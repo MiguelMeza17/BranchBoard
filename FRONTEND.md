@@ -65,6 +65,16 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
 
 Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 4 roles confirmados (Administrador, Líder, Desarrollador, Tester). La UI debe mostrar/ocultar acciones y pantallas según el rol del usuario logueado (ej. "eliminar proyecto" solo visible para Administrador; "aprobar solicitud de ingreso" visible para Líder y Administrador). El Desarrollador necesita una notificación/mensaje in-app cuando recibe autorización para modificar una tarea.
 
+Cuando un Desarrollador crea una tarea, la interfaz debe dejar claro que nace **bloqueada** (ej. una etiqueta o color distinto en la tarjeta) hasta que un Líder/Administrador la apruebe — ver [Pendiente por definir en SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
+
+## Notificaciones
+
+Ícono de campana (visible para todos los roles) con contador de no leídas, alimentado por los comandos Tauri `obtener_notificaciones()` / `marcar_leida(id)` (ver [BACKEND.md](./BACKEND.md#notificaciones)). Casos que debe cubrir el MVP:
+
+1. **Líder/Administrador**: "una tarea creada por [Desarrollador] espera tu aprobación" — con acción directa de aprobar desde la misma notificación
+2. **Desarrollador**: "tienes autorización para modificar [tarea]"
+3. **Quien solicitó ingreso**: "tu solicitud de ingreso a la organización fue aceptada"
+
 ## Pendiente por definir
 
 - Componentes de React por pantalla
