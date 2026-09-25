@@ -33,7 +33,7 @@
 - Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo
 - Es el único que puede asignar el rol de **Líder** a otro usuario
 - Acceso total al proyecto
-- Único rol que puede **eliminar el proyecto completo** — acción crítica, tratar con cuidado (requiere confirmación fuerte en la UI, ver "Pendiente por definir")
+- Único rol que puede **eliminar el proyecto completo** — **definido**: un escalón más estricto que eliminar una tarea (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)), dado que borra absolutamente todo, no solo un elemento. En vez de escribir una palabra genérica como "eliminar", el Administrador debe **escribir el nombre exacto del proyecto** para confirmar (mismo patrón que usa GitHub al borrar un repositorio) — así se evita una confirmación "en automático" sin medir la gravedad.
 
 ### Líder (por debajo del Administrador)
 - Puede crear usuarios (pero no puede crear ni ascender a otros Líderes)
@@ -102,7 +102,6 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 ## Pendiente por definir
 
 - Quién envía la autorización de modificación al Desarrollador (¿Líder, Administrador, o ambos?) y si es por tarea puntual o un permiso general
-- Confirmación reforzada para "eliminar el proyecto" (ej. escribir el nombre del proyecto, doble confirmación) dado que es irreversible
 - Validación de inputs que terminan en comandos `cm`/shell
 - Configuración del allowlist de Tauri (capabilities) una vez se defina qué comandos del backend se necesitan
 - Consideraciones de seguridad para la futura versión web (autenticación, permisos por usuario/equipo)

@@ -54,6 +54,10 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 - Campo de confirmación donde debe **escribir literalmente "eliminar"** para habilitar el botón
 - Motivo: queda registro en Unity Version Control, así que la justificación importa para el historial del equipo, no es un borrado silencioso
 
+**Eliminar el proyecto completo** (solo Administrador, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)): un escalón más estricto que eliminar una tarea, porque borra todo, no un elemento —
+- En vez de escribir una palabra genérica, el Administrador debe **escribir el nombre exacto del proyecto** para habilitar el botón (mismo patrón que usa GitHub al borrar un repositorio)
+- Sin campo de justificación (no aplica igual que en una tarea, ya no queda nada donde guardarla) — la acción en sí es la última que se registra
+
 ## Animación de inicio (splash)
 
 Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **animación de splash** (logo animado) mientras corren en paralelo las verificaciones de arranque: `estado_warp()`, y si WARP está conectado, `cm whoami` + listar workspaces (ver [Autenticación / acceso al proyecto](#autenticación--acceso-al-proyecto)). Sirve para no mostrar una pantalla en blanco/congelada mientras esas llamadas async resuelven.
