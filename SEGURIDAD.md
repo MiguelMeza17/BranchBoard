@@ -45,7 +45,8 @@
 
 ### Desarrollador
 - Puede ver sus propias tareas y el avance general del proyecto
-- Puede crear nuevas tareas
+- **Puede crear nuevas tareas, pero no libremente**: la tarea nace en estado **"bloqueada"** (pendiente de aprobación) — no puede tomarse ni crear rama hasta que un Líder o Administrador la apruebe. La notificación de "hay una tarea por aprobar" llega **solo a Líderes y Administradores**, nunca a otros Desarrolladores.
+- La aprobación **desbloquea** la tarea (pasa al backlog normal, ej. "por hacer") — no la mueve ni le crea la rama automáticamente; alguien todavía tiene que "tomarla" como cualquier otra tarea para que ahí sí se cree la rama.
 - Puede **modificar** una tarea propia solo si recibe una **autorización explícita** enviada como mensaje dentro de la app (pendiente definir quién la envía: ¿Líder, Administrador, o ambos?)
 - No puede ver/modificar tareas que no son suyas
 - No puede crear usuarios
@@ -66,7 +67,8 @@
 | Crear usuarios | ✅ | ✅ (no Líderes) | ❌ | ❌ |
 | Eliminar usuarios | ✅ (cualquiera) | ✅ (no Líderes, a confirmar) | ❌ | ❌ |
 | Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ | ❌ |
-| Crear tareas (producción) | ✅ | ✅ | ✅ | ❌ |
+| Crear tareas (producción) | ✅ (directo) | ✅ (directo) | ⚠️ (nace "bloqueada", requiere aprobación) | ❌ |
+| Aprobar/desbloquear tarea creada por Desarrollador | ✅ | ✅ | ❌ | ❌ |
 | Crear reporte de Testing | — | — | — | ✅ (exclusivo) |
 | Poner permisos en tareas | ✅ | ✅ | ❌ | ❌ |
 | Eliminar tareas de otros | ✅ | ✅ | ❌ | ❌ |
