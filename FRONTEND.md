@@ -38,6 +38,25 @@
 - Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
 - Tablero "Avance"
 
+## Autenticación / acceso al proyecto
+
+Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco actual: el flujo de "ingresar a un proyecto existente". "Crear un nuevo proyecto" queda en blanco/stub por ahora, no se implementa todavía.**
+
+1. **Pantalla inicial**: dos opciones —
+   - "Crear un nuevo proyecto" → **stub/en blanco por ahora, no tocar**
+   - "Ingresar a un proyecto existente" → lleva a la pantalla de login (punto 2)
+
+2. **Pantalla de login** (ingresar a proyecto existente):
+   - Campo(s) de credenciales
+   - Botón "ver" (mostrar/ocultar contraseña)
+   - Botón "guardar sesión"
+   - Botón/enlace, debajo de lo anterior: "Solicitar ingreso a una organización" → lleva a la pantalla de solicitud (punto 3)
+
+3. **Pantalla de solicitud de ingreso a una organización**:
+   - Campos: Nombre, Apellido, Correo, ID de la organización
+   - Al enviar, se genera una solicitud de ingreso al proyecto/organización
+   - Si la solicitud es aceptada, el solicitante recibe un correo (al que puso en el formulario) con un mensaje que contiene la **clave de acceso** para entrar al sistema
+
 ## Pendiente por definir
 
 - Componentes de Vue por pantalla
@@ -46,3 +65,7 @@
 - Librería de gráficos para la dona (ej. Chart.js, ApexCharts)
 - Diseño de la vista de sprint (cómo se agrupan tareas dentro de un sprint, con y sin fechas)
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
+- Campos exactos de "credenciales" en el login (¿usuario, correo, o ambos + contraseña?)
+- Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
+- Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido)
+- Quién/qué aprueba la solicitud de ingreso (¿un admin desde otra pantalla? es responsabilidad de backend, pero el frontend necesita saber si hay una pantalla de "solicitudes pendientes" para el admin)
