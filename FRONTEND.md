@@ -40,22 +40,20 @@
 
 ## Autenticación / acceso al proyecto
 
+**Actualizado**: BranchBoard no tiene login propio ni contraseña — ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario). La identidad se obtiene automáticamente de `cm whoami` (la sesión de Unity Version Control ya iniciada en la máquina). Esto reemplaza el formulario de credenciales que se había planteado antes.
+
 Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco actual: el flujo de "ingresar a un proyecto existente". "Crear un nuevo proyecto" queda en blanco/stub por ahora, no se implementa todavía.**
 
 1. **Pantalla inicial**: dos opciones —
    - "Crear un nuevo proyecto" → **stub/en blanco por ahora, no tocar**
-   - "Ingresar a un proyecto existente" → lleva a la pantalla de login (punto 2)
+   - "Ingresar a un proyecto existente" → la app corre `cm whoami` por detrás (sin que el usuario haga nada) y busca ese correo en la tabla de usuarios de SQLite:
+     - **Correo encontrado** → entra directo a la app con el rol asignado, sin formulario de por medio
+     - **Correo no encontrado** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía", con un botón "Solicitar ingreso a una organización" (punto 2)
 
-2. **Pantalla de login** (ingresar a proyecto existente):
-   - Campo(s) de credenciales
-   - Botón "ver" (mostrar/ocultar contraseña)
-   - Botón "guardar sesión"
-   - Botón/enlace, debajo de lo anterior: "Solicitar ingreso a una organización" → lleva a la pantalla de solicitud (punto 3)
-
-3. **Pantalla de solicitud de ingreso a una organización**:
-   - Campos: Nombre, Apellido, Correo, ID de la organización
+2. **Pantalla de solicitud de ingreso a una organización**:
+   - Campos: Nombre, Apellido, Correo (idealmente pre-rellenado con el correo detectado por `cm whoami`, ya que debe ser el mismo con el que luego se valide), ID de la organización
    - Al enviar, se genera una solicitud de ingreso al proyecto/organización
-   - Si la solicitud es aceptada, el solicitante recibe un correo (al que puso en el formulario) con un mensaje que contiene la **clave de acceso** para entrar al sistema
+   - Si la solicitud es aceptada, el Admin/Líder asocia ese correo a un rol en la tabla de usuarios — no se genera ni se envía ninguna clave/contraseña. El solicitante recibe un correo avisando que fue aceptado, y la próxima vez que abra BranchBoard, `cm whoami` ya lo identifica y entra directo.
 
 ## Roles y permisos (UI)
 
@@ -69,7 +67,7 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 - Librería de gráficos para la dona (ej. Chart.js, ApexCharts)
 - Diseño de la vista de sprint (cómo se agrupan tareas dentro de un sprint, con y sin fechas)
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
-- Campos exactos de "credenciales" en el login (¿usuario, correo, o ambos + contraseña?)
 - Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
-- Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido)
+- Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido, y que el correo puesto coincida con el que da `cm whoami`)
 - Quién/qué aprueba la solicitud de ingreso (¿un admin desde otra pantalla? es responsabilidad de backend, pero el frontend necesita saber si hay una pantalla de "solicitudes pendientes" para el admin)
+- Qué pasa si `cm whoami` falla o no hay sesión de Unity VC iniciada en la máquina (mensaje de error, instrucción de iniciar sesión en Unity VC primero)
