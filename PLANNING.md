@@ -12,6 +12,8 @@ Todo el trabajo del equipo se organiza y visualiza a través de **tareas**, en d
 
 Cada tarea, sin importar su tipo o nivel, pasa por los mismos estados y se ve reflejada en los mismos tableros.
 
+**Estado "bloqueada"**: si un **Desarrollador** crea una tarea, nace en este estado especial (antes de "por hacer") y no puede tomarse ni crear rama hasta que un Líder o Administrador la apruebe. Cuando Líder/Admin crean una tarea, no pasa por este estado — entra directo a "por hacer". Ver permisos exactos en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
+
 ## Pre-revisión
 
 Antes de pasar al estado "en revisión", el entregable de cualquier tarea se puede **reproducir/previsualizar dentro de la misma interfaz** de BranchBoard, sin salir de la app ni abrir la herramienta original (Unity, Blender, editor de video, etc.):
