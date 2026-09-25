@@ -8,11 +8,17 @@
 - **Nombre**: BranchBoard
 - **Qué es**: herramienta de gestión de tareas y producción para un equipo pequeño de desarrollo de un videojuego en Unity.
 - **Principio central**: todo el trabajo del equipo se organiza y visualiza a través de **tareas**. Cada tarea puede ser de tipo:
-  - Código → asociada 1 a 1 a una rama de Git (una tarea = una rama)
-  - Modelado 3D
-  - Arte 2D
-  - Música
-  - Video
+  - **Scripting** → asociada a una rama (una tarea = una rama)
+  - **Modelado** (3D)
+  - **Animación**
+  - **Imagen** (arte 2D)
+  - **Video**
+  - **Música**
+- **Flujo de vida de una tarea**:
+  1. Se crea la tarea desde la **Lista de tareas** — en este punto es puramente visual/informativa, **no existe rama todavía**.
+  2. Cuando alguien **toma** la tarea (se la asigna), en ese momento se crea la rama correspondiente. La conexión con el control de versiones (Unity Version Control) para crear la rama se hace mediante **scripts Python** del lado del backend — el frontend solo dispara la acción "tomar tarea" y refleja el resultado (rama creada / en progreso / error).
+  3. Los **sprints** representan el tiempo de vida de esa rama trabajando sobre `dev`, antes de integrarse (mergear) a `main`.
+- **Sprints y tareas, con y sin tiempo**: tanto los sprints como las tareas deben soportar dos variantes: **con fecha/duración** (planeados en el tiempo, estilo Scrum clásico) y **sin fecha** (tipo backlog, sin compromiso de tiempo). Es una decisión ya tomada — falta solo el diseño de cómo se ven en la interfaz. No es prioridad implementar aún la parte de sprints con fechas/calendario, pero el modelo de datos y la UI deben contemplarlo desde ya para no rehacer luego.
 - **Stack elegido**: Tauri + Vue. Fase 1 = app de escritorio (full desktop). Fase 2 (futuro) = versión web, con el mismo código gracias a Tauri.
 - **Usuarios**: un equipo pequeño trabajando sobre un proyecto Unity compartido.
 - **Pantallas/tableros del MVP** (definidos por el usuario, hay que respetar estos nombres):
@@ -26,12 +32,17 @@
 
 - Tablero Scrum (kanban)
 - Pantalla de resumen con gráfica circular (dona) de estados
-- Lista de todas las tareas existentes
+- Lista de todas las tareas existentes, con formulario/flujo de creación de tarea (sin rama aún)
+- Acción "tomar tarea": botón/interacción que dispara la creación de rama en el backend y refleja el estado (creando / lista / error)
+- Vista de sprints, soportando sprints con fecha y sprints sin fecha
+- Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
 - Tablero "Avance"
 
 ## Pendiente por definir
 
 - Componentes de Vue por pantalla
-- Cómo se ve una tarjeta de tarea (qué datos muestra)
+- Cómo se ve una tarjeta de tarea (qué datos muestra, y cómo cambia antes/después de tener rama asociada)
 - Diferencia visual/funcional entre tablero Scrum y tablero Avance
 - Librería de gráficos para la dona (ej. Chart.js, ApexCharts)
+- Diseño de la vista de sprint (cómo se agrupan tareas dentro de un sprint, con y sin fechas)
+- Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
