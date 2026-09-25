@@ -27,7 +27,7 @@
 
 ## Roles y permisos
 
-El usuario mencionó 4 roles pero solo describió 3 — **falta confirmar cuál es el cuarto**. Los 3 definidos hasta ahora:
+4 roles confirmados: Administrador, Líder, Desarrollador y **Tester** (el 4to rol, antes pendiente de confirmar).
 
 ### Administrador
 - Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo
@@ -50,22 +50,30 @@ El usuario mencionó 4 roles pero solo describió 3 — **falta confirmar cuál 
 - No puede ver/modificar tareas que no son suyas
 - No puede crear usuarios
 
+### Tester (4to rol)
+- Puede ver **todas** las tareas del proyecto (a diferencia de Desarrollador)
+- No crea tareas de producción (Scripting/Modelado/Animación/Imagen/Video/Música)
+- Sí puede **crear reportes de Testing**: al revisar una tarea, documenta lo que encontró en el apartado [Testing](./PLANNING.md#testing), vinculado a la tarea revisada
+- No puede modificar tareas de otros (solo reportar sobre ellas vía Testing)
+- No puede crear usuarios ni gestionar el proyecto
+
 ### Matriz resumen
 
-| Acción | Administrador | Líder | Desarrollador |
-|---|---|---|---|
-| Eliminar el proyecto | ✅ | ❌ | ❌ |
-| Asignar rol de Líder | ✅ | ❌ | ❌ |
-| Crear usuarios | ✅ | ✅ (no Líderes) | ❌ |
-| Eliminar usuarios | ✅ (cualquiera) | ✅ (no Líderes, a confirmar) | ❌ |
-| Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ |
-| Crear tareas | ✅ | ✅ | ✅ |
-| Poner permisos en tareas | ✅ | ✅ | ❌ |
-| Eliminar tareas de otros | ✅ | ✅ | ❌ |
-| Ver todas las tareas del proyecto | ✅ | ✅ | ❌ (solo las suyas) |
-| Ver avance del proyecto | ✅ | ✅ | ✅ |
-| Modificar tareas propias | ✅ | ✅ | ⚠️ solo con autorización explícita por mensaje |
-| Modificar tareas de otros | ✅ | ✅ | ❌ |
+| Acción | Administrador | Líder | Desarrollador | Tester |
+|---|---|---|---|---|
+| Eliminar el proyecto | ✅ | ❌ | ❌ | ❌ |
+| Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |
+| Crear usuarios | ✅ | ✅ (no Líderes) | ❌ | ❌ |
+| Eliminar usuarios | ✅ (cualquiera) | ✅ (no Líderes, a confirmar) | ❌ | ❌ |
+| Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ | ❌ |
+| Crear tareas (producción) | ✅ | ✅ | ✅ | ❌ |
+| Crear reporte de Testing | — | — | — | ✅ (exclusivo) |
+| Poner permisos en tareas | ✅ | ✅ | ❌ | ❌ |
+| Eliminar tareas de otros | ✅ | ✅ | ❌ | ❌ |
+| Ver todas las tareas del proyecto | ✅ | ✅ | ❌ (solo las suyas) | ✅ |
+| Ver avance del proyecto | ✅ | ✅ | ✅ | ✅ |
+| Modificar tareas propias | ✅ | ✅ | ⚠️ solo con autorización explícita por mensaje | — (no crea tareas propias) |
+| Modificar tareas de otros | ✅ | ✅ | ❌ | ❌ |
 
 ### Usuarios semilla (equipo VirusTF)
 
@@ -89,7 +97,6 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 
 ## Pendiente por definir
 
-- Confirmar el cuarto rol de usuario (el usuario mencionó 4, solo describió 3)
 - Quién envía la autorización de modificación al Desarrollador (¿Líder, Administrador, o ambos?) y si es por tarea puntual o un permiso general
 - Confirmación reforzada para "eliminar el proyecto" (ej. escribir el nombre del proyecto, doble confirmación) dado que es irreversible
 - Validación de inputs que terminan en comandos `cm`/shell
