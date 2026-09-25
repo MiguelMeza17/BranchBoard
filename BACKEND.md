@@ -47,7 +47,20 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
    - Marca la tarea como "modificada" (para que el frontend le ponga un badge/indicador)
    - Actualiza `ultimo_changeset_visto`
    - Opcional: extrae metadata del changeset (autor, comentario, archivos afectados) para mostrarla en el detalle de la tarea
-5. (Fase futura) Reemplazar el polling manual por **triggers del servidor de Unity VC** (ej. `after-checkin`) para detección casi en tiempo real, sin depender de que alguien le dé clic a "Refrescar".
+5. **El mismo refresco también revisa si la rama se cerró** (mergeada hacia su rama padre). Unity VC guarda el estado de cierre de una rama al mergearla. Si la rama aparece cerrada → la tarea se marca automáticamente como **"terminada"**, sin intervención manual. (Comando `cm` exacto para leer el estado de cierre: pendiente de verificar al implementar.)
+6. (Fase futura) Reemplazar el polling manual por **triggers del servidor de Unity VC** (ej. `after-checkin`) para detección casi en tiempo real, sin depender de que alguien le dé clic a "Refrescar".
+
+## Comando "Guardar cambios y sincronizar"
+
+Mismo patrón que "tomar tarea", reusando la arquitectura de comandos Tauri ya establecida:
+
+1. El usuario le da clic al botón en la interfaz (Vue)
+2. Se llama un comando Tauri, ej. `sincronizar_tarea(tarea_id)`
+3. El backend (script Python) corre el `cm` correspondiente (checkin/update) sobre la rama de esa tarea
+4. El frontend muestra estado de carga mientras corre, y éxito/error al terminar
+5. Al terminar con éxito, dispara de una vez la revisión del punto anterior (changesets nuevos + estado de cierre) para que la tarea quede actualizada sin pasos extra
+
+No es una pieza nueva de arquitectura — es el mismo cable Vue → comando Tauri → script Python → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
 
 ## Roles y permisos
 
@@ -60,4 +73,6 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 - Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
 - Estados del flujo de una tarea
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
+- Comando `cm` exacto para leer si una rama está cerrada/mergeada
 - Dónde vive `ultimo_changeset_visto` por tarea (misma base de datos del modelo de tarea)
+- Diseño final del lock de escritura en SQLite: corto y por operación (no por sesión completa) + detección de sobrescritura como red de seguridad, dado el retraso de sincronización de la carpeta en la nube
