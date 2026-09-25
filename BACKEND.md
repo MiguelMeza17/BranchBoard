@@ -28,7 +28,7 @@
 ## Alcance
 
 - Modelo de datos de una tarea (scripting, 3D, animación, imagen, música, video)
-- Persistencia local (¿SQLite? ¿archivo JSON?)
+- Persistencia: **SQLite** (un solo archivo `.db`, sin servidor). Fase 1 = archivo local; el archivo `.db` se sincroniza a la nube (ej. Drive/OneDrive) para compartirlo entre el equipo. Fase futura (versión web) = migrar a una base de datos con servidor (ej. Postgres) para manejar escrituras concurrentes de varios usuarios.
 - Integración con Unity Version Control vía scripts Python que invocan el CLI `cm`: crear rama al tomar una tarea, detectar cambios nuevos (ver sección de detección de cambios)
 - Comandos Tauri expuestos al frontend (ej. `tomar_tarea`, `revisar_actualizaciones`)
 
@@ -51,7 +51,6 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 
 ## Pendiente por definir
 
-- Motor de almacenamiento
 - Estructura exacta de la tarea (campos)
 - Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
 - Estados del flujo de una tarea
