@@ -36,7 +36,8 @@
 - Acción "tomar tarea": botón/interacción que dispara la creación de rama en el backend y refleja el estado (creando / lista / error)
 - Vista de sprints, soportando sprints con fecha y sprints sin fecha
 - Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
-- Tablero "Avance": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas/mini-tareas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
+- Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva.
+- "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas/mini-tareas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
 
 ## Autenticación / acceso al proyecto
 
@@ -66,8 +67,8 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 
 - Componentes de React por pantalla
 - Cómo se ve una tarjeta de tarea (qué datos muestra, y cómo cambia antes/después de tener rama asociada)
-- Diferencia visual/funcional entre tablero Scrum y tablero Avance
-- Librería de gráficos para la dona (ej. Chart.js, ApexCharts)
+- Librería de gráficos para la dona y la curva de Avance (ej. Chart.js, ApexCharts)
+- Qué mide exactamente el eje Y de la curva de Avance y qué marca el eje X (ver mismo pendiente en PLANNING.md)
 - Diseño de la vista de sprint (cómo se agrupan tareas dentro de un sprint, con y sin fechas)
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
 - Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
