@@ -39,6 +39,18 @@
 - Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva.
 - "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas/mini-tareas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
 
+## Confirmación al arrastrar tareas (drag & drop)
+
+En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dispara acciones reales sobre Unity Version Control (crear rama, mandar a revisión, mergear a `dev`). Por eso, ciertos arrastres piden confirmación antes de ejecutarse:
+
+- **Arrastrar a "En revisión"**: se abre un modal con dos pasos obligatorios:
+  1. Campo de texto para la **descripción** del cambio (se guarda como comentario del changeset en Unity VC)
+  2. Campo de confirmación donde el usuario debe **escribir literalmente la palabra "enviar"** para habilitar el botón de envío — sin eso, no se puede continuar
+  - Si el usuario cancela o cierra el modal sin completar ambos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
+  - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en el apartado de "Tareas en revisión" de Líder/Administrador
+- **Arrastrar a "En producción"** (crea la rama): mismo patrón de descripción obligatoria — pendiente confirmar si también requiere el candado de escribir una palabra literal, o solo la descripción basta.
+- **Líder marcando "autorizado"** (mergea la rama a `dev`): pendiente confirmar si aplica el mismo doble candado (descripción + palabra literal) dado lo delicado de la acción, o si es distinto.
+
 ## Autenticación / acceso al proyecto
 
 **Actualizado**: BranchBoard no tiene login propio ni contraseña — ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario). La identidad se obtiene automáticamente de `cm whoami` (la sesión de Unity Version Control ya iniciada en la máquina). Esto reemplaza el formulario de credenciales que se había planteado antes.
