@@ -65,6 +65,18 @@ El usuario mencionó 4 roles pero solo describió 3 — **falta confirmar cuál 
 | Modificar tareas propias | ✅ | ✅ | ⚠️ solo con autorización explícita por mensaje |
 | Modificar tareas de otros | ✅ | ✅ | ❌ |
 
+### Usuarios semilla (equipo VirusTF)
+
+Basado en los miembros actuales del proyecto en Unity Cloud (identidad = email de `cm whoami`, ver [BACKEND.md](./BACKEND.md#identidad-de-usuario)):
+
+| Nombre | Email | Rol en Unity Cloud | Rol en BranchBoard |
+|---|---|---|---|
+| Miguel Meza | miguellmezza123@gmail.com | Propietario | **Administrador** |
+| jo-an | arteagacristobal957@gmail.com | Usuario | **Líder** |
+| Sebas | johns.telagt@uqvirtual.edu.co | Usuario | **Desarrollador** |
+
+Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarrollador — esa asignación es decisión del equipo, no se deriva automáticamente de Unity Cloud.
+
 ## Alcance
 
 - Permisos de Tauri: qué comandos/API del sistema (filesystem, shell/git) se exponen al frontend y con qué restricciones (allowlist de Tauri)
