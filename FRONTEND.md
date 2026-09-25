@@ -43,13 +43,18 @@
 
 En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dispara acciones reales sobre Unity Version Control (crear rama, mandar a revisión, mergear a `dev`). Por eso, ciertos arrastres piden confirmación antes de ejecutarse:
 
-- **Arrastrar a "En revisión"**: se abre un modal con dos pasos obligatorios:
-  1. Campo de texto para la **descripción** del cambio (se guarda como comentario del changeset en Unity VC)
-  2. Campo de confirmación donde el usuario debe **escribir literalmente la palabra "enviar"** para habilitar el botón de envío — sin eso, no se puede continuar
-  - Si el usuario cancela o cierra el modal sin completar ambos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
+- **Tomar tarea / auto-asignarse** (crea la rama): modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "asignar"** para habilitar el botón — sin eso no se puede continuar.
+- **Arrastrar a "En revisión"**: modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "mandar a revisar"** para habilitar el botón de envío.
   - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en el apartado de "Tareas en revisión" de Líder/Administrador
-- **Arrastrar a "En producción"** (crea la rama): mismo patrón de descripción obligatoria — pendiente confirmar si también requiere el candado de escribir una palabra literal, o solo la descripción basta.
-- **Líder marcando "autorizado"** (mergea la rama a `dev`): pendiente confirmar si aplica el mismo doble candado (descripción + palabra literal) dado lo delicado de la acción, o si es distinto.
+- En ambos casos: si el usuario cancela o cierra el modal sin completar los dos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
+- **Líder marcando "autorizado"** (mergea la rama a `dev`): pendiente confirmar si aplica el mismo doble candado (descripción + palabra literal) y cuál sería la palabra, dado lo delicado de la acción.
+
+## Animación de inicio (splash)
+
+Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **animación de splash** (logo animado) mientras corren en paralelo las verificaciones de arranque: `estado_warp()`, y si WARP está conectado, `cm whoami` + listar workspaces (ver [Autenticación / acceso al proyecto](#autenticación--acceso-al-proyecto)). Sirve para no mostrar una pantalla en blanco/congelada mientras esas llamadas async resuelven.
+
+- Duración: hasta que terminen las verificaciones, con un mínimo breve (ej. ~600ms) para que no se sienta como un parpadeo si todo responde instantáneo.
+- Pendiente definir: estilo exacto de la animación (logo con loop simple vs. algo más elaborado) — no es prioridad de lógica, es una mejora de percepción de carga.
 
 ## Autenticación / acceso al proyecto
 
