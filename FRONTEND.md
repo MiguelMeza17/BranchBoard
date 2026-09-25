@@ -46,9 +46,12 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
 
 1. **Pantalla inicial**: dos opciones —
    - "Crear un nuevo proyecto" → **stub/en blanco por ahora, no tocar**
-   - "Ingresar a un proyecto existente" → la app corre `cm whoami` por detrás (sin que el usuario haga nada) y busca ese correo en la tabla de usuarios de SQLite:
-     - **Correo encontrado** → entra directo a la app con el rol asignado, sin formulario de por medio
-     - **Correo no encontrado** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía", con un botón "Solicitar ingreso a una organización" (punto 2)
+   - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado** (vía `cm`), no un solo proyecto fijo:
+     - El usuario selecciona uno de la lista
+     - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
+       - **Coincide** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
+       - **El correo no está registrado en ese proyecto** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía", con botón "Solicitar ingreso a una organización" (punto 2)
+       - **No coincide con ningún `.db` de BranchBoard** (proyecto de Unity VC que nunca se ha configurado con BranchBoard) → pendiente definir qué se muestra (¿opción de inicializarlo? ver "Pendiente por definir")
 
 2. **Pantalla de solicitud de ingreso a una organización**:
    - Campos: Nombre, Apellido, Correo (idealmente pre-rellenado con el correo detectado por `cm whoami`, ya que debe ser el mismo con el que luego se valide), ID de la organización
@@ -71,3 +74,5 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 - Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido, y que el correo puesto coincida con el que da `cm whoami`)
 - Quién/qué aprueba la solicitud de ingreso (¿un admin desde otra pantalla? es responsabilidad de backend, pero el frontend necesita saber si hay una pantalla de "solicitudes pendientes" para el admin)
 - Qué pasa si `cm whoami` falla o no hay sesión de Unity VC iniciada en la máquina (mensaje de error, instrucción de iniciar sesión en Unity VC primero)
+- Comando `cm` exacto para listar los proyectos/workspaces a los que el usuario está conectado (para la lista de "ingresar a un proyecto existente")
+- Qué se muestra cuando un proyecto de Unity VC listado **no tiene** un `.db` de BranchBoard asociado todavía (¿se ofrece inicializarlo ahí mismo? ¿se oculta de la lista?)
