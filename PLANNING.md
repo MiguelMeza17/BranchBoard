@@ -64,12 +64,14 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 1. **Tablero Scrum** — vista tipo kanban de las tareas
 2. **Resumen** — gráfica circular (dona) con el conteo de tareas: por hacer, en producción, en revisión, terminadas
 3. **Lista de tareas** — todas las tareas existentes, lugar donde se crean
-4. **Tablero "Avance"** — **definido**: es una **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (mini-tareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada), dando de un vistazo el progreso real del proyecto hacia `main`. Inspirado en el "Branch Explorer" que ya trae Unity Version Control. Diferencia con el Tablero Scrum: Scrum = tarjetas agrupadas por estado; Avance = árbol jerárquico de ramas.
+4. **Tablero "Avance"** — **definido**: gráfica de **curva en el tiempo** (tipo burndown/burnup) que muestra la cantidad de tareas (por estado, o completadas vs. totales) a lo largo del tiempo/sprints. Responde "¿vamos bien o mal respecto al tiempo?".
+5. **"Branches"** — **nuevo**: la **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (mini-tareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada). Inspirado en el "Branch Explorer" que ya trae Unity Version Control.
 
 ## Pendiente por definir
 
 - Campos de una tarea (título, tipo, rama asociada, estado, asignado, etc.)
-- Librería de grafos/árboles para renderizar el Tablero Avance (ej. `react-flow`)
+- Qué mide exactamente el eje Y de la curva de Avance (¿tareas completadas acumuladas? ¿tareas pendientes restantes tipo burndown? ¿ambas?) y qué marca el eje X (¿sprints? ¿fechas?)
+- Librería de grafos/árboles para renderizar "Branches" (ej. `react-flow`)
 - Estados exactos del flujo (por hacer → en producción → en revisión → terminada, ¿alguno más? ¿la pre-revisión es un estado propio o una acción dentro de "en revisión"?)
 - Integración con Unity Version Control: ¿lee el workspace local? ¿crea la rama automáticamente al tomar la tarea?
 - Formato/pipeline de assets 3D para la pre-revisión: ¿se exige exportar a glTF/GLB? ¿conversión automática desde el formato nativo (.fbx, .blend)?
