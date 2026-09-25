@@ -30,13 +30,14 @@
 El usuario mencionó 4 roles pero solo describió 3 — **falta confirmar cuál es el cuarto**. Los 3 definidos hasta ahora:
 
 ### Administrador
-- Gestiona y administra todo tipo de usuarios
+- Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo
 - Es el único que puede asignar el rol de **Líder** a otro usuario
 - Acceso total al proyecto
 - Único rol que puede **eliminar el proyecto completo** — acción crítica, tratar con cuidado (requiere confirmación fuerte en la UI, ver "Pendiente por definir")
 
 ### Líder (por debajo del Administrador)
 - Puede crear usuarios (pero no puede crear ni ascender a otros Líderes)
+- Puede **eliminar usuarios** (ej. cuando alguien deja el equipo) — pendiente confirmar si puede eliminar a otro Líder o solo a Desarrolladores (por consistencia con "no puede gestionar Líderes", se asume que no)
 - Administra las solicitudes de ingreso a la organización (aprobar/rechazar)
 - Puede crear tareas, poner permisos en tareas, eliminar tareas de otros usuarios
 - Puede ver todas las tareas del proyecto
@@ -56,6 +57,7 @@ El usuario mencionó 4 roles pero solo describió 3 — **falta confirmar cuál 
 | Eliminar el proyecto | ✅ | ❌ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ |
 | Crear usuarios | ✅ | ✅ (no Líderes) | ❌ |
+| Eliminar usuarios | ✅ (cualquiera) | ✅ (no Líderes, a confirmar) | ❌ |
 | Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ |
 | Crear tareas | ✅ | ✅ | ✅ |
 | Poner permisos en tareas | ✅ | ✅ | ❌ |
