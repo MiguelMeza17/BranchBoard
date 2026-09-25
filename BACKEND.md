@@ -62,14 +62,25 @@ Mismo patrón que "tomar tarea", reusando la arquitectura de comandos Tauri ya e
 
 No es una pieza nueva de arquitectura — es el mismo cable React → comando Tauri → Rust → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
 
+## Identidad de usuario
+
+BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtiene directamente de la sesión de Unity Version Control ya activa en la máquina:
+
+- Al arrancar, el backend corre `cm whoami` (subproceso) y obtiene el email de la cuenta logueada (confirmado en pruebas reales: devuelve algo como `nombre@dominio.com`).
+- Ese email es el identificador del usuario dentro de BranchBoard — no hay contraseña, sesión propia, ni token que gestionar.
+- La tabla de usuarios en SQLite mapea **email (de `cm whoami`) → rol** (ver Roles y permisos). El admin asigna el rol a cada email conocido del equipo la primera vez; después de eso, cada persona que abre la app en su máquina queda identificada automáticamente.
+- Requisito implícito: cada miembro del equipo ya debe tener el cliente de Unity Version Control instalado y con sesión iniciada (login por SSO/navegador, una sola vez) en su propia máquina — eso ya lo resuelve `cm`, BranchBoard no reimplementa nada de eso.
+- **Confirmado**: aunque todo el equipo comparte el mismo workspace de Unity Version Control, cada persona inicia sesión con su propia cuenta/correo — `cm whoami` sí distingue a cada usuario individualmente, no hay una cuenta compartida.
+
 ## Roles y permisos
 
-Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 3 roles confirmados (Administrador, Líder, Desarrollador; falta un 4to por confirmar). El modelo de datos de usuario necesita un campo de rol, y cada comando Tauri sensible debe validar permisos en el backend (no solo ocultar en la UI).
+Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 3 roles confirmados (Administrador, Líder, Desarrollador; falta un 4to por confirmar). El modelo de datos de usuario necesita un campo de rol asociado al email de `cm whoami` (ver Identidad de usuario), y cada comando Tauri sensible debe validar permisos en el backend (no solo ocultar en la UI).
 
 ## Pendiente por definir
 
 - Estructura exacta de la tarea (campos)
-- Estructura exacta de usuario (rol, y cómo se valida el permiso en cada comando Tauri)
+- Estructura exacta de usuario (email de `cm whoami` + rol, y cómo se valida el permiso en cada comando Tauri)
+- Cómo se puebla la primera vez la tabla email→rol (¿el admin los escribe a mano? ¿se listan desde los miembros del proyecto en Unity Cloud?)
 - Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
 - Estados del flujo de una tarea
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
