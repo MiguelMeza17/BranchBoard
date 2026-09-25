@@ -69,6 +69,8 @@
 | Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ | ❌ |
 | Crear tareas (producción) | ✅ (directo) | ✅ (directo) | ⚠️ (nace "bloqueada", requiere aprobación) | ❌ |
 | Aprobar/desbloquear tarea creada por Desarrollador | ✅ | ✅ | ❌ | ❌ |
+| Rechazar tarea (con motivo) | ✅ | ✅ | ❌ | ❌ |
+| Asignar tarea directamente a un Desarrollador | ✅ | ✅ | ❌ | ❌ |
 | Crear reporte de Testing | — | — | — | ✅ (exclusivo) |
 | Poner permisos en tareas | ✅ | ✅ | ❌ | ❌ |
 | Eliminar tareas de otros | ✅ | ✅ | ❌ | ❌ |
