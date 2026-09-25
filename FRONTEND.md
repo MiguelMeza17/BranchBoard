@@ -1,7 +1,7 @@
 # BranchBoard — Frontend
 
 > Ver visión general y conceptos compartidos en [PLANNING.md](./PLANNING.md).
-> Este documento cubre lo que se ve en pantalla, con Vue dentro de Tauri.
+> Este documento cubre lo que se ve en pantalla, con React + TypeScript dentro de Tauri.
 
 ## Contexto completo del proyecto
 
@@ -16,10 +16,10 @@
   - **Música**
 - **Flujo de vida de una tarea**:
   1. Se crea la tarea desde la **Lista de tareas** — en este punto es puramente visual/informativa, **no existe rama todavía**.
-  2. Cuando alguien **toma** la tarea (se la asigna), en ese momento se crea la rama correspondiente. La conexión con el control de versiones (Unity Version Control) para crear la rama se hace mediante **scripts Python** del lado del backend — el frontend solo dispara la acción "tomar tarea" y refleja el resultado (rama creada / en progreso / error).
+  2. Cuando alguien **toma** la tarea (se la asigna), en ese momento se crea la rama correspondiente. La conexión con el control de versiones (Unity Version Control) para crear la rama se hace desde el backend en **Rust**, invocando directamente el CLI `cm` — el frontend solo dispara la acción "tomar tarea" y refleja el resultado (rama creada / en progreso / error).
   3. Los **sprints** representan el tiempo de vida de esa rama trabajando sobre `dev`, antes de integrarse (mergear) a `main`.
 - **Sprints y tareas, con y sin tiempo**: tanto los sprints como las tareas deben soportar dos variantes: **con fecha/duración** (planeados en el tiempo, estilo Scrum clásico) y **sin fecha** (tipo backlog, sin compromiso de tiempo). Es una decisión ya tomada — falta solo el diseño de cómo se ven en la interfaz. No es prioridad implementar aún la parte de sprints con fechas/calendario, pero el modelo de datos y la UI deben contemplarlo desde ya para no rehacer luego.
-- **Stack elegido**: Tauri + Vue. Fase 1 = app de escritorio (full desktop). Fase 2 (futuro) = versión web, con el mismo código gracias a Tauri.
+- **Stack elegido**: Tauri (Rust) + React/TypeScript. Fase 1 = app de escritorio (full desktop); el backend en Rust invoca directamente el CLI `cm` de Unity Version Control y usa SQLite — sin Python. Fase 2 (futuro) = versión web, reutilizando solo el frontend (React); como Tauri no corre en navegador, esa fase necesita un backend servidor nuevo y aparte que exponga por HTTP lo que hoy hacen los comandos de Tauri.
 - **Usuarios**: un equipo pequeño trabajando sobre un proyecto Unity compartido.
 - **Pantallas/tableros del MVP** (definidos por el usuario, hay que respetar estos nombres):
   1. **Tablero Scrum** — vista tipo kanban de las tareas.
@@ -63,7 +63,7 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 
 ## Pendiente por definir
 
-- Componentes de Vue por pantalla
+- Componentes de React por pantalla
 - Cómo se ve una tarjeta de tarea (qué datos muestra, y cómo cambia antes/después de tener rama asociada)
 - Diferencia visual/funcional entre tablero Scrum y tablero Avance
 - Librería de gráficos para la dona (ej. Chart.js, ApexCharts)

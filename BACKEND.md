@@ -14,9 +14,9 @@
   - **Imagen** (arte 2D)
   - **Video**
   - **Música**
-- **Control de versiones: Unity Version Control** (antes Plastic SCM), no Git genérico. Se usa su CLI (`cm`). La integración desde el backend se hace mediante **scripts Python** que invocan `cm`.
-- **Flujo de vida de una tarea**: se crea visual/sin rama → al "tomarla" alguien, el backend crea la rama en Unity VC vía script Python → el sprint es el tiempo que esa rama vive sobre `dev` antes de mergear a `main`.
-- **Stack elegido**: Tauri + Vue. Fase 1 = app de escritorio (full desktop). Fase 2 (futuro) = versión web, con el mismo código gracias a Tauri.
+- **Control de versiones: Unity Version Control** (antes Plastic SCM), no Git genérico. Se usa su CLI (`cm`). La integración desde el backend se hace en **Rust directo** (sin Python), invocando `cm` como subproceso.
+- **Flujo de vida de una tarea**: se crea visual/sin rama → al "tomarla" alguien, el backend (Rust) crea la rama en Unity VC invocando `cm` → el sprint es el tiempo que esa rama vive sobre `dev` antes de mergear a `main`.
+- **Stack elegido**: Tauri (Rust) + React/TypeScript. Fase 1 = app de escritorio (full desktop); backend en Rust, SQLite, sin Python. Fase 2 (futuro) = versión web, reutilizando solo el frontend (React) — necesita un backend servidor nuevo y aparte (no Tauri) que exponga por HTTP lo que hoy hacen los comandos de Tauri.
 - **Usuarios**: un equipo pequeño trabajando sobre un proyecto Unity compartido.
 - **Pantallas/tableros del MVP** (definidos por el usuario, hay que respetar estos nombres):
   1. **Tablero Scrum** — vista tipo kanban de las tareas.
@@ -29,7 +29,7 @@
 
 - Modelo de datos de una tarea (scripting, 3D, animación, imagen, música, video)
 - Persistencia: **SQLite** (un solo archivo `.db`, sin servidor). Fase 1 = archivo local; el archivo `.db` se sincroniza a la nube (ej. Drive/OneDrive) para compartirlo entre el equipo. Fase futura (versión web) = migrar a una base de datos con servidor (ej. Postgres) para manejar escrituras concurrentes de varios usuarios.
-- Integración con Unity Version Control vía scripts Python que invocan el CLI `cm`: crear rama al tomar una tarea, detectar cambios nuevos (ver sección de detección de cambios)
+- Integración con Unity Version Control desde Rust invocando el CLI `cm` como subproceso: crear rama al tomar una tarea, detectar cambios nuevos (ver sección de detección de cambios)
 - Comandos Tauri expuestos al frontend (ej. `tomar_tarea`, `revisar_actualizaciones`)
 
 ## Detección de cambios en Unity Version Control (polling)
@@ -42,7 +42,7 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 
 1. Al crear la rama de una tarea (cuando alguien la "toma"), el backend guarda `ultimo_changeset_visto` para esa tarea (el changeset que existía en ese momento).
 2. El usuario dispara una revisión manual desde el frontend (botón "Refrescar", comando Tauri `revisar_actualizaciones(tarea_id)`) — no hace falta un proceso en segundo plano para el MVP.
-3. El script Python corre algo como `cm log br:/<rama> --xml` y obtiene el changeset más reciente de esa rama.
+3. El backend en Rust corre algo como `cm log br:/<rama> --xml` (como subproceso) y obtiene el changeset más reciente de esa rama.
 4. Si el changeset más reciente es mayor al `ultimo_changeset_visto` guardado → hay cambios nuevos:
    - Marca la tarea como "modificada" (para que el frontend le ponga un badge/indicador)
    - Actualiza `ultimo_changeset_visto`
@@ -54,13 +54,13 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 
 Mismo patrón que "tomar tarea", reusando la arquitectura de comandos Tauri ya establecida:
 
-1. El usuario le da clic al botón en la interfaz (Vue)
+1. El usuario le da clic al botón en la interfaz (React)
 2. Se llama un comando Tauri, ej. `sincronizar_tarea(tarea_id)`
-3. El backend (script Python) corre el `cm` correspondiente (checkin/update) sobre la rama de esa tarea
+3. El backend en Rust corre el `cm` correspondiente (checkin/update) sobre la rama de esa tarea
 4. El frontend muestra estado de carga mientras corre, y éxito/error al terminar
 5. Al terminar con éxito, dispara de una vez la revisión del punto anterior (changesets nuevos + estado de cierre) para que la tarea quede actualizada sin pasos extra
 
-No es una pieza nueva de arquitectura — es el mismo cable Vue → comando Tauri → script Python → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
+No es una pieza nueva de arquitectura — es el mismo cable React → comando Tauri → Rust → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
 
 ## Roles y permisos
 

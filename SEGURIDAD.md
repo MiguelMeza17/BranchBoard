@@ -14,9 +14,9 @@
   - **Imagen** (arte 2D)
   - **Video**
   - **Música**
-- **Control de versiones: Unity Version Control** (no Git genérico), integrado vía scripts Python que invocan el CLI `cm`.
+- **Control de versiones: Unity Version Control** (no Git genérico), integrado desde el backend en **Rust directo** (sin Python) invocando el CLI `cm` como subproceso.
 - **Persistencia**: SQLite (archivo `.db` local, sincronizado a la nube para compartir entre el equipo).
-- **Stack elegido**: Tauri + Vue. Fase 1 = app de escritorio (full desktop). Fase 2 (futuro) = versión web, con el mismo código gracias a Tauri.
+- **Stack elegido**: Tauri (Rust) + React/TypeScript. Fase 1 = app de escritorio (full desktop); backend en Rust, sin Python. Fase 2 (futuro) = versión web, reutilizando solo el frontend (React) — necesita un backend servidor nuevo y aparte (no Tauri).
 - **Usuarios**: un equipo pequeño trabajando sobre un proyecto Unity compartido.
 - **Pantallas/tableros del MVP** (definidos por el usuario, hay que respetar estos nombres):
   1. **Tablero Scrum** — vista tipo kanban de las tareas.
