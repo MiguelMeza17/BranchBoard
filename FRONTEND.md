@@ -76,7 +76,7 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
      - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
        - **Coincide** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
        - **El correo no está registrado en ese proyecto** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía", con botón "Solicitar ingreso a una organización" (punto 2)
-       - **No coincide con ningún `.db` de BranchBoard** (proyecto de Unity VC que nunca se ha configurado con BranchBoard) → pendiente definir qué se muestra (¿opción de inicializarlo? ver "Pendiente por definir")
+       - **No coincide con ningún `.db` de BranchBoard** (proyecto de Unity VC que nunca se ha configurado con BranchBoard) → se ofrece **inicializarlo ahí mismo**. Quien lo inicializa queda asignado automáticamente como **Líder** de ese proyecto (no Administrador — ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario)). Mismo criterio aplica a "Crear un nuevo proyecto" cuando se implemente (sigue siendo stub por ahora).
 
 2. **Pantalla de solicitud de ingreso a una organización**:
    - Campos: Nombre, Apellido, Correo (idealmente pre-rellenado con el correo detectado por `cm whoami`, ya que debe ser el mismo con el que luego se valide), ID de la organización
@@ -93,9 +93,13 @@ Cuando un Desarrollador crea una tarea, la interfaz debe dejar claro que nace **
 
 Ícono de campana (visible para todos los roles) con contador de no leídas, alimentado por los comandos Tauri `obtener_notificaciones()` / `marcar_leida(id)` (ver [BACKEND.md](./BACKEND.md#notificaciones)). Casos que debe cubrir el MVP:
 
-1. **Líder/Administrador**: "una tarea creada por [Desarrollador] espera tu aprobación" — con acción directa de aprobar desde la misma notificación
-2. **Desarrollador**: "tienes autorización para modificar [tarea]"
-3. **Quien solicitó ingreso**: "tu solicitud de ingreso a la organización fue aceptada"
+1. **Líder/Administrador**: "una tarea creada por [Desarrollador] espera tu aprobación" — con acción directa de aprobar o **rechazar** desde la misma notificación (ver `aprobar_tarea` / `rechazar_tarea` en [BACKEND.md](./BACKEND.md#notificaciones))
+2. **Desarrollador**: "tu tarea [tarea] fue rechazada: [motivo]"
+3. **Desarrollador**: "se te asignó la tarea [tarea]" (cuando un Líder/Administrador la asigna directamente, no autoasignación)
+4. **Desarrollador**: "tienes autorización para modificar [tarea]"
+5. **Líder/Administrador**: "la tarea [tarea] pasó a revisión"
+6. **Quien solicitó ingreso**: "tu solicitud de ingreso a la organización fue aceptada"
+7. **Desarrollador**: recordatorio de inactividad — "llevas X días sin actividad en [tarea]" (generado automáticamente por el backend, sin que nadie lo envíe manualmente)
 
 ## Pendiente por definir
 

@@ -96,6 +96,7 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 - Requisito implícito: cada miembro del equipo ya debe tener el cliente de Unity Version Control instalado y con sesión iniciada (login por SSO/navegador, una sola vez) en su propia máquina — eso ya lo resuelve `cm`, BranchBoard no reimplementa nada de eso.
 - **Confirmado**: aunque todo el equipo comparte el mismo workspace de Unity Version Control, cada persona inicia sesión con su propia cuenta/correo — `cm whoami` sí distingue a cada usuario individualmente, no hay una cuenta compartida.
 - **Eliminar a alguien del equipo** (rol: Administrador o Líder, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)) es tan simple como borrar su fila en la tabla de usuarios: como la identidad se valida contra esa tabla cada vez que se abre la app (no hay sesión persistente que revocar), la persona pierde el acceso de inmediato la próxima vez que intente entrar — su correo ya no aparecería registrado.
+- **Bootstrapping (primer usuario de un proyecto nuevo)**: resuelto. Cuando alguien inicializa un `.db` de BranchBoard por primera vez para un workspace de Unity VC (ver flujo en [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), su email (de `cm whoami`) se inserta automáticamente en la tabla de usuarios con rol **Líder** — no Administrador. El rol de Administrador se asigna después, a mano, por decisión del equipo (consistente con que en Unity Cloud el "Propietario" ya es una persona identificada aparte, ver [Usuarios semilla en SEGURIDAD.md](./SEGURIDAD.md#usuarios-semilla-equipo-virustf)).
 
 ## Conexión VPN (Cloudflare WARP)
 
@@ -119,13 +120,19 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 
 ## Notificaciones
 
-Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea relacionada (opcional), leída/no leída, fecha. Casos ya identificados:
+Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea relacionada (opcional), leída/no leída, fecha. Todos estos casos disparan mensaje **automático**, sin acción manual de quien los envía más allá de la acción que los origina (aprobar, rechazar, asignar, etc.):
 
 1. **Tarea creada por un Desarrollador esperando aprobación** — destinatarios: todos los usuarios con rol Líder o Administrador (ver [PLANNING.md](./PLANNING.md#visión), estado "bloqueada"). Se resuelve con un comando Tauri `aprobar_tarea(tarea_id)` que solo Líder/Admin puede invocar (validación de rol en backend), y que solo cambia el estado de la tarea a "por hacer" — no crea rama ni la mueve de tablero, eso lo sigue haciendo "tomar tarea" por separado.
-2. **Autorización para modificar una tarea** — destinatario: el Desarrollador dueño de la tarea. Queda pendiente confirmar quién puede enviarla (¿Líder, Administrador, o ambos?).
-3. **Solicitud de ingreso a la organización aprobada** — destinatario: quien la solicitó (además del correo externo que ya se manda, ver [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)).
+2. **Tarea rechazada** — destinatario: el Desarrollador que la creó/tomó. Comando Tauri nuevo `rechazar_tarea(tarea_id, motivo)` (Líder/Admin), simétrico a `aprobar_tarea`. El motivo queda guardado y se muestra en la notificación.
+3. **Tarea asignada directamente por Administrador/Líder a un Desarrollador** — destinatario: ese Desarrollador. Comando Tauri nuevo `asignar_tarea(tarea_id, email_destinatario)` (solo Administrador/Líder) — a diferencia de "tomar tarea" (autoasignación), aquí alguien más asigna la tarea. Crea la rama igual que "tomar tarea" lo hace hoy.
+4. **Autorización para modificar una tarea** — destinatario: el Desarrollador dueño de la tarea. Queda pendiente confirmar quién puede enviarla (¿Líder, Administrador, o ambos?).
+5. **Tarea llega a "en revisión"** — destinatarios: todos los usuarios con rol Líder o Administrador (no solo que aparezca en el apartado "Tareas en revisión" — también genera notificación en la campana).
+6. **Solicitud de ingreso a la organización aprobada** — destinatario: quien la solicitó (además del correo externo que ya se manda, ver [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)).
+7. **Recordatorio de inactividad en Unity Version Control**: si una tarea con rama (Scripting u otra tarea general) no tiene **changesets nuevos** en un tiempo determinado, se le manda al Desarrollador dueño un recordatorio del tipo "llevas X días sin actividad en [tarea], recuerda [qué le toca hacer]". Se apoya en el mismo mecanismo de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) (`cm log br:/<rama> --xml`), pero a diferencia del polling manual por "Refrescar", **este caso sí necesita revisarse solo, sin que nadie le dé clic a nada** — implica correr esta revisión con un temporizador mientras la app está abierta (ej. cada N horas), no solo bajo demanda. Pendiente definir: el umbral de tiempo exacto (¿3 días? ¿configurable por Líder/Admin?), y si esto corre también para minitareas.
 
 Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono de campana con contador) y `marcar_leida(notificacion_id)`.
+
+Pendiente definir: si además de la campana in-app, estas notificaciones también disparan una notificación nativa de escritorio del sistema operativo (Tauri lo soporta) para que lleguen aunque la app esté minimizada.
 
 ## Pendiente por definir
 
@@ -137,4 +144,4 @@ Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono d
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
 - Comando `cm` exacto para leer si una rama está cerrada/mergeada
 - Dónde vive `ultimo_changeset_visto` por tarea (misma base de datos del modelo de tarea)
-- Diseño final del lock de escritura en SQLite: corto y por operación (no por sesión completa) + detección de sobrescritura como red de seguridad, dado el retraso de sincronización de la carpeta en la nube
+- Diseño final del lock de escritura en SQLite: corto y por operación (no por sesión completa) + detección de sobrescritura como red de seguridad, dado el retraso de sincronización de la carpeta en la nube. **Aclarado**: el lock solo restringe **escrituras** concurrentes mientras alguien más está modificando el `.db` — nunca bloquea abrir la app ni leer datos, eso siempre debe estar disponible.
