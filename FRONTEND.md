@@ -36,7 +36,7 @@
 - Acción "tomar tarea": botón/interacción que dispara la creación de rama en el backend y refleja el estado (creando / lista / error)
 - Vista de sprints, soportando sprints con fecha y sprints sin fecha
 - Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
-- Tablero "Avance"
+- Tablero "Avance": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas/mini-tareas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
 
 ## Autenticación / acceso al proyecto
 
