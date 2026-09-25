@@ -57,6 +57,10 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
    - Al enviar, se genera una solicitud de ingreso al proyecto/organización
    - Si la solicitud es aceptada, el solicitante recibe un correo (al que puso en el formulario) con un mensaje que contiene la **clave de acceso** para entrar al sistema
 
+## Roles y permisos (UI)
+
+Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 3 roles confirmados (Administrador, Líder, Desarrollador; falta un 4to por confirmar). La UI debe mostrar/ocultar acciones y pantallas según el rol del usuario logueado (ej. "eliminar proyecto" solo visible para Administrador; "aprobar solicitud de ingreso" visible para Líder y Administrador). El Desarrollador necesita una notificación/mensaje in-app cuando recibe autorización para modificar una tarea.
+
 ## Pendiente por definir
 
 - Componentes de Vue por pantalla

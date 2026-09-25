@@ -49,9 +49,14 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
    - Opcional: extrae metadata del changeset (autor, comentario, archivos afectados) para mostrarla en el detalle de la tarea
 5. (Fase futura) Reemplazar el polling manual por **triggers del servidor de Unity VC** (ej. `after-checkin`) para detección casi en tiempo real, sin depender de que alguien le dé clic a "Refrescar".
 
+## Roles y permisos
+
+Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 3 roles confirmados (Administrador, Líder, Desarrollador; falta un 4to por confirmar). El modelo de datos de usuario necesita un campo de rol, y cada comando Tauri sensible debe validar permisos en el backend (no solo ocultar en la UI).
+
 ## Pendiente por definir
 
 - Estructura exacta de la tarea (campos)
+- Estructura exacta de usuario (rol, y cómo se valida el permiso en cada comando Tauri)
 - Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
 - Estados del flujo de una tarea
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
