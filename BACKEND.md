@@ -62,6 +62,16 @@ Mismo patrón que "tomar tarea", reusando la arquitectura de comandos Tauri ya e
 
 No es una pieza nueva de arquitectura — es el mismo cable React → comando Tauri → Rust → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
 
+## Flujo de revisión y merge a `dev`
+
+1. El Desarrollador arrastra su tarea a **"En revisión"** en el Tablero Scrum (con la confirmación de doble candado descrita en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)). La descripción escrita se guarda junto a la tarea.
+2. La tarea aparece automáticamente en el apartado **"Tareas en revisión"**, visible solo para **Líder y Administrador** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)).
+3. Cuando el Líder/Admin marca la tarea como **"autorizado"**, el backend en Rust ejecuta el **merge real de la rama hacia `dev`** invocando `cm` como subproceso (comando exacto pendiente de verificar al implementar, ej. `cm merge` + `cm checkin`) — no es solo un cambio de estado en SQLite, sí toca Unity VC.
+4. Si se **rechaza**, la tarea vuelve al Desarrollador para reimplementar (mismos changesets sobre la misma rama, sin perder historial) — igual que el flujo ya descrito para mini-tareas rechazadas.
+5. Tras un merge exitoso, se dispara la misma revisión de "Detección de cambios" (rama cerrada → tarea "terminada").
+
+Pendiente confirmar: si la acción de "autorizado" también requiere el doble candado (descripción + palabra literal) del punto 1, dado que mergear a `dev` es igual o más delicado que mandar a revisión.
+
 ## Datos para la gráfica de Avance
 
 Ver definición de la gráfica en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Dos fuentes de datos distintas:
