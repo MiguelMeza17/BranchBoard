@@ -72,6 +72,13 @@ No es una pieza nueva de arquitectura — es el mismo cable React → comando Ta
 
 Pendiente confirmar: si la acción de "autorizado" también requiere el doble candado (descripción + palabra literal) del punto 1, dado que mergear a `dev` es igual o más delicado que mandar a revisión.
 
+## Eliminar una tarea
+
+Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend para que solo Administrador o Líder puedan invocarlo (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). Requiere el doble candado descrito en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop) (justificación + escribir "eliminar").
+
+- La `justificacion` se guarda en SQLite como parte del registro de auditoría (no se borra junto con la tarea, queda como historial de por qué se eliminó).
+- Si la tarea ya tenía una rama asociada en Unity VC: pendiente definir si se abandona/cierra la rama en Unity VC al eliminar la tarea, o si la rama queda huérfana (sin tarea en BranchBoard) pero intacta en el historial de Unity VC — dado que "todo se registra en UVCS", probablemente conviene cerrarla explícitamente en vez de dejarla suelta.
+
 ## Datos para la gráfica de Avance
 
 Ver definición de la gráfica en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Dos fuentes de datos distintas:

@@ -49,6 +49,11 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 - En ambos casos: si el usuario cancela o cierra el modal sin completar los dos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
 - **Líder marcando "autorizado"** (mergea la rama a `dev`): pendiente confirmar si aplica el mismo doble candado (descripción + palabra literal) y cuál sería la palabra, dado lo delicado de la acción.
 
+**Eliminar una tarea** (solo Administrador o Líder, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)): mismo patrón, no es un arrastre pero sí una acción destructiva —
+- Campo de texto obligatorio para la **justificación** de por qué se elimina
+- Campo de confirmación donde debe **escribir literalmente "eliminar"** para habilitar el botón
+- Motivo: queda registro en Unity Version Control, así que la justificación importa para el historial del equipo, no es un borrado silencioso
+
 ## Animación de inicio (splash)
 
 Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **animación de splash** (logo animado) mientras corren en paralelo las verificaciones de arranque: `estado_warp()`, y si WARP está conectado, `cm whoami` + listar workspaces (ver [Autenticación / acceso al proyecto](#autenticación--acceso-al-proyecto)). Sirve para no mostrar una pantalla en blanco/congelada mientras esas llamadas async resuelven.
