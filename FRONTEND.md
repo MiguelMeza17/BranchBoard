@@ -75,6 +75,14 @@ Barra superior persistente: switch de VPN, campana de notificaciones, botón "Ab
   - Tester ve ambas carpetas siempre en solo lectura.
 - **"Categorías"**: pantalla nueva, distinta de la navegación tipo explorador de carpetas del Tablero Scrum (esa es por jerarquía padre/hijo de tareas; esta es por **tipo/disciplina**). Son **carpetas puramente visuales, nunca ramas** — Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing. Abrir una carpeta filtra la Lista de tareas por ese tipo, es la misma tabla/tarjetas de siempre, solo con un filtro aplicado.
 
+## Aviso de rama incorrecta
+
+Antes de sincronizar, mandar a revisión, o crear una subtarea, el backend valida que el workspace esté en la rama correcta para esa tarea (ver [Guardia de rama incorrecta en BACKEND.md](./BACKEND.md#guardia-de-rama-incorrecta)). Si no coincide, en vez de dejar que la acción falle en seco:
+
+- Modal de aviso: "Tu workspace está en la rama `X`, pero esta tarea es de la rama `Y`"
+- Botón **"Cambiar de rama y continuar"**: BranchBoard ejecuta el `cm switch` correcto y reintenta la acción original, sin que la persona tenga que hacerlo a mano
+- Botón "Cancelar": cierra el aviso sin hacer nada
+
 ## Confirmación al arrastrar tareas (drag & drop)
 
 En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dispara acciones reales sobre Unity Version Control (crear rama, mandar a revisión, mergear a `dev`). Por eso, ciertos arrastres piden confirmación antes de ejecutarse:
