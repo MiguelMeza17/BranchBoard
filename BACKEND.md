@@ -217,6 +217,7 @@ Para roles técnicos sin workspace todavía (ver [Instalación de Unity Version 
 Botón visible dentro de la app una vez hay un proyecto cargado (ver [Panel "Abrir en Unity" en FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), solo para roles con workspace local.
 
 - Comando Tauri `abrir_en_unity()`: lanza el Editor de Unity (o Unity Hub) apuntando a la ruta del workspace, vía su propio CLI — mismo patrón de invocar un ejecutable externo ya usado con `cm` y `warp-cli`.
+- **Definido**: al tomar/asignar una tarea, justo después del [auto-switch](#alcance) (`cm switch` a la rama nueva), el modal de confirmación ofrece un botón **"Abrir en Unity"** ahí mismo — la persona no tiene que ir a buscar el ícono de Unity Hub/Editor por su cuenta, ya con el workspace apuntando a la rama correcta. Sigue siendo opcional (algunas tareas simples de un Desarrollador pueden no requerir abrir el Editor de inmediato), pero queda a un clic en el momento justo en que más se necesita.
 - Pendiente definir: comando exacto del CLI de Unity Hub para abrir un proyecto por ruta (verificar al implementar), y qué pasa si Unity Editor no está instalado (¿mismo patrón de "Instalar" con winget, o simplemente un mensaje de error?).
 
 ## Conexión VPN (Cloudflare WARP)

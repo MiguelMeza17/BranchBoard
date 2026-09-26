@@ -87,7 +87,7 @@ Antes de sincronizar, mandar a revisión, o crear una subtarea, el backend valid
 
 En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dispara acciones reales sobre Unity Version Control (crear rama, mandar a revisión, mergear a `dev`). Por eso, ciertos arrastres piden confirmación antes de ejecutarse:
 
-- **Tomar tarea / auto-asignarse** (crea la rama): modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "asignar"** para habilitar el botón — sin eso no se puede continuar.
+- **Tomar tarea / auto-asignarse** (crea la rama): modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "asignar"** para habilitar el botón — sin eso no se puede continuar. Al confirmar, el backend crea la rama y hace el auto-switch (ver [BACKEND.md](./BACKEND.md#alcance)); la pantalla de éxito que sigue incluye un botón **"Abrir en Unity"** ahí mismo (ver [Comando "Abrir en Unity" en BACKEND.md](./BACKEND.md#comando-abrir-en-unity)) — ya con el workspace en la rama correcta, para no obligar a la persona a ir a buscar Unity Hub por su cuenta.
 - **Arrastrar a "En revisión"**: modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "mandar a revisar"** para habilitar el botón de envío.
   - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en el apartado [Merging](#alcance) de Líder/Administrador
 - En ambos casos: si el usuario cancela o cierra el modal sin completar los dos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
