@@ -38,7 +38,8 @@ Regla adicional: una rama hija debe mergearse a su rama padre antes de que la ra
 **Minitareas** es el apartado donde vive todo el conjunto de tareas que no son generales: **Modelado 3D, Animación, Imagen, Video, Audio/Música**. Pensadas para colaboradores **no especializados** en el funcionamiento de Unity/Unity Version Control.
 
 - Una minitarea es un entregable puntual y pequeño: subir un `.fbx`, unas imágenes, un video, un audio, una animación.
-- **Sí se sincroniza con Unity Version Control**: cada minitarea es, técnicamente, una **subtarea** (rama hija de la tarea general a la que se vincula) — reutiliza el mismo mecanismo descrito en "Subtareas (tareas anidadas)". La diferencia es solo de experiencia: el colaborador no técnico nunca ve ni entiende que hay una rama detrás; solo sube su archivo y la app crea la rama y hace el checkin por él.
+- **Sí se sincroniza con Unity Version Control**: cada minitarea es, técnicamente, una **subtarea** (rama hija de la tarea general a la que se vincula). La diferencia es solo de experiencia: el colaborador no técnico nunca ve ni entiende que hay una rama detrás; solo sube su archivo y la app crea la rama y hace el checkin por él.
+- **Corregido**: el colaborador de Minitareas **no necesita Unity Version Control instalado ni ningún workspace** (ni siquiera uno auto-provisionado) — BranchBoard hace la rama/checkin por la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado), no invocando `cm`. Solo los roles que sí trabajan en Unity (Administrador, Líder, Desarrollador, Tester) usan `cm` con su workspace local.
 - Un rechazo no borra la minitarea: simplemente se pide una nueva implementación (nuevos checkins sobre esa misma rama hija) y, cuando se aprueba, se mergea hacia la tarea general — igual que cualquier merge de rama.
 - Vive en su propia interfaz, separada de los tableros de ramas, pero **siempre queda vinculada a una tarea general** (la que sí es rama).
 
@@ -73,7 +74,7 @@ Apartado nuevo. Cuando un **sprint con fecha** llega a su fin, se genera automá
 
 Solo aplica a sprints **con fecha** — los sprints sin fecha no tienen un punto de cierre que dispare el reporte. Se apoya en el mismo mecanismo de temporizador ya usado para el [recordatorio de inactividad en BACKEND.md](./BACKEND.md#notificaciones) (revisión periódica mientras la app está abierta, comparando contra `fecha_limite`).
 
-Pendiente definir: quién puede ver los Reportes (¿todos los roles, o solo Líder/Administrador?), y qué otras métricas incluye además de las tareas retrasadas.
+**Definido**: los Reportes son visibles para **todos los roles**, sin restricción. Pendiente definir: qué otras métricas incluye además de las tareas retrasadas.
 
 ## Stack
 
