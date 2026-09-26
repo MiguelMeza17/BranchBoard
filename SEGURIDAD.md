@@ -67,6 +67,7 @@
 | Acción | Administrador | Líder | Desarrollador | Tester |
 |---|---|---|---|---|
 | Eliminar el proyecto | ✅ | ❌ | ❌ | ❌ |
+| Ver/configurar/eliminar/rotar el Service Account de Unity Cloud | ✅ (exclusivo) | ❌ | ❌ | ❌ |
 | Restaurar backup de la BD | ✅ | ❌ | ❌ | ❌ |
 | Solicitar acción sobre la BD (notificación al Admin) | — | ✅ | ✅ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |

@@ -143,16 +143,21 @@ POST https://<servidor-regional>.plasticscm.com:7178/api/v1/organizations/{org}/
 (recibe el contenido del archivo directo en el body — `path`, `content`, `hash`, etc.)
 
 **Autenticación — Service Account**:
-- El Administrador crea, **una sola vez**, un *Service Account* desde el Dashboard de Unity Cloud (Administración → Service Accounts → Create service account), y le asigna el rol/permiso necesario para acceder a Unity Version Control.
-- Eso genera un **Key ID + Secret Key** — se guardan cifrados (ej. Windows Credential Manager, nunca en texto plano en el `.db`).
-- Ese Key ID + Secret se intercambia (Token Exchange API de Unity) por un **Bearer token de corta duración**, que es el que se usa en cada llamada real. El backend lo renueva automáticamente cuando expira — nadie del equipo vuelve a tocar esto tras la configuración inicial.
+- El Administrador crea, **una sola vez**, un *Service Account* desde el Dashboard de Unity Cloud (Administración → Service Accounts → Create service account), con el **rol más angosto posible** (solo lo necesario para checkin en Version Control, nunca administración de organización — principio de menor privilegio, así el daño si se filtra es limitado).
+- Eso genera un **Key ID + Secret Key**. Desde el nuevo apartado [Service Account de Unity Cloud en FRONTEND.md](./FRONTEND.md#ajustes) (exclusivo Administrador), se pega esa llave junto con una **contraseña compartida** definida por el equipo (se le pasa a los demás fuera de la app, ej. de palabra — como una clave de WiFi).
+- BranchBoard **cifra** la llave con esa contraseña (nunca un hash — un hash no se puede revertir, aquí sí necesitamos recuperar el valor original) y la guarda en un campo de la **misma base de datos SQLite compartida** (`configuracion_organizacion.service_account_cifrado`). No hace falta ninguna integración con la API de Drive — el campo viaja gratis con el `.db` que ya se sincroniza por la carpeta de Drive/OneDrive del equipo.
+- La primera vez que la app de **cualquier otro miembro del equipo** detecta ese campo, pide la contraseña compartida una sola vez, descifra, y guarda el resultado ya descifrado en el almacén de credenciales de Windows de **esa máquina** — no vuelve a pedir la contraseña después.
+- **Rotación/revocación**: si se sospecha una filtración, el Administrador regenera la llave en el Dashboard de Unity Cloud (la vieja muere al instante, sin importar en cuántas máquinas quedó copiada), la vuelve a cifrar con la misma contraseña compartida desde el apartado de Ajustes, y sobreescribe el campo en el `.db` — se propaga sola a todo el equipo en el siguiente sync de Drive, sin que nadie más tenga que hacer nada.
+- Ese Key ID + Secret se intercambia (Token Exchange API de Unity) por un **Bearer token de corta duración**, que es el que se usa en cada llamada real. El backend lo renueva automáticamente cuando expira.
 - El Bearer token vive solo en memoria mientras la app corre, nunca se persiste a disco.
 - Esto es un mecanismo de autenticación **completamente separado** de `cm whoami` — el Service Account identifica a la *app* ante Unity, no a la persona.
+- **Limitación conocida, no resuelta del todo**: al ser una sola llave compartida por varias máquinas (sin backend propio que la centralice), el riesgo depende de que el equipo sea pequeño y de confianza — no escala bien a un equipo grande sin un backend real que la resguarde.
 
 **Pendiente por definir**:
 - Identidad del colaborador de Minitareas en BranchBoard: como no tiene `cm` instalado, `cm whoami` no le sirve para identificarse. ¿Se identifica con el correo que usó al "solicitar ingreso"? ¿Un selector simple de "quién eres" dentro de la app (equipo pequeño, de confianza)?
 - Qué rol/permiso exacto de Unity Cloud hay que asignarle al Service Account para que pueda usar los endpoints de Version Control (la documentación de Unity no lo especifica, hay que probarlo al implementar).
 - Endpoint regional exacto a usar (Unity Cloud tiene servidores por región — US East, Europa, Asia — hay que confirmar cuál usa la organización del equipo).
+- Algoritmo de cifrado exacto a usar para la llave (ej. AES-256 derivando la clave de la contraseña compartida vía PBKDF2/Argon2).
 
 ## Conexión VPN (Cloudflare WARP)
 
@@ -269,8 +274,21 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `eliminada` | booleano | **soft-delete**, no se borra la fila (ver [Eliminar una tarea](#eliminar-una-tarea)) |
 | `justificacion_eliminacion` / `fecha_eliminacion` | nullable | solo si `eliminada = true` |
 | `motivo_rechazo` | nullable | último motivo de rechazo, si aplica |
+| `reporte_testing_origen_id` | nullable | si esta tarea nació de un reporte de Testing (ver abajo), referencia a ese reporte |
 
-Los reportes de Testing (ver [Testing en PLANNING.md](./PLANNING.md#testing)) viven en una tabla aparte (`reportes_testing`, con `tarea_id` de referencia), no como campos de `tareas` — no son tareas ni afectan su estado.
+## Modelo de datos: tabla `reportes_testing`
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `id` | — | |
+| `tarea_revisada_id` | — | la tarea general (ya "terminada") sobre la que se reportó el bug |
+| `tarea_correccion_id` | — | la tarea de corrección generada automáticamente (ver abajo) |
+| `creado_por` | email | el Tester que lo hizo |
+| `descripcion` | texto | qué encontró |
+| `adjunto` | nullable | archivo opcional |
+| `fecha` | fecha | |
+
+Comando Tauri `crear_reporte_testing(tarea_revisada_id, descripcion, adjunto?)`, exclusivo Tester: inserta el reporte y, en la misma operación, crea la fila en `tareas` de corrección (mismo `tipo` que la tarea revisada, `tarea_padre_id = null` porque es una tarea general nueva, no una subtarea). Pendiente definir el `estado` inicial de esa tarea (bloqueada vs. por hacer directo, ver [Pendiente en PLANNING.md](./PLANNING.md#testing)).
 
 ## Pendiente por definir
 - Cómo se valida el permiso de rol en cada comando Tauri (mecanismo exacto de autorización, ej. middleware/decorador vs. chequeo manual al inicio de cada comando)
