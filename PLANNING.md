@@ -8,7 +8,7 @@ Todo el trabajo del equipo se organiza y visualiza a través de **tareas**, en d
 
 - **Tareas generales** → tipo **Scripting**. Una tarea general = una rama de Git/Unity Version Control. Las crea y gestiona gente técnica, familiarizada con Unity y el control de versiones.
 - **Minitareas** → el apartado donde aparece el conjunto de tareas que **no** son generales: **Modelado 3D, Animación, Imagen, Video, Audio/Música**. Cada minitarea es un entregable simple (subir un archivo), pensada para colaboradores **no especializados** en Unity. Ver detalle en [Mini-tareas](#mini-tareas).
-- **Testing** → apartado debajo de Minitareas, exclusivo del rol **Tester**, y **fuera del sistema de tareas/ramas** (no es tarea ni subtarea). Por ahora solo aplica como revisión final de una tarea general ya desarrollada: si el Tester encuentra un error, documenta un reporte pequeño vinculado a esa tarea. Ver detalle en [Testing](#testing).
+- **Testing** → apartado debajo de Minitareas, exclusivo del rol **Tester**, y **fuera del sistema de tareas/ramas** (no es tarea ni subtarea). **Corregido: no es un paso previo al merge** — aplica sobre tareas que **ya están "terminada" (ya mergeadas a `dev`)**, para bugs que se escaparon de la revisión en [Merging](#merging) por la razón que sea. Si el Tester encuentra un error, documenta un reporte pequeño vinculado a esa tarea. Ver detalle en [Testing](#testing).
 - **Merging** → apartado nuevo, aparte de Tareas/Minitareas/Testing. Lista **todas** las tareas actualmente en "en revisión" — funciona como una página de estado de PR (ramas en espera de merge). Visible para **todos los roles**, pero de **solo lectura para Desarrollador y Tester**; solo Líder y Administrador pueden actuar (autorizar/rechazar el merge) desde ahí. También aparece reflejado como columna en el **Tablero Scrum**. Ver detalle en [Merging](#merging).
 
 Cada tarea, sin importar su tipo o nivel, pasa por los mismos estados y se ve reflejada en los mismos tableros.
@@ -49,9 +49,11 @@ En otras palabras: las minitareas son la puerta de entrada para que alguien sin 
 Apartado ubicado debajo de **Minitareas**, exclusivo del rol **Tester** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). A diferencia de las minitareas, **queda deliberadamente fuera del sistema de tareas/ramas**: un reporte de testing no es una tarea, no es una subtarea, no crea rama ni checkin — es solo texto (y opcionalmente un adjunto) vinculado a la tarea general que revisó.
 
 - El Tester puede ver **todas** las tareas del proyecto (a diferencia de Desarrollador, que solo ve las suyas).
-- **Por ahora, Testing solo aplica al final de cada desarrollo**: es la revisión final de una tarea general antes de darla por terminada, no algo que ocurra en medio de la producción.
-- Si encuentra un error en esa revisión final, el Tester **crea un reporte de testing**: algo pequeño y simple, documentando lo que vio, vinculado a la tarea general correspondiente.
+- **Corregido**: Testing no es un requisito antes de mergear — el Líder/Admin puede autorizar el merge en [Merging](#merging) sin que el Tester haya revisado nada. Testing aplica **después**, sobre tareas ya en estado "terminada" (ya mergeadas a `dev`), para atrapar bugs que se escaparon de esa revisión por la razón que sea.
+- Si encuentra un error, el Tester **crea un reporte de testing**: algo pequeño y simple, documentando lo que vio, vinculado a la tarea general (ya terminada) correspondiente.
 - El Tester no crea tareas de producción (Scripting/Modelado/Animación/Imagen/Video/Música) ni minitareas — su única capacidad de "crear" es este reporte de testing.
+
+**Pendiente por definir**: qué pasa después de crear un reporte — ¿se genera automáticamente una nueva tarea de corrección (bug fix) vinculada, o el reporte queda solo como aviso y alguien del equipo decide manualmente crear la tarea de arreglo?
 
 ## Merging
 
