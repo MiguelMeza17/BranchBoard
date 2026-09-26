@@ -121,47 +121,33 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 - **Confirmado**: aunque todo el equipo comparte el mismo workspace de Unity Version Control, cada persona inicia sesión con su propia cuenta/correo — `cm whoami` sí distingue a cada usuario individualmente, no hay una cuenta compartida.
 - **Eliminar a alguien del equipo** (rol: Administrador o Líder, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)) es tan simple como borrar su fila en la tabla de usuarios: como la identidad se valida contra esa tabla cada vez que se abre la app (no hay sesión persistente que revocar), la persona pierde el acceso de inmediato la próxima vez que intente entrar — su correo ya no aparecería registrado.
 - **Bootstrapping (primer usuario de un proyecto nuevo)**: resuelto. Cuando alguien inicializa un `.db` de BranchBoard por primera vez para un workspace de Unity VC (ver flujo en [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), su email (de `cm whoami`) se inserta automáticamente en la tabla de usuarios con rol **Líder** — no Administrador. El rol de Administrador se asigna después, a mano, por decisión del equipo (consistente con que en Unity Cloud el "Propietario" ya es una persona identificada aparte, ver [Usuarios semilla en SEGURIDAD.md](./SEGURIDAD.md#usuarios-semilla-equipo-virustf)).
-- **Quién necesita Unity Version Control instalado, y quién no** — **corregido**, la regla es por lo que la persona necesita hacer, no por conveniencia:
-  - **Administrador, Líder, Desarrollador y Tester**: **todos** necesitan Unity Version Control instalado y el proyecto clonado en su máquina. Los primeros tres porque trabajan directamente en Unity Editor (programar, modelar, etc.). El **Tester también** — para encontrar errores necesita **jugar/ejecutar el juego real**, algo que ninguna interfaz de BranchBoard puede reemplazar, así que sí o sí necesita el proyecto corriendo en su máquina.
-  - Para estos 4 roles: identidad vía `cm whoami`, workspace vía `cm workspace list` (ver arriba, sin pedir carpeta a mano). Si `cm` no está instalado, ver [Instalación de Unity Version Control](#instalación-de-unity-version-control-roles-técnicos) más abajo.
-  - **Únicamente el colaborador de subtareas simples** (alguien que solo sube un archivo puntual — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego) **no necesita nada instalado**: ni Unity, ni el cliente de Unity VC, ni el proyecto clonado. Requiere permiso otorgado por Líder/Admin (ver [Ajustes en FRONTEND.md](./FRONTEND.md#ajustes)). Para este caso se usa la [API REST de Unity Version Control](#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) en vez de `cm`.
+- **Quién necesita Unity Version Control instalado** — **corregido de nuevo, versión final**: en la práctica, **todos** los roles (incluido el colaborador de subtareas simples) necesitan tener `cm` instalado en su máquina. La diferencia real no es "instalado sí/no", sino **cuánto del proyecto se descarga**:
+  - **Administrador, Líder, Desarrollador y Tester**: workspace **completo** — lo necesitan porque trabajan en Unity Editor (programar, modelar, etc.) o, en el caso del Tester, porque necesita **jugar/ejecutar el juego real** para encontrar errores, algo que ninguna interfaz de BranchBoard reemplaza.
+  - **Colaborador de subtareas simples** (alguien que solo sube un archivo puntual — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego): workspace **parcial**, ver [Workspace parcial (Gluon) para subtareas simples](#workspace-parcial-gluon-para-subtareas-simples) — nunca descarga el proyecto completo, solo la carpeta donde va su archivo.
+  - Para **todos** los roles sin excepción: identidad vía `cm whoami`, workspace vía `cm workspace list` (ver arriba, sin pedir carpeta a mano). Si `cm` no está instalado, ver [Instalación de Unity Version Control](#instalación-de-unity-version-control) más abajo — el botón de instalar ahora aplica a todos los roles, incluido el colaborador de subtareas simples.
 
-## Instalación de Unity Version Control (roles técnicos)
+## Instalación de Unity Version Control
 
-Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado y el rol de la persona lo necesita (Administrador/Líder/Desarrollador/Tester — nunca para un colaborador de subtareas simples, a ellos no se les ofrece esto), aparece un botón **"Instalar Unity Version Control"**.
+Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado (sin importar el rol — **corregido**, ya no se excluye al colaborador de subtareas simples, ver arriba), aparece un botón **"Instalar Unity Version Control"**.
 
-- **Confirmado disponible en winget**: `winget install --id Codice.PlasticSCM.CloudEdition -e --accept-package-agreements --accept-source-agreements` — instala el cliente completo, que trae `cm` incluido.
+- **Confirmado disponible en winget**: `winget install --id Codice.PlasticSCM.CloudEdition -e --accept-package-agreements --accept-source-agreements` — instala el cliente completo, que trae `cm` incluido (y con él, el modo Gluon para workspace parcial).
 - Mismo fallback que WARP: si `winget` falla o no está disponible, el botón abre la página oficial de descarga de Unity Version Control en el navegador.
 - Misma nota de UX: puede disparar un prompt de UAC, mostrar estado "instalando..." mientras corre.
 
-## API REST de Unity Version Control (Minitareas sin proyecto instalado)
+## Workspace parcial (Gluon) para subtareas simples
 
-Nota de terminología: "Minitareas" ya no es una categoría de producto (ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)) — se dejó el nombre de esta sección igual para no romper enlaces. En el resto del documento, este mecanismo se llama **subtareas simples** o **colaborador sin Unity VC instalado**.
+**Decisión final** (reemplaza el intento anterior de API REST + Service Account, descartado — ver nota abajo): Unity Version Control tiene un modo llamado **Gluon**, diseñado oficialmente para artistas que necesitan trabajar con archivos grandes sin descargar ni gestionar el proyecto completo. Trae su propio soporte de CLI: **`cm partial`** (`cm partial add`, `cm partial checkin`, etc.), así que el backend lo puede manejar por subproceso exactamente igual que el resto de comandos `cm` — el colaborador nunca necesita abrir una interfaz aparte.
 
-Para este colaborador, en vez de invocar `cm` como subproceso, el backend llama directamente al servidor de Unity Version Control por HTTPS — **confirmado en la documentación oficial de Unity** que existe una API REST del lado del servidor que no requiere cliente ni workspace local, incluyendo un endpoint de checkin:
+- El colaborador de subtareas simples instala Unity Version Control (mismo botón de winget que todos, ver arriba) — es liviano, no implica tener Unity Editor.
+- El backend crea/usa un **workspace parcial** con `cm partial` scopeado a la carpeta específica donde va su archivo (ej. `Assets/Modelados3D/`) — nunca descarga el proyecto completo.
+- **Identidad: vuelve a ser `cm whoami`, igual que todos los demás roles.** No hace falta ninguna Service Account, ni API REST, ni llave cifrada compartida, ni contraseña de equipo — todo ese diseño queda descartado (ver nota abajo).
+- Esto también evita por completo el problema que motivó la idea de la Service Account: como cada colaborador usa su propia cuenta real (no una cuenta de servicio), no choca con ninguna limitación de permisos de Unity Cloud.
 
-```
-POST https://<servidor-regional>.plasticscm.com:7178/api/v1/organizations/{org}/repos/{repo}/branch/{branch}/checkin
-```
-(recibe el contenido del archivo directo en el body — `path`, `content`, `hash`, etc.)
-
-**Autenticación — Service Account**:
-- El Administrador crea, **una sola vez**, un *Service Account* desde el Dashboard de Unity Cloud (Administración → Service Accounts → Create service account), con el **rol más angosto posible** (solo lo necesario para checkin en Version Control, nunca administración de organización — principio de menor privilegio, así el daño si se filtra es limitado).
-- Eso genera un **Key ID + Secret Key**. Desde el nuevo apartado [Service Account de Unity Cloud en FRONTEND.md](./FRONTEND.md#ajustes) (exclusivo Administrador), se pega esa llave junto con una **contraseña compartida** definida por el equipo (se le pasa a los demás fuera de la app, ej. de palabra — como una clave de WiFi).
-- BranchBoard **cifra** la llave con esa contraseña (nunca un hash — un hash no se puede revertir, aquí sí necesitamos recuperar el valor original) y la guarda en un campo de la **misma base de datos SQLite compartida** (`configuracion_organizacion.service_account_cifrado`). No hace falta ninguna integración con la API de Drive — el campo viaja gratis con el `.db` que ya se sincroniza por la carpeta de Drive/OneDrive del equipo.
-- La primera vez que la app de **cualquier otro miembro del equipo** detecta ese campo, pide la contraseña compartida una sola vez, descifra, y guarda el resultado ya descifrado en el almacén de credenciales de Windows de **esa máquina** — no vuelve a pedir la contraseña después.
-- **Rotación/revocación**: si se sospecha una filtración, el Administrador regenera la llave en el Dashboard de Unity Cloud (la vieja muere al instante, sin importar en cuántas máquinas quedó copiada), la vuelve a cifrar con la misma contraseña compartida desde el apartado de Ajustes, y sobreescribe el campo en el `.db` — se propaga sola a todo el equipo en el siguiente sync de Drive, sin que nadie más tenga que hacer nada.
-- Ese Key ID + Secret se intercambia (Token Exchange API de Unity) por un **Bearer token de corta duración**, que es el que se usa en cada llamada real. El backend lo renueva automáticamente cuando expira.
-- El Bearer token vive solo en memoria mientras la app corre, nunca se persiste a disco.
-- Esto es un mecanismo de autenticación **completamente separado** de `cm whoami` — el Service Account identifica a la *app* ante Unity, no a la persona.
-- **Limitación conocida, no resuelta del todo**: al ser una sola llave compartida por varias máquinas (sin backend propio que la centralice), el riesgo depende de que el equipo sea pequeño y de confianza — no escala bien a un equipo grande sin un backend real que la resguarde.
-
-**Resuelto**: la identidad del colaborador sin `cm` instalado se resuelve con el panel de [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes) — Líder/Admin agrega su correo a una lista de permitidos, y esa persona se identifica seleccionando/escribiendo su correo dentro de la app (validado contra esa lista, no contra `cm whoami`).
+**Por qué se descartó la API REST + Service Account** (para que quede el porqué, no solo el qué): se comprobó en la práctica, directamente en el Dashboard de Unity Cloud, que **las Service Accounts no pueden asignarse a ningún rol/permiso de Unity Version Control** (ni los roles genéricos de proyecto, ni los Custom Roles de Version Control — se probó buscándola en el selector de usuarios de un Custom Role y no aparece como opción). Es una limitación real de la plataforma en este momento, no algo que dependiera de elegir mejor el rol. Gluon evita el problema de raíz porque no depende de ninguna cuenta de servicio.
 
 **Pendiente por definir**:
-- Qué rol/permiso exacto de Unity Cloud hay que asignarle al Service Account para que pueda usar los endpoints de Version Control (la documentación de Unity no lo especifica, hay que probarlo al implementar).
-- Endpoint regional exacto a usar (Unity Cloud tiene servidores por región — US East, Europa, Asia — hay que confirmar cuál usa la organización del equipo).
-- Algoritmo de cifrado exacto a usar para la llave (ej. AES-256 derivando la clave de la contraseña compartida vía PBKDF2/Argon2).
+- Sintaxis exacta de `cm partial add` / `cm partial checkin` para el caso de uso (verificar al implementar).
+- Cómo se le indica al colaborador qué subcarpeta le corresponde según el tipo de subtarea (ej. Modelado 3D → `Assets/Modelados3D/`) — probablemente un mapeo fijo tipo→carpeta en el backend.
 
 ## Clonar proyecto (in-app)
 
@@ -254,16 +240,16 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
 
 ## Modelo de datos: tabla `colaboradores_externos`
 
-Separada de `usuarios` — estas personas no tienen `cm` instalado ni un rol de los 4 definidos, solo permiso puntual para crear subtareas simples (ver [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes)).
+Separada de `usuarios` — estas personas **sí tienen `cm` instalado** (liviano, solo para el workspace parcial vía Gluon, ver [Workspace parcial (Gluon) para subtareas simples](#workspace-parcial-gluon-para-subtareas-simples)) pero no tienen uno de los 4 roles principales — solo permiso puntual para crear subtareas simples (ver [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes)).
 
 | Campo | Tipo | Notas |
 |---|---|---|
-| `email` | texto (PK) | con el que se identifica dentro de la app, sin `cm whoami` |
+| `email` | texto (PK) | **corregido**: viene de `cm whoami`, igual que en `usuarios` — no se escribe/selecciona a mano dentro de la app |
 | `nombre` | texto | |
 | `agregado_por` | email | qué Líder/Admin le dio el permiso |
 | `fecha_alta` | fecha | |
 
-Borrar una fila = revocar el permiso; la próxima vez que intente subir algo, ya no aparece en la lista de identificación.
+Borrar una fila = revocar el permiso; la próxima vez que `cm whoami` identifique a esa persona, ya no aparece en la lista de permitidos.
 
 ## Modelo de datos: tabla `solicitudes_ingreso`
 
