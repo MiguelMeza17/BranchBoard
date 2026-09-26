@@ -47,7 +47,7 @@
 - Puede ver sus propias tareas y el avance general del proyecto
 - **Puede crear nuevas tareas, pero no libremente**: la tarea nace en estado **"bloqueada"** (pendiente de aprobación) — no puede tomarse ni crear rama hasta que un Líder o Administrador la apruebe. La notificación de "hay una tarea por aprobar" llega **solo a Líderes y Administradores**, nunca a otros Desarrolladores.
 - La aprobación **desbloquea** la tarea (pasa al backlog normal, ej. "por hacer") — no la mueve ni le crea la rama automáticamente; alguien todavía tiene que "tomarla" como cualquier otra tarea para que ahí sí se cree la rama.
-- Puede **modificar** una tarea propia solo si recibe una **autorización explícita** enviada como mensaje dentro de la app (pendiente definir quién la envía: ¿Líder, Administrador, o ambos?)
+- Puede **modificar** una tarea propia solo si recibe una **autorización explícita** enviada como mensaje dentro de la app — **definido**: la puede enviar tanto un **Líder** como un **Administrador**, cualquiera de los dos
 - No puede ver/modificar tareas que no son suyas
 - No puede crear usuarios
 
@@ -74,6 +74,9 @@
 | Crear reporte de Testing | — | — | — | ✅ (exclusivo) |
 | Poner permisos en tareas | ✅ | ✅ | ❌ | ❌ |
 | Eliminar tareas de otros | ✅ | ✅ | ❌ | ❌ |
+| Ver apartado "Merging" (ramas en espera de merge) | ✅ | ✅ | 👁️ solo lectura | 👁️ solo lectura |
+| Autorizar/rechazar merge desde "Merging" | ✅ | ✅ | ❌ | ❌ |
+| Asignar la revisión de una tarea a un Líder específico | ✅ (exclusivo) | ❌ | ❌ | ❌ |
 | Ver todas las tareas del proyecto | ✅ | ✅ | ❌ (solo las suyas) | ✅ |
 | Ver avance del proyecto | ✅ | ✅ | ✅ | ✅ |
 | Modificar tareas propias | ✅ | ✅ | ⚠️ solo con autorización explícita por mensaje | — (no crea tareas propias) |
@@ -101,6 +104,6 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 
 ## Pendiente por definir
 
-- Quién envía la autorización de modificación al Desarrollador (¿Líder, Administrador, o ambos?) y si es por tarea puntual o un permiso general
+- Si la autorización de modificación es por tarea puntual o un permiso general (quién la envía ya quedó definido: Líder o Administrador)
 - Configuración del allowlist de Tauri (capabilities) una vez se defina qué comandos del backend se necesitan
 - Consideraciones de seguridad para la futura versión web (autenticación, permisos por usuario/equipo)
