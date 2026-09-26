@@ -62,6 +62,15 @@ Esta regla es **solo una capa de código en BranchBoard** — no la puede hacer 
 - **Ningún comando de checkin puede apuntar a `dev` directamente**: mismo tipo de validación — todo cambio a `dev` debe entrar por el flujo de merge ya definido en [Flujo de revisión y merge a dev](#flujo-de-revisión-y-merge-a-dev), nunca por un checkin directo, sin importar el rol.
 - **El merge de `dev` hacia `main` es exclusivo del Administrador**: hoy este merge queda fuera del alcance de BranchBoard (es manual, directo en Unity VC — ver [Flujo de vida de una tarea](#contexto-completo-del-proyecto)) y "esto jamás debería pasar" a través de la app. Aun así, si en algún momento se decide incorporar esa acción a BranchBoard, queda anotado desde ya como **exclusiva del Administrador** — ningún otro rol podría invocarla, ni siquiera el Líder.
 
+## Guardia de rama incorrecta
+
+El [auto-switch al tomar una tarea](#alcance) reduce el riesgo, pero no lo elimina del todo — alguien podría cambiar de rama manualmente en su cliente de Unity VC después, sin darse cuenta de que sigue ahí al volver a BranchBoard. Antes de cualquier acción que dependa de estar en la rama correcta (sincronizar, mandar a revisión, crear una subtarea), el backend corre `cm status` (o equivalente) para leer la rama activa del workspace y la compara contra `rama_asociada` de la tarea sobre la que se está actuando:
+
+- **Coincide** → la acción sigue normal, sin interrupciones.
+- **No coincide** → se bloquea la acción y se muestra un aviso claro: "Tu workspace está en la rama `X`, pero esta tarea es de la rama `Y` — cambia de rama antes de continuar" — con un botón para que BranchBoard mismo ejecute el `cm switch` correcto ahí, en vez de que la persona tenga que hacerlo a mano.
+
+Esto evita el caso real que motivó el auto-switch: mezclar cambios de dos tareas distintas en la misma rama sin querer.
+
 ## Detección de cambios en Unity Version Control (polling)
 
 Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity directamente a una rama, y esa tarea debe reflejarse como "modificada" en BranchBoard.
@@ -79,6 +88,17 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
    - Opcional: extrae metadata del changeset (autor, comentario, archivos afectados) para mostrarla en el detalle de la tarea
 5. **El mismo refresco también revisa si la rama se cerró** (mergeada hacia su rama padre). Unity VC guarda el estado de cierre de una rama al mergearla. Si la rama aparece cerrada → la tarea se marca automáticamente como **"terminada"**, sin intervención manual. (Comando `cm` exacto para leer el estado de cierre: pendiente de verificar al implementar.)
 6. (Fase futura) Reemplazar el polling manual por **triggers del servidor de Unity VC** (ej. `after-checkin`) para detección casi en tiempo real, sin depender de que alguien le dé clic a "Refrescar".
+
+## Guardia de rama incorrecta
+
+**Problema real señalado**: Unity Version Control tiene su propio sistema nativo de permisos por rama, pero **actualmente no está funcionando de forma confiable** — no se puede depender de que Unity VC por sí solo impida que alguien haga cambios en una rama que no le corresponde. BranchBoard necesita su propia red de seguridad encima.
+
+- Cada vez que el backend hace polling (ver [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling)) o el temporizador de [recordatorio de inactividad](#notificaciones) corre, además revisa: **¿la rama actual del workspace de esta persona (`cm status --header`) coincide con alguna tarea que tiene asignada?**
+- Si el workspace está parado en una rama que **no es una de sus tareas asignadas** (ej. la rama de la tarea de otro compañero, o `dev`) **y** hay cambios pendientes o checkins recientes ahí (`cm status` con archivos modificados, o un changeset nuevo del autor equivocado) → se dispara una **alerta inmediata** en pantalla (no solo una notificación de campana, dado lo grave del error): *"Estás haciendo cambios en la rama de la tarea [X], que no te pertenece. Cambia a tu rama asignada [Y] antes de continuar."*
+- La alerta no deshace nada automáticamente — los cambios ya hechos siguen ahí (podrían perderse si se descartan sin cuidado); solo advierte para que la persona decida cómo corregirlo (ej. mover esos cambios a la rama correcta manualmente, o descartar los que en realidad no debían estar ahí).
+- Esto es una **detección después del hecho**, no una prevención — no reemplaza al auto-switch de [tomar/asignar tarea](#alcance), que es la primera línea de defensa; la guardia es para cuando, aun así, alguien termina escribiendo en la rama equivocada (ej. cambió de rama a mano desde el cliente de Unity VC directamente, fuera de BranchBoard).
+
+**Pendiente por definir**: cada cuánto corre esta revisión (¿mismo intervalo que el recordatorio de inactividad, o más frecuente dado que es un caso de seguridad?), y si además debe avisarle a un Líder/Administrador cuando pasa, no solo a la persona que se equivocó.
 
 ## Comando "Guardar cambios y sincronizar"
 
