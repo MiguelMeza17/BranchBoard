@@ -62,6 +62,17 @@ Apartado nuevo, independiente de Tareas/Minitareas/Testing. Lista **todas** las 
 - **El Administrador puede asignarle la revisión de una tarea específica a un Líder** — delegar quién es responsable de decidir sobre ese merge en particular, en vez de que cualquier Líder/Admin pueda tomarla. Ver permisos en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
 - También se refleja como columna/estado en el **Tablero Scrum** (ya existía como uno de los 4 estados básicos: por hacer / en producción / en revisión / terminada) — Merging es la vista dedicada y ampliada de ese mismo estado, no un estado nuevo.
 
+## Reportes
+
+Apartado nuevo. Cuando un **sprint con fecha** llega a su fin, se genera automáticamente un reporte con cómo fue el flujo de trabajo de ese sprint:
+
+- Tareas que quedaron **retrasadas** (no llegaron a "terminada" antes de la fecha límite del sprint)
+- Otras métricas del flujo de trabajo (a definir con más detalle — ej. cuántas tareas se completaron a tiempo, cuántas se rechazaron, etc.)
+
+Solo aplica a sprints **con fecha** — los sprints sin fecha no tienen un punto de cierre que dispare el reporte. Se apoya en el mismo mecanismo de temporizador ya usado para el [recordatorio de inactividad en BACKEND.md](./BACKEND.md#notificaciones) (revisión periódica mientras la app está abierta, comparando contra `fecha_limite`).
+
+Pendiente definir: quién puede ver los Reportes (¿todos los roles, o solo Líder/Administrador?), y qué otras métricas incluye además de las tareas retrasadas.
+
 ## Stack
 
 - **Framework**: Tauri (Rust) + React/TypeScript
