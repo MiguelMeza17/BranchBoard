@@ -147,7 +147,7 @@ Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-clo
 **Decisión final** (reemplaza el intento anterior de API REST + Service Account, descartado — ver nota abajo): Unity Version Control tiene un modo llamado **Gluon**, diseñado oficialmente para artistas que necesitan trabajar con archivos grandes sin descargar ni gestionar el proyecto completo. Trae su propio soporte de CLI: **`cm partial`** (`cm partial add`, `cm partial checkin`, etc.), así que el backend lo puede manejar por subproceso exactamente igual que el resto de comandos `cm` — el colaborador nunca necesita abrir una interfaz aparte.
 
 - El colaborador de subtareas simples instala Unity Version Control (mismo botón de winget que todos, ver arriba) — es liviano, no implica tener Unity Editor.
-- El backend crea/usa un **workspace parcial** con `cm partial` scopeado a la carpeta específica donde va su archivo (ej. `Assets/Modelados3D/`) — nunca descarga el proyecto completo.
+- **Definido**: la carpeta a descargar no la calcula el backend en automático — **el propio colaborador la elige**, desde un selector con las mismas categorías de [Categorías en PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp): Audio, Modelado 3D, Modelado 2D, Imagen, Animación, Música, Video, UI/Interfaz (Scripting y Testing no aplican a este perfil, no son subtareas simples de archivo). El backend crea/usa un **workspace parcial** con `cm partial` scopeado solo a esa carpeta elegida — nunca descarga el proyecto completo, y solo trae la categoría en la que la persona va a trabajar, ni siquiera las demás carpetas de assets.
 - **Identidad: vuelve a ser `cm whoami`, igual que todos los demás roles.** No hace falta ninguna Service Account, ni API REST, ni llave cifrada compartida, ni contraseña de equipo — todo ese diseño queda descartado (ver nota abajo).
 - Esto también evita por completo el problema que motivó la idea de la Service Account: como cada colaborador usa su propia cuenta real (no una cuenta de servicio), no choca con ninguna limitación de permisos de Unity Cloud.
 
@@ -155,7 +155,7 @@ Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-clo
 
 **Pendiente por definir**:
 - Sintaxis exacta de `cm partial add` / `cm partial checkin` para el caso de uso (verificar al implementar).
-- Cómo se le indica al colaborador qué subcarpeta le corresponde según el tipo de subtarea (ej. Modelado 3D → `Assets/Modelados3D/`) — probablemente un mapeo fijo tipo→carpeta en el backend.
+- Mapeo exacto categoría→carpeta real del proyecto (ej. Audio → `Assets/MP3/` según la estructura real de VirusTF, ver [ignore.conf del proyecto]) — la categoría la elige el colaborador, pero la ruta destino la resuelve el backend.
 
 ## Clonar proyecto (in-app)
 
