@@ -118,10 +118,39 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 - **Confirmado**: aunque todo el equipo comparte el mismo workspace de Unity Version Control, cada persona inicia sesión con su propia cuenta/correo — `cm whoami` sí distingue a cada usuario individualmente, no hay una cuenta compartida.
 - **Eliminar a alguien del equipo** (rol: Administrador o Líder, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)) es tan simple como borrar su fila en la tabla de usuarios: como la identidad se valida contra esa tabla cada vez que se abre la app (no hay sesión persistente que revocar), la persona pierde el acceso de inmediato la próxima vez que intente entrar — su correo ya no aparecería registrado.
 - **Bootstrapping (primer usuario de un proyecto nuevo)**: resuelto. Cuando alguien inicializa un `.db` de BranchBoard por primera vez para un workspace de Unity VC (ver flujo en [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), su email (de `cm whoami`) se inserta automáticamente en la tabla de usuarios con rol **Líder** — no Administrador. El rol de Administrador se asigna después, a mano, por decisión del equipo (consistente con que en Unity Cloud el "Propietario" ya es una persona identificada aparte, ver [Usuarios semilla en SEGURIDAD.md](./SEGURIDAD.md#usuarios-semilla-equipo-virustf)).
-- **Workspace local: reusar si existe, provisionar si no**. La regla no depende del rol de la persona, depende de si ya tiene un clon del proyecto en su máquina:
-  - Si `cm workspace list` devuelve al menos un resultado, BranchBoard se conecta a ese workspace/repo existente — típico de Administrador/Líder, y de cualquier Desarrollador que ya trabaje en Unity con el proyecto clonado. No se navega ni se "abre" la carpeta, es solo la referencia de `cm`.
-  - Si `cm workspace list` devuelve **vacío** (nadie ha clonado nada en esa máquina — caso típico de Tester, colaboradores de Minitareas, o un Desarrollador nuevo), el backend corre `cm workspace create` (más el checkout correspondiente) en una ruta **gestionada por la propia app** (ej. dentro de `%LocalAppData%\BranchBoard\workspace`), sin pedirle ninguna carpeta al usuario ni mostrarle la ruta. Es un workspace real de Unity VC, solo que invisible para quien no lo necesita — sirve para que el backend pueda hacer los `cm checkin` de minitareas/reportes aunque la persona nunca abra Unity Editor.
-  - Pendiente de implementación: tamaño de ese workspace auto-provisionado (¿checkout completo o parcial/selectivo, dado que estos roles no necesitan los assets pesados del proyecto para nada más que subir un archivo?).
+- **Quién necesita Unity Version Control instalado, y quién no** — **corregido**, la regla es por lo que la persona necesita hacer, no por conveniencia:
+  - **Administrador, Líder, Desarrollador y Tester**: **todos** necesitan Unity Version Control instalado y el proyecto clonado en su máquina. Los primeros tres porque trabajan directamente en Unity Editor (programar, modelar, etc.). El **Tester también** — para encontrar errores necesita **jugar/ejecutar el juego real**, algo que ninguna interfaz de BranchBoard puede reemplazar, así que sí o sí necesita el proyecto corriendo en su máquina.
+  - Para estos 4 roles: identidad vía `cm whoami`, workspace vía `cm workspace list` (ver arriba, sin pedir carpeta a mano). Si `cm` no está instalado, ver [Instalación de Unity Version Control](#instalación-de-unity-version-control-roles-técnicos) más abajo.
+  - **Únicamente el colaborador de Minitareas** (alguien que solo sube un archivo puntual — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego) **no necesita nada instalado**: ni Unity, ni el cliente de Unity VC, ni el proyecto clonado. Para este caso se usa la [API REST de Unity Version Control](#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) en vez de `cm`.
+
+## Instalación de Unity Version Control (roles técnicos)
+
+Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado y el rol de la persona lo necesita (Administrador/Líder/Desarrollador/Tester — nunca para un colaborador de Minitareas, a ellos no se les ofrece esto), aparece un botón **"Instalar Unity Version Control"**.
+
+- **Confirmado disponible en winget**: `winget install --id Codice.PlasticSCM.CloudEdition -e --accept-package-agreements --accept-source-agreements` — instala el cliente completo, que trae `cm` incluido.
+- Mismo fallback que WARP: si `winget` falla o no está disponible, el botón abre la página oficial de descarga de Unity Version Control en el navegador.
+- Misma nota de UX: puede disparar un prompt de UAC, mostrar estado "instalando..." mientras corre.
+
+## API REST de Unity Version Control (Minitareas sin proyecto instalado)
+
+Para el colaborador de Minitareas, en vez de invocar `cm` como subproceso, el backend llama directamente al servidor de Unity Version Control por HTTPS — **confirmado en la documentación oficial de Unity** que existe una API REST del lado del servidor que no requiere cliente ni workspace local, incluyendo un endpoint de checkin:
+
+```
+POST https://<servidor-regional>.plasticscm.com:7178/api/v1/organizations/{org}/repos/{repo}/branch/{branch}/checkin
+```
+(recibe el contenido del archivo directo en el body — `path`, `content`, `hash`, etc.)
+
+**Autenticación — Service Account**:
+- El Administrador crea, **una sola vez**, un *Service Account* desde el Dashboard de Unity Cloud (Administración → Service Accounts → Create service account), y le asigna el rol/permiso necesario para acceder a Unity Version Control.
+- Eso genera un **Key ID + Secret Key** — se guardan cifrados (ej. Windows Credential Manager, nunca en texto plano en el `.db`).
+- Ese Key ID + Secret se intercambia (Token Exchange API de Unity) por un **Bearer token de corta duración**, que es el que se usa en cada llamada real. El backend lo renueva automáticamente cuando expira — nadie del equipo vuelve a tocar esto tras la configuración inicial.
+- El Bearer token vive solo en memoria mientras la app corre, nunca se persiste a disco.
+- Esto es un mecanismo de autenticación **completamente separado** de `cm whoami` — el Service Account identifica a la *app* ante Unity, no a la persona.
+
+**Pendiente por definir**:
+- Identidad del colaborador de Minitareas en BranchBoard: como no tiene `cm` instalado, `cm whoami` no le sirve para identificarse. ¿Se identifica con el correo que usó al "solicitar ingreso"? ¿Un selector simple de "quién eres" dentro de la app (equipo pequeño, de confianza)?
+- Qué rol/permiso exacto de Unity Cloud hay que asignarle al Service Account para que pueda usar los endpoints de Version Control (la documentación de Unity no lo especifica, hay que probarlo al implementar).
+- Endpoint regional exacto a usar (Unity Cloud tiene servidores por región — US East, Europa, Asia — hay que confirmar cuál usa la organización del equipo).
 
 ## Conexión VPN (Cloudflare WARP)
 
