@@ -4,12 +4,12 @@ Herramienta de gestión de tareas y producción para equipos pequeños de desarr
 
 ## Visión
 
-Todo el trabajo del equipo se organiza y visualiza a través de **tareas**, en dos niveles:
+Todo el trabajo del equipo se organiza y visualiza a través de **tareas**, en un solo árbol jerárquico (sin un apartado aparte de "Minitareas" — eso se eliminó, ver [Subtareas](#subtareas-tareas-anidadas)):
 
 - **Tareas generales** → tipo **Scripting**. Una tarea general = una rama de Git/Unity Version Control. Las crea y gestiona gente técnica, familiarizada con Unity y el control de versiones.
-- **Minitareas** → el apartado donde aparece el conjunto de tareas que **no** son generales: **Modelado 3D, Animación, Imagen, Video, Audio/Música**. Cada minitarea es un entregable simple (subir un archivo), pensada para colaboradores **no especializados** en Unity. Ver detalle en [Mini-tareas](#mini-tareas).
-- **Testing** → apartado debajo de Minitareas, exclusivo del rol **Tester**, y **fuera del sistema de tareas/ramas** (no es tarea ni subtarea). **Corregido: no es un paso previo al merge** — aplica sobre tareas que **ya están "terminada" (ya mergeadas a `dev`)**, para bugs que se escaparon de la revisión en [Merging](#merging) por la razón que sea. Si el Tester encuentra un error, documenta un reporte pequeño vinculado a esa tarea. Ver detalle en [Testing](#testing).
-- **Merging** → apartado nuevo, aparte de Tareas/Minitareas/Testing. Lista **todas** las tareas actualmente en "en revisión" — funciona como una página de estado de PR (ramas en espera de merge). Visible para **todos los roles**, pero de **solo lectura para Desarrollador y Tester**; solo Líder y Administrador pueden actuar (autorizar/rechazar el merge) desde ahí. También aparece reflejado como columna en el **Tablero Scrum**. Ver detalle en [Merging](#merging).
+- **Subtareas** → hijas de una tarea general (o de otra subtarea), hasta 3 niveles. Pueden ser de cualquier tipo (Scripting, Modelado, Animación, Imagen, Video, Música). Las simples (un solo archivo) pueden crearlas colaboradores no especializados, con permiso otorgado por Líder/Admin. Ver detalle en [Subtareas](#subtareas-tareas-anidadas).
+- **Testing** → apartado exclusivo del rol **Tester**, y **fuera del sistema de tareas/ramas** (no es tarea ni subtarea). No es un paso previo al merge — aplica sobre tareas que **ya están "terminada" (ya mergeadas a `dev`)**, para bugs que se escaparon de la revisión en [Merging](#merging) por la razón que sea. Si el Tester encuentra un error, documenta un reporte pequeño vinculado a esa tarea. Ver detalle en [Testing](#testing).
+- **Merging** → apartado nuevo, aparte de Tareas/Testing. Lista **todas** las tareas actualmente en "en revisión" — funciona como una página de estado de PR (ramas en espera de merge). Visible para **todos los roles**, pero de **solo lectura para Desarrollador y Tester**; solo Líder y Administrador pueden actuar (autorizar/rechazar el merge) desde ahí. También aparece reflejado como columna en el **Tablero Scrum**. Ver detalle en [Merging](#merging).
 
 Cada tarea, sin importar su tipo o nivel, pasa por los mismos estados y se ve reflejada en los mismos tableros.
 
@@ -18,11 +18,11 @@ Cada tarea, sin importar su tipo o nivel, pasa por los mismos estados y se ve re
 ## Pre-revisión
 
 Antes de pasar al estado "en revisión", el entregable de cualquier tarea se puede **reproducir/previsualizar dentro de la misma interfaz** de BranchBoard, sin salir de la app ni abrir la herramienta original (Unity, Blender, editor de video, etc.):
-- Video (minitarea) → reproductor embebido
-- Imagen (minitarea) → visor de imagen
-- Audio/Música (minitarea) → reproductor de audio embebido
-- Animación (minitarea) → previsualización reproducible de la animación
-- Modelado (minitarea) → visor 3D interactivo (rotar/zoom/pan sobre el modelo)
+- Video → reproductor embebido
+- Imagen → visor de imagen
+- Audio/Música → reproductor de audio embebido
+- Animación → previsualización reproducible de la animación
+- Modelado → visor 3D interactivo (rotar/zoom/pan sobre el modelo)
 - Scripting (tarea general) → (pendiente de definir: ¿diff de la rama? ¿build/preview del cambio?)
 
 **Primer tipo a implementar:** el visor de previsualización de **modelado 3D**, usando tecnología web de visualización 3D (ej. Three.js / `<model-viewer>` sobre glTF) embebida en la webview de Tauri.
@@ -33,32 +33,35 @@ Una tarea puede tener subtareas, y estas a su vez asociarse a una rama hija de l
 
 Regla adicional: una rama hija debe mergearse a su rama padre antes de que la rama padre pueda mergearse/cerrarse hacia arriba (orden de merge estrictamente de abajo hacia arriba). El límite de profundidad por sí solo no evita la desincronización si una subtarea queda abierta mucho tiempo — lo que realmente desincroniza no es la profundidad sino el tiempo que una rama vive sin mergear.
 
-## Mini-tareas
+**Subtareas simples (antes "mini-tareas")**: ya no existe un apartado separado — una subtarea puede ser tan simple como subir un solo archivo (`.fbx`, imágenes, video, audio, animación), pensada para colaboradores **no especializados** en Unity/Unity Version Control.
 
-**Minitareas** es el apartado donde vive todo el conjunto de tareas que no son generales: **Modelado 3D, Animación, Imagen, Video, Audio/Música**. Pensadas para colaboradores **no especializados** en el funcionamiento de Unity/Unity Version Control.
+- **Sí se sincroniza con Unity Version Control**: técnicamente es una subtarea normal (rama hija). La diferencia es solo de experiencia: el colaborador no técnico nunca ve ni entiende que hay una rama detrás; solo sube su archivo y la app crea la rama y hace el checkin por él.
+- **No necesita Unity Version Control instalado ni ningún workspace** — BranchBoard hace la rama/checkin por la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado), no invocando `cm`. Solo los roles que sí trabajan en Unity (Administrador, Líder, Desarrollador, Tester) usan `cm` con su workspace local.
+- **Requiere permiso**: a diferencia de un Desarrollador normal, un colaborador no especializado necesita que un Líder/Administrador le otorgue el permiso de crear este tipo de subtarea, desde un panel en [Ajustes](./FRONTEND.md#ajustes) — no puede hacerlo libremente por su cuenta.
+- Un rechazo no borra la subtarea: simplemente se pide una nueva implementación (nuevos checkins sobre esa misma rama hija) y, cuando se aprueba, se mergea hacia la tarea general — igual que cualquier merge de rama.
 
-- Una minitarea es un entregable puntual y pequeño: subir un `.fbx`, unas imágenes, un video, un audio, una animación.
-- **Sí se sincroniza con Unity Version Control**: cada minitarea es, técnicamente, una **subtarea** (rama hija de la tarea general a la que se vincula). La diferencia es solo de experiencia: el colaborador no técnico nunca ve ni entiende que hay una rama detrás; solo sube su archivo y la app crea la rama y hace el checkin por él.
-- **Corregido**: el colaborador de Minitareas **no necesita Unity Version Control instalado ni ningún workspace** (ni siquiera uno auto-provisionado) — BranchBoard hace la rama/checkin por la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado), no invocando `cm`. Solo los roles que sí trabajan en Unity (Administrador, Líder, Desarrollador, Tester) usan `cm` con su workspace local.
-- Un rechazo no borra la minitarea: simplemente se pide una nueva implementación (nuevos checkins sobre esa misma rama hija) y, cuando se aprueba, se mergea hacia la tarea general — igual que cualquier merge de rama.
-- Vive en su propia interfaz, separada de los tableros de ramas, pero **siempre queda vinculada a una tarea general** (la que sí es rama).
+### Navegación tipo "explorador de carpetas" en el Tablero Scrum
 
-En otras palabras: las minitareas son la puerta de entrada para que alguien sin conocimiento de Git/Unity VCS pueda aportar un archivo, sin tocar ni necesitar entender el sistema de ramas — aunque por debajo sí es una rama como cualquier otra.
+Con hasta 3 niveles de anidación, mostrar todo el árbol plano de una vez es difícil de leer. En su lugar:
+
+- Cada tarea con hijos se comporta como una carpeta
+- Al hacer clic en una tarea padre, la vista se enfoca en ella: las ramas hermanas desaparecen de la pantalla, y solo se muestran esa tarea y sus hijos directos
+- Entrar a una de esas hijas repite el mismo comportamiento (se enfoca en ella y en sus propios hijos), como navegar carpeta por carpeta
 
 ## Testing
 
-Apartado ubicado debajo de **Minitareas**, exclusivo del rol **Tester** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). El reporte en sí no es una tarea ni crea rama — es solo texto (y opcionalmente un adjunto) vinculado a la tarea general que revisó — pero **sí genera una tarea de corrección automáticamente**.
+Apartado exclusivo del rol **Tester** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). El reporte en sí no es una tarea ni crea rama — es solo texto (y opcionalmente un adjunto) vinculado a la tarea general que revisó — pero **sí genera una tarea de corrección automáticamente**.
 
 - El Tester puede ver **todas** las tareas del proyecto (a diferencia de Desarrollador, que solo ve las suyas).
 - Testing no es un requisito antes de mergear — el Líder/Admin puede autorizar el merge en [Merging](#merging) sin que el Tester haya revisado nada. Testing aplica **después**, sobre tareas ya en estado "terminada" (ya mergeadas a `dev`), para atrapar bugs que se escaparon de esa revisión por la razón que sea.
 - Si encuentra un error, el Tester **crea un reporte de testing** (algo pequeño y simple, documentando lo que vio) **y eso genera automáticamente una nueva tarea de corrección**, vinculada tanto al reporte como a la tarea general original. Alguien del equipo se asigna esa tarea de corrección igual que cualquier otra — al tomarla, se le crea su rama (partiendo de `dev`, igual que toda tarea general).
-- El Tester no crea tareas de producción directamente (Scripting/Modelado/Animación/Imagen/Video/Música) ni minitareas — su única capacidad de "crear" es el reporte, que en cadena genera la tarea de corrección.
+- El Tester no crea tareas de producción directamente (Scripting/Modelado/Animación/Imagen/Video/Música) ni subtareas — su única capacidad de "crear" es el reporte, que en cadena genera la tarea de corrección.
 
 **Definido**: la tarea de corrección nace directo en **"por hacer"** (no "bloqueada") — viene de un hallazgo real del Tester, no de una idea sin validar, así que cualquiera puede tomarla de una vez y crear su rama.
 
 ## Merging
 
-Apartado nuevo, independiente de Tareas/Minitareas/Testing. Lista **todas** las tareas actualmente en estado "en revisión" — es, en esencia, una página de estado de PR (pull request): qué ramas están esperando ser mergeadas a `dev`.
+Apartado nuevo, independiente de Tareas/Testing. Lista **todas** las tareas actualmente en estado "en revisión" — es, en esencia, una página de estado de PR (pull request): qué ramas están esperando ser mergeadas a `dev`.
 
 - **Visible para todos los roles**, pero de **solo lectura** para Desarrollador y Tester — pueden ver qué está esperando merge, pero no actuar sobre ello.
 - Solo **Líder y Administrador** pueden actuar ahí: autorizar el merge o rechazar la tarea (ver [Flujo de revisión y merge en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)).
@@ -70,13 +73,13 @@ Apartado nuevo, independiente de Tareas/Minitareas/Testing. Lista **todas** las 
 Apartado nuevo. Cuando un **sprint con fecha** llega a su fin, se genera automáticamente un reporte con cómo fue el flujo de trabajo de ese sprint. **No tiene nada que ver con el rol Tester** — es un análisis general del sprint, con dos partes:
 
 1. **Análisis de tareas del sprint**: tareas hechas, tareas que faltaron (no llegaron a "terminada"), tareas que se quedaron en revisión — para ver qué se cumplió, qué falló y por qué no se cumplió lo planeado.
-2. **Desglose de actividad por persona**: qué hizo cada quien durante el sprint, con su nombre — Administrador, Líderes, Desarrolladores, e incluso Tester (como cualquier otro miembro, sin trato especial). Incluye también la actividad de colaboradores externos de Minitareas, que técnicamente pasa por la cuenta de servicio (Service Account/"bot") pero se atribuye a la persona real que la generó.
+2. **Desglose de actividad por persona**: qué hizo cada quien durante el sprint, con su nombre — Administrador, Líderes, Desarrolladores, e incluso Tester (como cualquier otro miembro, sin trato especial). Incluye también la actividad de colaboradores externos sin Unity VC instalado (subtareas simples vía API REST), que técnicamente pasa por la cuenta de servicio (Service Account/"bot") pero se atribuye a la persona real que la generó.
 
 Solo aplica a sprints **con fecha** — los sprints sin fecha no tienen un punto de cierre que dispare el reporte. Se apoya en el mismo mecanismo de temporizador ya usado para el [recordatorio de inactividad en BACKEND.md](./BACKEND.md#notificaciones) (revisión periódica mientras la app está abierta, comparando contra `fecha_limite`).
 
 **Definido**: los Reportes son visibles para **todos los roles**, sin restricción.
 
-**Pendiente por definir**: cómo se atribuye a una persona real la actividad que pasa por la cuenta de servicio de Minitareas (¿el colaborador externo se identifica con su correo al subir el archivo, y eso queda guardado junto al registro de esa actividad?).
+**Pendiente por definir**: cómo se atribuye a una persona real la actividad que pasa por la cuenta de servicio (¿el colaborador externo se identifica con su correo al subir el archivo, y eso queda guardado junto al registro de esa actividad?).
 
 ## Stack
 
@@ -94,7 +97,7 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 2. **Resumen** — gráfica circular (dona) con el conteo de tareas: por hacer, en producción, en revisión, terminadas
 3. **Lista de tareas** — todas las tareas existentes, lugar donde se crean
 4. **Tablero "Avance"** — **definido**: gráfica de **curva en el tiempo**, eje X = días, eje Y = **tareas resueltas ese día** (línea principal — se cuenta usando la fecha en que cada tarea pasó a "terminada"). Opcionalmente, una segunda línea muestra **cambios/changesets hechos ese día en todo el proyecto** (no por tarea, es actividad general del equipo vía `cm log` sobre todo el repositorio) — sirve para contrastar "mucha actividad pero pocas tareas cerrándose" vs. lo contrario. Responde "¿vamos bien o mal respecto al tiempo?".
-5. **"Branches"** — **nuevo**: la **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (mini-tareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada). Inspirado en el "Branch Explorer" que ya trae Unity Version Control.
+5. **"Branches"** — **nuevo**: la **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (subtareas de subtareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada). Inspirado en el "Branch Explorer" que ya trae Unity Version Control.
 6. **"Merging"** — **nuevo**: página de estado de PR, lista todas las tareas en "en revisión". Visible para todos, solo lectura para Desarrollador/Tester; Líder/Administrador autorizan o rechazan desde ahí. Ver detalle en [Merging](#merging).
 7. **"Ajustes"** — **nuevo**: agrupa acciones administrativas que antes estaban definidas sueltas (gestión de usuarios, solicitudes de ingreso, backups, eliminar proyecto). Ver detalle en [Ajustes](./FRONTEND.md#ajustes).
 
