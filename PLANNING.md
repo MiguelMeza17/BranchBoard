@@ -37,6 +37,8 @@ Antes de pasar al estado "en revisión", el entregable de cualquier tarea se pue
 
 Una tarea puede tener subtareas, y estas a su vez asociarse a una rama hija de la rama de su tarea padre (rama sobre rama). **Profundidad máxima: 3 niveles de ramas hijas por debajo de `dev`** (`dev` → rama → rama hija → rama nieta). No se permite crear una cuarta rama hija — más allá de eso el riesgo de desincronización entre ramas crece demasiado para un equipo pequeño.
 
+**Cómo se valida en código**: en vez de solo contar "niveles de subtarea", el backend cuenta la cadena completa de ancestros desde `main` (`main → dev → tarea general → subtarea → subtarea de subtarea` = 5 ramas). Si crear una nueva rama haría que la cadena llegue a 6, la app la bloquea antes de tocar `cm`. Esto es lo mismo que la regla de arriba, solo que expresado de forma verificable con código. Ver [Protección de ramas en BACKEND.md](./BACKEND.md#protección-de-ramas-main-y-dev) — incluye también que nadie (ni el Administrador) puede hacer checkin directo sobre `main` o `dev`, y que el merge `dev → main` sería exclusivo del Administrador si algún día se implementa en la app. **Importante**: esto solo se puede hacer cumplir a través de BranchBoard — si alguien usa el cliente de Unity VC directamente, la app no puede impedirlo.
+
 Regla adicional: una rama hija debe mergearse a su rama padre antes de que la rama padre pueda mergearse/cerrarse hacia arriba (orden de merge estrictamente de abajo hacia arriba). El límite de profundidad por sí solo no evita la desincronización si una subtarea queda abierta mucho tiempo — lo que realmente desincroniza no es la profundidad sino el tiempo que una rama vive sin mergear.
 
 **Subtareas simples (antes "mini-tareas")**: ya no existe un apartado separado — una subtarea puede ser tan simple como subir un solo archivo (`.fbx`, imágenes, video, audio, animación), pensada para colaboradores **no especializados** en Unity/Unity Version Control.
@@ -116,6 +118,6 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 - Formato/pipeline de assets 3D para la pre-revisión: ¿se exige exportar a glTF/GLB? ¿conversión automática desde el formato nativo (.fbx, .blend)?
 - Previsualización para los demás tipos de tarea (animación, scripting) — solo se definió a fondo la de modelado 3D
 - **Resuelto**: el orden de merge de abajo hacia arriba se valida en el backend antes de ejecutar el merge — ver [Flujo de revisión y merge a dev en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)
-- Qué pasa si se intenta crear una cuarta rama hija por debajo del límite de 3 (¿se bloquea en la UI? ¿solo se advierte?)
+- **Resuelto**: se bloquea antes de crear la rama — ver [Protección de ramas en BACKEND.md](./BACKEND.md#protección-de-ramas-main-y-dev)
 - Si una subtarea simple puede tener más de un archivo adjunto o es siempre 1 subtarea = 1 archivo
 - Permisos: ¿un colaborador no especializado puede crear mini-tareas libremente, o solo dentro de una tarea superior ya creada por alguien técnico?

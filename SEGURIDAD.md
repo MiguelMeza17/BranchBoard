@@ -67,6 +67,8 @@
 | Acción | Administrador | Líder | Desarrollador | Tester |
 |---|---|---|---|---|
 | Eliminar el proyecto | ✅ | ❌ | ❌ | ❌ |
+| Merge de `dev` a `main` (si algún día se implementa en la app) | ✅ (exclusivo) | ❌ | ❌ | ❌ |
+| Checkin directo sobre `main` o `dev` | ❌ (nadie, ni el Admin) | ❌ | ❌ | ❌ |
 | Restaurar backup de la BD | ✅ | ❌ | ❌ | ❌ |
 | Solicitar acción sobre la BD (notificación al Admin) | — | ✅ | ✅ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |

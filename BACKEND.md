@@ -52,6 +52,15 @@ Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` 
   Así, aunque `nombre_rama` traiga caracteres raros, viajan como texto literal hacia `cm` (en el peor caso, `cm` responde con un error de "rama no encontrada"), nunca se interpretan como comandos.
 - No requiere librerías ni validación extra — es la forma normal de invocar subprocesos en Rust, solo hay que ser deliberado y no armar comandos como texto plano en ningún punto.
 
+## Protección de ramas (`main` y `dev`)
+
+Esta regla es **solo una capa de código en BranchBoard** — no la puede hacer cumplir Unity Version Control por sí solo (no existe un permiso nativo de VCS para "límite de niveles de anidación" ni reglas de negocio como estas). Si alguien usa el cliente de Unity VC directamente, sin pasar por la app, estas protecciones no aplican — es un acuerdo de equipo además de una validación técnica.
+
+- **Límite de profundidad, contado como cadena de ancestros**: antes de crear cualquier rama, el backend camina la cadena de ramas padre (`cm branch` / `cm log` para reconstruirla) contando desde `main`. Cadena máxima permitida: **5** — `main → dev → tarea general → subtarea → subtarea de subtarea`. Si crear la nueva rama haría que la cadena llegue a 6, la creación **se rechaza antes de llamar a `cm`**, con un mensaje explicando el límite.
+- **Ningún comando de checkin puede apuntar a `main`**: cualquier función que ejecute `cm checkin` valida primero que la rama destino no sea literalmente `main` — aplica para **todos los roles, incluido el Administrador**, sin excepción. Si se detecta, se rechaza antes de invocar `cm`.
+- **Ningún comando de checkin puede apuntar a `dev` directamente**: mismo tipo de validación — todo cambio a `dev` debe entrar por el flujo de merge ya definido en [Flujo de revisión y merge a dev](#flujo-de-revisión-y-merge-a-dev), nunca por un checkin directo, sin importar el rol.
+- **El merge de `dev` hacia `main` es exclusivo del Administrador**: hoy este merge queda fuera del alcance de BranchBoard (es manual, directo en Unity VC — ver [Flujo de vida de una tarea](#contexto-completo-del-proyecto)) y "esto jamás debería pasar" a través de la app. Aun así, si en algún momento se decide incorporar esa acción a BranchBoard, queda anotado desde ya como **exclusiva del Administrador** — ningún otro rol podría invocarla, ni siquiera el Líder.
+
 ## Detección de cambios en Unity Version Control (polling)
 
 Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity directamente a una rama, y esa tarea debe reflejarse como "modificada" en BranchBoard.
