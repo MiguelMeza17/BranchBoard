@@ -67,7 +67,6 @@
 | Acción | Administrador | Líder | Desarrollador | Tester |
 |---|---|---|---|---|
 | Eliminar el proyecto | ✅ | ❌ | ❌ | ❌ |
-| Ver/configurar/eliminar/rotar el Service Account de Unity Cloud | ✅ (exclusivo) | ❌ | ❌ | ❌ |
 | Restaurar backup de la BD | ✅ | ❌ | ❌ | ❌ |
 | Solicitar acción sobre la BD (notificación al Admin) | — | ✅ | ✅ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |
@@ -107,7 +106,7 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 - Permisos de Tauri: qué comandos/API del sistema (filesystem, shell/git) se exponen al frontend y con qué restricciones (allowlist de Tauri)
 - Ejecución de comandos `cm` (Unity VC) desde la app: **resuelto**, ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos) — siempre pasar argumentos por separado a `Command`, nunca construir un string de shell con datos del usuario
 - Alcance del acceso a disco: limitar al workspace de Unity VC configurado, no acceso libre al filesystem
-- Manejo de datos del equipo: **resuelto**, no hay login propio — identidad vía `cm whoami` (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario)). Protección del Service Account de Unity Cloud (llave compartida, no por-persona) ver [API REST en BACKEND.md](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado).
+- Manejo de datos del equipo: **resuelto**, no hay login propio, ni siquiera para el colaborador de subtareas simples — identidad vía `cm whoami` para **todos** los roles (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario) y [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)). El diseño anterior de Service Account/API REST se descartó por una limitación real de la plataforma (las Service Accounts no pueden recibir permisos de Version Control), así que no hay ninguna llave/secreto compartido que proteger.
 - Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, aprobar solicitud) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
 
 ## Pendiente por definir
