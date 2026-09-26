@@ -32,6 +32,32 @@
   8. **"Categorías"** — explorador de carpetas por tipo de tarea (Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing), solo para filtrar, sin relación con ramas.
 - **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (frontend) y otra en [BACKEND.md](./BACKEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
 
+## Navegación general
+
+Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + etiqueta corta por pantalla:
+
+```
+🗂  Tareas (Scrum)
+📊  Resumen
+📋  Lista de tareas
+📈  Avance
+🌳  Branches
+🔀  Merging
+🐞  Testing
+🗃  Categorías
+📄  Reportes
+⚙️  Ajustes
+```
+
+Barra superior persistente: switch de VPN, campana de notificaciones, botón "Abrir en Unity", identidad (correo + rol).
+
+**Botón de regreso en la navegación tipo carpetas**: al entrar a una tarea padre en el Tablero Scrum (ver [Navegación tipo explorador de carpetas en PLANNING.md](./PLANNING.md#navegación-tipo-explorador-de-carpetas-en-el-tablero-scrum)), aparece una migaja de pan (breadcrumb) arriba, ej. `Tareas > Modelar personaje > Textura de cara`, con cada nivel clickeable para regresar directo a él — no solo "un paso atrás", sino saltar a cualquier nivel superior de una vez.
+
+**Pendiente/dudas a resolver** (marcando explícitamente lo que no tengo claro, en vez de asumir):
+- **Visibilidad de "Testing" en el menú**: ¿aparece para todos los roles en modo lectura (como Merging), o solo el Tester lo ve?
+- **Cerrar la app**: si hay una acción en curso (ej. sincronizando, creando una rama), ¿se bloquea el cierre con una advertencia, o simplemente se puede cerrar y esa operación queda a medias? Tampoco está definido si hace falta algún tipo de "guardado" al cerrar, dado que las escrituras a SQLite son inmediatas por acción (no hay un estado de app sin guardar en el sentido tradicional).
+- **Confirmación al cerrar sesión/cambiar de proyecto**: como no hay login/logout real (es `cm whoami`), ¿"cambiar de proyecto" desde dentro de la app vuelve a la Pantalla inicial sin más, o pide confirmar si hay algo en curso?
+
 ## Alcance
 
 - Tablero Scrum (kanban)
