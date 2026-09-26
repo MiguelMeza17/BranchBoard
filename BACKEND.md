@@ -23,7 +23,7 @@
   2. **Resumen** — pantalla con una gráfica circular (tipo dona) mostrando el conteo de tareas en 4 estados: por hacer, en producción, en revisión, terminadas.
   3. **Lista de tareas** — vista con todas las tareas existentes; es el lugar donde se crean tareas nuevas.
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
-  5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas/mini-tareas), coloreado por estado.
+  5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas anidadas), coloreado por estado.
   6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
   7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (backend) y otra en [FRONTEND.md](./FRONTEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
@@ -91,7 +91,7 @@ No es una pieza nueva de arquitectura — es el mismo cable React → comando Ta
 4. **Si el merge falla** (conflicto de contenido entre archivos): **decisión tomada** — BranchBoard no implementa resolución de conflictos propia, Unity Version Control ya tiene su propia herramienta para eso. El backend detecta que `cm merge` devolvió error y la tarea **no se marca como terminada** (se queda en "en revisión"). Como quien dispara el "autorizado" es el propio Líder/Admin (acción síncrona, no en segundo plano), la reacción es una **alerta/pantalla inmediata** en ese momento (no una notificación de campana) mostrando que el merge falló, con dos opciones para el Líder/Admin:
    - **Resolverlo él mismo**: cierra la alerta, va al cliente de Unity VC a resolver el conflicto manualmente, y luego reintenta el "autorizado" desde BranchBoard. No se notifica a nadie más.
    - **Enviarla al Desarrollador para que la corrija**: reutiliza el mismo mecanismo de **`rechazar_tarea(tarea_id, motivo)`** ya definido arriba — el motivo queda como "falló el merge por conflicto", la tarea vuelve al Desarrollador (con notificación normal de tarea rechazada), y él la reimplementa y la vuelve a mandar a revisión como cualquier rechazo.
-5. Si se **rechaza**, la tarea vuelve al Desarrollador para reimplementar (mismos changesets sobre la misma rama, sin perder historial) — igual que el flujo ya descrito para mini-tareas rechazadas.
+5. Si se **rechaza**, la tarea vuelve al Desarrollador para reimplementar (mismos changesets sobre la misma rama, sin perder historial) — igual que el flujo ya descrito para subtareas rechazadas.
 6. Tras un merge exitoso, se dispara la misma revisión de "Detección de cambios" (rama cerrada → tarea "terminada").
 
 Pendiente confirmar: si la acción de "autorizado" también requiere el doble candado (descripción + palabra literal) del punto 1, dado que mergear a `dev` es igual o más delicado que mandar a revisión.
@@ -124,11 +124,11 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 - **Quién necesita Unity Version Control instalado, y quién no** — **corregido**, la regla es por lo que la persona necesita hacer, no por conveniencia:
   - **Administrador, Líder, Desarrollador y Tester**: **todos** necesitan Unity Version Control instalado y el proyecto clonado en su máquina. Los primeros tres porque trabajan directamente en Unity Editor (programar, modelar, etc.). El **Tester también** — para encontrar errores necesita **jugar/ejecutar el juego real**, algo que ninguna interfaz de BranchBoard puede reemplazar, así que sí o sí necesita el proyecto corriendo en su máquina.
   - Para estos 4 roles: identidad vía `cm whoami`, workspace vía `cm workspace list` (ver arriba, sin pedir carpeta a mano). Si `cm` no está instalado, ver [Instalación de Unity Version Control](#instalación-de-unity-version-control-roles-técnicos) más abajo.
-  - **Únicamente el colaborador de Minitareas** (alguien que solo sube un archivo puntual — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego) **no necesita nada instalado**: ni Unity, ni el cliente de Unity VC, ni el proyecto clonado. Para este caso se usa la [API REST de Unity Version Control](#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) en vez de `cm`.
+  - **Únicamente el colaborador de subtareas simples** (alguien que solo sube un archivo puntual — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego) **no necesita nada instalado**: ni Unity, ni el cliente de Unity VC, ni el proyecto clonado. Requiere permiso otorgado por Líder/Admin (ver [Ajustes en FRONTEND.md](./FRONTEND.md#ajustes)). Para este caso se usa la [API REST de Unity Version Control](#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) en vez de `cm`.
 
 ## Instalación de Unity Version Control (roles técnicos)
 
-Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado y el rol de la persona lo necesita (Administrador/Líder/Desarrollador/Tester — nunca para un colaborador de Minitareas, a ellos no se les ofrece esto), aparece un botón **"Instalar Unity Version Control"**.
+Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado y el rol de la persona lo necesita (Administrador/Líder/Desarrollador/Tester — nunca para un colaborador de subtareas simples, a ellos no se les ofrece esto), aparece un botón **"Instalar Unity Version Control"**.
 
 - **Confirmado disponible en winget**: `winget install --id Codice.PlasticSCM.CloudEdition -e --accept-package-agreements --accept-source-agreements` — instala el cliente completo, que trae `cm` incluido.
 - Mismo fallback que WARP: si `winget` falla o no está disponible, el botón abre la página oficial de descarga de Unity Version Control en el navegador.
@@ -136,7 +136,9 @@ Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-clo
 
 ## API REST de Unity Version Control (Minitareas sin proyecto instalado)
 
-Para el colaborador de Minitareas, en vez de invocar `cm` como subproceso, el backend llama directamente al servidor de Unity Version Control por HTTPS — **confirmado en la documentación oficial de Unity** que existe una API REST del lado del servidor que no requiere cliente ni workspace local, incluyendo un endpoint de checkin:
+Nota de terminología: "Minitareas" ya no es una categoría de producto (ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)) — se dejó el nombre de esta sección igual para no romper enlaces. En el resto del documento, este mecanismo se llama **subtareas simples** o **colaborador sin Unity VC instalado**.
+
+Para este colaborador, en vez de invocar `cm` como subproceso, el backend llama directamente al servidor de Unity Version Control por HTTPS — **confirmado en la documentación oficial de Unity** que existe una API REST del lado del servidor que no requiere cliente ni workspace local, incluyendo un endpoint de checkin:
 
 ```
 POST https://<servidor-regional>.plasticscm.com:7178/api/v1/organizations/{org}/repos/{repo}/branch/{branch}/checkin
@@ -154,8 +156,9 @@ POST https://<servidor-regional>.plasticscm.com:7178/api/v1/organizations/{org}/
 - Esto es un mecanismo de autenticación **completamente separado** de `cm whoami` — el Service Account identifica a la *app* ante Unity, no a la persona.
 - **Limitación conocida, no resuelta del todo**: al ser una sola llave compartida por varias máquinas (sin backend propio que la centralice), el riesgo depende de que el equipo sea pequeño y de confianza — no escala bien a un equipo grande sin un backend real que la resguarde.
 
+**Resuelto**: la identidad del colaborador sin `cm` instalado se resuelve con el panel de [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes) — Líder/Admin agrega su correo a una lista de permitidos, y esa persona se identifica seleccionando/escribiendo su correo dentro de la app (validado contra esa lista, no contra `cm whoami`).
+
 **Pendiente por definir**:
-- Identidad del colaborador de Minitareas en BranchBoard: como no tiene `cm` instalado, `cm whoami` no le sirve para identificarse. ¿Se identifica con el correo que usó al "solicitar ingreso"? ¿Un selector simple de "quién eres" dentro de la app (equipo pequeño, de confianza)?
 - Qué rol/permiso exacto de Unity Cloud hay que asignarle al Service Account para que pueda usar los endpoints de Version Control (la documentación de Unity no lo especifica, hay que probarlo al implementar).
 - Endpoint regional exacto a usar (Unity Cloud tiene servidores por región — US East, Europa, Asia — hay que confirmar cuál usa la organización del equipo).
 - Algoritmo de cifrado exacto a usar para la llave (ej. AES-256 derivando la clave de la contraseña compartida vía PBKDF2/Argon2).
@@ -193,7 +196,7 @@ Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea rel
 5. **Tarea llega a "en revisión"** — destinatarios: todos los usuarios con rol Líder o Administrador (no solo que aparezca en el apartado [Merging](./PLANNING.md#merging) — también genera notificación en la campana).
 6. **Revisión asignada a un Líder específico** — destinatario: ese Líder. Generada por `asignar_revision(tarea_id, email_lider)` (solo Administrador). Mensaje tipo "se te asignó revisar [tarea]".
 7. **Solicitud de ingreso a la organización aprobada** — destinatario: quien la solicitó (además del correo externo que ya se manda, ver [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)).
-8. **Recordatorio de inactividad en Unity Version Control**: si una tarea con rama (Scripting u otra tarea general) no tiene **changesets nuevos** en un tiempo determinado, se le manda al Desarrollador dueño un recordatorio del tipo "llevas X días sin actividad en [tarea], recuerda [qué le toca hacer]". Se apoya en el mismo mecanismo de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) (`cm log br:/<rama> --xml`), pero a diferencia del polling manual por "Refrescar", **este caso sí necesita revisarse solo, sin que nadie le dé clic a nada** — implica correr esta revisión con un temporizador mientras la app está abierta (ej. cada N horas), no solo bajo demanda. Pendiente definir: el umbral de tiempo exacto (¿3 días? ¿configurable por Líder/Admin?), y si esto corre también para minitareas.
+8. **Recordatorio de inactividad en Unity Version Control**: si una tarea con rama (Scripting u otra tarea general) no tiene **changesets nuevos** en un tiempo determinado, se le manda al Desarrollador dueño un recordatorio del tipo "llevas X días sin actividad en [tarea], recuerda [qué le toca hacer]". Se apoya en el mismo mecanismo de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) (`cm log br:/<rama> --xml`), pero a diferencia del polling manual por "Refrescar", **este caso sí necesita revisarse solo, sin que nadie le dé clic a nada** — implica correr esta revisión con un temporizador mientras la app está abierta (ej. cada N horas), no solo bajo demanda. Pendiente definir: el umbral de tiempo exacto (¿3 días? ¿configurable por Líder/Admin?), y si esto corre también para subtareas simples.
 9. **Solicitud de acción sobre la base de datos** — un Líder o Desarrollador que detecta un problema (ej. datos raros, algo se ve corrupto) no puede actuar directamente sobre la BD, así que le manda una notificación a **todos los Administradores** pidiendo que revisen/restauren. Comando Tauri `solicitar_accion_bd(motivo)`, disponible para Líder y Desarrollador (no para Tester, que no tiene relación con el ciclo de tareas/BD del equipo). El `motivo` escrito queda en el mensaje de la notificación para que el Admin sepa qué está pasando antes de actuar.
 
 Nota: el **merge fallido por conflicto** no genera un tipo de notificación nuevo — se maneja con una alerta síncrona en pantalla para el Líder/Admin en el momento, y si decide enviarla a corregir, reutiliza el caso 2 (`rechazar_tarea`). Ver detalle completo en [Flujo de revisión y merge a `dev`](#flujo-de-revisión-y-merge-a-dev).
@@ -234,6 +237,19 @@ Ver diseño de la pantalla en [FRONTEND.md](./FRONTEND.md#ajustes).
 
 Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-de-usuario) (revoca acceso de inmediato, sin sesión que cerrar).
 
+## Modelo de datos: tabla `colaboradores_externos`
+
+Separada de `usuarios` — estas personas no tienen `cm` instalado ni un rol de los 4 definidos, solo permiso puntual para crear subtareas simples (ver [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes)).
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `email` | texto (PK) | con el que se identifica dentro de la app, sin `cm whoami` |
+| `nombre` | texto | |
+| `agregado_por` | email | qué Líder/Admin le dio el permiso |
+| `fecha_alta` | fecha | |
+
+Borrar una fila = revocar el permiso; la próxima vez que intente subir algo, ya no aparece en la lista de identificación.
+
 ## Modelo de datos: tabla `solicitudes_ingreso`
 
 Separada de `usuarios` — una solicitud no es todavía un usuario del proyecto.
@@ -259,8 +275,8 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `titulo` | texto | |
 | `descripcion` | texto | viene del modal de confirmación al crear/tomar/mandar a revisar (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)) |
 | `tipo` | enum | Scripting / Modelado / Animación / Imagen / Video / Música |
-| `tarea_padre_id` | nullable | si es subtarea o mini-tarea (rama hija); `null` si es tarea general |
-| `archivo_ruta` | nullable | solo mini-tareas: ruta del archivo dentro del workspace de Unity VC |
+| `tarea_padre_id` | nullable | si es subtarea (rama hija); `null` si es tarea general |
+| `archivo_ruta` | nullable | solo subtareas simples: ruta del archivo dentro del workspace de Unity VC |
 | `estado` | enum | bloqueada / por hacer / en producción / en revisión / terminada |
 | `rama_asociada` | nullable | `null` hasta que alguien "toma" la tarea |
 | `ultimo_changeset_visto` | nullable | para el polling de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) |
