@@ -134,6 +134,21 @@ Igual que hace Unity Editor mientras guarda/compila: mientras hay una operación
 
 Pendiente confirmar: si la acción de "autorizado" también requiere el doble candado (descripción + palabra literal) del punto 1, dado que mergear a `dev` es igual o más delicado que mandar a revisión.
 
+**Nota**: este flujo completo es específico de la carpeta **"Tareas grandes"** de [Merging](./PLANNING.md#merging) (tarea general → `dev`). Para el flujo de **"Tareas pequeñas"** (subtarea → su tarea padre), ver la sección siguiente — es más simple y con otro dueño de la decisión.
+
+## Flujo de merge de subtareas pequeñas (hacia su tarea padre)
+
+A diferencia del flujo anterior, este **no** pasa por Líder/Administrador exclusivamente — quien autoriza es **quien esté a cargo de la tarea padre** (puede ser Desarrollador, Líder o Administrador, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)).
+
+1. La subtarea simple aparece en la carpeta **"Tareas pequeñas"** de [Merging](./PLANNING.md#merging) en cuanto el colaborador hace su checkin (no hay un paso explícito de "mandar a revisar" — el checkin mismo la deja lista para revisión, ya que es un solo archivo, no un flujo de trabajo largo).
+2. Quien esté a cargo de la tarea padre abre la fila y ve el visor de [Pre-revisión](./PLANNING.md#pre-revisión) correspondiente al tipo (malla 3D, imagen, audio, video, etc.) — **sin cambiar de rama en su propio workspace** (ver [Guardia de rama incorrecta](#guardia-de-rama-incorrecta), este flujo es precisamente el que motivó no depender de cambios de rama para revisar algo tan pequeño).
+3. Comando Tauri `autorizar_merge_subtarea(subtarea_id)`: ejecuta `cm merge` de la rama de la subtarea hacia la rama de su tarea padre (no hacia `dev`) — mismo patrón de invocar `cm` como subproceso.
+4. **Si falla por conflicto**: mismo patrón que el flujo de "Tareas grandes" — alerta síncrona inmediata para quien intentó autorizar, con las mismas dos opciones (resolverlo él mismo, o rechazar con `rechazar_tarea` para que el colaborador vuelva a subir el archivo).
+5. Si se **rechaza**: la subtarea vuelve al colaborador — no se borra, simplemente se le pide subir una nueva versión sobre la misma rama hija (ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)).
+6. Tras un merge exitoso, la subtarea pasa a "terminada" — no dispara el flujo completo de "Detección de cambios" del punto anterior (no aplica el chequeo de changesets por polling para algo tan simple), solo el cambio de estado.
+
+Pendiente por definir: si este merge también requiere el doble candado de confirmación, o basta con un solo clic dado que el impacto es mucho menor que mergear a `dev`.
+
 ## Eliminar una tarea
 
 Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend para que solo Administrador o Líder puedan invocarlo (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). Requiere el doble candado descrito en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop) (justificación + escribir "eliminar").
