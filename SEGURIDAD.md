@@ -94,7 +94,7 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 ## Alcance
 
 - Permisos de Tauri: qué comandos/API del sistema (filesystem, shell/git) se exponen al frontend y con qué restricciones (allowlist de Tauri)
-- Ejecución de comandos `cm` (Unity VC) desde la app: evitar inyección de comandos si algún dato (nombre de rama, nombre de tarea) viene de input del usuario
+- Ejecución de comandos `cm` (Unity VC) desde la app: **resuelto**, ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos) — siempre pasar argumentos por separado a `Command`, nunca construir un string de shell con datos del usuario
 - Alcance del acceso a disco: limitar al workspace de Unity VC configurado, no acceso libre al filesystem
 - Manejo de datos del equipo: cómo se autentican los usuarios (login) y se protegen los datos en tránsito (correo con clave de acceso, etc.)
 - Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, aprobar solicitud) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
@@ -102,6 +102,5 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 ## Pendiente por definir
 
 - Quién envía la autorización de modificación al Desarrollador (¿Líder, Administrador, o ambos?) y si es por tarea puntual o un permiso general
-- Validación de inputs que terminan en comandos `cm`/shell
 - Configuración del allowlist de Tauri (capabilities) una vez se defina qué comandos del backend se necesitan
 - Consideraciones de seguridad para la futura versión web (autenticación, permisos por usuario/equipo)
