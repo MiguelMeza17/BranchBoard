@@ -163,6 +163,21 @@ POST https://<servidor-regional>.plasticscm.com:7178/api/v1/organizations/{org}/
 - Endpoint regional exacto a usar (Unity Cloud tiene servidores por región — US East, Europa, Asia — hay que confirmar cuál usa la organización del equipo).
 - Algoritmo de cifrado exacto a usar para la llave (ej. AES-256 derivando la clave de la contraseña compartida vía PBKDF2/Argon2).
 
+## Clonar proyecto (in-app)
+
+Para roles técnicos sin workspace todavía (ver [Instalación de Unity Version Control](#instalación-de-unity-version-control-roles-técnicos)), en vez de mandarlos a clonar por su cuenta en Unity Hub:
+
+1. El frontend abre el selector de carpetas nativo de Tauri (diálogo del sistema operativo) para elegir dónde clonar
+2. Comando Tauri `clonar_proyecto(ruta_destino)`: corre `cm workspace create` + el checkout correspondiente como subproceso, mostrando progreso
+3. Al terminar, dispara el mismo flujo de `cm workspace list` para que ese workspace nuevo aparezca disponible en la Pantalla inicial
+
+## Comando "Abrir en Unity"
+
+Botón visible dentro de la app una vez hay un proyecto cargado (ver [Panel "Abrir en Unity" en FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), solo para roles con workspace local.
+
+- Comando Tauri `abrir_en_unity()`: lanza el Editor de Unity (o Unity Hub) apuntando a la ruta del workspace, vía su propio CLI — mismo patrón de invocar un ejecutable externo ya usado con `cm` y `warp-cli`.
+- Pendiente definir: comando exacto del CLI de Unity Hub para abrir un proyecto por ruta (verificar al implementar), y qué pasa si Unity Editor no está instalado (¿mismo patrón de "Instalar" con winget, o simplemente un mensaje de error?).
+
 ## Conexión VPN (Cloudflare WARP)
 
 Problema real observado: en la red de la universidad, `cm` no logra conectar con el servidor de Unity Version Control (bloqueo de puerto). La solución probada en la práctica es activar **Cloudflare WARP** (cliente gratuito, `warp-cli`) — con la VPN activa, `cm` conecta sin problema.
