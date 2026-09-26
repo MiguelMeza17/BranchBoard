@@ -84,6 +84,12 @@ Pantalla nueva que agrupa las acciones administrativas — antes estaban definid
 
 4. **Zona de peligro** (solo Administrador): el botón de **"Eliminar proyecto completo"**, con el candado de escribir el nombre exacto del proyecto — separado visualmente del resto (ej. al final, con estilo de advertencia) para que no se confunda con una acción cualquiera
 
+5. **Service Account de Unity Cloud** (exclusivo Administrador, ver [API REST de Unity Version Control en BACKEND.md](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado)): apartado dedicado dentro de Ajustes, nadie más lo ve ni sabe que existe.
+   - Si no hay ninguna llave configurada: formulario para pegar el Key ID + Secret Key generados en el Dashboard de Unity Cloud, más el campo de la **contraseña compartida** con la que se cifra antes de guardarse.
+   - Si ya hay una llave configurada: se muestra su estado (activa, fecha de creación) — **nunca el valor de la llave en texto plano**, ni siquiera al Administrador, una vez guardada.
+   - Botón **"Eliminar clave"**: borra la llave cifrada del `.db` — a partir de ahí, cualquier minitarea pendiente de subir por un colaborador sin Unity VC instalado fallará hasta que se configure una nueva.
+   - Botón **"Asignar nueva clave"**: mismo formulario de arriba, sobreescribe la anterior — es el mecanismo de rotación cuando el Administrador regenera la llave en Unity Cloud (ver flujo de rotación ya descrito en BACKEND.md).
+
 ## Animación de inicio (splash)
 
 Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **animación de splash** (logo animado) mientras corren en paralelo las verificaciones de arranque: `estado_warp()`, y si WARP está conectado, `cm whoami` + listar workspaces (ver [Autenticación / acceso al proyecto](#autenticación--acceso-al-proyecto)). Sirve para no mostrar una pantalla en blanco/congelada mientras esas llamadas async resuelven.
