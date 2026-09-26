@@ -145,7 +145,6 @@ Cuando un Desarrollador crea una tarea, la interfaz debe dejar claro que nace **
 - Componentes de React por pantalla
 - Cómo se ve una tarjeta de tarea (qué datos muestra, y cómo cambia antes/después de tener rama asociada)
 - Librería de gráficos para la dona y la curva de Avance (ej. Chart.js, ApexCharts)
-- Qué mide exactamente el eje Y de la curva de Avance y qué marca el eje X (ver mismo pendiente en PLANNING.md)
 - Diseño de la vista de sprint (cómo se agrupan tareas dentro de un sprint, con y sin fechas)
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
 - Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
