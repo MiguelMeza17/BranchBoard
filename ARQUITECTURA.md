@@ -8,7 +8,7 @@
 
 ## Componentes
 
-- **Frontend**: React + TypeScript, corriendo dentro de la webview de Tauri. Renderiza las 8 pantallas (Scrum, Resumen, Lista de tareas, Avance, Branches, Merging, Testing, Categorías, Reportes, Ajustes) y dispara acciones vía `invoke(...)` hacia el backend.
+- **Frontend**: React + TypeScript, corriendo dentro de la webview de Tauri. Renderiza las pantallas (Scrum, Resumen, Lista de tareas, Avance, Branches, Revisión, Testing, Categorías, Reportes, Ajustes) y dispara acciones vía `invoke(...)` hacia el backend.
 - **Backend**: Rust, dentro del mismo proceso de Tauri. Expone comandos que el frontend invoca (`tomar_tarea`, `aprobar_tarea`, `crear_reporte_testing`, etc.), valida permisos por rol, y es el único que toca SQLite y `cm`.
 - **Persistencia (SQLite)**: un archivo `.db` por proyecto, sincronizado a la nube (Drive/OneDrive) para compartirlo entre el equipo. Guarda tareas, usuarios, solicitudes de ingreso, notificaciones, colaboradores externos — todo excepto el código/archivos versionados en sí.
 - **Unity Version Control (vía `cm`)**: el backend invoca el CLI `cm` como subproceso para todo lo que toca ramas/changesets (crear rama, checkin, merge, leer historial). Es la fuente de verdad del código y los assets versionados — SQLite solo guarda referencias (nombre de rama, último changeset visto), nunca el contenido.

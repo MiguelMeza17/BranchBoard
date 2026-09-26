@@ -24,7 +24,7 @@
   3. **Lista de tareas** — vista con todas las tareas existentes; es el lugar donde se crean tareas nuevas.
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
   5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas anidadas), coloreado por estado.
-  6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
+  6. **"Revisión"** (antes "Merging") — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
   7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: varias sesiones de Claude trabajando en paralelo (una en [BACKEND.md](./BACKEND.md), otra en [FRONTEND.md](./FRONTEND.md), esta en seguridad), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que otra sesión.
 
@@ -83,9 +83,10 @@
 | Crear reporte de Testing | — | — | — | ✅ (exclusivo) |
 | Poner permisos en tareas | ✅ | ✅ | ❌ | ❌ |
 | Eliminar tareas de otros | ✅ | ✅ | ❌ | ❌ |
-| Ver apartado "Merging" (ambas carpetas) | ✅ | ✅ | 👁️ solo lectura | 👁️ solo lectura |
-| Autorizar/rechazar merge — carpeta "Tareas grandes" (hacia `dev`) | ✅ | ✅ | ❌ | ❌ |
-| Autorizar/rechazar merge — carpeta "Tareas pequeñas" (hacia la tarea padre) | ✅ | ✅ | ✅ (solo si es dueño de la tarea padre) | ❌ |
+| Ver "Revisión" — carpeta "Tareas grandes" | ✅ | ✅ | ❌ (no la ve) | ❌ (no la ve) |
+| Autorizar/rechazar — carpeta "Tareas grandes" (hacia `dev`) | ✅ | ✅ | ❌ | ❌ |
+| Ver "Revisión" — carpeta "Tareas pequeñas" | ✅ | ✅ | ✅ | ✅ |
+| Autorizar/rechazar — carpeta "Tareas pequeñas" (hacia la tarea padre) | ✅ | ✅ | ✅ (solo si es dueño de la tarea padre) | ❌ |
 | Asignar la revisión de una tarea a un Líder específico | ✅ (exclusivo) | ❌ | ❌ | ❌ |
 | Ver todas las tareas del proyecto | ✅ | ✅ | ❌ (solo las suyas) | ✅ |
 | Ver avance del proyecto | ✅ | ✅ | ✅ | ✅ |

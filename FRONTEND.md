@@ -27,7 +27,7 @@
   3. **Lista de tareas** — vista con todas las tareas existentes; es el lugar donde se crean tareas nuevas.
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
   5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas anidadas), coloreado por estado.
-  6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
+  6. **"Revisión"** (antes "Merging") — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
   7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
   8. **"Categorías"** — explorador de carpetas por tipo de tarea (Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing), solo para filtrar, sin relación con ramas.
 - **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (frontend) y otra en [BACKEND.md](./BACKEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
@@ -42,7 +42,7 @@ Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + 
 📋  Lista de tareas
 📈  Avance
 🌳  Branches
-🔀  Merging
+🔀  Revisión
 🐞  Testing
 🗃  Categorías
 📄  Reportes
@@ -54,7 +54,7 @@ Barra superior persistente: switch de VPN, campana de notificaciones, botón "Ab
 **Botón de regreso en la navegación tipo carpetas**: al entrar a una tarea padre en el Tablero Scrum (ver [Navegación tipo explorador de carpetas en PLANNING.md](./PLANNING.md#navegación-tipo-explorador-de-carpetas-en-el-tablero-scrum)), aparece una migaja de pan (breadcrumb) arriba, ej. `Tareas > Modelar personaje > Textura de cara`, con cada nivel clickeable para regresar directo a él — no solo "un paso atrás", sino saltar a cualquier nivel superior de una vez.
 
 **Pendiente/dudas a resolver** (marcando explícitamente lo que no tengo claro, en vez de asumir):
-- **Visibilidad de "Testing" en el menú**: ¿aparece para todos los roles en modo lectura (como Merging), o solo el Tester lo ve?
+- **Visibilidad de "Testing" en el menú**: ¿aparece para todos los roles en modo lectura, o solo el Tester lo ve?
 - **Cerrar la app**: si hay una acción en curso (ej. sincronizando, creando una rama), ¿se bloquea el cierre con una advertencia, o simplemente se puede cerrar y esa operación queda a medias? Tampoco está definido si hace falta algún tipo de "guardado" al cerrar, dado que las escrituras a SQLite son inmediatas por acción (no hay un estado de app sin guardar en el sentido tradicional).
 - **Confirmación al cerrar sesión/cambiar de proyecto**: como no hay login/logout real (es `cm whoami`), ¿"cambiar de proyecto" desde dentro de la app vuelve a la Pantalla inicial sin más, o pide confirmar si hay algo en curso?
 
@@ -69,10 +69,9 @@ Barra superior persistente: switch de VPN, campana de notificaciones, botón "Ab
 - Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva.
 - "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas anidadas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
 - Tablero Scrum: navegación tipo "explorador de carpetas" para las tareas con hijos — clic en una tarea padre enfoca la vista en ella y sus hijos directos, ocultando las ramas hermanas; repetible recursivamente hasta 3 niveles. Ver definición en [PLANNING.md](./PLANNING.md#navegación-tipo-explorador-de-carpetas-en-el-tablero-scrum).
-- **"Merging"**: página tipo estado de PR, con **2 carpetas** (ver [PLANNING.md](./PLANNING.md#merging)):
-  - **Tareas grandes** (→ `dev`): solo Líder/Administrador ven botones "Autorizar"/"Rechazar" (con el doble candado ya descrito); Desarrollador y Tester la ven en solo lectura (la UI oculta los botones, sin ocultar la carpeta entera). El Administrador además ve un selector para **asignarle la revisión a un Líder específico** (`asignar_revision`, ver [BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)) — cuando una tarea tiene Líder asignado, se muestra su nombre en la fila.
-  - **Tareas pequeñas** (→ su tarea padre): quien esté a cargo de la tarea padre ve los botones "Autorizar"/"Rechazar" — puede ser Desarrollador, Líder o Administrador. Al abrir la fila aparece el visor de [Pre-revisión](./PLANNING.md#pre-revisión) correspondiente al tipo (malla 3D, imagen, reproductor de audio/video, etc.), embebido ahí mismo — nadie necesita abrir Unity ni cambiar de rama en su propio workspace solo para revisar un archivo.
-  - Tester ve ambas carpetas siempre en solo lectura.
+- **"Revisión"** (antes "Merging"): página tipo estado de PR, con **2 carpetas** (ver [PLANNING.md](./PLANNING.md#revisión)):
+  - **Tareas grandes** (→ `dev`): **corregido**, carpeta **exclusiva de Líder/Administrador** — Desarrollador y Tester no la ven en el menú en absoluto (no es una restricción de solo lectura, la carpeta no aparece). Botones "Autorizar"/"Rechazar" con el doble candado ya descrito. El Administrador además ve un selector para **asignarle la revisión a un Líder específico** (`asignar_revision`, ver [BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)) — cuando una tarea tiene Líder asignado, se muestra su nombre en la fila.
+  - **Tareas pequeñas** (subtareas de colaboradores externos → su tarea padre): **visible para todos los roles**. Quien esté a cargo de la tarea padre ve los botones "Autorizar"/"Rechazar" — puede ser Desarrollador, Líder o Administrador; el resto la ve en solo lectura. Al abrir la fila aparece el visor de [Pre-revisión](./PLANNING.md#pre-revisión) correspondiente al tipo (malla 3D, imagen, reproductor de audio/video, etc.), embebido ahí mismo — nadie necesita abrir Unity ni cambiar de rama en su propio workspace solo para revisar un archivo.
 - **"Categorías"**: pantalla nueva, distinta de la navegación tipo explorador de carpetas del Tablero Scrum (esa es por jerarquía padre/hijo de tareas; esta es por **tipo/disciplina**). Son **carpetas puramente visuales, nunca ramas** — Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing. Abrir una carpeta filtra la Lista de tareas por ese tipo, es la misma tabla/tarjetas de siempre, solo con un filtro aplicado.
 
 ## Aviso de rama incorrecta
@@ -89,7 +88,7 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 
 - **Tomar tarea / auto-asignarse** (crea la rama): modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "asignar"** para habilitar el botón — sin eso no se puede continuar. Al confirmar, el backend crea la rama y hace el auto-switch (ver [BACKEND.md](./BACKEND.md#alcance)); la pantalla de éxito que sigue incluye un botón **"Abrir en Unity"** ahí mismo (ver [Comando "Abrir en Unity" en BACKEND.md](./BACKEND.md#comando-abrir-en-unity)) — ya con el workspace en la rama correcta, para no obligar a la persona a ir a buscar Unity Hub por su cuenta.
 - **Arrastrar a "En revisión"**: modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "mandar a revisar"** para habilitar el botón de envío.
-  - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en el apartado [Merging](#alcance) de Líder/Administrador
+  - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en la carpeta "Tareas grandes" del apartado [Revisión](#alcance), exclusiva de Líder/Administrador
 - En ambos casos: si el usuario cancela o cierra el modal sin completar los dos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
 - **Líder marcando "autorizado"** (mergea la rama a `dev`): pendiente confirmar si aplica el mismo doble candado (descripción + palabra literal) y cuál sería la palabra, dado lo delicado de la acción.
 
