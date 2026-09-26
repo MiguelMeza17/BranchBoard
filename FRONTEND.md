@@ -78,7 +78,7 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
 
    Además, dos opciones —
    - "Crear un nuevo proyecto" → **stub/en blanco por ahora, no tocar**
-   - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado** (vía `cm`), no un solo proyecto fijo:
+   - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado**, no un solo proyecto fijo. **Confirmado en pruebas reales**: no se le pide al usuario apuntar manualmente a la carpeta del proyecto clonado — el comando `cm workspace list` ya devuelve todos los workspaces registrados en esa máquina con su ruta local (ej. `VirusTF-VirusTF@MIGUELMEZA  d:\...\VirusTF`), sin importar en qué carpeta estén clonados:
      - El usuario selecciona uno de la lista
      - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
        - **Coincide** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
@@ -120,5 +120,4 @@ Cuando un Desarrollador crea una tarea, la interfaz debe dejar claro que nace **
 - Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido, y que el correo puesto coincida con el que da `cm whoami`)
 - Quién/qué aprueba la solicitud de ingreso (¿un admin desde otra pantalla? es responsabilidad de backend, pero el frontend necesita saber si hay una pantalla de "solicitudes pendientes" para el admin)
 - Qué pasa si `cm whoami` falla o no hay sesión de Unity VC iniciada en la máquina (mensaje de error, instrucción de iniciar sesión en Unity VC primero)
-- Comando `cm` exacto para listar los proyectos/workspaces a los que el usuario está conectado (para la lista de "ingresar a un proyecto existente")
 - Qué se muestra cuando un proyecto de Unity VC listado **no tiene** un `.db` de BranchBoard asociado todavía (¿se ofrece inicializarlo ahí mismo? ¿se oculta de la lista?)
