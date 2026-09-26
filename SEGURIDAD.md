@@ -25,6 +25,7 @@
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
   5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas/mini-tareas), coloreado por estado.
   6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
+  7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: varias sesiones de Claude trabajando en paralelo (una en [BACKEND.md](./BACKEND.md), otra en [FRONTEND.md](./FRONTEND.md), esta en seguridad), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que otra sesión.
 
 ## Roles y permisos

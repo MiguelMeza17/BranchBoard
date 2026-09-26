@@ -28,6 +28,7 @@
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
   5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas/mini-tareas), coloreado por estado.
   6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
+  7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (frontend) y otra en [BACKEND.md](./BACKEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
 
 ## Alcance
@@ -62,6 +63,26 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 - Sin campo de justificación (no aplica igual que en una tarea, ya no queda nada donde guardarla) — la acción en sí es la última que se registra
 
 **Restaurar backup de la base de datos** (solo Administrador, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos), lógica en [BACKEND.md](./BACKEND.md#copias-de-seguridad-y-restauración-de-la-bd)): pantalla que lista los backups automáticos disponibles con fecha, y al elegir uno pide el mismo doble candado que las demás acciones destructivas (confirmación + palabra literal, pendiente definir cuál). Un Líder o Desarrollador que quiera pedir esto no ve este botón — en su lugar tienen un botón **"Reportar problema con la base de datos"** que envía la notificación a los Administradores con un campo de motivo (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 9).
+
+## Ajustes
+
+Pantalla nueva que agrupa las acciones administrativas — antes estaban definidas sueltas sin un lugar fijo donde vivir. Se organiza en secciones, cada una visible según el rol de quien la abre:
+
+1. **Solicitudes de ingreso** (Líder y Administrador): lista las filas de `solicitudes_ingreso` en estado "pendiente" — nombre, apellido, correo, ID de organización, fecha. Cada fila tiene:
+   - **"Aceptar"**: abre un selector de rol (Administrador/Líder/Desarrollador/Tester — con las mismas restricciones ya definidas, ej. un Líder no puede asignar el rol Líder) y confirma, insertando la fila en `usuarios`
+   - **"Rechazar"**: marca la solicitud como rechazada, sin crear usuario
+   - Las solicitudes ya resueltas (aceptada/rechazada) se pueden ver como historial debajo, colapsado por defecto
+
+2. **Gestión de usuarios** (Líder y Administrador, con matices de permiso): tabla con todos los usuarios actuales del proyecto (email, nombre, rol). Botón "Eliminar" por fila:
+   - Administrador: puede eliminar a cualquiera
+   - Líder: solo puede eliminar Desarrolladores (el botón no aparece sobre otro Líder ni sobre el Administrador)
+   - El Administrador además tiene un botón **"Ascender a Líder"** sobre las filas de Desarrollador/Tester (exclusivo suyo, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos))
+
+3. **Copias de seguridad**:
+   - Administrador: ve la lista de backups con fecha (`listar_backups()`) y el botón "Restaurar" con su doble candado (ver [Confirmación al arrastrar tareas](#confirmación-al-arrastrar-tareas-drag--drop))
+   - Líder/Desarrollador: en vez de la lista, ven el botón **"Reportar problema con la base de datos"** (campo de motivo → notificación a los Administradores)
+
+4. **Zona de peligro** (solo Administrador): el botón de **"Eliminar proyecto completo"**, con el candado de escribir el nombre exacto del proyecto — separado visualmente del resto (ej. al final, con estilo de advertencia) para que no se confunda con una acción cualquiera
 
 ## Animación de inicio (splash)
 
@@ -122,6 +143,6 @@ Cuando un Desarrollador crea una tarea, la interfaz debe dejar claro que nace **
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
 - Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
 - Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido, y que el correo puesto coincida con el que da `cm whoami`)
-- Quién/qué aprueba la solicitud de ingreso (¿un admin desde otra pantalla? es responsabilidad de backend, pero el frontend necesita saber si hay una pantalla de "solicitudes pendientes" para el admin)
+- **Resuelto**: la aprueba Líder/Administrador desde la pantalla [Ajustes](#ajustes)
 - Qué pasa si `cm whoami` falla o no hay sesión de Unity VC iniciada en la máquina (mensaje de error, instrucción de iniciar sesión en Unity VC primero)
 - Qué se muestra cuando un proyecto de Unity VC listado **no tiene** un `.db` de BranchBoard asociado todavía (¿se ofrece inicializarlo ahí mismo? ¿se oculta de la lista?)

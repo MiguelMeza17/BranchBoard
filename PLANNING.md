@@ -91,11 +91,11 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 4. **Tablero "Avance"** — **definido**: gráfica de **curva en el tiempo**, eje X = días, eje Y = **tareas resueltas ese día** (línea principal — se cuenta usando la fecha en que cada tarea pasó a "terminada"). Opcionalmente, una segunda línea muestra **cambios/changesets hechos ese día en todo el proyecto** (no por tarea, es actividad general del equipo vía `cm log` sobre todo el repositorio) — sirve para contrastar "mucha actividad pero pocas tareas cerrándose" vs. lo contrario. Responde "¿vamos bien o mal respecto al tiempo?".
 5. **"Branches"** — **nuevo**: la **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (mini-tareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada). Inspirado en el "Branch Explorer" que ya trae Unity Version Control.
 6. **"Merging"** — **nuevo**: página de estado de PR, lista todas las tareas en "en revisión". Visible para todos, solo lectura para Desarrollador/Tester; Líder/Administrador autorizan o rechazan desde ahí. Ver detalle en [Merging](#merging).
+7. **"Ajustes"** — **nuevo**: agrupa acciones administrativas que antes estaban definidas sueltas (gestión de usuarios, solicitudes de ingreso, backups, eliminar proyecto). Ver detalle en [Ajustes](./FRONTEND.md#ajustes).
 
 ## Pendiente por definir
 
-- Campos de una tarea (título, tipo, rama asociada, estado, asignado, etc.)
-- Campo `fecha_completada` en la tarea, necesario para armar la curva de Avance por día
+- **Resuelto**: campos de una tarea, ver [tabla `tareas` en BACKEND.md](./BACKEND.md#modelo-de-datos-tabla-tareas)
 - Librería de grafos/árboles para renderizar "Branches" (ej. `react-flow`)
 - Estados exactos del flujo (por hacer → en producción → en revisión → terminada, ¿alguno más? ¿la pre-revisión es un estado propio o una acción dentro de "en revisión"?)
 - Integración con Unity Version Control: ¿lee el workspace local? ¿crea la rama automáticamente al tomar la tarea?

@@ -25,6 +25,7 @@
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
   5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas/mini-tareas), coloreado por estado.
   6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
+  7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (backend) y otra en [FRONTEND.md](./FRONTEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
 
 ## Alcance
@@ -193,6 +194,17 @@ Nota: el **merge fallido por conflicto** no genera un tipo de notificación nuev
 Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono de campana con contador) y `marcar_leida(notificacion_id)`.
 
 Pendiente definir: si además de la campana in-app, estas notificaciones también disparan una notificación nativa de escritorio del sistema operativo (Tauri lo soporta) para que lleguen aunque la app esté minimizada.
+
+## Comandos de la pantalla "Ajustes"
+
+Ver diseño de la pantalla en [FRONTEND.md](./FRONTEND.md#ajustes).
+
+- `listar_solicitudes_pendientes()` — Líder/Administrador
+- `aceptar_solicitud(solicitud_id, rol)` — Líder/Administrador; valida que el rol elegido esté permitido para quien invoca (ej. un Líder no puede asignar `rol = Líder`, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos))
+- `rechazar_solicitud(solicitud_id)` — Líder/Administrador
+- `listar_usuarios()` — Líder/Administrador
+- `eliminar_usuario(email)` — validado según quién invoca (Administrador: cualquiera; Líder: solo Desarrolladores)
+- `ascender_a_lider(email)` — exclusivo Administrador
 
 ## Copias de seguridad y restauración de la BD
 
