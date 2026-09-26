@@ -78,7 +78,7 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 
 - **Tomar tarea / auto-asignarse** (crea la rama): modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "asignar"** para habilitar el botón — sin eso no se puede continuar.
 - **Arrastrar a "En revisión"**: modal con descripción + campo de confirmación donde el usuario debe **escribir literalmente "mandar a revisar"** para habilitar el botón de envío.
-  - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en el apartado de "Tareas en revisión" de Líder/Administrador
+  - Al confirmar, la tarea pasa a "en revisión" con la descripción guardada, y aparece en el apartado [Merging](#alcance) de Líder/Administrador
 - En ambos casos: si el usuario cancela o cierra el modal sin completar los dos pasos, la tarjeta **regresa visualmente a su columna original**, nunca queda a medias
 - **Líder marcando "autorizado"** (mergea la rama a `dev`): pendiente confirmar si aplica el mismo doble candado (descripción + palabra literal) y cuál sería la palabra, dado lo delicado de la acción.
 
@@ -113,13 +113,7 @@ Pantalla nueva que agrupa las acciones administrativas — antes estaban definid
 
 4. **Zona de peligro** (solo Administrador): el botón de **"Eliminar proyecto completo"**, con el candado de escribir el nombre exacto del proyecto — separado visualmente del resto (ej. al final, con estilo de advertencia) para que no se confunda con una acción cualquiera
 
-5. **Service Account de Unity Cloud** (exclusivo Administrador, ver [API REST de Unity Version Control en BACKEND.md](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado)): apartado dedicado dentro de Ajustes, nadie más lo ve ni sabe que existe.
-   - Si no hay ninguna llave configurada: formulario para pegar el Key ID + Secret Key generados en el Dashboard de Unity Cloud, más el campo de la **contraseña compartida** con la que se cifra antes de guardarse.
-   - Si ya hay una llave configurada: se muestra su estado (activa, fecha de creación) — **nunca el valor de la llave en texto plano**, ni siquiera al Administrador, una vez guardada.
-   - Botón **"Eliminar clave"**: borra la llave cifrada del `.db` — a partir de ahí, cualquier subtarea simple pendiente de subir por un colaborador sin Unity VC instalado fallará hasta que se configure una nueva.
-   - Botón **"Asignar nueva clave"**: mismo formulario de arriba, sobreescribe la anterior — es el mecanismo de rotación cuando el Administrador regenera la llave en Unity Cloud (ver flujo de rotación ya descrito en BACKEND.md).
-
-6. **Permisos de subtareas simples** (Líder y Administrador): panel donde se gestiona **quién puede crear subtareas simples** (colaboradores sin Unity VC instalado, ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)) — a diferencia de un Desarrollador normal, estas personas no pueden hacerlo libremente.
+5. **Permisos de subtareas simples** (Líder y Administrador): panel donde se gestiona **quién puede crear subtareas simples** (colaboradores con workspace parcial vía Gluon — sí tienen `cm` instalado, pero nunca el proyecto completo, ver [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)) — a diferencia de un Desarrollador normal, estas personas no pueden hacerlo libremente.
    - Lista de correos con permiso otorgado, con botón para agregar uno nuevo (nombre + correo) y otro para revocarlo
    - Al revocar, esa persona deja de poder subir nada la próxima vez que lo intente
 
@@ -143,7 +137,7 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
    - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado**, no un solo proyecto fijo. **Confirmado en pruebas reales**: no se le pide al usuario apuntar manualmente a la carpeta del proyecto clonado — el comando `cm workspace list` ya devuelve todos los workspaces registrados en esa máquina con su ruta local (ej. `VirusTF-VirusTF@MIGUELMEZA  d:\...\VirusTF`), sin importar en qué carpeta estén clonados. La regla no depende del rol, depende de si **ya existe un workspace o no**:
      - **Ya tiene un workspace clonado** (caso típico de Administrador/Líder, y de Desarrollador si ya trabaja en Unity): la app se conecta directo a ese repo/workspace vía `cm` — nunca se "abre" ni navega la carpeta, es solo una referencia interna.
      - **No tiene ningún workspace todavía, pero necesita uno** (Desarrollador o Tester nuevo, sin clonar aún): se le pide instalar Unity Version Control (si hace falta) y luego se le ofrece un botón **"Clonar proyecto"** directamente dentro de BranchBoard — abre el selector de carpetas nativo para elegir dónde, y de ahí BranchBoard corre `cm workspace create` + checkout mostrando el progreso. No hace falta que la persona vaya a Unity Hub por su cuenta a clonarlo antes de poder usar la app.
-     - **Colaborador de subtareas simples**: no necesita ningún workspace ni tener Unity Version Control instalado — nunca pasa por `cm workspace list` en absoluto. BranchBoard usa la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) para su checkin.
+     - **Colaborador de subtareas simples**: **corregido** — sí necesita Unity Version Control instalado (mismo botón de instalar que los demás), pero el workspace es **parcial** (Gluon/`cm partial`, ver [BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)) — nunca descarga el proyecto completo, solo la carpeta de su archivo. Su identidad sigue siendo `cm whoami` como todos los demás.
      - El usuario selecciona uno de la lista (si hay más de uno)
      - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
        - **Coincide** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
