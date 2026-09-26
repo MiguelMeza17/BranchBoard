@@ -107,7 +107,7 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 - Integración con Unity Version Control: ¿lee el workspace local? ¿crea la rama automáticamente al tomar la tarea?
 - Formato/pipeline de assets 3D para la pre-revisión: ¿se exige exportar a glTF/GLB? ¿conversión automática desde el formato nativo (.fbx, .blend)?
 - Previsualización para los demás tipos de tarea (animación, scripting) — solo se definió a fondo la de modelado 3D
-- Cómo se fuerza/valida en la práctica el orden de merge de abajo hacia arriba en subtareas anidadas
+- **Resuelto**: el orden de merge de abajo hacia arriba se valida en el backend antes de ejecutar el merge — ver [Flujo de revisión y merge a dev en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)
 - Qué pasa si se intenta crear una cuarta rama hija por debajo del límite de 3 (¿se bloquea en la UI? ¿solo se advierte?)
 - Si una subtarea simple puede tener más de un archivo adjunto o es siempre 1 subtarea = 1 archivo
 - Permisos: ¿un colaborador no especializado puede crear mini-tareas libremente, o solo dentro de una tarea superior ya creada por alguien técnico?
