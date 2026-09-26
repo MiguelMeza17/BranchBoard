@@ -67,14 +67,16 @@ Apartado nuevo, independiente de Tareas/Minitareas/Testing. Lista **todas** las 
 
 ## Reportes
 
-Apartado nuevo. Cuando un **sprint con fecha** llega a su fin, se genera automáticamente un reporte con cómo fue el flujo de trabajo de ese sprint:
+Apartado nuevo. Cuando un **sprint con fecha** llega a su fin, se genera automáticamente un reporte con cómo fue el flujo de trabajo de ese sprint. **No tiene nada que ver con el rol Tester** — es un análisis general del sprint, con dos partes:
 
-- Tareas que quedaron **retrasadas** (no llegaron a "terminada" antes de la fecha límite del sprint)
-- Otras métricas del flujo de trabajo (a definir con más detalle — ej. cuántas tareas se completaron a tiempo, cuántas se rechazaron, etc.)
+1. **Análisis de tareas del sprint**: tareas hechas, tareas que faltaron (no llegaron a "terminada"), tareas que se quedaron en revisión — para ver qué se cumplió, qué falló y por qué no se cumplió lo planeado.
+2. **Desglose de actividad por persona**: qué hizo cada quien durante el sprint, con su nombre — Administrador, Líderes, Desarrolladores, e incluso Tester (como cualquier otro miembro, sin trato especial). Incluye también la actividad de colaboradores externos de Minitareas, que técnicamente pasa por la cuenta de servicio (Service Account/"bot") pero se atribuye a la persona real que la generó.
 
 Solo aplica a sprints **con fecha** — los sprints sin fecha no tienen un punto de cierre que dispare el reporte. Se apoya en el mismo mecanismo de temporizador ya usado para el [recordatorio de inactividad en BACKEND.md](./BACKEND.md#notificaciones) (revisión periódica mientras la app está abierta, comparando contra `fecha_limite`).
 
-**Definido**: los Reportes son visibles para **todos los roles**, sin restricción. Pendiente definir: qué otras métricas incluye además de las tareas retrasadas.
+**Definido**: los Reportes son visibles para **todos los roles**, sin restricción.
+
+**Pendiente por definir**: cómo se atribuye a una persona real la actividad que pasa por la cuenta de servicio de Minitareas (¿el colaborador externo se identifica con su correo al subir el archivo, y eso queda guardado junto al registro de esa actividad?).
 
 ## Stack
 
