@@ -36,6 +36,7 @@
 - Es el único que puede asignar el rol de **Líder** a otro usuario
 - Acceso total al proyecto
 - Único rol que puede **eliminar el proyecto completo** — **definido**: un escalón más estricto que eliminar una tarea (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)), dado que borra absolutamente todo, no solo un elemento. En vez de escribir una palabra genérica como "eliminar", el Administrador debe **escribir el nombre exacto del proyecto** para confirmar (mismo patrón que usa GitHub al borrar un repositorio) — así se evita una confirmación "en automático" sin medir la gravedad.
+- Único rol que puede **restaurar un backup de la base de datos** (ver [Copias de seguridad en BACKEND.md](./BACKEND.md#copias-de-seguridad-y-restauración-de-la-bd)) — Líder y Desarrollador solo pueden pedírselo vía notificación, no hacerlo ellos mismos.
 
 ### Líder (por debajo del Administrador)
 - Puede crear usuarios (pero no puede crear ni ascender a otros Líderes)
@@ -65,6 +66,8 @@
 | Acción | Administrador | Líder | Desarrollador | Tester |
 |---|---|---|---|---|
 | Eliminar el proyecto | ✅ | ❌ | ❌ | ❌ |
+| Restaurar backup de la BD | ✅ | ❌ | ❌ | ❌ |
+| Solicitar acción sobre la BD (notificación al Admin) | — | ✅ | ✅ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |
 | Crear usuarios | ✅ | ✅ (no Líderes) | ❌ | ❌ |
 | Eliminar usuarios | ✅ (cualquiera) | ✅ (solo Desarrolladores) | ❌ | ❌ |
