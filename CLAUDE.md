@@ -11,5 +11,6 @@ Varias sesiones de Claude trabajan en paralelo en esta carpeta, cada una sobre s
 - `BACKEND.md` — lógica de backend (Rust + Tauri)
 - `FRONTEND.md` — interfaz (React + TypeScript + Tauri)
 - `SEGURIDAD.md` — seguridad y roles/permisos
+- `ARQUITECTURA.md` — vista de pájaro de cómo encajan los componentes (monolito de escritorio Fase 1); no duplica detalle, indexa hacia `BACKEND.md`/`FRONTEND.md`
 
 Antes de editar `PLANNING.md`, revisar `git status` — si tiene cambios sin comitear de otra sesión, evitar editarlo al mismo tiempo. Los demás documentos (`BACKEND.md`, `FRONTEND.md`, `SEGURIDAD.md`) incluyen una sección "Contexto completo del proyecto" que resume las decisiones clave para que cualquier sesión tenga contexto sin necesitar leer los demás archivos — mantenerla sincronizada cuando cambien decisiones importantes (stack, roles, flujo de identidad, etc.).
