@@ -23,7 +23,7 @@
   2. **Resumen** — pantalla con una gráfica circular (tipo dona) mostrando el conteo de tareas en 4 estados: por hacer, en producción, en revisión, terminadas.
   3. **Lista de tareas** — vista con todas las tareas existentes; es el lugar donde se crean tareas nuevas.
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
-  5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas/mini-tareas), coloreado por estado.
+  5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas anidadas), coloreado por estado.
   6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
   7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: varias sesiones de Claude trabajando en paralelo (una en [BACKEND.md](./BACKEND.md), otra en [FRONTEND.md](./FRONTEND.md), esta en seguridad), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que otra sesión.
@@ -74,6 +74,7 @@
 | Crear usuarios | ✅ | ✅ (no Líderes) | ❌ | ❌ |
 | Eliminar usuarios | ✅ (cualquiera) | ✅ (solo Desarrolladores) | ❌ | ❌ |
 | Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ | ❌ |
+| Otorgar/revocar permiso de subtareas simples a colaborador externo | ✅ | ✅ | ❌ | ❌ |
 | Crear tareas (producción) | ✅ (directo) | ✅ (directo) | ⚠️ (nace "bloqueada", requiere aprobación) | ❌ |
 | Aprobar/desbloquear tarea creada por Desarrollador | ✅ | ✅ | ❌ | ❌ |
 | Rechazar tarea (con motivo) | ✅ | ✅ | ❌ | ❌ |
@@ -106,7 +107,7 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 - Permisos de Tauri: qué comandos/API del sistema (filesystem, shell/git) se exponen al frontend y con qué restricciones (allowlist de Tauri)
 - Ejecución de comandos `cm` (Unity VC) desde la app: **resuelto**, ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos) — siempre pasar argumentos por separado a `Command`, nunca construir un string de shell con datos del usuario
 - Alcance del acceso a disco: limitar al workspace de Unity VC configurado, no acceso libre al filesystem
-- Manejo de datos del equipo: cómo se autentican los usuarios (login) y se protegen los datos en tránsito (correo con clave de acceso, etc.)
+- Manejo de datos del equipo: **resuelto**, no hay login propio — identidad vía `cm whoami` (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario)). Protección del Service Account de Unity Cloud (llave compartida, no por-persona) ver [API REST en BACKEND.md](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado).
 - Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, aprobar solicitud) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
 
 ## Pendiente por definir
