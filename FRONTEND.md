@@ -78,8 +78,10 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
 
    Además, dos opciones —
    - "Crear un nuevo proyecto" → **stub/en blanco por ahora, no tocar**
-   - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado**, no un solo proyecto fijo. **Confirmado en pruebas reales**: no se le pide al usuario apuntar manualmente a la carpeta del proyecto clonado — el comando `cm workspace list` ya devuelve todos los workspaces registrados en esa máquina con su ruta local (ej. `VirusTF-VirusTF@MIGUELMEZA  d:\...\VirusTF`), sin importar en qué carpeta estén clonados:
-     - El usuario selecciona uno de la lista
+   - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado**, no un solo proyecto fijo. **Confirmado en pruebas reales**: no se le pide al usuario apuntar manualmente a la carpeta del proyecto clonado — el comando `cm workspace list` ya devuelve todos los workspaces registrados en esa máquina con su ruta local (ej. `VirusTF-VirusTF@MIGUELMEZA  d:\...\VirusTF`), sin importar en qué carpeta estén clonados. La regla no depende del rol, depende de si **ya existe un workspace o no**:
+     - **Ya tiene un workspace clonado** (caso típico de Administrador/Líder, y de Desarrollador si ya trabaja en Unity): la app se conecta directo a ese repo/workspace vía `cm` — nunca se "abre" ni navega la carpeta, es solo una referencia interna.
+     - **No tiene ningún workspace todavía** (Desarrollador nuevo, Tester, colaborador de Minitareas): BranchBoard **provisiona un workspace mínimo por su cuenta**, en silencio, sin pedirle ninguna carpeta al usuario (`cm workspace create` en una ruta gestionada por la app, ver [Bootstrapping en BACKEND.md](./BACKEND.md#identidad-de-usuario)).
+     - El usuario selecciona uno de la lista (si hay más de uno)
      - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
        - **Coincide** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
        - **El correo no está registrado en ese proyecto** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía", con botón "Solicitar ingreso a una organización" (punto 2)
