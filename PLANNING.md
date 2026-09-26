@@ -36,7 +36,7 @@ Regla adicional: una rama hija debe mergearse a su rama padre antes de que la ra
 **Subtareas simples (antes "mini-tareas")**: ya no existe un apartado separado — una subtarea puede ser tan simple como subir un solo archivo (`.fbx`, imágenes, video, audio, animación), pensada para colaboradores **no especializados** en Unity/Unity Version Control.
 
 - **Sí se sincroniza con Unity Version Control**: técnicamente es una subtarea normal (rama hija). La diferencia es solo de experiencia: el colaborador no técnico nunca ve ni entiende que hay una rama detrás; solo sube su archivo y la app crea la rama y hace el checkin por él.
-- **No necesita Unity Version Control instalado ni ningún workspace** — BranchBoard hace la rama/checkin por la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado), no invocando `cm`. Solo los roles que sí trabajan en Unity (Administrador, Líder, Desarrollador, Tester) usan `cm` con su workspace local.
+- **Corregido**: sí necesita Unity Version Control instalado (liviano, mismo instalador que todos), pero usa un **workspace parcial** (modo Gluon, `cm partial`) — nunca descarga el proyecto completo, solo la carpeta de su archivo. Ver [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples). Su identidad es `cm whoami`, igual que todos los demás roles — no hay ninguna cuenta de servicio ni mecanismo aparte.
 - **Requiere permiso**: a diferencia de un Desarrollador normal, un colaborador no especializado necesita que un Líder/Administrador le otorgue el permiso de crear este tipo de subtarea, desde un panel en [Ajustes](./FRONTEND.md#ajustes) — no puede hacerlo libremente por su cuenta.
 - Un rechazo no borra la subtarea: simplemente se pide una nueva implementación (nuevos checkins sobre esa misma rama hija) y, cuando se aprueba, se mergea hacia la tarea general — igual que cualquier merge de rama.
 
@@ -73,13 +73,11 @@ Apartado nuevo, independiente de Tareas/Testing. Lista **todas** las tareas actu
 Apartado nuevo. Cuando un **sprint con fecha** llega a su fin, se genera automáticamente un reporte con cómo fue el flujo de trabajo de ese sprint. **No tiene nada que ver con el rol Tester** — es un análisis general del sprint, con dos partes:
 
 1. **Análisis de tareas del sprint**: tareas hechas, tareas que faltaron (no llegaron a "terminada"), tareas que se quedaron en revisión — para ver qué se cumplió, qué falló y por qué no se cumplió lo planeado.
-2. **Desglose de actividad por persona**: qué hizo cada quien durante el sprint, con su nombre — Administrador, Líderes, Desarrolladores, e incluso Tester (como cualquier otro miembro, sin trato especial). Incluye también la actividad de colaboradores externos sin Unity VC instalado (subtareas simples vía API REST), que técnicamente pasa por la cuenta de servicio (Service Account/"bot") pero se atribuye a la persona real que la generó.
+2. **Desglose de actividad por persona**: qué hizo cada quien durante el sprint, con su nombre — Administrador, Líderes, Desarrolladores, Tester, y colaboradores de subtareas simples, todos por igual. **Simplificado**: como ahora todos usan `cm whoami` (incluidos los colaboradores de subtareas simples, ver [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)), cada changeset ya viene atribuido directamente a la persona real — no hace falta ninguna traducción desde una cuenta de servicio.
 
 Solo aplica a sprints **con fecha** — los sprints sin fecha no tienen un punto de cierre que dispare el reporte. Se apoya en el mismo mecanismo de temporizador ya usado para el [recordatorio de inactividad en BACKEND.md](./BACKEND.md#notificaciones) (revisión periódica mientras la app está abierta, comparando contra `fecha_limite`).
 
 **Definido**: los Reportes son visibles para **todos los roles**, sin restricción.
-
-**Pendiente por definir**: cómo se atribuye a una persona real la actividad que pasa por la cuenta de servicio (¿el colaborador externo se identifica con su correo al subir el archivo, y eso queda guardado junto al registro de esa actividad?).
 
 ## Stack
 
