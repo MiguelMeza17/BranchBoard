@@ -141,7 +141,9 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 
 ## Notificaciones
 
-Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea relacionada (opcional), leída/no leída, fecha. Todos estos casos disparan mensaje **automático**, sin acción manual de quien los envía más allá de la acción que los origina (aprobar, rechazar, asignar, etc.):
+Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea relacionada (opcional), leída/no leída, fecha. Todos estos casos disparan mensaje **automático**, sin acción manual de quien los envía más allá de la acción que los origina (aprobar, rechazar, asignar, etc.).
+
+**Aclarado**: todas las notificaciones de esta lista son **100% internas a la app** (campana + tabla SQLite) — no se manda ningún correo real por revisión, tareas o permisos. El **único** caso que usa correo de verdad es la solicitud de ingreso a la organización (ver [Autenticación / acceso al proyecto en FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), porque ahí la persona todavía no tiene acceso a BranchBoard para ver una notificación in-app — envía su nombre/correo de Unity Version Control (`cm whoami`) desde la Pantalla inicial para que un Admin/Líder lo agregue, y solo ese primer contacto necesita salir por correo.
 
 1. **Tarea creada por un Desarrollador esperando aprobación** — destinatarios: todos los usuarios con rol Líder o Administrador (ver [PLANNING.md](./PLANNING.md#visión), estado "bloqueada"). Se resuelve con un comando Tauri `aprobar_tarea(tarea_id)` que solo Líder/Admin puede invocar (validación de rol en backend), y que solo cambia el estado de la tarea a "por hacer" — no crea rama ni la mueve de tablero, eso lo sigue haciendo "tomar tarea" por separado.
 2. **Tarea rechazada** — destinatario: el Desarrollador que la creó/tomó. Comando Tauri nuevo `rechazar_tarea(tarea_id, motivo)` (Líder/Admin), simétrico a `aprobar_tarea`. El motivo queda guardado y se muestra en la notificación.
@@ -157,9 +159,36 @@ Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono d
 
 Pendiente definir: si además de la campana in-app, estas notificaciones también disparan una notificación nativa de escritorio del sistema operativo (Tauri lo soporta) para que lleguen aunque la app esté minimizada.
 
-## Pendiente por definir
+## Modelo de datos: tabla `tareas`
 
-- Estructura exacta de la tarea (campos)
+Consolidando todo lo definido a lo largo de la conversación en un esquema concreto:
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `id` | — | identificador único |
+| `titulo` | texto | |
+| `descripcion` | texto | viene del modal de confirmación al crear/tomar/mandar a revisar (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)) |
+| `tipo` | enum | Scripting / Modelado / Animación / Imagen / Video / Música |
+| `tarea_padre_id` | nullable | si es subtarea o mini-tarea (rama hija); `null` si es tarea general |
+| `archivo_ruta` | nullable | solo mini-tareas: ruta del archivo dentro del workspace de Unity VC |
+| `estado` | enum | bloqueada / por hacer / en producción / en revisión / terminada |
+| `rama_asociada` | nullable | `null` hasta que alguien "toma" la tarea |
+| `ultimo_changeset_visto` | nullable | para el polling de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) |
+| `modificada` | booleano | badge de "hay cambios nuevos" (ver polling) |
+| `creado_por` | email | quien creó la tarea |
+| `asignado_a` | email, nullable | quien la tomó/le fue asignada |
+| `lider_revision_asignado` | email, nullable | ver [asignar_revision en Flujo de revisión](#flujo-de-revisión-y-merge-a-dev) |
+| `autorizada_modificacion` | booleano | ver [Notificaciones](#notificaciones), punto 4 |
+| `sprint_id` | nullable | una tarea puede no pertenecer a ningún sprint |
+| `con_fecha` / `fecha_limite` | booleano / nullable | tareas con y sin tiempo (ver [Sprints y tareas en FRONTEND.md](./FRONTEND.md#alcance)) |
+| `fecha_completada` | nullable | usada para la [gráfica de Avance](#datos-para-la-gráfica-de-avance) |
+| `eliminada` | booleano | **soft-delete**, no se borra la fila (ver [Eliminar una tarea](#eliminar-una-tarea)) |
+| `justificacion_eliminacion` / `fecha_eliminacion` | nullable | solo si `eliminada = true` |
+| `motivo_rechazo` | nullable | último motivo de rechazo, si aplica |
+
+Los reportes de Testing (ver [Testing en PLANNING.md](./PLANNING.md#testing)) viven en una tabla aparte (`reportes_testing`, con `tarea_id` de referencia), no como campos de `tareas` — no son tareas ni afectan su estado.
+
+## Pendiente por definir
 - Estructura exacta de usuario (email de `cm whoami` + rol, y cómo se valida el permiso en cada comando Tauri)
 - Cómo se puebla la primera vez la tabla email→rol (¿el admin los escribe a mano? ¿se listan desde los miembros del proyecto en Unity Cloud?)
 - Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
