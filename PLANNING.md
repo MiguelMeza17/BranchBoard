@@ -9,6 +9,7 @@ Todo el trabajo del equipo se organiza y visualiza a través de **tareas**, en d
 - **Tareas generales** → tipo **Scripting**. Una tarea general = una rama de Git/Unity Version Control. Las crea y gestiona gente técnica, familiarizada con Unity y el control de versiones.
 - **Minitareas** → el apartado donde aparece el conjunto de tareas que **no** son generales: **Modelado 3D, Animación, Imagen, Video, Audio/Música**. Cada minitarea es un entregable simple (subir un archivo), pensada para colaboradores **no especializados** en Unity. Ver detalle en [Mini-tareas](#mini-tareas).
 - **Testing** → apartado debajo de Minitareas, exclusivo del rol **Tester**, y **fuera del sistema de tareas/ramas** (no es tarea ni subtarea). Por ahora solo aplica como revisión final de una tarea general ya desarrollada: si el Tester encuentra un error, documenta un reporte pequeño vinculado a esa tarea. Ver detalle en [Testing](#testing).
+- **Merging** → apartado nuevo, aparte de Tareas/Minitareas/Testing. Lista **todas** las tareas actualmente en "en revisión" — funciona como una página de estado de PR (ramas en espera de merge). Visible para **todos los roles**, pero de **solo lectura para Desarrollador y Tester**; solo Líder y Administrador pueden actuar (autorizar/rechazar el merge) desde ahí. También aparece reflejado como columna en el **Tablero Scrum**. Ver detalle en [Merging](#merging).
 
 Cada tarea, sin importar su tipo o nivel, pasa por los mismos estados y se ve reflejada en los mismos tableros.
 
@@ -52,6 +53,15 @@ Apartado ubicado debajo de **Minitareas**, exclusivo del rol **Tester** (ver [SE
 - Si encuentra un error en esa revisión final, el Tester **crea un reporte de testing**: algo pequeño y simple, documentando lo que vio, vinculado a la tarea general correspondiente.
 - El Tester no crea tareas de producción (Scripting/Modelado/Animación/Imagen/Video/Música) ni minitareas — su única capacidad de "crear" es este reporte de testing.
 
+## Merging
+
+Apartado nuevo, independiente de Tareas/Minitareas/Testing. Lista **todas** las tareas actualmente en estado "en revisión" — es, en esencia, una página de estado de PR (pull request): qué ramas están esperando ser mergeadas a `dev`.
+
+- **Visible para todos los roles**, pero de **solo lectura** para Desarrollador y Tester — pueden ver qué está esperando merge, pero no actuar sobre ello.
+- Solo **Líder y Administrador** pueden actuar ahí: autorizar el merge o rechazar la tarea (ver [Flujo de revisión y merge en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)).
+- **El Administrador puede asignarle la revisión de una tarea específica a un Líder** — delegar quién es responsable de decidir sobre ese merge en particular, en vez de que cualquier Líder/Admin pueda tomarla. Ver permisos en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
+- También se refleja como columna/estado en el **Tablero Scrum** (ya existía como uno de los 4 estados básicos: por hacer / en producción / en revisión / terminada) — Merging es la vista dedicada y ampliada de ese mismo estado, no un estado nuevo.
+
 ## Stack
 
 - **Framework**: Tauri (Rust) + React/TypeScript
@@ -69,6 +79,7 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 3. **Lista de tareas** — todas las tareas existentes, lugar donde se crean
 4. **Tablero "Avance"** — **definido**: gráfica de **curva en el tiempo**, eje X = días, eje Y = **tareas resueltas ese día** (línea principal — se cuenta usando la fecha en que cada tarea pasó a "terminada"). Opcionalmente, una segunda línea muestra **cambios/changesets hechos ese día en todo el proyecto** (no por tarea, es actividad general del equipo vía `cm log` sobre todo el repositorio) — sirve para contrastar "mucha actividad pero pocas tareas cerrándose" vs. lo contrario. Responde "¿vamos bien o mal respecto al tiempo?".
 5. **"Branches"** — **nuevo**: la **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (mini-tareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada). Inspirado en el "Branch Explorer" que ya trae Unity Version Control.
+6. **"Merging"** — **nuevo**: página de estado de PR, lista todas las tareas en "en revisión". Visible para todos, solo lectura para Desarrollador/Tester; Líder/Administrador autorizan o rechazan desde ahí. Ver detalle en [Merging](#merging).
 
 ## Pendiente por definir
 
