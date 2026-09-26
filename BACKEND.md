@@ -82,6 +82,14 @@ Mismo patrón que "tomar tarea", reusando la arquitectura de comandos Tauri ya e
 
 No es una pieza nueva de arquitectura — es el mismo cable React → comando Tauri → Rust → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
 
+## Bloquear el cierre de la app durante una operación
+
+Igual que hace Unity Editor mientras guarda/compila: mientras hay una operación de `cm` en curso (crear rama, sincronizar, merge, etc.), no se debe poder cerrar la app a la mitad.
+
+- El backend mantiene una bandera en memoria `operacion_en_curso: bool` (o un contador, si puede haber más de una en paralelo), que se activa justo antes de invocar `cm` y se desactiva cuando el subproceso termina (éxito o error).
+- Comando Tauri `hay_operacion_en_curso()` para que el frontend lo consulte antes de permitir cerrar la ventana.
+- Tauri permite interceptar el evento de cierre de ventana (`onCloseRequested` o equivalente) para cancelarlo y mostrar un aviso en vez de cerrar de inmediato — esa parte de UI queda para [FRONTEND.md](./FRONTEND.md#navegación-general).
+
 ## Flujo de revisión y merge a `dev`
 
 1. El Desarrollador arrastra su tarea a **"En revisión"** en el Tablero Scrum (con la confirmación de doble candado descrita en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)). La descripción escrita se guarda junto a la tarea.
