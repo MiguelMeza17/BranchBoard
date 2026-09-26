@@ -39,7 +39,7 @@
 
 ### Líder (por debajo del Administrador)
 - Puede crear usuarios (pero no puede crear ni ascender a otros Líderes)
-- Puede **eliminar usuarios** (ej. cuando alguien deja el equipo) — pendiente confirmar si puede eliminar a otro Líder o solo a Desarrolladores (por consistencia con "no puede gestionar Líderes", se asume que no)
+- Puede **eliminar usuarios** (ej. cuando alguien deja el equipo), pero **solo Desarrolladores** — **definido**: no puede eliminar a otro Líder, esa acción es exclusiva del Administrador
 - Administra las solicitudes de ingreso a la organización (aprobar/rechazar)
 - Puede crear tareas, poner permisos en tareas, eliminar tareas de otros usuarios
 - Puede ver todas las tareas del proyecto
@@ -67,7 +67,7 @@
 | Eliminar el proyecto | ✅ | ❌ | ❌ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |
 | Crear usuarios | ✅ | ✅ (no Líderes) | ❌ | ❌ |
-| Eliminar usuarios | ✅ (cualquiera) | ✅ (no Líderes, a confirmar) | ❌ | ❌ |
+| Eliminar usuarios | ✅ (cualquiera) | ✅ (solo Desarrolladores) | ❌ | ❌ |
 | Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ | ❌ |
 | Crear tareas (producción) | ✅ (directo) | ✅ (directo) | ⚠️ (nace "bloqueada", requiere aprobación) | ❌ |
 | Aprobar/desbloquear tarea creada por Desarrollador | ✅ | ✅ | ❌ | ❌ |
