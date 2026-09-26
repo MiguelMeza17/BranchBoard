@@ -38,6 +38,7 @@
 - Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
 - Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva.
 - "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas/mini-tareas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
+- **"Merging"**: página tipo estado de PR, lista todas las tareas en "en revisión" (ver [PLANNING.md](./PLANNING.md#merging)). Para Desarrollador y Tester es **solo lectura** (la UI oculta los botones de acción, sin necesidad de ocultar la página entera). Para Líder/Administrador, cada fila tiene botones "Autorizar" / "Rechazar" (con el doble candado ya descrito). El Administrador además ve un selector para **asignarle la revisión a un Líder específico** (`asignar_revision`, ver [BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)) — cuando una tarea tiene Líder asignado, se muestra su nombre en la fila.
 
 ## Confirmación al arrastrar tareas (drag & drop)
 
