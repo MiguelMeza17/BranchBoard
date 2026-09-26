@@ -26,7 +26,7 @@
   2. **Resumen** — pantalla con una gráfica circular (tipo dona) mostrando el conteo de tareas en 4 estados: por hacer, en producción, en revisión, terminadas.
   3. **Lista de tareas** — vista con todas las tareas existentes; es el lugar donde se crean tareas nuevas.
   4. **Tablero "Avance"** — gráfica de curva en el tiempo (tareas resueltas por día + changesets por día).
-  5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas/mini-tareas), coloreado por estado.
+  5. **"Branches"** — árbol de linaje de ramas (`dev` → tareas → subtareas anidadas), coloreado por estado.
   6. **"Merging"** — página tipo estado de PR, lista las tareas en "en revisión" pendientes de autorizar/rechazar.
   7. **"Ajustes"** — agrupa gestión de usuarios, solicitudes de ingreso, backups y eliminar proyecto.
 - **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (frontend) y otra en [BACKEND.md](./BACKEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
@@ -40,7 +40,8 @@
 - Vista de sprints, soportando sprints con fecha y sprints sin fecha
 - Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
 - Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva.
-- "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas/mini-tareas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
+- "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban) — `dev` como raíz, ramas de tareas generales, ramas hijas (subtareas anidadas) colgando de su padre, coloreadas según estado. Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería sugerida: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite.
+- Tablero Scrum: navegación tipo "explorador de carpetas" para las tareas con hijos — clic en una tarea padre enfoca la vista en ella y sus hijos directos, ocultando las ramas hermanas; repetible recursivamente hasta 3 niveles. Ver definición en [PLANNING.md](./PLANNING.md#navegación-tipo-explorador-de-carpetas-en-el-tablero-scrum).
 - **"Merging"**: página tipo estado de PR, lista todas las tareas en "en revisión" (ver [PLANNING.md](./PLANNING.md#merging)). Para Desarrollador y Tester es **solo lectura** (la UI oculta los botones de acción, sin necesidad de ocultar la página entera). Para Líder/Administrador, cada fila tiene botones "Autorizar" / "Rechazar" (con el doble candado ya descrito). El Administrador además ve un selector para **asignarle la revisión a un Líder específico** (`asignar_revision`, ver [BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)) — cuando una tarea tiene Líder asignado, se muestra su nombre en la fila.
 
 ## Confirmación al arrastrar tareas (drag & drop)
@@ -87,8 +88,12 @@ Pantalla nueva que agrupa las acciones administrativas — antes estaban definid
 5. **Service Account de Unity Cloud** (exclusivo Administrador, ver [API REST de Unity Version Control en BACKEND.md](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado)): apartado dedicado dentro de Ajustes, nadie más lo ve ni sabe que existe.
    - Si no hay ninguna llave configurada: formulario para pegar el Key ID + Secret Key generados en el Dashboard de Unity Cloud, más el campo de la **contraseña compartida** con la que se cifra antes de guardarse.
    - Si ya hay una llave configurada: se muestra su estado (activa, fecha de creación) — **nunca el valor de la llave en texto plano**, ni siquiera al Administrador, una vez guardada.
-   - Botón **"Eliminar clave"**: borra la llave cifrada del `.db` — a partir de ahí, cualquier minitarea pendiente de subir por un colaborador sin Unity VC instalado fallará hasta que se configure una nueva.
+   - Botón **"Eliminar clave"**: borra la llave cifrada del `.db` — a partir de ahí, cualquier subtarea simple pendiente de subir por un colaborador sin Unity VC instalado fallará hasta que se configure una nueva.
    - Botón **"Asignar nueva clave"**: mismo formulario de arriba, sobreescribe la anterior — es el mecanismo de rotación cuando el Administrador regenera la llave en Unity Cloud (ver flujo de rotación ya descrito en BACKEND.md).
+
+6. **Permisos de subtareas simples** (Líder y Administrador): panel donde se gestiona **quién puede crear subtareas simples** (colaboradores sin Unity VC instalado, ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)) — a diferencia de un Desarrollador normal, estas personas no pueden hacerlo libremente.
+   - Lista de correos con permiso otorgado, con botón para agregar uno nuevo (nombre + correo) y otro para revocarlo
+   - Al revocar, esa persona deja de poder subir nada la próxima vez que lo intente
 
 ## Animación de inicio (splash)
 
@@ -110,7 +115,7 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
    - "Ingresar a un proyecto existente" → la app lista los **proyectos/workspaces de Unity Version Control a los que el usuario está conectado**, no un solo proyecto fijo. **Confirmado en pruebas reales**: no se le pide al usuario apuntar manualmente a la carpeta del proyecto clonado — el comando `cm workspace list` ya devuelve todos los workspaces registrados en esa máquina con su ruta local (ej. `VirusTF-VirusTF@MIGUELMEZA  d:\...\VirusTF`), sin importar en qué carpeta estén clonados. La regla no depende del rol, depende de si **ya existe un workspace o no**:
      - **Ya tiene un workspace clonado** (caso típico de Administrador/Líder, y de Desarrollador si ya trabaja en Unity): la app se conecta directo a ese repo/workspace vía `cm` — nunca se "abre" ni navega la carpeta, es solo una referencia interna.
      - **No tiene ningún workspace todavía, pero necesita uno** (Desarrollador o Tester nuevo, sin clonar aún): se le pide instalar Unity Version Control y clonar el proyecto — ver [Instalación de Unity Version Control en BACKEND.md](./BACKEND.md#instalación-de-unity-version-control-roles-técnicos). No se auto-provisiona nada por él, porque de todas formas va a necesitar el proyecto real (para Unity Editor o para jugar/probar el juego, en el caso de Tester).
-     - **Colaborador de Minitareas**: **corregido**, no necesita ningún workspace ni tener Unity Version Control instalado — nunca pasa por `cm workspace list` en absoluto. BranchBoard usa la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) para su checkin.
+     - **Colaborador de subtareas simples**: no necesita ningún workspace ni tener Unity Version Control instalado — nunca pasa por `cm workspace list` en absoluto. BranchBoard usa la [API REST de Unity Version Control](./BACKEND.md#api-rest-de-unity-version-control-minitareas-sin-proyecto-instalado) para su checkin.
      - El usuario selecciona uno de la lista (si hay más de uno)
      - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
        - **Coincide** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
