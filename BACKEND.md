@@ -163,6 +163,33 @@ Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono d
 
 Pendiente definir: si además de la campana in-app, estas notificaciones también disparan una notificación nativa de escritorio del sistema operativo (Tauri lo soporta) para que lleguen aunque la app esté minimizada.
 
+## Modelo de datos: tabla `usuarios`
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `email` | texto (PK) | viene de `cm whoami`, ver [Identidad de usuario](#identidad-de-usuario) — no hay contraseña que guardar |
+| `nombre` | texto | viene del formulario de [solicitud de ingreso](./FRONTEND.md#autenticación--acceso-al-proyecto) |
+| `apellido` | texto | ídem |
+| `rol` | enum | Administrador / Líder / Desarrollador / Tester |
+| `fecha_alta` | fecha | cuándo quedó registrado en el proyecto |
+
+Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-de-usuario) (revoca acceso de inmediato, sin sesión que cerrar).
+
+## Modelo de datos: tabla `solicitudes_ingreso`
+
+Separada de `usuarios` — una solicitud no es todavía un usuario del proyecto.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `id` | — | |
+| `nombre` / `apellido` | texto | |
+| `correo` | texto | debe coincidir con el email de `cm whoami` de quien la aprueba después, ver [Pendiente por definir en FRONTEND.md](./FRONTEND.md#pendiente-por-definir) |
+| `id_organizacion` | texto | |
+| `estado` | enum | pendiente / aceptada / rechazada |
+| `fecha_solicitud` / `fecha_resolucion` | fecha, nullable | |
+
+Al aceptarse, se inserta la fila correspondiente en `usuarios` con el rol que le asigne quien aprueba — la solicitud no desaparece, queda como historial con `estado = aceptada`.
+
 ## Modelo de datos: tabla `tareas`
 
 Consolidando todo lo definido a lo largo de la conversación en un esquema concreto:
@@ -193,8 +220,7 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 Los reportes de Testing (ver [Testing en PLANNING.md](./PLANNING.md#testing)) viven en una tabla aparte (`reportes_testing`, con `tarea_id` de referencia), no como campos de `tareas` — no son tareas ni afectan su estado.
 
 ## Pendiente por definir
-- Estructura exacta de usuario (email de `cm whoami` + rol, y cómo se valida el permiso en cada comando Tauri)
-- Cómo se puebla la primera vez la tabla email→rol (¿el admin los escribe a mano? ¿se listan desde los miembros del proyecto en Unity Cloud?)
+- Cómo se valida el permiso de rol en cada comando Tauri (mecanismo exacto de autorización, ej. middleware/decorador vs. chequeo manual al inicio de cada comando)
 - Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
 - Estados del flujo de una tarea
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
