@@ -273,9 +273,7 @@ Los reportes de Testing (ver [Testing en PLANNING.md](./PLANNING.md#testing)) vi
 
 ## Pendiente por definir
 - Cómo se valida el permiso de rol en cada comando Tauri (mecanismo exacto de autorización, ej. middleware/decorador vs. chequeo manual al inicio de cada comando)
-- Cómo se detecta/vincula el workspace de Unity VC del proyecto Unity (ruta local, nombre del repo)
-- Estados del flujo de una tarea
+- Estados del flujo de una tarea (ya definidos en la práctica: bloqueada / por hacer / en producción / en revisión / terminada — falta solo confirmarlos como lista cerrada)
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
 - Comando `cm` exacto para leer si una rama está cerrada/mergeada
-- Dónde vive `ultimo_changeset_visto` por tarea (misma base de datos del modelo de tarea)
 - Diseño final del lock de escritura en SQLite: corto y por operación (no por sesión completa) + detección de sobrescritura como red de seguridad, dado el retraso de sincronización de la carpeta en la nube. **Aclarado**: el lock solo restringe **escrituras** concurrentes mientras alguien más está modificando el `.db` — nunca bloquea abrir la app ni leer datos, eso siempre debe estar disponible.

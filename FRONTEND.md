@@ -143,6 +143,4 @@ Cuando un Desarrollador crea una tarea, la interfaz debe dejar claro que nace **
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
 - Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
 - Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido, y que el correo puesto coincida con el que da `cm whoami`)
-- **Resuelto**: la aprueba Líder/Administrador desde la pantalla [Ajustes](#ajustes)
 - Qué pasa si `cm whoami` falla o no hay sesión de Unity VC iniciada en la máquina (mensaje de error, instrucción de iniciar sesión en Unity VC primero)
-- Qué se muestra cuando un proyecto de Unity VC listado **no tiene** un `.db` de BranchBoard asociado todavía (¿se ofrece inicializarlo ahí mismo? ¿se oculta de la lista?)

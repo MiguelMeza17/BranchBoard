@@ -95,7 +95,6 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 
 ## Pendiente por definir
 
-- **Resuelto**: campos de una tarea, ver [tabla `tareas` en BACKEND.md](./BACKEND.md#modelo-de-datos-tabla-tareas)
 - Librería de grafos/árboles para renderizar "Branches" (ej. `react-flow`)
 - Estados exactos del flujo (por hacer → en producción → en revisión → terminada, ¿alguno más? ¿la pre-revisión es un estado propio o una acción dentro de "en revisión"?)
 - Integración con Unity Version Control: ¿lee el workspace local? ¿crea la rama automáticamente al tomar la tarea?
@@ -104,6 +103,5 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 - Cómo se fuerza/valida en la práctica el orden de merge de abajo hacia arriba en subtareas anidadas
 - Qué pasa si se intenta crear una cuarta rama hija por debajo del límite de 3 (¿se bloquea en la UI? ¿solo se advierte?)
 - Cómo se ve la interfaz de mini-tareas (¿lista aparte? ¿sección dentro de la tarea superior?)
-- **Resuelto**: la mini-tarea ya es una rama con el archivo versionado desde que se subió; "integrarla" es simplemente mergear esa rama hija hacia la tarea general, sin archivos sueltos que limpiar.
 - Si una mini-tarea puede tener más de un archivo adjunto o es siempre 1 mini-tarea = 1 archivo
 - Permisos: ¿un colaborador no especializado puede crear mini-tareas libremente, o solo dentro de una tarea superior ya creada por alguien técnico?
