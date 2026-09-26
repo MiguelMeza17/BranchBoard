@@ -54,7 +54,7 @@ Apartado ubicado debajo de **Minitareas**, exclusivo del rol **Tester** (ver [SE
 - Si encuentra un error, el Tester **crea un reporte de testing** (algo pequeño y simple, documentando lo que vio) **y eso genera automáticamente una nueva tarea de corrección**, vinculada tanto al reporte como a la tarea general original. Alguien del equipo se asigna esa tarea de corrección igual que cualquier otra — al tomarla, se le crea su rama (partiendo de `dev`, igual que toda tarea general).
 - El Tester no crea tareas de producción directamente (Scripting/Modelado/Animación/Imagen/Video/Música) ni minitareas — su única capacidad de "crear" es el reporte, que en cadena genera la tarea de corrección.
 
-**Pendiente por definir**: si la tarea de corrección generada nace "bloqueada" (como toda tarea creada fuera de Líder/Admin) o entra directo a "por hacer" dado que viene de un hallazgo real de Testing, no de una idea sin validar.
+**Definido**: la tarea de corrección nace directo en **"por hacer"** (no "bloqueada") — viene de un hallazgo real del Tester, no de una idea sin validar, así que cualquiera puede tomarla de una vez y crear su rama.
 
 ## Merging
 
