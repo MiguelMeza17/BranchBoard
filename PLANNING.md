@@ -109,6 +109,5 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 - Previsualización para los demás tipos de tarea (animación, scripting) — solo se definió a fondo la de modelado 3D
 - Cómo se fuerza/valida en la práctica el orden de merge de abajo hacia arriba en subtareas anidadas
 - Qué pasa si se intenta crear una cuarta rama hija por debajo del límite de 3 (¿se bloquea en la UI? ¿solo se advierte?)
-- Cómo se ve la interfaz de mini-tareas (¿lista aparte? ¿sección dentro de la tarea superior?)
-- Si una mini-tarea puede tener más de un archivo adjunto o es siempre 1 mini-tarea = 1 archivo
+- Si una subtarea simple puede tener más de un archivo adjunto o es siempre 1 subtarea = 1 archivo
 - Permisos: ¿un colaborador no especializado puede crear mini-tareas libremente, o solo dentro de una tarea superior ya creada por alguien técnico?
