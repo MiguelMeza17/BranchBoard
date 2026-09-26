@@ -17,13 +17,19 @@ Cada tarea, sin importar su tipo o nivel, pasa por los mismos estados y se ve re
 
 ## Pre-revisión
 
-Antes de pasar al estado "en revisión", el entregable de cualquier tarea se puede **reproducir/previsualizar dentro de la misma interfaz** de BranchBoard, sin salir de la app ni abrir la herramienta original (Unity, Blender, editor de video, etc.):
-- Video → reproductor embebido
-- Imagen → visor de imagen
-- Audio/Música → reproductor de audio embebido
-- Animación → previsualización reproducible de la animación
-- Modelado → visor 3D interactivo (rotar/zoom/pan sobre el modelo)
-- Scripting (tarea general) → (pendiente de definir: ¿diff de la rama? ¿build/preview del cambio?)
+Antes de pasar al estado "en revisión", el entregable de cualquier tarea se puede **reproducir/previsualizar dentro de la misma interfaz** de BranchBoard, sin salir de la app ni abrir la herramienta original (Unity, Blender, editor de video, etc.) — **quien revisa nunca necesita abrir Unity ni cambiar de rama en su propio workspace** para ver el contenido, eso es justo el problema que resuelve la pre-revisión.
+
+**Definido por tipo (con restricción de archivo permitido al subir):**
+
+- **Modelado 3D** → solo se permite subir `.fbx`. Visor: la malla del modelo (con material si lo tiene), cantidad de polígonos, y geometría/shading que permita ver la **orientación de las caras** (normales). Botón aparte **"Abrir en Unity"** como alternativa.
+- **Modelado 2D** → visor de imagen simple (solo mostrar la imagen).
+- **Animación** → mismo visor que Modelado 3D (malla + material + polígonos + orientación de caras) **más** reproducir la animación sobre esa malla.
+- **Imagen** → visor de imagen.
+- **UI/Interfaz** → visor de imagen (mostrar el mockup/elemento de UI).
+- **Audio** → reproductor de audio embebido.
+- **Música** → reproductor de audio embebido.
+- **Video** → reproductor de video embebido. **Restricción de archivo**: valida la extensión real del archivo, no solo el nombre — no se puede subir una imagen disfrazada de video para esta categoría.
+- **Scripting** (tarea general) → (pendiente de definir: ¿diff de la rama? ¿build/preview del cambio?)
 
 **Primer tipo a implementar:** el visor de previsualización de **modelado 3D**, usando tecnología web de visualización 3D (ej. Three.js / `<model-viewer>` sobre glTF) embebida en la webview de Tauri.
 
@@ -61,12 +67,14 @@ Apartado exclusivo del rol **Tester** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y
 
 ## Merging
 
-Apartado nuevo, independiente de Tareas/Testing. Lista **todas** las tareas actualmente en estado "en revisión" — es, en esencia, una página de estado de PR (pull request): qué ramas están esperando ser mergeadas a `dev`.
+Apartado nuevo, independiente de Tareas/Testing. Lista **todas** las tareas actualmente en estado "en revisión" — es, en esencia, una página de estado de PR (pull request): qué ramas están esperando ser mergeadas.
 
-- **Visible para todos los roles**, pero de **solo lectura** para Desarrollador y Tester — pueden ver qué está esperando merge, pero no actuar sobre ello.
-- Solo **Líder y Administrador** pueden actuar ahí: autorizar el merge o rechazar la tarea (ver [Flujo de revisión y merge en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)).
-- **El Administrador puede asignarle la revisión de una tarea específica a un Líder** — delegar quién es responsable de decidir sobre ese merge en particular, en vez de que cualquier Líder/Admin pueda tomarla. Ver permisos en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
-- También se refleja como columna/estado en el **Tablero Scrum** (ya existía como uno de los 4 estados básicos: por hacer / en producción / en revisión / terminada) — Merging es la vista dedicada y ampliada de ese mismo estado, no un estado nuevo.
+**Organizado en 2 carpetas** (mismo patrón visual que las carpetas del Tablero Scrum/Categorías):
+
+1. **Tareas grandes** — tareas generales esperando mergear hacia **`dev`**. Solo **Líder y Administrador** pueden actuar (autorizar/rechazar, ver [Flujo de revisión y merge en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)). Desarrollador y Tester ven esta carpeta en **solo lectura**. El Administrador puede **asignarle la revisión de una tarea específica a un Líder** — delegar quién decide sobre ese merge en particular. Ver permisos en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
+2. **Tareas pequeñas** — subtareas simples esperando mergear hacia **su tarea padre** (no hacia `dev` directamente). **Definido**: aquí quien revisa/autoriza es **quien esté a cargo de la tarea padre** — puede ser Desarrollador, Líder o Administrador, según quien la haya tomado; no está restringido a Líder/Admin como en "Tareas grandes", porque mergear hacia la rama de tu propia tarea no requiere el mismo nivel de permiso que mergear hacia `dev`. Tester sigue viendo esta carpeta en solo lectura. La revisión se hace con el visor de [Pre-revisión](#pre-revisión) correspondiente al tipo de la subtarea — **nunca requiere que quien revisa cambie de rama en su propio workspace**, justo para no ser costoso en un caso tan pequeño como subir un solo archivo.
+
+Ambas carpetas también se reflejan como columna/estado en el **Tablero Scrum** (ya existía como uno de los 4 estados básicos: por hacer / en producción / en revisión / terminada) — Merging es la vista dedicada y ampliada de ese mismo estado, no un estado nuevo.
 
 ## Reportes
 

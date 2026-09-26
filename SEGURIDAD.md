@@ -81,8 +81,9 @@
 | Crear reporte de Testing | — | — | — | ✅ (exclusivo) |
 | Poner permisos en tareas | ✅ | ✅ | ❌ | ❌ |
 | Eliminar tareas de otros | ✅ | ✅ | ❌ | ❌ |
-| Ver apartado "Merging" (ramas en espera de merge) | ✅ | ✅ | 👁️ solo lectura | 👁️ solo lectura |
-| Autorizar/rechazar merge desde "Merging" | ✅ | ✅ | ❌ | ❌ |
+| Ver apartado "Merging" (ambas carpetas) | ✅ | ✅ | 👁️ solo lectura | 👁️ solo lectura |
+| Autorizar/rechazar merge — carpeta "Tareas grandes" (hacia `dev`) | ✅ | ✅ | ❌ | ❌ |
+| Autorizar/rechazar merge — carpeta "Tareas pequeñas" (hacia la tarea padre) | ✅ | ✅ | ✅ (solo si es dueño de la tarea padre) | ❌ |
 | Asignar la revisión de una tarea a un Líder específico | ✅ (exclusivo) | ❌ | ❌ | ❌ |
 | Ver todas las tareas del proyecto | ✅ | ✅ | ❌ (solo las suyas) | ✅ |
 | Ver avance del proyecto | ✅ | ✅ | ✅ | ✅ |

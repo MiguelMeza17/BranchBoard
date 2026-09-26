@@ -157,6 +157,23 @@ Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-clo
 - Sintaxis exacta de `cm partial add` / `cm partial checkin` para el caso de uso (verificar al implementar).
 - Mapeo exacto categoría→carpeta real del proyecto (ej. Audio → `Assets/MP3/` según la estructura real de VirusTF, ver [ignore.conf del proyecto]) — la categoría la elige el colaborador, pero la ruta destino la resuelve el backend.
 
+## Validación de tipo de archivo al subir una subtarea simple
+
+**Definido**: cada categoría restringe qué extensión de archivo acepta al subir, validando el contenido real del archivo (magic bytes / firma), no solo el nombre/extensión declarada — para que no se pueda, por ejemplo, subir una imagen renombrada como `.mp4` en la categoría Video.
+
+| Categoría | Extensión(es) permitida(s) |
+|---|---|
+| Modelado 3D | `.fbx` únicamente |
+| Modelado 2D | formatos de imagen (a definir lista exacta, ej. `.png`, `.jpg`) |
+| Animación | `.fbx` (igual que Modelado 3D, ya que trae la malla animada) |
+| Imagen | formatos de imagen |
+| UI/Interfaz | formatos de imagen |
+| Audio | formatos de audio (ej. `.mp3`, `.wav`) |
+| Música | formatos de audio |
+| Video | formatos de video (ej. `.mp4`) — explícitamente rechaza imágenes u otros tipos |
+
+Si el archivo no coincide con lo permitido para esa categoría, el comando Tauri de subida (ej. `subir_subtarea_simple(categoria, archivo)`) rechaza la operación **antes** de tocar `cm partial` — nunca llega a intentar el checkin con un archivo inválido.
+
 ## Clonar proyecto (in-app)
 
 Para roles técnicos sin workspace todavía (ver [Instalación de Unity Version Control](#instalación-de-unity-version-control-roles-técnicos)), en vez de mandarlos a clonar por su cuenta en Unity Hub:
