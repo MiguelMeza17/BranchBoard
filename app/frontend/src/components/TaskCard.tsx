@@ -64,7 +64,7 @@ export function TaskCard({
       )}
       <div className={`pl-4 pr-3 ${compact ? 'py-2.5' : 'py-3'}`}>
         <div className="flex items-start justify-between gap-2">
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <div className="mb-1.5 flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
               <span className="font-mono text-[11px] text-faint">{tarea.id}</span>
               {tarea.pendiente_aprobacion && (
