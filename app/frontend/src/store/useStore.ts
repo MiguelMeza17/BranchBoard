@@ -64,6 +64,21 @@ function normalizarJerarquiaEstados(tareas: Tarea[]): Tarea[] {
   return resultado;
 }
 
+// Ids de todo el subárbol (hijas, nietas, etc.) no eliminado de una tarea.
+function descendientesDe(tareas: Tarea[], id: string): Set<string> {
+  const ids = new Set<string>();
+  const recolectar = (padreId: string) => {
+    tareas.forEach((t) => {
+      if (t.tarea_padre_id === padreId && !t.eliminada) {
+        ids.add(t.id);
+        recolectar(t.id);
+      }
+    });
+  };
+  recolectar(id);
+  return ids;
+}
+
 export interface NuevaTarea {
   titulo: string;
   descripcion: string;
@@ -207,19 +222,24 @@ export const useStore = create<State>((set, get) => {
 
   moverTarea: (id, estado) => {
     const anterior = get().tareas.find((t) => t.id === id);
-    set((s) => ({
-      tareas: normalizarJerarquiaEstados(
-        s.tareas.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                estado,
-                fecha_completada: estado === 'terminada' ? today() : t.fecha_completada,
-              }
-            : t
-        )
-      ),
-    }));
+    // El estado de una tarea con subtareas se deriva de ellas: si solo se cambiara el padre,
+    // normalizarJerarquiaEstados lo devolvería a su columna. Por eso el cambio baja a todo su subárbol.
+    set((s) => {
+      const descendientes = descendientesDe(s.tareas, id);
+      return {
+        tareas: normalizarJerarquiaEstados(
+          s.tareas.map((t) =>
+            t.id === id || descendientes.has(t.id)
+              ? {
+                  ...t,
+                  estado,
+                  fecha_completada: estado === 'terminada' ? today() : t.fecha_completada,
+                }
+              : t
+          )
+        ),
+      };
+    });
     // Notificación #5 (BACKEND.md): una tarea llega a "en revisión" — avisa a todo Líder/Admin.
     if (anterior && anterior.estado !== 'en revisión' && estado === 'en revisión') {
       notificarLideres({
@@ -250,12 +270,21 @@ export const useStore = create<State>((set, get) => {
       }),
     })),
 
+  // En una tarea general, sus subtareas también vuelven a "por hacer"; si no, al siguiente
+  // cambio el padre se volvería a derivar a otro estado (y heredaría un responsable).
   desasignarTarea: (id) =>
-    set((s) => ({
-      tareas: s.tareas.map((t) =>
-        t.id === id ? { ...t, asignado_a: null, estado: 'por hacer' } : t
-      ),
-    })),
+    set((s) => {
+      const descendientes = descendientesDe(s.tareas, id);
+      return {
+        tareas: normalizarJerarquiaEstados(
+          s.tareas.map((t) => {
+            if (t.id === id) return { ...t, asignado_a: null, estado: 'por hacer' };
+            if (descendientes.has(t.id)) return { ...t, estado: 'por hacer' };
+            return t;
+          })
+        ),
+      };
+    }),
 
   crearTarea: (data) => {
     const s = get();
@@ -435,16 +464,7 @@ export const useStore = create<State>((set, get) => {
   // Para una tarea sin hijas (individual), esto no cambia nada más que a sí misma.
   autorizarMerge: (id) => {
     set((s) => {
-      const descendientes = new Set<string>();
-      const recolectar = (padreId: string) => {
-        s.tareas.forEach((t) => {
-          if (t.tarea_padre_id === padreId && !t.eliminada) {
-            descendientes.add(t.id);
-            recolectar(t.id);
-          }
-        });
-      };
-      recolectar(id);
+      const descendientes = descendientesDe(s.tareas, id);
       const hoy = today();
       return {
         tareas: normalizarJerarquiaEstados(
@@ -461,11 +481,19 @@ export const useStore = create<State>((set, get) => {
 
   rechazarRevision: (id, motivo) => {
     const tarea = get().tareas.find((t) => t.id === id);
-    set((s) => ({
-      tareas: normalizarJerarquiaEstados(
-        s.tareas.map((t) => (t.id === id ? { ...t, estado: 'en producción', motivo_rechazo: motivo } : t))
-      ),
-    }));
+    // Igual que moverTarea: si es una tarea general, sus subtareas también vuelven a producción.
+    set((s) => {
+      const descendientes = descendientesDe(s.tareas, id);
+      return {
+        tareas: normalizarJerarquiaEstados(
+          s.tareas.map((t) => {
+            if (t.id === id) return { ...t, estado: 'en producción', motivo_rechazo: motivo };
+            if (descendientes.has(t.id)) return { ...t, estado: 'en producción' };
+            return t;
+          })
+        ),
+      };
+    });
     get().showToast('Revisión rechazada — vuelve a producción', 'danger');
     if (tarea?.asignado_a) {
       notificar({
