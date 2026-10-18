@@ -2,18 +2,27 @@
 
 ## Datos reales en la documentación
 
-`SEGURIDAD.md` contiene una tabla con **correos reales** de los miembros del equipo (sección "Usuarios semilla"). Esto fue una decisión consciente del usuario: **no son contraseñas ni claves, solo correos**, y aceptó el riesgo de tenerlos versionados en git. **No sugerir quitarlos, moverlos a un `.gitignore`, ni marcarlo como hallazgo de seguridad** — ya se discutió y se decidió dejarlos así. Si el repositorio se fuera a subir a GitHub o compartir más ampliamente, ahí sí vale la pena retomar el tema, pero no antes.
+`documentacion/SEGURIDAD.md` contiene una tabla con **correos reales** de los miembros del equipo (sección "Usuarios semilla"). Esto fue una decisión consciente del usuario: **no son contraseñas ni claves, solo correos**, y aceptó el riesgo de tenerlos versionados en git. **No sugerir quitarlos, moverlos a un `.gitignore`, ni marcarlo como hallazgo de seguridad** — ya se discutió y se decidió dejarlos así. Si el repositorio se fuera a subir a GitHub o compartir más ampliamente, ahí sí vale la pena retomar el tema, pero no antes.
 
-## Flujo de trabajo de este proyecto
+## Estructura del repositorio
 
-Varias sesiones de Claude trabajan en paralelo en esta carpeta, cada una sobre su propio documento:
-- `PLANNING.md` — visión general y conceptos compartidos (punto de choque entre sesiones, no editar dos sesiones a la vez)
-- `BACKEND.md` — lógica de backend (Rust + Tauri)
-- `FRONTEND.md` — interfaz (React + TypeScript + Tauri)
-- `SEGURIDAD.md` — seguridad y roles/permisos
-- `ARQUITECTURA.md` — vista de pájaro de cómo encajan los componentes (monolito de escritorio Fase 1); no duplica detalle, indexa hacia `BACKEND.md`/`FRONTEND.md`
+- `documentacion/` — toda la documentación de diseño del producto (ver detalle abajo).
+- `app/backend/` — **todavía no tiene código real**, solo un `README.md` placeholder. Toda la lógica de backend vive únicamente en `documentacion/BACKEND.md`. **No empezar a implementar código Rust/Tauri aquí sin que el usuario lo pida explícitamente.**
+- `app/frontend/` — código React/TypeScript/Vite/Tailwind real (mockup funcional). Es la única parte del proyecto con código de aplicación implementado por ahora.
 
-Antes de editar `PLANNING.md`, revisar `git status` — si tiene cambios sin comitear de otra sesión, evitar editarlo al mismo tiempo. Los demás documentos (`BACKEND.md`, `FRONTEND.md`, `SEGURIDAD.md`) incluyen una sección "Contexto completo del proyecto" que resume las decisiones clave para que cualquier sesión tenga contexto sin necesitar leer los demás archivos — mantenerla sincronizada cuando cambien decisiones importantes (stack, roles, flujo de identidad, etc.).
+## Flujo de trabajo de la documentación
+
+Varias sesiones de Claude trabajan en paralelo en `documentacion/`, cada una sobre su propio documento:
+- `documentacion/PLANNING.md` — visión general y conceptos compartidos (punto de choque entre sesiones, no editar dos sesiones a la vez)
+- `documentacion/BACKEND.md` — lógica de backend (Rust + Tauri)
+- `documentacion/FRONTEND.md` — interfaz (React + TypeScript + Tauri)
+- `documentacion/SEGURIDAD.md` — seguridad y roles/permisos
+- `documentacion/ARQUITECTURA.md` — vista de pájaro de cómo encajan los componentes (monolito de escritorio Fase 1); no duplica detalle, indexa hacia `BACKEND.md`/`FRONTEND.md`
+- `documentacion/pendientes.md` — lista viva de huecos/bugs de diseño encontrados en auditorías, con su resolución
+
+Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene cambios sin comitear de otra sesión, evitar editarlo al mismo tiempo. Los demás documentos (`BACKEND.md`, `FRONTEND.md`, `SEGURIDAD.md`) incluyen una sección "Contexto completo del proyecto" que resume las decisiones clave para que cualquier sesión tenga contexto sin necesitar leer los demás archivos — mantenerla sincronizada cuando cambien decisiones importantes (stack, roles, flujo de identidad, etc.).
+
+**Siempre que se toque diseño de interfaz** (una pantalla nueva, un flujo, un componente, resolver un punto de "Pendiente por definir", etc.) **se debe actualizar `documentacion/FRONTEND.md`** para que quede reflejada la decisión — no dejarlo solo implementado en el código de `app/frontend/`.
 
 ## Flujo de ramas del repositorio de código (este repo, no el producto)
 

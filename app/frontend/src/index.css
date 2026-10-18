@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    background: rgba(99, 102, 241, 0.35);
+  }
+  /* scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2b313f transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #2b313f;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #3a4252;
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-150 select-none disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-primary text-white hover:bg-primary-hover shadow-sm hover:shadow;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-muted hover:text-text hover:bg-surface-3;
+  }
+  .btn-outline {
+    @apply btn border border-border text-text hover:border-border-strong hover:bg-surface-3;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-white hover:brightness-110;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .card {
+    @apply bg-surface border border-border rounded-xl shadow-card;
+  }
+  .input {
+    @apply w-full rounded-lg bg-surface-2 border border-border px-3 py-2 text-sm text-text placeholder:text-faint outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/30;
+  }
+  .label {
+    @apply block text-xs font-medium text-muted mb-1.5;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .nav-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-3 hover:text-text;
+  }
+  .nav-link-active {
+    @apply bg-primary-soft text-text;
+  }
+}
