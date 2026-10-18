@@ -28,6 +28,7 @@ Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene c
 
 **No confundir con el modelo `dev`/`main` que BranchBoard-el-producto usa para gestionar tareas de un proyecto Unity** (eso está documentado en `PLANNING.md`/`BACKEND.md`, es lo que la app gestiona para otros). Esto es sobre cómo el equipo versiona el **código fuente de BranchBoard mismo**, una vez empiecen a implementar:
 
-- **Sin rama `dev`** — todo apunta directo a `main`.
-- Cada feature/cambio vive en su propia rama, creada desde `main`.
+- **Hay rama `dev`** (creada el 2026-10-15 desde `main`) — es la rama de integración: los PR de features apuntan a `dev`, no a `main`.
+- Cada feature/cambio vive en su propia rama, creada desde `dev`.
 - Una rama se cierra **únicamente mediante un Pull Request**, y ese PR solo se mergea **si ya se resolvieron todos los conflictos antes** — nunca se mergea un PR con conflictos pendientes.
+- **Pendiente por definir**: cuándo y cómo pasa `dev` a `main` (ej. un PR de `dev` → `main` al cerrar cada entrega).
