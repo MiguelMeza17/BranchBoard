@@ -115,6 +115,7 @@ export function ScrumBoard() {
   const tomarTarea = useStore((s) => s.tomarTarea);
   const desasignarTarea = useStore((s) => s.desasignarTarea);
   const autorizarMerge = useStore((s) => s.autorizarMerge);
+  const puedeAvanzar = useStore((s) => s.puedeAvanzar);
   const crearTareaConSubtareas = useStore((s) => s.crearTareaConSubtareas);
   const sprints = useStore((s) => s.sprints);
   const showToast = useStore((s) => s.showToast);
@@ -308,7 +309,7 @@ export function ScrumBoard() {
         showToast('Esta tarea está pendiente de aprobación — no se puede mandar a revisión', 'danger');
         return;
       }
-      setPendingMove({ id, to });
+      if (puedeAvanzar(id, to)) setPendingMove({ id, to });
       return;
     }
 
@@ -339,7 +340,7 @@ export function ScrumBoard() {
         {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && (
           <button
             className="btn-primary btn-sm"
-            onClick={() => setPendingMove({ id: t.id, to: 'terminada' })}
+            onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}
           >
             ✓ Autorizar (merge a dev)
           </button>

@@ -19,11 +19,13 @@ function compararTareas(a: Tarea, b: Tarea): number {
 }
 
 // Etiqueta de estado de aprobación con una explicación corta en gris al pasar el mouse.
+// La ayuda se abre siempre a la derecha, centrada con la etiqueta, para que quede dentro de
+// su propia fila y no se salga de la tarjeta en la última.
 function EtiquetaConAyuda({ className, ayuda, children }: { className: string; ayuda: string; children: React.ReactNode }) {
   return (
     <span className="group relative">
       <span className={`chip cursor-help border ${className}`}>{children}</span>
-      <span className="pointer-events-none absolute left-0 top-full z-20 mt-1.5 hidden w-64 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-normal text-muted shadow-lg group-hover:block">
+      <span className="pointer-events-none absolute left-full top-1/2 z-20 ml-2 hidden w-80 -translate-y-1/2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-normal text-muted shadow-lg group-hover:block">
         {ayuda}
       </span>
     </span>
