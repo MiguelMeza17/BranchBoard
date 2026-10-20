@@ -15,7 +15,7 @@ import { useStore } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
-import { TaskCard } from '../components/TaskCard';
+import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
@@ -40,6 +40,7 @@ function DraggableCard({
   onOpenDetalle,
   tipoResumen,
   onOpenTipo,
+  estadoResumen,
   footer,
   ocultarResponsable,
 }: {
@@ -49,6 +50,7 @@ function DraggableCard({
   onOpenDetalle?: () => void;
   tipoResumen?: { tipo: Tarea['tipo']; count: number }[];
   onOpenTipo?: (tipo: Tarea['tipo']) => void;
+  estadoResumen?: { estado: EstadoVisual; count: number }[];
   footer?: React.ReactNode;
   ocultarResponsable?: boolean;
 }) {
@@ -62,6 +64,7 @@ function DraggableCard({
         onOpenDetalle={onOpenDetalle}
         tipoResumen={tipoResumen}
         onOpenTipo={onOpenTipo}
+        estadoResumen={estadoResumen}
         footer={footer}
         dragHandleProps={{ ...attributes, ...listeners }}
         ocultarResponsable={ocultarResponsable}
@@ -169,6 +172,20 @@ export function ScrumBoard() {
       resumen: orden.map((tipo) => ({ tipo: tipo as Tarea['tipo'], count: conteo.get(tipo)! })),
       primeraDeCadaTipo,
     };
+  };
+
+  // Cuántas subtareas directas (las que se ven al abrir la carpeta) hay en cada estado,
+  // en el orden de las columnas.
+  const estadoResumenDe = (id: string) => {
+    const desc = visibles.filter((t) => t.tarea_padre_id === id);
+    return COLUMNAS.map(({ id: col }) => ({
+      estado: (col === 'sin-asignar' ? 'sin asignar' : col) as EstadoVisual,
+      count: desc.filter((d) =>
+        col === 'sin-asignar'
+          ? d.estado === 'por hacer' && !d.asignado_a
+          : d.estado === col && (col !== 'por hacer' || !!d.asignado_a)
+      ).length,
+    })).filter((r) => r.count > 0);
   };
 
   // Ícono-botón: abre esa categoría (tablero Scrum de ese tipo) y resalta la subtarea puntual.
@@ -338,6 +355,7 @@ export function ScrumBoard() {
         onOpenDetalle={nHijos === 0 ? () => setDetalle(t) : undefined}
         tipoResumen={nHijos > 0 ? tipoResumenDe(t.id).resumen : undefined}
         onOpenTipo={(tipo) => abrirTipoEspecifico(t.id, tipo)}
+        estadoResumen={nHijos > 0 ? estadoResumenDe(t.id) : undefined}
         footer={footer}
         ocultarResponsable={t.estado === 'por hacer'}
       />
@@ -539,6 +557,7 @@ export function ScrumBoard() {
                   tipoResumen={
                     childrenCount(activeTask.id) > 0 ? tipoResumenDe(activeTask.id).resumen : undefined
                   }
+                  estadoResumen={childrenCount(activeTask.id) > 0 ? estadoResumenDe(activeTask.id) : undefined}
                 />
               </div>
             ) : null}

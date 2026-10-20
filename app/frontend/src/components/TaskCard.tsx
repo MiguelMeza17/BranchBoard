@@ -1,8 +1,13 @@
 import { useNavigate } from 'react-router-dom';
-import type { Tarea, TipoTarea } from '../types';
+import type { EstadoTarea, Tarea, TipoTarea } from '../types';
 import { TipoBadge, Avatar } from './primitives';
 import { tipoMeta, estadoMeta } from '../lib/ui';
-import { useStore } from '../store/useStore';
+
+/** "Sin asignar" es el recorte visual de 'por hacer' sin dueño, igual que la columna del tablero. */
+export type EstadoVisual = 'sin asignar' | EstadoTarea;
+
+const estadoVisualMeta = (e: EstadoVisual) =>
+  e === 'sin asignar' ? { label: 'Sin asignar', dot: '#94a3b8' } : estadoMeta[e];
 
 interface Props {
   tarea: Tarea;
@@ -13,6 +18,8 @@ interface Props {
   /** Resumen de los tipos que contiene por dentro (recursivo), solo si tiene subtareas. */
   tipoResumen?: { tipo: TipoTarea; count: number }[];
   onOpenTipo?: (tipo: TipoTarea) => void;
+  /** Cantidad de subtareas directas por estado, solo si tiene subtareas. */
+  estadoResumen?: { estado: EstadoVisual; count: number }[];
   footer?: React.ReactNode;
   dragHandleProps?: Record<string, unknown>;
   compact?: boolean;
@@ -27,6 +34,7 @@ export function TaskCard({
   onOpenDetalle,
   tipoResumen,
   onOpenTipo,
+  estadoResumen,
   footer,
   dragHandleProps,
   compact,
@@ -35,7 +43,6 @@ export function TaskCard({
   const navigate = useNavigate();
   const accent = tipoMeta[tarea.tipo].color;
   const tiposHijas = childCount > 0 ? tipoResumen ?? [] : [];
-  const commits = useStore((s) => s.commits).filter((c) => c.tarea_id === tarea.id);
   const estado = estadoMeta[tarea.estado];
   return (
     <div
@@ -103,15 +110,24 @@ export function TaskCard({
                 <span className="text-[11px] text-muted">{estado.label}</span>
               </div>
             )}
-            {commits.length > 0 && (
-              <ul className="mt-1 space-y-0.5" onClick={(e) => e.stopPropagation()}>
-                {commits.map((c) => (
-                  <li key={c.id} className="flex items-baseline gap-1.5 text-[11px] text-faint" title={c.mensaje}>
-                    <span className="shrink-0 font-mono text-accent/70">{c.hash}</span>
-                    <span className="truncate">{c.mensaje}</span>
-                  </li>
-                ))}
-              </ul>
+            {childCount > 0 && estadoResumen && estadoResumen.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {estadoResumen.map(({ estado: e, count }) => {
+                  const m = estadoVisualMeta(e);
+                  return (
+                    <span
+                      key={e}
+                      className="chip border"
+                      style={{ color: m.dot, borderColor: `${m.dot}55`, background: `${m.dot}18` }}
+                      title={`${count} ${m.label.toLowerCase()}`}
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.dot }} />
+                      <span className="font-semibold">{count}</span>
+                      <span>{m.label}</span>
+                    </span>
+                  );
+                })}
+              </div>
             )}
           </div>
           {tarea.asignado_a && !ocultarResponsable && (
@@ -134,7 +150,7 @@ export function TaskCard({
                   title={`Ir a la subtarea de ${tipo}`}
                 >
                   <span>{m.emoji}</span>
-                  {count > 1 && <span className="font-semibold">{count}</span>}
+                  <span className="font-semibold">{count}</span>
                 </button>
               );
             })
