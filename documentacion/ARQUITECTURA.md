@@ -8,17 +8,17 @@
 
 ## Componentes
 
-- **Frontend**: React + TypeScript, corriendo dentro de la webview de Tauri. Renderiza las pantallas (Scrum, Resumen, Lista de tareas, Avance, Branches, Revisión, Testing, Categorías, Reportes, Ajustes) y dispara acciones vía `invoke(...)` hacia el backend.
+- **Frontend**: React + TypeScript, corriendo dentro de la webview de Tauri. Renderiza las pantallas (Scrum, Resumen, Lista de tareas, Avance, Branches, Revisión, Testing, Pendientes, Papelera, Categorías, Reportes, Ajustes) y dispara acciones vía `invoke(...)` hacia el backend.
 - **Backend**: Rust, dentro del mismo proceso de Tauri. Expone comandos que el frontend invoca (`tomar_tarea`, `aprobar_tarea`, `crear_reporte_testing`, etc.), valida permisos por rol, y es el único que toca SQLite y `cm`.
-- **Persistencia (SQLite)**: un archivo `.db` por proyecto, sincronizado a la nube (Drive/OneDrive) para compartirlo entre el equipo. Guarda tareas, usuarios, solicitudes de ingreso, notificaciones, colaboradores externos — todo excepto el código/archivos versionados en sí.
+- **Persistencia (SQLite)**: cada máquina tiene su propio `.db` local, que **no se sincroniza directamente**. Lo que se comparte por la nube (Drive/OneDrive) es un log de eventos (carpeta `ops/`); cada máquina reproduce esos eventos sobre su `.db` local para llegar al mismo estado — ver [Sincronización entre máquinas en BACKEND.md](./BACKEND.md#sincronización-entre-máquinas-arquitectura-de-eventos). Guarda tareas, usuarios, solicitudes de ingreso, notificaciones, colaboradores externos — todo excepto el código/archivos versionados en sí.
 - **Unity Version Control (vía `cm`)**: el backend invoca el CLI `cm` como subproceso para todo lo que toca ramas/changesets (crear rama, checkin, merge, leer historial). Es la fuente de verdad del código y los assets versionados — SQLite solo guarda referencias (nombre de rama, último changeset visto), nunca el contenido.
 - **Gluon (workspace parcial)**: variante liviana de `cm` para colaboradores externos sin el proyecto completo instalado — mismo mecanismo de invocar subprocesos, solo que con `cm partial` en vez de los comandos normales.
-- **Cloudflare WARP**: dependencia externa opcional, gestionada desde la app (`warp-cli`), necesaria quando la red bloquea la conexión a Unity VC.
+- **Cloudflare WARP**: dependencia externa opcional, gestionada desde la app (`warp-cli`), necesaria cuando la red bloquea la conexión a Unity VC.
 
 ## Decisiones de arquitectura ya tomadas
 
 - **Sin backend propio de autenticación**: la identidad se resuelve con `cm whoami` para todos los roles (incluidos los colaboradores con workspace parcial) — ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario).
 - **Sin servicios en la nube propios** (ni Service Account, ni API REST propia): se descartó ese diseño a favor de Gluon — ver [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples).
-- **SQLite como único almacén de datos de la app**, sincronizado por una carpeta de nube ya existente del equipo (no se construye infraestructura de sincronización propia) — ver [Alcance en BACKEND.md](./BACKEND.md#alcance).
+- **SQLite local como único almacén de datos de la app, sincronizado indirectamente vía un log de eventos** (no el archivo `.db` en sí) por una carpeta de nube ya existente del equipo (no se construye infraestructura de sincronización propia) — ver [Sincronización entre máquinas en BACKEND.md](./BACKEND.md#sincronización-entre-máquinas-arquitectura-de-eventos).
 - **Todas las reglas de negocio (roles, límite de profundidad de ramas, estados) viven en el backend de BranchBoard, no en Unity VC** — Unity VC no tiene forma de conocerlas ni aplicarlas. Esto significa que solo se cumplen si el equipo usa BranchBoard como única puerta de entrada — ver [Protección de ramas en BACKEND.md](./BACKEND.md#protección-de-ramas-main-y-dev).
 - **Comandos externos siempre por subproceso con argumentos separados**, nunca por string de shell — ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos).
