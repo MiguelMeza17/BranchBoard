@@ -31,4 +31,4 @@ Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene c
 - **Hay rama `dev`** (creada el 2026-10-15 desde `main`) — es la rama de integración: los PR de features apuntan a `dev`, no a `main`.
 - Cada feature/cambio vive en su propia rama, creada desde `dev`.
 - Una rama se cierra **únicamente mediante un Pull Request**, y ese PR solo se mergea **si ya se resolvieron todos los conflictos antes** — nunca se mergea un PR con conflictos pendientes.
-- **Pendiente por definir**: cuándo y cómo pasa `dev` a `main` (ej. un PR de `dev` → `main` al cerrar cada entrega).
+- **`dev` pasa a `main` con un PR de `dev` → `main`** (definido el 2026-10-19, primera vez en el PR #17): se abre con `gh pr create --base main --head dev`, se revisa que no tenga conflictos (`gh pr view --json mergeable,mergeStateStatus` debe dar `MERGEABLE`) y se mergea con merge commit (`gh pr merge <número> --merge`). **Nunca con `--delete-branch`**: `dev` es permanente y no se borra. El momento lo decide el equipo cuando quiera llevar lo acumulado en `dev` a `main`.
