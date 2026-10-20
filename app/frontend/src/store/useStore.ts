@@ -79,6 +79,29 @@ function descendientesDe(tareas: Tarea[], id: string): Set<string> {
   return ids;
 }
 
+// Subtareas (de cualquier nivel) que impiden que una tarea avance. Para mandarla a revisión no
+// puede quedar ninguna en "por hacer"/"en producción". Para el merge (orden de abajo hacia arriba,
+// BACKEND.md) todas deben estar ya "terminada", es decir, mergeadas antes a su rama padre.
+function subtareasPendientes(tareas: Tarea[], id: string, estado: EstadoTarea): Tarea[] {
+  const descendientes = descendientesDe(tareas, id);
+  return tareas.filter(
+    (t) =>
+      descendientes.has(t.id) &&
+      (estado === 'terminada' ? t.estado !== 'terminada' : t.estado === 'por hacer' || t.estado === 'en producción')
+  );
+}
+
+function avisoSubtareasPendientes(pendientes: Tarea[], estado: EstadoTarea): string {
+  const lista = pendientes
+    .slice(0, 3)
+    .map((t) => `${t.id} (${t.estado})`)
+    .join(', ');
+  const resto = pendientes.length > 3 ? ` y ${pendientes.length - 3} más` : '';
+  return estado === 'terminada'
+    ? `No se puede mergear: primero hay que mergear sus subtareas a su rama — ${lista}${resto}`
+    : `No se puede mandar a revisión: tiene subtareas pendientes — ${lista}${resto}`;
+}
+
 export interface NuevaTarea {
   titulo: string;
   descripcion: string;
@@ -125,6 +148,8 @@ interface State {
   currentUser: () => Usuario;
 
   // acciones de tareas
+  /** Si la tarea no puede pasar a "en revisión"/"terminada" por tener subtareas pendientes, avisa con un toast y devuelve false. */
+  puedeAvanzar: (id: string, estado: EstadoTarea) => boolean;
   moverTarea: (id: string, estado: EstadoTarea) => void;
   tomarTarea: (id: string, email: string, modo?: 'rama' | 'checkin') => void;
   desasignarTarea: (id: string) => void;
@@ -220,12 +245,24 @@ export const useStore = create<State>((set, get) => {
     return s.usuarios.find((u) => u.email === s.currentEmail) ?? s.usuarios[0];
   },
 
+  puedeAvanzar: (id, estado) => {
+    if (estado !== 'en revisión' && estado !== 'terminada') return true;
+    const pendientes = subtareasPendientes(get().tareas, id, estado);
+    if (pendientes.length === 0) return true;
+    get().showToast(avisoSubtareasPendientes(pendientes, estado), 'danger');
+    return false;
+  },
+
   moverTarea: (id, estado) => {
+    if (!get().puedeAvanzar(id, estado)) return;
     const anterior = get().tareas.find((t) => t.id === id);
     // El estado de una tarea con subtareas se deriva de ellas: si solo se cambiara el padre,
-    // normalizarJerarquiaEstados lo devolvería a su columna. Por eso el cambio baja a todo su subárbol.
+    // normalizarJerarquiaEstados lo devolvería a su columna. Por eso el cambio hacia atrás baja a
+    // todo su subárbol. Hacia "en revisión"/"terminada" no hace falta: puedeAvanzar ya exigió que
+    // sus subtareas hayan llegado, y bajarlo devolvería a revisión subtareas ya terminadas.
+    const propaga = estado !== 'en revisión' && estado !== 'terminada';
     set((s) => {
-      const descendientes = descendientesDe(s.tareas, id);
+      const descendientes = propaga ? descendientesDe(s.tareas, id) : new Set<string>();
       return {
         tareas: normalizarJerarquiaEstados(
           s.tareas.map((t) =>
@@ -459,20 +496,15 @@ export const useStore = create<State>((set, get) => {
     get().showToast('Edición rechazada — se revirtieron los valores', 'danger');
   },
 
-  // Al autorizar la rama total (la tarea general), se valida junto con TODAS sus hijas (recursivo,
-  // ya terminaron su parte y están en "en revisión") — terminan todas a la vez, en un solo merge.
-  // Para una tarea sin hijas (individual), esto no cambia nada más que a sí misma.
+  // Orden de merge de abajo hacia arriba (BACKEND.md): una tarea con subtareas solo se mergea
+  // cuando todas ya se mergearon a su rama ("terminada"), y entonces termina solo ella.
   autorizarMerge: (id) => {
+    if (!get().puedeAvanzar(id, 'terminada')) return;
     set((s) => {
-      const descendientes = descendientesDe(s.tareas, id);
       const hoy = today();
       return {
         tareas: normalizarJerarquiaEstados(
-          s.tareas.map((t) =>
-            t.id === id || descendientes.has(t.id)
-              ? { ...t, estado: 'terminada', fecha_completada: hoy }
-              : t
-          )
+          s.tareas.map((t) => (t.id === id ? { ...t, estado: 'terminada', fecha_completada: hoy } : t))
         ),
       };
     });

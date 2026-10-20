@@ -12,6 +12,7 @@ export function Revision() {
   const tareas = useStore((s) => s.tareas);
   const usuarios = useStore((s) => s.usuarios);
   const autorizarMerge = useStore((s) => s.autorizarMerge);
+  const puedeAvanzar = useStore((s) => s.puedeAvanzar);
   const rechazarRevision = useStore((s) => s.rechazarRevision);
   const asignarRevision = useStore((s) => s.asignarRevision);
   const showToast = useStore((s) => s.showToast);
@@ -155,7 +156,7 @@ export function Revision() {
           tarea={revisando}
           padre={revisando.tarea_padre_id ? tareas.find((x) => x.id === revisando.tarea_padre_id) : undefined}
           onClose={() => setRevisando(null)}
-          onAutorizar={() => { setAutorizar(revisando); setRevisando(null); }}
+          onAutorizar={() => { if (puedeAvanzar(revisando.id, 'terminada')) { setAutorizar(revisando); setRevisando(null); } }}
           onRechazar={() => { setRechazar(revisando); setRevisando(null); }}
           onPreRevisar={() => setPreview(revisando)}
           onAbrirUnity={() => showToast('Lanzando el Editor de Unity sobre el workspace…', 'info')}
