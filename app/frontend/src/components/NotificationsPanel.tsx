@@ -9,6 +9,7 @@ const tipoIcono: Record<string, string> = {
   tarea_asignada: '📥',
   edicion_pendiente: '✏️',
   tarea_a_revision: '🔀',
+  tarea_reabierta: '↩️',
   revision_asignada: '👤',
   inactividad: '⏰',
   accion_bd: '🗄️',

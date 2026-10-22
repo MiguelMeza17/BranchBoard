@@ -85,6 +85,8 @@ export interface Tarea {
   fecha_eliminacion: string | null;
   motivo_rechazo: string | null;
   reporte_testing_origen_id: string | null;
+  // Veces que volvió de "terminada" a "en revisión" (ver LIMITE_REAPERTURAS en useStore).
+  reaperturas?: number;
   // UI-only: edición pendiente (sombra amarilla) — derivada de ediciones_pendientes
   edicion_pendiente: boolean;
 }
@@ -116,6 +118,7 @@ export type TipoNotificacion =
   | 'tarea_asignada'
   | 'edicion_pendiente'
   | 'tarea_a_revision'
+  | 'tarea_reabierta'
   | 'revision_asignada'
   | 'inactividad'
   | 'accion_bd'

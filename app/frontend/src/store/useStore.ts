@@ -64,6 +64,16 @@ function normalizarJerarquiaEstados(tareas: Tarea[]): Tarea[] {
   return resultado;
 }
 
+// Reabrir = devolver una tarea "terminada" (ya mergeada a dev) a "en revisión". Para que no se
+// intercale de forma indefinida, cada tarea se puede reabrir hasta este número de veces; después
+// solo el Administrador puede seguir reabriéndola.
+export const LIMITE_REAPERTURAS = 3;
+
+/** Si el usuario con este rol todavía puede reabrir la tarea. */
+export function puedeReabrir(t: Tarea, rol: Rol): boolean {
+  return rol === 'Administrador' || (t.reaperturas ?? 0) < LIMITE_REAPERTURAS;
+}
+
 // Ids de todo el subárbol (hijas, nietas, etc.) no eliminado de una tarea.
 function descendientesDe(tareas: Tarea[], id: string): Set<string> {
   const ids = new Set<string>();
@@ -170,6 +180,8 @@ interface State {
 
   // revisión
   autorizarMerge: (id: string) => void;
+  /** "terminada" -> "en revisión" con motivo obligatorio; respeta LIMITE_REAPERTURAS. */
+  reabrirTarea: (id: string, motivo: string) => void;
   rechazarRevision: (id: string, motivo: string) => void;
   asignarRevision: (id: string, liderEmail: string) => void;
   autoasignarRevision: (id: string, email: string) => void;
@@ -509,6 +521,36 @@ export const useStore = create<State>((set, get) => {
       };
     });
     get().showToast('Merge autorizado — tarea terminada');
+  },
+
+  // Las subtareas se quedan "terminada": solo se reabre la rama total. normalizarJerarquiaEstados
+  // la deja en "en revisión" porque todas sus hijas ya terminaron.
+  reabrirTarea: (id, motivo) => {
+    const tarea = get().tareas.find((t) => t.id === id);
+    if (!tarea || tarea.estado !== 'terminada') return;
+    if (!puedeReabrir(tarea, get().currentUser().rol)) {
+      get().showToast(
+        `Esta tarea ya se reabrió ${LIMITE_REAPERTURAS} veces — solo el Administrador puede reabrirla otra vez`,
+        'danger'
+      );
+      return;
+    }
+    const reaperturas = (tarea.reaperturas ?? 0) + 1;
+    set((s) => ({
+      tareas: normalizarJerarquiaEstados(
+        s.tareas.map((t) =>
+          t.id === id ? { ...t, estado: 'en revisión', fecha_completada: null, reaperturas } : t
+        )
+      ),
+    }));
+    get().showToast(`Tarea reabierta — vuelve a revisión (${reaperturas}/${LIMITE_REAPERTURAS})`, 'info');
+    notificarLideres({
+      tipo: 'tarea_reabierta',
+      titulo: 'Una tarea terminada se reabrió',
+      cuerpo: `"${tarea.titulo}" (${id}) volvió a revisión (reapertura ${reaperturas}/${LIMITE_REAPERTURAS}). Motivo: ${motivo}`,
+      tarea_id: id,
+      accionable: false,
+    });
   },
 
   rechazarRevision: (id, motivo) => {
