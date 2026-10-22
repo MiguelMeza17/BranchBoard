@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { useStore } from '../store/useStore';
+import { useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
@@ -115,6 +115,7 @@ export function ScrumBoard() {
   const tomarTarea = useStore((s) => s.tomarTarea);
   const desasignarTarea = useStore((s) => s.desasignarTarea);
   const autorizarMerge = useStore((s) => s.autorizarMerge);
+  const reabrirTarea = useStore((s) => s.reabrirTarea);
   const puedeAvanzar = useStore((s) => s.puedeAvanzar);
   const crearTareaConSubtareas = useStore((s) => s.crearTareaConSubtareas);
   const sprints = useStore((s) => s.sprints);
@@ -123,6 +124,7 @@ export function ScrumBoard() {
   const [focusId, setFocusId] = useState<string | null>(null); // navegación tipo carpeta
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);
+  const [reabrirId, setReabrirId] = useState<string | null>(null);
   const [tomarId, setTomarId] = useState<string | null>(null);
   const [mostrarTomarModal, setMostrarTomarModal] = useState(false);
   const [modoTomar, setModoTomar] = useState<'rama' | 'checkin'>('rama');
@@ -297,9 +299,28 @@ export function ScrumBoard() {
     const to = toCol;
     if (tarea.estado === to) return;
 
+    // Reabrir (terminada -> en revisión): candado "reabrir" con motivo, y tope de reaperturas.
+    if (tarea.estado === 'terminada' && to === 'en revisión') {
+      if (!puedeReabrir(tarea, user.rol)) {
+        showToast(
+          `Esta tarea ya se reabrió ${LIMITE_REAPERTURAS} veces — solo el Administrador puede reabrirla otra vez`,
+          'danger'
+        );
+        return;
+      }
+      setReabrirId(id);
+      return;
+    }
+
     // Desarrollador/Tester no pueden mandar a "terminada" directo — solo vía revisión
     if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
       showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
+      return;
+    }
+
+    // Líder/Administrador: mergear a dev pide el mismo candado "autorizar" que la pantalla Revisión.
+    if (to === 'terminada') {
+      if (puedeAvanzar(id, to)) setPendingMove({ id, to });
       return;
     }
 
@@ -584,6 +605,30 @@ export function ScrumBoard() {
           pendingMove?.to === 'terminada'
             ? 'Vas a mergear esta rama directamente a dev. Es una acción delicada sobre Unity Version Control.'
             : 'La tarea pasará a "en revisión" y aparecerá en la carpeta "Tareas grandes" de Revisión, visible para todo el equipo. Autorizan Líder/Administrador.'
+        }
+      />
+
+      {/* Reabrir una tarea terminada (ya mergeada a dev): candado + motivo obligatorio */}
+      <ConfirmLock
+        open={!!reabrirId}
+        onClose={() => setReabrirId(null)}
+        onConfirm={(motivo) => {
+          if (reabrirId) reabrirTarea(reabrirId, motivo ?? '');
+          setReabrirId(null);
+        }}
+        title="Reabrir tarea terminada"
+        palabra="reabrir"
+        confirmLabel="Reabrir"
+        requiereJustificacion
+        justificacionLabel="Motivo de la reapertura"
+        description={
+          <>
+            La tarea ya se mergeó a dev y volverá a "en revisión". Se avisará a Líderes y Administradores.{' '}
+            <span className="font-semibold text-text">
+              Reaperturas: {tareasAll.find((t) => t.id === reabrirId)?.reaperturas ?? 0}/{LIMITE_REAPERTURAS}
+            </span>
+            {' '}— al llegar al tope, solo el Administrador puede reabrirla.
+          </>
         }
       />
 

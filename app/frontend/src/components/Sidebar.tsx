@@ -21,7 +21,16 @@ const NAV: NavItem[] = [
   { to: '/ajustes', icon: '⚙️', label: 'Ajustes' },
 ];
 
-export function Sidebar() {
+// Clases literales (no armadas con template) para que Tailwind las genere.
+const PUNTO_ROJO = { solido: 'bg-red-500', halo: 'bg-red-500/25' };
+const PUNTO_AZUL = { solido: 'bg-primary', halo: 'bg-primary/25' };
+
+interface SidebarProps {
+  colapsado: boolean;
+  onToggle: () => void;
+}
+
+export function Sidebar({ colapsado, onToggle }: SidebarProps) {
   const tareas = useStore((s) => s.tareas);
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
   const sprints = useStore((s) => s.sprints);
@@ -48,21 +57,79 @@ export function Sidebar() {
     '/revision': 'bg-fuchsia-500/20 text-fuchsia-300',
   };
 
+  const puntoDeRuta = (to: string) => {
+    if (to === '/reportes' && hayReporteActivo) return PUNTO_ROJO;
+    if (to === '/branches' && hayCambioBranches) return PUNTO_AZUL;
+    if (rutasConPuntoAzul.has(to) && hayTareasActivas) return PUNTO_AZUL;
+    return null;
+  };
+
+  const etiquetaToggle = colapsado ? 'Expandir menú' : 'Contraer menú';
+
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex items-center gap-2.5 px-5 py-5">
-        <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-lg shadow-sm">
+    <aside
+      className={`flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 ${
+        colapsado ? 'w-16' : 'w-60'
+      }`}
+    >
+      <div className={`flex items-center gap-2.5 py-5 ${colapsado ? 'flex-col px-2' : 'px-5'}`}>
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-lg shadow-sm">
           {/* placeholder: aquí va el icono/imagen definitiva */}
         </div>
-        <div className="leading-tight">
-          <div className="text-sm font-bold text-text">BranchBoard</div>
-          <div className="font-mono text-[11px] text-faint">VirusTF</div>
-        </div>
+        {!colapsado && (
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="text-sm font-bold text-text">BranchBoard</div>
+            <div className="font-mono text-[11px] text-faint">VirusTF</div>
+          </div>
+        )}
+        <button
+          onClick={onToggle}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-3 hover:text-text"
+          title={etiquetaToggle}
+          aria-label={etiquetaToggle}
+          aria-expanded={!colapsado}
+        >
+          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M3 5h14M3 10h14M3 15h14" />
+          </svg>
+        </button>
       </div>
 
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
+      <nav className={`flex-1 space-y-0.5 overflow-y-auto pb-4 ${colapsado ? 'px-2' : 'px-3'}`}>
         {NAV.map((item) => {
           const badge = badgeByPath[item.to];
+          const punto = puntoDeRuta(item.to);
+
+          // Contraído: solo el ícono, con el badge/punto superpuesto en la esquina
+          // y la etiqueta como tooltip nativo.
+          if (colapsado) {
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                title={badge !== undefined ? `${item.label} (${badge})` : item.label}
+                aria-label={item.label}
+                className={({ isActive }) => `nav-link justify-center px-0 ${isActive ? 'nav-link-active' : ''}`}
+              >
+                <span className="relative text-base leading-none">
+                  {item.icon}
+                  {badge !== undefined && badge > 0 && (
+                    <span
+                      className={`absolute -right-2.5 -top-2 grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[9px] font-bold ${
+                        colorBadgePorRuta[item.to] ?? 'bg-primary text-white'
+                      }`}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                  {punto && (
+                    <span className={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full ${punto.solido}`} />
+                  )}
+                </span>
+              </NavLink>
+            );
+          }
+
           return (
             <NavLink
               key={item.to}
@@ -71,22 +138,10 @@ export function Sidebar() {
             >
               <span className="text-base leading-none">{item.icon}</span>
               <span className="truncate">{item.label}</span>
-              {item.to === '/reportes' && hayReporteActivo && (
+              {punto && (
                 <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-red-500/25 blur-[2px]" />
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-                </span>
-              )}
-              {item.to === '/branches' && hayCambioBranches && (
-                <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-primary/25 blur-[2px]" />
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                </span>
-              )}
-              {rutasConPuntoAzul.has(item.to) && hayTareasActivas && (
-                <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-primary/25 blur-[2px]" />
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                  <span className={`absolute h-2.5 w-2.5 rounded-full blur-[2px] ${punto.halo}`} />
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${punto.solido}`} />
                 </span>
               )}
               {badge !== undefined && (
@@ -103,9 +158,11 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-border px-4 py-3 text-[11px] text-faint">
-        Mockup UI · datos en memoria
-      </div>
+      {!colapsado && (
+        <div className="border-t border-border px-4 py-3 text-[11px] text-faint">
+          Mockup UI · datos en memoria
+        </div>
+      )}
     </aside>
   );
 }

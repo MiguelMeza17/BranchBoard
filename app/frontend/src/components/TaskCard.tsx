@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import type { EstadoTarea, Tarea, TipoTarea } from '../types';
 import { TipoBadge, Avatar } from './primitives';
 import { tipoMeta, estadoMeta } from '../lib/ui';
+import { LIMITE_REAPERTURAS } from '../store/useStore';
 
 /** "Sin asignar" es el recorte visual de 'por hacer' sin dueño, igual que la columna del tablero. */
 export type EstadoVisual = 'sin asignar' | EstadoTarea;
@@ -94,6 +95,18 @@ export function TaskCard({
                   title="Check-in directo — sin rama propia, el trabajo va sobre la rama de la tarea padre"
                 >
                   ✅ Check-in directo
+                </span>
+              )}
+              {(tarea.reaperturas ?? 0) > 0 && (
+                <span
+                  className={`chip border ${
+                    (tarea.reaperturas ?? 0) >= LIMITE_REAPERTURAS
+                      ? 'border-red-500/40 bg-red-500/15 text-red-300'
+                      : 'border-border bg-surface-3 text-muted'
+                  }`}
+                  title="Veces que volvió de terminada a revisión — al llegar al tope solo el Administrador puede reabrirla"
+                >
+                  ↩️ Reabierta {tarea.reaperturas}/{LIMITE_REAPERTURAS}
                 </span>
               )}
             </div>
