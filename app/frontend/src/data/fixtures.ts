@@ -8,9 +8,29 @@ import type {
   EdicionPendiente,
   Backup,
   Commit,
+  WorkspaceUnityVC,
 } from '../types';
 
 export const PROYECTO_NOMBRE = 'VirusTF';
+
+// ---- Workspaces de Unity VC en esta máquina (simula `cm workspace list`) ----
+export const workspaces: WorkspaceUnityVC[] = [
+  {
+    nombre: 'VirusTF',
+    repo: 'VirusTF@MIGUELMEZA',
+    ruta: 'D:\\Unity\\VirusTF',
+    tiene_db_branchboard: true,
+  },
+  {
+    nombre: 'Prototipo-Plataformas',
+    repo: 'Prototipo-Plataformas@MIGUELMEZA',
+    ruta: 'D:\\Unity\\Prototipo-Plataformas',
+    tiene_db_branchboard: false,
+  },
+];
+
+// Correo de prueba que `cm whoami` puede devolver sin estar en la tabla de usuarios.
+export const CORREO_NO_REGISTRADO = 'ana.torres@estudiante.dev';
 
 // ---- Usuarios (equipo semilla VirusTF + tester + un pendiente de confirmar) ----
 export const usuarios: Usuario[] = [
