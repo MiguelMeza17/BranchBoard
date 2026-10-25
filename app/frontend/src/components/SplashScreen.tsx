@@ -34,7 +34,7 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
             <circle cx="72" cy="52" r="6" fill="#2dd4bf" />
           </g>
           <g className="splash-node splash-node--4">
-            <circle cx="28" cy="17" r="6" fill="#22c55e" />
+            <circle cx="28" cy="17" r="6" fill="#facc15" />
           </g>
         </svg>
         <div className="flex flex-col items-center gap-1">

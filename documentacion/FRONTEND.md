@@ -162,6 +162,7 @@ Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **ani
 
 - Duración: hasta que terminen las verificaciones, con un mínimo breve (ej. ~600ms) para que no se sienta como un parpadeo si todo responde instantáneo.
 - Pendiente definir: estilo exacto de la animación (logo con loop simple vs. algo más elaborado) — no es prioridad de lógica, es una mejora de percepción de carga.
+- **Implementado en el mockup** (`SplashScreen.tsx`): grafo de rama/merge que se dibuja nodo por nodo y termina en el wordmark. El último nodo (donde termina el merge) es **amarillo** (`#facc15`) con un **brillo amarillo** pulsante; los demás nodos conservan sus colores.
 
 ## Autenticación / acceso al proyecto
 
