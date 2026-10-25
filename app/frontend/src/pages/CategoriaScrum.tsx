@@ -40,14 +40,16 @@ function DraggableCard({
   onOpenDetalle,
   ocultarResponsable,
   resaltada,
+  disabled,
 }: {
   tarea: Tarea;
   footer: React.ReactNode;
   onOpenDetalle: () => void;
   ocultarResponsable: boolean;
   resaltada: boolean;
+  disabled: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id, disabled });
   const colorTipo = tipoMeta[tarea.tipo].color;
   return (
     <div
@@ -180,6 +182,8 @@ export function CategoriaScrum() {
     }
 
     if (toCol === 'por hacer' && tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      // Solo una tarjeta "en vuelo" a la vez (ver ScrumBoard).
+      if (tomarId) return;
       setTomarId(id);
       setBloqueado(true);
       setTimeout(() => {
@@ -333,6 +337,7 @@ export function CategoriaScrum() {
                         onOpenDetalle={() => setDetalle(t)}
                         ocultarResponsable={t.estado === 'por hacer'}
                         resaltada={resaltada === t.id}
+                        disabled={!!tomarId}
                       />
                     );
                   })}
