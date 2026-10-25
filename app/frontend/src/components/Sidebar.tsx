@@ -72,7 +72,7 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
         colapsado ? 'w-16' : 'w-60'
       }`}
     >
-      <div className={`flex items-center gap-2.5 py-5 ${colapsado ? 'flex-col px-2' : 'px-5'}`}>
+      <div className={`flex items-center gap-2.5 pt-5 ${colapsado ? 'justify-center px-2' : 'px-5'}`}>
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-lg shadow-sm">
           {/* placeholder: aquí va el icono/imagen definitiva */}
         </div>
@@ -82,6 +82,11 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
             <div className="font-mono text-[11px] text-faint">VirusTF</div>
           </div>
         )}
+      </div>
+
+      {/* El botón va siempre debajo de la cabecera y a la misma distancia del borde
+          (18px = centrado en la franja contraída de 64px), así no se mueve al alternar. */}
+      <div className="px-[18px] pb-3 pt-2">
         <button
           onClick={onToggle}
           className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-3 hover:text-text"
@@ -95,40 +100,11 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
         </button>
       </div>
 
-      <nav className={`flex-1 space-y-0.5 overflow-y-auto pb-4 ${colapsado ? 'px-2' : 'px-3'}`}>
+      {/* Contraído: no se muestra ningún botón de navegación, solo la franja con el logo y el toggle. */}
+      <nav className={`flex-1 space-y-0.5 overflow-y-auto px-3 pb-4 ${colapsado ? 'hidden' : ''}`}>
         {NAV.map((item) => {
           const badge = badgeByPath[item.to];
           const punto = puntoDeRuta(item.to);
-
-          // Contraído: solo el ícono, con el badge/punto superpuesto en la esquina
-          // y la etiqueta como tooltip nativo.
-          if (colapsado) {
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                title={badge !== undefined ? `${item.label} (${badge})` : item.label}
-                aria-label={item.label}
-                className={({ isActive }) => `nav-link justify-center px-0 ${isActive ? 'nav-link-active' : ''}`}
-              >
-                <span className="relative text-base leading-none">
-                  {item.icon}
-                  {badge !== undefined && badge > 0 && (
-                    <span
-                      className={`absolute -right-2.5 -top-2 grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[9px] font-bold ${
-                        colorBadgePorRuta[item.to] ?? 'bg-primary text-white'
-                      }`}
-                    >
-                      {badge}
-                    </span>
-                  )}
-                  {punto && (
-                    <span className={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full ${punto.solido}`} />
-                  )}
-                </span>
-              </NavLink>
-            );
-          }
 
           return (
             <NavLink
