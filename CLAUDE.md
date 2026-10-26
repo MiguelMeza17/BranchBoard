@@ -32,3 +32,14 @@ Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene c
 - Cada feature/cambio vive en su propia rama, creada desde `dev`.
 - Una rama se cierra **únicamente mediante un Pull Request**, y ese PR solo se mergea **si ya se resolvieron todos los conflictos antes** — nunca se mergea un PR con conflictos pendientes.
 - **`dev` pasa a `main` con un PR de `dev` → `main`** (definido el 2026-10-19, primera vez en el PR #17): se abre con `gh pr create --base main --head dev`, se revisa que no tenga conflictos (`gh pr view --json mergeable,mergeStateStatus` debe dar `MERGEABLE`) y se mergea con merge commit (`gh pr merge <número> --merge`). **Nunca con `--delete-branch`**: `dev` es permanente y no se borra. El momento lo decide el equipo cuando quiera llevar lo acumulado en `dev` a `main`.
+
+### Issues y nombre de rama
+
+- **Antes de implementar cualquier cambio**, Claude debe crear el issue correspondiente en GitHub (siempre, incluso para ajustes pequeños) — ningún cambio se empieza sin su issue.
+- El nombre de la rama debe incluir el número de issue, ej. `fix/123-descripcion-corta` o `feature/123-nombre`.
+- El PR que cierra esa rama (hacia `dev`) debe incluir en su descripción la palabra clave de GitHub (`Closes #123`, `Fixes #123` o `Resolves #123`) — es eso, no el nombre de la rama, lo que realmente cierra el issue al mergear.
+
+### Por ahora, solo frontend
+
+- **No tocar nada de `app/backend/` por ahora** — ni siquiera en paralelo a un cambio de frontend. Esto aplica aunque el issue/feature toque un flujo que eventualmente necesitará backend.
+- Todo cambio de frontend debe quedar reflejado en la documentación de backend correspondiente (`documentacion/BACKEND.md` y/o `documentacion/ARQUITECTURA.md`) para que, cuando se implemente el backend real, no haya que redescubrir qué asume el frontend — ver también la regla de mantener `documentacion/FRONTEND.md` sincronizada, arriba.

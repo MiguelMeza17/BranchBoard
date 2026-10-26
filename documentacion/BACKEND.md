@@ -227,7 +227,7 @@ Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend par
 
 ## Papelera
 
-**Nuevo**, va en el menú justo después de "Testing". **Visible para todos los roles** (Desarrollador y Tester la ven en **solo lectura**, igual que la carpeta "Tareas grandes" de Revisión) — lista todas las tareas con `eliminada = true`, sin importar si llegaron ahí por `eliminar_tarea` directo o por el rechazo de una tarea de Pendientes.
+**Nuevo**, va en el menú justo después de "Pendientes". **Visible para todos los roles** (Desarrollador y Tester la ven en **solo lectura**, igual que la carpeta "Tareas grandes" de Revisión) — lista todas las tareas con `eliminada = true`, sin importar si llegaron ahí por `eliminar_tarea` directo o por el rechazo de una tarea de Pendientes.
 
 - Comando Tauri `eliminar_definitivamente(tarea_id)`, **exclusivo Líder/Administrador**, mismo doble candado que el resto de acciones destructivas (escribir "eliminar" para habilitar el botón).
 - A diferencia de `eliminar_tarea` (que ya cerró la rama pero conserva la fila como soft-delete para historial), esto **borra la fila por completo** de la tabla `tareas` y purga la rama en Unity VC en vez de solo cerrarla (comando `cm` exacto pendiente de verificar al implementar — depende de si Unity VC permite borrar una rama cerrada o solo cerrarla para siempre).

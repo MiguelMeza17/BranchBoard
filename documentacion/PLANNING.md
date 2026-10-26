@@ -80,7 +80,7 @@ Ambas carpetas también se reflejan como columna/estado en el **Tablero Scrum** 
 
 ## Pendientes
 
-**Nuevo**, va en el menú justo después de **Testing** y antes de **Categorías**. Reemplaza al antiguo estado "bloqueada" (ver [Visión](#visión)).
+**Nuevo**, va en el menú justo después de **Revisión** y antes de **Papelera**. Reemplaza al antiguo estado "bloqueada" (ver [Visión](#visión)).
 
 - Lista las tareas (y subtareas) creadas por un **Desarrollador** o un **Tester** que todavía tienen `pendiente_aprobacion = true` — es decir, que un Líder/Administrador todavía no ha aprobado.
 - La tarea **no está oculta ni bloqueada** mientras espera aquí: aparece con normalidad en el Tablero Scrum (en "por hacer", o más adelante en "en producción" si alguien ya la tomó) — lo único que no puede hacer es **mandarse a revisión**, hasta que se apruebe desde aquí.
@@ -126,12 +126,11 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 4. **Tablero "Avance"** — **definido**: gráfica de **curva en el tiempo**, eje X = días, eje Y = **tareas resueltas ese día** (línea principal — se cuenta usando la fecha en que cada tarea pasó a "terminada"). Opcionalmente, una segunda línea muestra **cambios/changesets hechos ese día en todo el proyecto** (no por tarea, es actividad general del equipo vía `cm log` sobre todo el repositorio) — sirve para contrastar "mucha actividad pero pocas tareas cerrándose" vs. lo contrario. Responde "¿vamos bien o mal respecto al tiempo?".
 5. **"Branches"** — **nuevo**: la **gráfica de ascendencia/linaje de ramas** (árbol visual, no un kanban). Muestra `dev` como raíz, las ramas de tareas generales saliendo de ahí, las ramas hijas (subtareas) colgando de su rama padre, y las ramas nietas (subtareas de subtareas) un nivel más abajo. Cada rama se colorea según el estado de su tarea (por hacer / en producción / en revisión / terminada-mergeada). Inspirado en el "Branch Explorer" que ya trae Unity Version Control.
 6. **"Revisión"** (antes "Merging") — **nuevo**: página de estado de PR con 2 carpetas — "Tareas grandes" (visible para todos, solo lectura para Desarrollador/Tester, autorizan Líder/Admin hacia `dev`) y "Tareas pequeñas" (visible para todos, quien esté a cargo de la tarea padre autoriza, puede ser Desarrollador). Ver detalle en [Revisión](#revisión).
-7. **"Testing"** — apartado exclusivo del rol Tester para documentar reportes sobre tareas ya "terminada". Ver detalle en [Testing](#testing).
-8. **"Pendientes"** — **nuevo**: lista las tareas creadas por Desarrollador o Tester que todavía no han sido aprobadas por un Líder/Administrador. Va en el menú justo después de "Testing" y antes de "Papelera". Ver detalle en [Pendientes](#pendientes).
-9. **"Papelera"** — **nuevo**: lista las tareas eliminadas (soft-delete), con eliminación definitiva exclusiva de Líder/Administrador. Va justo después de "Pendientes" y antes de "Categorías". Ver detalle en [Papelera en BACKEND.md](./BACKEND.md#papelera).
-10. **"Categorías"** — **nuevo**: vista tipo explorador de carpetas, aparte de la Lista de tareas (que es plana). Son **solo carpetas visuales para organizar/filtrar, nunca ramas** — abrir una carpeta simplemente filtra las tareas de ese tipo. Carpetas: **Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing**.
-11. **"Reportes"** — reporte automático de cierre de sprint (con fecha), visible para todos los roles. Ver detalle en [Reportes](#reportes).
-12. **"Ajustes"** — **nuevo**: agrupa acciones administrativas que antes estaban definidas sueltas (gestión de usuarios, solicitudes de ingreso, backups, eliminar proyecto). Ver detalle en [Ajustes](./FRONTEND.md#ajustes).
+7. **"Pendientes"** — **nuevo**: lista las tareas creadas por Desarrollador o Tester que todavía no han sido aprobadas por un Líder/Administrador. Va en el menú justo después de "Revisión" y antes de "Papelera". Ver detalle en [Pendientes](#pendientes).
+8. **"Papelera"** — **nuevo**: lista las tareas eliminadas (soft-delete), con eliminación definitiva exclusiva de Líder/Administrador. Va justo después de "Pendientes" y antes de "Categorías". Ver detalle en [Papelera en BACKEND.md](./BACKEND.md#papelera).
+9. **"Categorías"** — **nuevo**: vista tipo explorador de carpetas, aparte de la Lista de tareas (que es plana). Son **solo carpetas visuales para organizar/filtrar, nunca ramas** — abrir una carpeta simplemente filtra las tareas de ese tipo. Carpetas: **Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing**.
+10. **"Reportes"** — reporte automático de cierre de sprint (con fecha), visible para todos los roles. Ver detalle en [Reportes](#reportes).
+11. **"Ajustes"** — **nuevo**: agrupa acciones administrativas que antes estaban definidas sueltas (gestión de usuarios, solicitudes de ingreso, backups, eliminar proyecto). Ver detalle en [Ajustes](./FRONTEND.md#ajustes).
 
 ## Pendiente por definir
 
