@@ -18,7 +18,7 @@ import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
-import { ConfirmarSaltoModal, estadosSaltados } from '../components/ConfirmarSaltoModal';
+import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
@@ -306,9 +306,9 @@ export function ScrumBoard() {
     const to = toCol;
     if (tarea.estado === to) return;
 
-    // Avanzar más de un estado a la vez (p. ej. "Sin asignar" → "En producción") pide confirmar
-    // el salto; al confirmarlo se sigue con el flujo normal de la columna destino (avanzarA).
-    if (estadosSaltados(tarea, to).length > 0) {
+    // Desde "Sin asignar" lo normal es pasar solo a "Por hacer" (ya tratado arriba). Forzarla a
+    // otra columna pide confirmar el salto; al confirmarlo sigue el flujo normal (avanzarA).
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
       if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
         showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
         return;

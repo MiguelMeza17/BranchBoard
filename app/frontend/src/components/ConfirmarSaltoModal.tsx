@@ -3,7 +3,7 @@ import { estadoMeta } from '../lib/ui';
 import type { EstadoVisual } from './TaskCard';
 import { Modal } from './Modal';
 
-// Orden de las columnas del tablero: lo normal es avanzar de una en una.
+// Orden de las columnas del tablero, para nombrar los estados que se salta la tarea.
 const ORDEN: EstadoVisual[] = ['sin asignar', 'por hacer', 'en producción', 'en revisión', 'terminada'];
 
 const labelDe = (e: EstadoVisual) => (e === 'sin asignar' ? 'Sin asignar' : estadoMeta[e].label);
@@ -11,13 +11,13 @@ const labelDe = (e: EstadoVisual) => (e === 'sin asignar' ? 'Sin asignar' : esta
 const columnaDe = (t: Tarea): EstadoVisual =>
   t.estado === 'por hacer' && !t.asignado_a ? 'sin asignar' : t.estado;
 
-/** Estados intermedios que se saltan al mover la tarea hacia adelante (vacío si es un paso normal o hacia atrás). */
-export function estadosSaltados(tarea: Tarea, to: EstadoTarea): EstadoVisual[] {
+function estadosSaltados(tarea: Tarea, to: EstadoTarea): EstadoVisual[] {
   const i = ORDEN.indexOf(columnaDe(tarea));
   const j = ORDEN.indexOf(to);
   return j > i + 1 ? ORDEN.slice(i + 1, j) : [];
 }
 
+/** Confirma forzar una tarea "Sin asignar" a una columna distinta de "Por hacer". */
 export function ConfirmarSaltoModal({
   tarea,
   to,
@@ -61,7 +61,7 @@ export function ConfirmarSaltoModal({
                 <span className="font-semibold text-text">{labelDe(e)}</span>
               </span>
             ))}
-            . Lo normal es avanzar un estado a la vez.
+            . Una tarea sin asignar normalmente solo pasa a Por hacer.
           </p>
           {sinDueno && (
             <p>Al continuar, la tarea se te asigna y se crea su rama, igual que con "Tomar tarea".</p>

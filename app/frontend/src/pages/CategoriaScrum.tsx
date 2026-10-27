@@ -18,7 +18,7 @@ import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard } from '../components/TaskCard';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
-import { ConfirmarSaltoModal, estadosSaltados } from '../components/ConfirmarSaltoModal';
+import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
@@ -198,8 +198,8 @@ export function CategoriaScrum() {
     const to = toCol;
     if (tarea.estado === to) return;
 
-    // Saltarse estados hacia adelante pide confirmación antes del flujo normal (avanzarA).
-    if (estadosSaltados(tarea, to).length > 0) {
+    // Desde "Sin asignar" solo se pasa a "Por hacer"; forzar otra columna pide confirmación.
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
       if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
         showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
         return;
