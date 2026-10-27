@@ -301,6 +301,13 @@ export function ScrumBoard() {
       return;
     }
 
+    // Una tarea sin dueño todavía no tiene rama: no puede saltar a "En producción" (ni más
+    // adelante) sin pasar antes por "Por hacer", que es donde se toma y se crea la rama.
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      showToast('Primero toma la tarea — arrástrala a "Por hacer" antes de moverla más adelante', 'danger');
+      return;
+    }
+
     const to = toCol;
     if (tarea.estado === to) return;
 

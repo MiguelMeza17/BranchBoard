@@ -193,6 +193,12 @@ export function CategoriaScrum() {
       return;
     }
 
+    // Sin dueño no hay rama: tiene que tomarse en "Por hacer" antes de avanzar.
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      showToast('Primero toma la tarea — arrástrala a "Por hacer" antes de moverla más adelante', 'danger');
+      return;
+    }
+
     const to = toCol;
     if (tarea.estado === to) return;
 
