@@ -46,6 +46,14 @@ export interface Usuario {
   firmado_en: string | null;
 }
 
+// Una línea de `cm workspace list`: workspace de Unity VC ya clonado en esta máquina.
+export interface WorkspaceUnityVC {
+  nombre: string;
+  repo: string;
+  ruta: string;
+  tiene_db_branchboard: boolean; // false = proyecto que nunca se configuró con BranchBoard
+}
+
 export interface Sprint {
   id: string;
   nombre: string;

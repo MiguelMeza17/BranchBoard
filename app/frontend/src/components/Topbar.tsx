@@ -9,6 +9,7 @@ export function Topbar() {
   const vpnOn = useStore((s) => s.vpnOn);
   const toggleVpn = useStore((s) => s.toggleVpn);
   const toggleCmSesion = useStore((s) => s.toggleCmSesion);
+  const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
   const setRolActual = useStore((s) => s.setRolActual);
   const showToast = useStore((s) => s.showToast);
   const notifs = useStore((s) => s.notificaciones);
@@ -78,6 +79,15 @@ export function Topbar() {
           onClick={toggleCmSesion}
         >
           🔒 Simular sin sesión Unity VC
+        </button>
+
+        {/* Demo: volver a las pantallas de acceso al proyecto */}
+        <button
+          className="btn-ghost btn-sm text-faint"
+          title="Demo: volver a la Pantalla inicial (acceso al proyecto)"
+          onClick={() => setAccesoCompletado(false)}
+        >
+          🚪 Pantallas de acceso
         </button>
       </div>
 

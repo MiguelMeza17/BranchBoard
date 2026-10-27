@@ -173,6 +173,8 @@ Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **ani
 
 Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco actual: el flujo de "ingresar a un proyecto existente". "Crear un nuevo proyecto" queda en blanco/stub por ahora, no se implementa todavía.**
 
+**Implementado en el mockup** (`AccesoProyecto.tsx`, se muestra después del splash): Pantalla inicial con el switch de VPN → lista de workspaces (fixture que simula `cm workspace list`, con aviso si la VPN está apagada) o, si no hay ninguno, "Clonar proyecto" con carpeta de destino y barra de progreso → según el workspace y el correo detectado: entra directo (registrado y firmado), "pendiente de confirmación" (`firma = NULL`), "no registrado" → formulario de solicitud que abre el `mailto:` prellenado hacia el correo de contacto, o "inicializar" (workspace sin `.db`, queda como Administrador). Como todavía no hay backend, **no actúa como gate real**: debajo de la tarjeta hay controles de demo para elegir qué correo devuelve `cm whoami` y un botón **"Saltar al tablero"** siempre visible; desde el Topbar, "🚪 Pantallas de acceso" vuelve a la Pantalla inicial.
+
 1. **Pantalla inicial**: incluye un **switch de "Conexión VPN" (Cloudflare WARP)**, visible siempre en esta pantalla — enciende/apaga la VPN desde la propia app (ver [Conexión VPN (Cloudflare WARP) en BACKEND.md](./BACKEND.md#conexión-vpn-cloudflare-warp)). Necesario porque en redes como la de la universidad, `cm` no conecta sin la VPN activa; el switch evita que el usuario tenga que ir a buscar el ícono de WARP fuera de la app. Si `warp-cli` no está instalado en la máquina, el switch aparece deshabilitado con instrucciones para instalarlo.
 
    Además, dos opciones —

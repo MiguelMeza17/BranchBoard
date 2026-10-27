@@ -4,6 +4,7 @@ import { useStore } from './store/useStore';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
+import { AccesoProyecto } from './components/AccesoProyecto';
 import { ScrumBoard } from './pages/ScrumBoard';
 import { Resumen } from './pages/Resumen';
 import { ListaTareas } from './pages/ListaTareas';
@@ -21,9 +22,14 @@ import { PerfilUsuario } from './pages/PerfilUsuario';
 export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
+  const accesoCompletado = useStore((s) => s.accesoCompletado);
 
   if (!showSplash && !cmSesionActiva) {
     return <SesionUnityVCRequerida />;
+  }
+
+  if (!showSplash && !accesoCompletado) {
+    return <AccesoProyecto />;
   }
 
   return (

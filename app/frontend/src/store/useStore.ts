@@ -130,6 +130,9 @@ interface State {
   // pantalla de "no hay sesión de Unity VC" en vez de los tableros (ver FRONTEND.md,
   // "Autenticación / acceso al proyecto"). Toggle de demo en el Topbar.
   cmSesionActiva: boolean;
+  // Si ya se pasó por las pantallas de acceso al proyecto (Pantalla inicial →
+  // workspaces → validación del .db). En el mockup nunca bloquea: se pueden saltar.
+  accesoCompletado: boolean;
 
   // datos
   usuarios: Usuario[];
@@ -151,6 +154,7 @@ interface State {
   setRolActual: (rol: Rol) => void; // cambia el rol del usuario activo (simulación)
   toggleVpn: () => void;
   toggleCmSesion: () => void;
+  setAccesoCompletado: (v: boolean) => void;
   showToast: (msg: string, tone?: 'ok' | 'info' | 'danger') => void;
   clearToast: () => void;
 
@@ -222,6 +226,7 @@ export const useStore = create<State>((set, get) => {
   currentEmail: fx.usuarios[0].email,
   vpnOn: true,
   cmSesionActiva: true,
+  accesoCompletado: false,
 
   usuarios: [...fx.usuarios],
   tareas: normalizarJerarquiaEstados([...fx.tareas]),
@@ -243,6 +248,7 @@ export const useStore = create<State>((set, get) => {
     })),
   toggleVpn: () => set((s) => ({ vpnOn: !s.vpnOn })),
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),
+  setAccesoCompletado: (v) => set({ accesoCompletado: v }),
   showToast: (msg, tone = 'ok') => {
     const id = Date.now();
     set({ toast: { id, msg, tone } });
