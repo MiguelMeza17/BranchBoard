@@ -43,6 +43,7 @@ function DraggableCard({
   estadoResumen,
   footer,
   ocultarResponsable,
+  disabled,
 }: {
   tarea: Tarea;
   childCount: number;
@@ -53,8 +54,9 @@ function DraggableCard({
   estadoResumen?: { estado: EstadoVisual; count: number }[];
   footer?: React.ReactNode;
   ocultarResponsable?: boolean;
+  disabled?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id, disabled });
   return (
     <div ref={setNodeRef} className={isDragging ? 'opacity-40' : ''}>
       <TaskCard
@@ -287,6 +289,9 @@ export function ScrumBoard() {
     // confirmación, el mismo que usa el botón "Tomar tarea". Si se cancela, como el dato
     // real nunca cambió, la tarjeta vuelve sola a "Sin asignar".
     if (toCol === 'por hacer' && tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      // Solo una tarjeta "en vuelo" a la vez: si otra ya espera su confirmación,
+      // sobrescribir tomarId haría que esa primera regresara sola a "Sin asignar".
+      if (tomarId) return;
       setTomarId(id);
       setBloqueado(true);
       setTimeout(() => {
@@ -380,6 +385,7 @@ export function ScrumBoard() {
         estadoResumen={nHijos > 0 ? estadoResumenDe(t.id) : undefined}
         footer={footer}
         ocultarResponsable={t.estado === 'por hacer'}
+        disabled={!!tomarId}
       />
     );
   }
