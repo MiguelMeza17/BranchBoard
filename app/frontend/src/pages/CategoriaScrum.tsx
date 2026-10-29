@@ -18,6 +18,7 @@ import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard } from '../components/TaskCard';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
+import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
@@ -113,6 +114,7 @@ export function CategoriaScrum() {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);
+  const [salto, setSalto] = useState<{ id: string; to: EstadoTarea } | null>(null);
   const [reabrirId, setReabrirId] = useState<string | null>(null);
   const [tomarId, setTomarId] = useState<string | null>(null);
   const [mostrarTomarModal, setMostrarTomarModal] = useState(false);
@@ -195,6 +197,24 @@ export function CategoriaScrum() {
 
     const to = toCol;
     if (tarea.estado === to) return;
+
+    // Desde "Sin asignar" solo se pasa a "Por hacer"; forzar otra columna pide confirmación.
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+        showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
+        return;
+      }
+      setSalto({ id, to });
+      return;
+    }
+
+    avanzarA(id, to);
+  }
+
+  // Lee la tarea del store: tras confirmar un salto desde "Sin asignar" se acaba de tomar.
+  function avanzarA(id: string, to: EstadoTarea) {
+    const tarea = useStore.getState().tareas.find((t) => t.id === id);
+    if (!tarea) return;
 
     // Reabrir (terminada -> en revisión): candado "reabrir" con motivo, y tope de reaperturas.
     if (tarea.estado === 'terminada' && to === 'en revisión') {
@@ -380,6 +400,20 @@ export function CategoriaScrum() {
             ? 'Vas a mergear esta rama directamente a dev. Es una acción delicada sobre Unity Version Control.'
             : 'La tarea pasará a "en revisión" y aparecerá en la carpeta "Tareas grandes" de Revisión, visible para todo el equipo. Autorizan Líder/Administrador.'
         }
+      />
+
+      {/* Salto de estados: se confirma y luego sigue el flujo normal de la columna destino */}
+      <ConfirmarSaltoModal
+        tarea={salto ? tareasAll.find((t) => t.id === salto.id) ?? null : null}
+        to={salto?.to ?? null}
+        onClose={() => setSalto(null)}
+        onConfirm={() => {
+          if (!salto) return;
+          const t = tareasAll.find((x) => x.id === salto.id);
+          if (t && t.estado === 'por hacer' && !t.asignado_a) tomarTarea(salto.id, user.email, 'rama');
+          setSalto(null);
+          avanzarA(salto.id, salto.to);
+        }}
       />
 
       {/* Reabrir una tarea terminada (ya mergeada a dev): candado + motivo obligatorio */}
