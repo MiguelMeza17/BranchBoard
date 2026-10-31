@@ -3,13 +3,18 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { TIPOS_TAREA, type TipoTarea } from '../types';
 import { tipoMeta } from '../lib/ui';
+import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { PageHeader } from '../components/primitives';
 
 const CARPETAS = [...TIPOS_TAREA];
 
 export function Categorias() {
   const navigate = useNavigate();
-  const tareas = useStore((s) => s.tareas).filter((t) => !t.eliminada);
+  const user = useStore((s) => s.currentUser());
+  // Mismo filtro que el tablero de la categoría, para que el conteo coincida al abrirla.
+  const tareas = useStore((s) => s.tareas).filter(
+    (t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user)
+  );
 
   const [ocultas, setOcultas] = useState<Set<TipoTarea>>(new Set());
   const toggleCarpeta = (id: TipoTarea) =>
