@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactFlow, {
   Background,
   BaseEdge,
+  ControlButton,
   Controls,
   Handle,
   Position,
@@ -42,6 +43,12 @@ const grosorTarea = (d: number) => 4 / 2 ** (d - 1);
 // - Línea por el COSTADO, recta y SIN flecha = CONTINUIDAD: la misma rama en el tiempo
 //   (tramos de la línea de main, de dev o del historial de una tarea).
 // Nunca usar una línea lateral para unir padre e hija, ni una flecha de abajo para continuidad.
+// Fuerza del zoom (al acercar y al alejar), respecto a la de React Flow: el pellizco del
+// trackpad usa 2^(FUERZA_ZOOM * delta) y los botones +/- un paso de 1.2^FUERZA_ZOOM.
+const FUERZA_ZOOM = 1.3;
+const ZOOM_MIN = 0.5; // los mismos límites que React Flow por defecto
+const ZOOM_MAX = 2;
+
 // Separación vertical mínima entre dos ramas (o paneles) que se cruzan en horizontal.
 const GAP_VERTICAL = 16;
 
@@ -796,6 +803,29 @@ export function Branches() {
   // ===== buscador (sirve en las dos vistas) =====
   const [busqueda, setBusqueda] = useState('');
   const [rf, setRf] = useState<ReactFlowInstance | null>(null);
+  // Zoom con más fuerza: el pellizco (en Chrome/Edge llega como rueda con ctrlKey) se intercepta
+  // en el panel antes de que llegue a React Flow y se aplica con FUERZA_ZOOM, centrado en el
+  // cursor. Hace falta un listener nativo no pasivo para poder cancelar el gesto.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el || !rf) return;
+    const alPellizcar = (e: WheelEvent) => {
+      if (!e.ctrlKey) return; // sin ctrl es desplazamiento: lo maneja React Flow
+      e.preventDefault();
+      e.stopPropagation();
+      const factor = e.ctrlKey && navigator.platform.toUpperCase().includes('MAC') ? 10 : 1;
+      const delta = -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor;
+      const { x, y, zoom } = rf.getViewport();
+      const nuevo = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * 2 ** (FUERZA_ZOOM * delta)));
+      const caja = el.getBoundingClientRect();
+      const px = e.clientX - caja.left;
+      const py = e.clientY - caja.top;
+      rf.setViewport({ x: px - ((px - x) * nuevo) / zoom, y: py - ((py - y) * nuevo) / zoom, zoom: nuevo });
+    };
+    el.addEventListener('wheel', alPellizcar, { capture: true, passive: false });
+    return () => el.removeEventListener('wheel', alPellizcar, { capture: true });
+  }, [rf, vista]);
   const [irA, setIrA] = useState<string | null>(null);
   const [resaltado, setResaltado] = useState<string | null>(null);
   const resultados = useMemo(() => {
@@ -856,7 +886,7 @@ export function Branches() {
     // página (48px). El panel se estira y la leyenda queda abajo.
     <div className="flex flex-col" style={{ height: 'calc(100vh - 105px)' }}>
       <PageHeader title="Branches" />
-      <div className="card relative min-h-[420px] flex-1 overflow-hidden">
+      <div ref={panelRef} className="card relative min-h-[420px] flex-1 overflow-hidden">
         {/* Pestañas: Árbol / Historial */}
         <div className="absolute left-3 top-3 z-10 flex rounded-lg border border-border bg-surface-2 p-0.5 text-xs">
           {(
@@ -925,7 +955,20 @@ export function Branches() {
           zoomOnPinch
         >
           <Background color="#2b313f" gap={20} />
-          <Controls showInteractive={false} />
+          {/* Botones propios (+, -, ajustar) para que +/- usen FUERZA_ZOOM y el orden se mantenga. */}
+          <Controls showInteractive={false} showZoom={false} showFitView={false}>
+            <ControlButton onClick={() => rf?.zoomTo(Math.min(ZOOM_MAX, rf.getZoom() * 1.2 ** FUERZA_ZOOM), { duration: 150 })} title="Acercar" aria-label="Acercar">
+              <span className="text-base leading-none">+</span>
+            </ControlButton>
+            <ControlButton onClick={() => rf?.zoomTo(Math.max(ZOOM_MIN, rf.getZoom() / 1.2 ** FUERZA_ZOOM), { duration: 150 })} title="Alejar" aria-label="Alejar">
+              <span className="text-base leading-none">−</span>
+            </ControlButton>
+            <ControlButton onClick={() => rf?.fitView({ duration: 200 })} title="Ajustar vista" aria-label="Ajustar vista">
+              <svg viewBox="0 0 32 30" aria-hidden="true">
+                <path d="M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z" />
+              </svg>
+            </ControlButton>
+          </Controls>
         </ReactFlow>
         )}
 
