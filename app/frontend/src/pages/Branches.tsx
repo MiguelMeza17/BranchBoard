@@ -45,7 +45,7 @@ const grosorTarea = (d: number) => 4 / 2 ** (d - 1);
 // Nunca usar una línea lateral para unir padre e hija, ni una flecha de abajo para continuidad.
 // Fuerza del zoom (al acercar y al alejar), respecto a la de React Flow: el pellizco del
 // trackpad usa 2^(FUERZA_ZOOM * delta) y los botones +/- un paso de 1.2^FUERZA_ZOOM.
-const FUERZA_ZOOM = 1.3;
+const FUERZA_ZOOM = 1.5;
 const ZOOM_MIN = 0.5; // los mismos límites que React Flow por defecto
 const ZOOM_MAX = 2;
 
