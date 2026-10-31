@@ -369,6 +369,7 @@ export const useStore = create<State>((set, get) => {
       fecha_eliminacion: null,
       motivo_rechazo: null,
       reporte_testing_origen_id: null,
+      tarea_origen_id: null,
       edicion_pendiente: false,
     };
     set({ tareas: [nueva, ...s.tareas] });

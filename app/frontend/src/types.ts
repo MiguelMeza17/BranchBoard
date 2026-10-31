@@ -93,6 +93,10 @@ export interface Tarea {
   fecha_eliminacion: string | null;
   motivo_rechazo: string | null;
   reporte_testing_origen_id: string | null;
+  // Tarea ya terminada (mergeada a dev) que esta corrige o a la que da seguimiento. Es solo
+  // una referencia, no jerarquía: la corrección es una tarea general nueva que sale de dev,
+  // con su propio número (no T-101-n), porque la rama de la original ya está cerrada.
+  tarea_origen_id: string | null;
   // Veces que volvió de "terminada" a "en revisión" (ver LIMITE_REAPERTURAS en useStore).
   reaperturas?: number;
   // UI-only: edición pendiente (sombra amarilla) — derivada de ediciones_pendientes

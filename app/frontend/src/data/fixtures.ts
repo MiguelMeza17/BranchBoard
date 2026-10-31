@@ -144,6 +144,7 @@ function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' |
     fecha_eliminacion: null,
     motivo_rechazo: null,
     reporte_testing_origen_id: null,
+    tarea_origen_id: null,
     edicion_pendiente: false,
     modo_trabajo: null,
     ...p,
@@ -341,7 +342,8 @@ export const tareas: Tarea[] = [
     estado: 'terminada',
     creado_por: TESTER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-101',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-101',
     rama_asociada: 'task/T-211-fix-hitbox-combo',
     fecha_completada: '2026-08-20',
     sprint_id: 'sp2',
@@ -354,7 +356,8 @@ export const tareas: Tarea[] = [
     estado: 'terminada',
     creado_por: TESTER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-102',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-102',
     rama_asociada: 'task/T-212-fix-ia-pathing',
     fecha_completada: '2026-08-23',
     sprint_id: 'sp2',
@@ -367,7 +370,8 @@ export const tareas: Tarea[] = [
     estado: 'terminada',
     creado_por: LIDER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-101',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-101',
     rama_asociada: 'task/T-213-balance-combo',
     fecha_completada: '2026-08-26',
     sprint_id: 'sp2',
@@ -380,7 +384,8 @@ export const tareas: Tarea[] = [
     estado: 'terminada',
     creado_por: TESTER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-107',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-107',
     rama_asociada: 'task/T-214-fix-salto-dash',
     fecha_completada: '2026-08-29',
     sprint_id: 'sp2',
@@ -393,7 +398,8 @@ export const tareas: Tarea[] = [
     estado: 'en producción',
     creado_por: LIDER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-102',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-102',
     rama_asociada: 'task/T-215-anim-muerte-enemigo',
     sprint_id: 'sp2',
   }),
@@ -404,7 +410,8 @@ export const tareas: Tarea[] = [
     tipo: 'Audio',
     estado: 'por hacer',
     creado_por: TESTER,
-    tarea_padre_id: 'T-101',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-101',
     sprint_id: 'sp2',
   }),
 

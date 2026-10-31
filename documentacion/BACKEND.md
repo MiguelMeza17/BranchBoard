@@ -555,6 +555,7 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `justificacion_eliminacion` / `fecha_eliminacion` | nullable | solo si `eliminada = true` |
 | `motivo_rechazo` | nullable | último motivo de rechazo, si aplica |
 | `reporte_testing_origen_id` | nullable | si esta tarea nació de un reporte de Testing (ver abajo), referencia a ese reporte |
+| `tarea_origen_id` | nullable | tarea ya terminada (mergeada a `dev`) que esta corrige o a la que da seguimiento. **Solo referencia, no jerarquía**: `tarea_padre_id` queda en `null`, la rama sale de `dev` y la tarea lleva su propio número (`T-211`, no `T-101-3`), porque la rama de la original ya está cerrada |
 
 ## Modelo de datos: tabla `sprints`
 
