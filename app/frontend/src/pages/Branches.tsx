@@ -6,6 +6,9 @@ import { estadoMeta } from '../lib/ui';
 import { PageHeader } from '../components/primitives';
 import type { Tarea } from '../types';
 
+// Separación vertical entre niveles del árbol.
+const NIVEL_Y = 130;
+
 export function Branches() {
   const tareasAll = useStore((s) => s.tareas);
 
@@ -36,21 +39,34 @@ export function Branches() {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
 
-    // raíz dev
+    const estiloRamaBase = {
+      background: '#161922',
+      color: '#e7e9ee',
+      borderRadius: 12,
+      padding: '10px 16px',
+      fontWeight: 700,
+      fontFamily: 'JetBrains Mono, monospace',
+    };
+
+    // raíz main (rama principal) y dev colgando de ella
+    nodes.push({
+      id: 'main',
+      position: { x: 40, y: 40 },
+      data: { label: '🏁 main' },
+      style: { ...estiloRamaBase, border: '2px solid #60a5fa' },
+    });
     nodes.push({
       id: 'dev',
-      position: { x: 40, y: 40 },
+      position: { x: 40, y: 40 + NIVEL_Y },
       data: { label: '🌳 dev' },
-      style: {
-        background: '#161922',
-        color: '#e7e9ee',
-        border: '2px solid #2dd4bf',
-        borderRadius: 12,
-        padding: '10px 16px',
-        fontWeight: 700,
-        fontFamily: 'JetBrains Mono, monospace',
-      },
-      draggable: true,
+      style: { ...estiloRamaBase, border: '2px solid #2dd4bf' },
+    });
+    edges.push({
+      id: 'e-main-dev',
+      source: 'main',
+      target: 'dev',
+      style: { stroke: '#60a5fa', strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#60a5fa' },
     });
 
     const perLevel: Record<number, number> = {};
@@ -61,7 +77,8 @@ export function Branches() {
       const m = estadoMeta[t.estado];
       nodes.push({
         id: t.id,
-        position: { x: 40 + idx * 250, y: 40 + d * 130 },
+        // +1 nivel porque main ocupa la primera fila y dev la segunda
+        position: { x: 40 + idx * 250, y: 40 + (d + 1) * NIVEL_Y },
         data: {
           label: (
             <div style={{ textAlign: 'left' }}>
@@ -100,7 +117,7 @@ export function Branches() {
     <div>
       <PageHeader
         title="Branches"
-        desc="Árbol de ascendencia de ramas — dev como raíz, ramas de tareas y sus hijas, coloreadas por estado."
+        desc="Árbol de ascendencia de ramas — main como raíz, dev colgando de ella, ramas de tareas y sus hijas, coloreadas por estado."
       />
       <div className="card overflow-hidden" style={{ height: 560 }}>
         <ReactFlow
