@@ -25,11 +25,12 @@ const today = () => new Date().toISOString().slice(0, 10);
 // padre (merge liviano, sin el candado de "mergear a dev"). Lo único que se revisa de verdad es
 // la rama total: en cuanto todas las hijas terminan, el padre pasa a "en revisión" él mismo —
 // ahí sí corre el flujo normal de aprobación (Líder/Admin) antes de llegar a "terminada".
-// - todas "por hacer" -> "por hacer"
+// - todas "por hacer" -> "por hacer", SALVO que el padre ya tenga su rama (alguien la tomó y
+//   empezó a trabajar, hay commits): una rama con trabajo nunca vuelve a "por hacer" -> "en producción"
 // - alguna "por hacer" o "en producción" -> "en producción"
 // - ninguna "por hacer"/"en producción" (todas terminaron su parte) -> "en revisión"
-function estadoDerivadoDeHijas(hijas: Tarea[]): EstadoTarea {
-  if (hijas.every((h) => h.estado === 'por hacer')) return 'por hacer';
+function estadoDerivadoDeHijas(hijas: Tarea[], padreTieneRama = false): EstadoTarea {
+  if (hijas.every((h) => h.estado === 'por hacer')) return padreTieneRama ? 'en producción' : 'por hacer';
   if (hijas.some((h) => h.estado === 'por hacer' || h.estado === 'en producción')) return 'en producción';
   return 'en revisión';
 }
@@ -47,7 +48,7 @@ function normalizarJerarquiaEstados(tareas: Tarea[]): Tarea[] {
       if (t.estado === 'terminada') return t;
       const hijas = resultado.filter((h) => h.tarea_padre_id === t.id && !h.eliminada);
       if (hijas.length === 0) return t;
-      const derivado = estadoDerivadoDeHijas(hijas);
+      const derivado = estadoDerivadoDeHijas(hijas, !!t.rama_asociada);
       const necesitaResponsable = derivado !== 'por hacer' && !t.asignado_a;
       if (derivado === t.estado && !necesitaResponsable) return t;
       cambio = true;
@@ -62,6 +63,19 @@ function normalizarJerarquiaEstados(tareas: Tarea[]): Tarea[] {
     if (!cambio) break;
   }
   return resultado;
+}
+
+// Una rama con commits ya tiene progreso: ni ella ni (al mover un padre) ninguna de sus
+// subtareas puede volver a "por hacer" / "sin asignar". Si alguna tiene commits, avisa y bloquea.
+function tieneProgreso(s: { tareas: Tarea[]; commits: { tarea_id: string }[]; showToast: (m: string, tono?: 'ok' | 'info' | 'danger') => void }, id: string): boolean {
+  const afectadas = [id, ...descendientesDe(s.tareas, id)];
+  const conCommits = afectadas.filter((x) => s.commits.some((c) => c.tarea_id === x));
+  if (!conCommits.length) return false;
+  s.showToast(
+    `No se puede volver a "Por hacer": ${conCommits.join(', ')} ya ${conCommits.length === 1 ? 'tiene' : 'tienen'} commits (hay progreso).`,
+    'danger'
+  );
+  return true;
 }
 
 // Reabrir = devolver una tarea "terminada" (ya mergeada a dev) a "en revisión". Para que no se
@@ -273,6 +287,7 @@ export const useStore = create<State>((set, get) => {
 
   moverTarea: (id, estado) => {
     if (!get().puedeAvanzar(id, estado)) return;
+    if (estado === 'por hacer' && tieneProgreso(get(), id)) return;
     const anterior = get().tareas.find((t) => t.id === id);
     // El estado de una tarea con subtareas se deriva de ellas: si solo se cambiara el padre,
     // normalizarJerarquiaEstados lo devolvería a su columna. Por eso el cambio hacia atrás baja a
@@ -327,7 +342,8 @@ export const useStore = create<State>((set, get) => {
 
   // En una tarea general, sus subtareas también vuelven a "por hacer"; si no, al siguiente
   // cambio el padre se volvería a derivar a otro estado (y heredaría un responsable).
-  desasignarTarea: (id) =>
+  desasignarTarea: (id) => {
+    if (tieneProgreso(get(), id)) return;
     set((s) => {
       const descendientes = descendientesDe(s.tareas, id);
       return {
@@ -339,7 +355,8 @@ export const useStore = create<State>((set, get) => {
           })
         ),
       };
-    }),
+    });
+  },
 
   crearTarea: (data) => {
     const s = get();
