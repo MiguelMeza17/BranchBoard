@@ -7,16 +7,28 @@ import { PageHeader } from '../components/primitives';
 import type { Tarea } from '../types';
 
 export function Branches() {
-  const tareas = useStore((s) => s.tareas).filter((t) => !t.eliminada && t.rama_asociada);
+  const tareasAll = useStore((s) => s.tareas);
 
   const { nodes, edges } = useMemo(() => {
-    // profundidad de cada tarea según cadena de padres
+    const tareas = tareasAll.filter((t) => !t.eliminada && t.rama_asociada);
+    const porId = new Map(tareasAll.map((t) => [t.id, t]));
+    const conRama = new Set(tareas.map((t) => t.id));
+
+    // Ancestro más cercano que sí está en el grafo: un padre sin rama (aún sin
+    // tomar) o en la Papelera no se dibuja, así que la hija cuelga del siguiente.
+    const padreEnGrafo = (t: Tarea): string | null => {
+      let cur = t.tarea_padre_id;
+      while (cur && !conRama.has(cur)) cur = porId.get(cur)?.tarea_padre_id ?? null;
+      return cur;
+    };
+
+    // profundidad de cada tarea según la cadena de padres dibujados
     const depthOf = (t: Tarea): number => {
       let d = 1; // dev = 0
-      let cur: string | null = t.tarea_padre_id;
+      let cur = padreEnGrafo(t);
       while (cur) {
         d++;
-        cur = tareas.find((x) => x.id === cur)?.tarea_padre_id ?? null;
+        cur = padreEnGrafo(porId.get(cur)!);
       }
       return d;
     };
@@ -71,9 +83,10 @@ export function Branches() {
         },
         draggable: true,
       });
+      const padre = padreEnGrafo(t) ?? 'dev';
       edges.push({
-        id: `e-${t.tarea_padre_id ?? 'dev'}-${t.id}`,
-        source: t.tarea_padre_id ?? 'dev',
+        id: `e-${padre}-${t.id}`,
+        source: padre,
         target: t.id,
         animated: t.estado === 'en producción',
         style: { stroke: m.dot, strokeWidth: 2 },
@@ -82,7 +95,7 @@ export function Branches() {
     });
 
     return { nodes, edges };
-  }, [tareas]);
+  }, [tareasAll]);
 
   return (
     <div>
