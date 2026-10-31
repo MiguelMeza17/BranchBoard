@@ -11,7 +11,14 @@ export function Papelera() {
   const eliminarDefinitivo = useStore((s) => s.eliminarDefinitivo);
   const [target, setTarget] = useState<Tarea | null>(null);
 
-  const eliminadas = tareas.filter((t) => t.eliminada);
+  // La más reciente primero; a igual fecha, por ID.
+  const eliminadas = tareas
+    .filter((t) => t.eliminada)
+    .sort(
+      (a, b) =>
+        (b.fecha_eliminacion ?? '').localeCompare(a.fecha_eliminacion ?? '') ||
+        a.id.localeCompare(b.id, undefined, { numeric: true })
+    );
   const puedeBorrar = puedeEliminarDefinitivo(user.rol);
 
   return (
@@ -26,30 +33,35 @@ export function Papelera() {
         {eliminadas.length === 0 ? (
           <EmptyState icon="🗑️" title="La papelera está vacía" desc="No hay tareas eliminadas por ahora." />
         ) : (
-          <div className="space-y-2">
-            {eliminadas.map((t) => (
-              <Card key={t.id} className="flex flex-wrap items-center gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[11px] text-faint">{t.id}</span>
-                    <span className="font-medium text-text line-through decoration-faint">{t.titulo}</span>
+          <>
+            <p className="mb-3 text-xs text-muted">
+              {eliminadas.length} tarea{eliminadas.length === 1 ? '' : 's'} en la Papelera · más recientes primero
+            </p>
+            <div className="space-y-2">
+              {eliminadas.map((t) => (
+                <Card key={t.id} className="flex flex-wrap items-center gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] text-faint">{t.id}</span>
+                      <span className="font-medium text-text line-through decoration-faint">{t.titulo}</span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <TipoBadge tipo={t.tipo} />
+                      <span className="text-xs text-faint">Eliminada: {t.fecha_eliminacion}</span>
+                    </div>
+                    {t.justificacion_eliminacion && (
+                      <p className="mt-2 text-xs text-muted">Motivo: {t.justificacion_eliminacion}</p>
+                    )}
                   </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                    <TipoBadge tipo={t.tipo} />
-                    <span className="text-xs text-faint">Eliminada: {t.fecha_eliminacion}</span>
-                  </div>
-                  {t.justificacion_eliminacion && (
-                    <p className="mt-2 text-xs text-muted">Motivo: {t.justificacion_eliminacion}</p>
+                  {puedeBorrar ? (
+                    <button className="btn-danger btn-sm" onClick={() => setTarget(t)}>Eliminar definitivamente</button>
+                  ) : (
+                    <ReadOnlyTag />
                   )}
-                </div>
-                {puedeBorrar ? (
-                  <button className="btn-danger btn-sm" onClick={() => setTarget(t)}>Eliminar definitivamente</button>
-                ) : (
-                  <ReadOnlyTag />
-                )}
-              </Card>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
