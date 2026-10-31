@@ -27,7 +27,16 @@ export function TipoBadge({ tipo }: { tipo: TipoTarea }) {
   );
 }
 
-export function Avatar({ email, size = 28 }: { email: string; size?: number }) {
+export function Avatar({
+  email,
+  size = 28,
+  sinTooltip = false,
+}: {
+  email: string;
+  size?: number;
+  /** Oculta el tooltip con el nombre (ej. en la barra superior, donde el nombre ya está escrito al lado). */
+  sinTooltip?: boolean;
+}) {
   const usuarios = useStore((s) => s.usuarios);
   const navigate = useNavigate();
   const u = usuarios.find((x) => x.email === email);
@@ -49,9 +58,11 @@ export function Avatar({ email, size = 28 }: { email: string; size?: number }) {
       >
         {label}
       </button>
-      <span className="pointer-events-none absolute -top-1.5 left-1/2 z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 py-1 text-xs font-medium text-text opacity-0 shadow-pop transition-opacity duration-150 group-hover/avatar:opacity-100">
-        {nombre}
-      </span>
+      {!sinTooltip && (
+        <span className="pointer-events-none absolute -top-1.5 left-1/2 z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 py-1 text-xs font-medium text-text opacity-0 shadow-pop transition-opacity duration-150 group-hover/avatar:opacity-100">
+          {nombre}
+        </span>
+      )}
     </span>
   );
 }
