@@ -94,13 +94,13 @@ export function HistorialRamas({ busqueda, abierta, onAbrir }: {
           <>
             <Seccion titulo="Historia">
               <Evento texto={`Rama ${t.rama_asociada}`} />
-              <Evento texto={padre ? `Sale de ${padre.id}` : 'Sale de dev'} />
-              {t.tarea_origen_id && <Evento texto={`Corrige ${t.tarea_origen_id}`} />}
+              <Evento texto={`${t.id} sale de ${padre ? padre.id : 'dev'}`} />
+              {t.tarea_origen_id && <Evento texto={`${t.id} corrige ${t.tarea_origen_id}`} />}
               {fusionadas.map((h) => (
-                <Fusionada key={h.id} tarea={h} commits={commitsDe.get(h.id) ?? []} usuarios={usuarios} enfocada={abierta === h.id} />
+                <Fusionada key={h.id} tarea={h} destino={t.id} commits={commitsDe.get(h.id) ?? []} usuarios={usuarios} enfocada={abierta === h.id} />
               ))}
               <Evento
-                texto={t.estado === 'terminada' ? `Fusionada en ${padre ? padre.id : 'dev'}` : m.label}
+                texto={t.estado === 'terminada' ? `${t.id} se fusionó en ${padre ? padre.id : 'dev'}` : `${t.id} ahora: ${m.label}`}
                 detalle={t.estado === 'terminada' ? t.fecha_completada ?? undefined : undefined}
                 color={m.dot}
               />
@@ -147,9 +147,9 @@ export function HistorialRamas({ busqueda, abierta, onAbrir }: {
             onClick={() => alternar('dev')}
             historial={
               <Seccion titulo="Historia">
-                <Evento texto="Nace desde main" />
+                <Evento texto="dev nace desde main" />
                 {mergesDev.map((t) => (
-                  <Fusionada key={t.id} tarea={t} commits={commitsDe.get(t.id) ?? []} usuarios={usuarios} enfocada={abierta === t.id} />
+                  <Fusionada key={t.id} tarea={t} destino="dev" commits={commitsDe.get(t.id) ?? []} usuarios={usuarios} enfocada={abierta === t.id} />
                 ))}
               </Seccion>
             }
@@ -209,8 +209,9 @@ function Caja({ id, nombre, titulo, color, gris, nivel, detalle, abierta, onClic
 
 // Rama ya fusionada, dentro del historial de su padre (no es una caja: ya no es una rama
 // abierta). En gris; click despliega sus commits ahí mismo.
-function Fusionada({ tarea, commits, usuarios, enfocada }: {
+function Fusionada({ tarea, destino, commits, usuarios, enfocada }: {
   tarea: Tarea;
+  destino: string;
   commits: Commit[];
   usuarios: Usuario[];
   enfocada: boolean;
@@ -227,7 +228,9 @@ function Fusionada({ tarea, commits, usuarios, enfocada }: {
         <span className="shrink-0 text-[#475063]">●</span>
         <span className="shrink-0 font-mono text-faint">{tarea.id}</span>
         <span className="min-w-0 flex-1 truncate text-faint">{tarea.titulo}</span>
-        <span className="shrink-0 font-mono text-faint">fusionada {tarea.fecha_completada ?? ''}</span>
+        <span className="shrink-0 text-faint">
+          se fusionó en {destino} · <span className="font-mono">{tarea.fecha_completada ?? ''}</span>
+        </span>
         <span className="shrink-0 text-faint">
           {commits.length} commit{commits.length === 1 ? '' : 's'} {ver ? '▾' : '▸'}
         </span>
