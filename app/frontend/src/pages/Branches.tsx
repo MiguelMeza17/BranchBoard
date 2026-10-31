@@ -852,9 +852,11 @@ export function Branches() {
   );
 
   return (
-    <div>
+    // Ocupa todo el alto disponible: pantalla menos la barra superior (57px) y el margen de la
+    // página (48px). El panel se estira y la leyenda queda abajo.
+    <div className="flex flex-col" style={{ height: 'calc(100vh - 105px)' }}>
       <PageHeader title="Branches" />
-      <div className="card relative overflow-hidden" style={{ height: 560 }}>
+      <div className="card relative min-h-[420px] flex-1 overflow-hidden">
         {/* Pestañas: Árbol / Historial */}
         <div className="absolute left-3 top-3 z-10 flex rounded-lg border border-border bg-surface-2 p-0.5 text-xs">
           {(
@@ -964,11 +966,17 @@ export function Branches() {
           )}
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted">
-        {Object.values(estadoMeta).map((m) => (
-          <span key={m.label} className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: m.dot }} />
-            {m.label}
+      {/* Leyenda: solo lo que aparece en el árbol. "Por hacer" no sale (esas tareas aún no tienen
+          rama) y "Terminada" en el árbol es una rama ya fusionada: recuadro gris. */}
+      <div className="mt-3 flex shrink-0 flex-wrap gap-4 text-xs text-muted">
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-4 rounded border-2" style={{ borderColor: '#475063', background: '#161922' }} />
+          Fusionada
+        </span>
+        {(['en producción', 'en revisión'] as const).map((e) => (
+          <span key={e} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: estadoMeta[e].dot }} />
+            {estadoMeta[e].label}
           </span>
         ))}
       </div>
