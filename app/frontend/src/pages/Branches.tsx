@@ -81,7 +81,6 @@ export function Branches() {
           padding: '8px 12px',
           width: 210,
         },
-        draggable: true,
       });
       const padre = padreEnGrafo(t) ?? 'dev';
       edges.push({
@@ -110,6 +109,13 @@ export function Branches() {
           fitView
           proOptions={{ hideAttribution: true }}
           nodesConnectable={false}
+          // Los nodos no se arrastran (su posición no se guarda), así que arrastrar con
+          // click izquierdo mueve la vista desde cualquier punto, también sobre un nodo.
+          nodesDraggable={false}
+          panOnDrag
+          // Dos dedos en el trackpad (o la rueda) mueven la vista; el pellizco hace zoom.
+          panOnScroll
+          zoomOnPinch
         >
           <Background color="#2b313f" gap={20} />
           <Controls showInteractive={false} />
