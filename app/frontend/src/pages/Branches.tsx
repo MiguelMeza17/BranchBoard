@@ -16,6 +16,7 @@ import 'reactflow/dist/style.css';
 import { useStore } from '../store/useStore';
 import { estadoMeta } from '../lib/ui';
 import { PageHeader } from '../components/primitives';
+import { HistorialRamas } from '../components/HistorialRamas';
 import type { Tarea } from '../types';
 
 // Separación entre los tramos de la línea de tiempo de main.
@@ -788,7 +789,11 @@ export function Branches() {
     return { nodes, edges, ubicaciones, buscables: tareas, conHistorial, duenoHistorial, cabezaId };
   }, [tareasAll, commits, cerrados, cabezaDev, enfoqueDev, cabezas]);
 
-  // ===== buscador =====
+  // ===== vistas: Árbol (diagrama) e Historial (ramas apiladas con su historia y commits) =====
+  const [vista, setVista] = useState<'arbol' | 'historial'>('arbol');
+  const [abiertaHistorial, setAbiertaHistorial] = useState<string | null>(null);
+
+  // ===== buscador (sirve en las dos vistas) =====
   const [busqueda, setBusqueda] = useState('');
   const [rf, setRf] = useState<ReactFlowInstance | null>(null);
   const [irA, setIrA] = useState<string | null>(null);
@@ -803,6 +808,14 @@ export function Branches() {
   }, [busqueda, buscables]);
 
   const irATarea = (t: Tarea) => {
+    if (vista === 'historial') {
+      setAbiertaHistorial(t.id);
+      setBusqueda('');
+      requestAnimationFrame(() =>
+        document.getElementById(`historial-${t.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      );
+      return;
+    }
     const u = ubicaciones.get(t.id);
     if (!u) return;
     setCabezaDev(null); // el buscador siempre trabaja sobre el presente
@@ -842,6 +855,30 @@ export function Branches() {
     <div>
       <PageHeader title="Branches" />
       <div className="card relative overflow-hidden" style={{ height: 560 }}>
+        {/* Pestañas: Árbol / Historial */}
+        <div className="absolute left-3 top-3 z-10 flex rounded-lg border border-border bg-surface-2 p-0.5 text-xs">
+          {(
+            [
+              ['arbol', 'Árbol'],
+              ['historial', 'Historial'],
+            ] as const
+          ).map(([id, etiqueta]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setVista(id)}
+              className={`rounded-md px-3 py-1.5 font-medium transition ${
+                vista === id ? 'bg-surface-3 text-text shadow-pop' : 'text-muted hover:text-text'
+              }`}
+            >
+              {etiqueta}
+            </button>
+          ))}
+        </div>
+
+        {vista === 'historial' ? (
+          <HistorialRamas busqueda={busqueda} abierta={abiertaHistorial} onAbrir={setAbiertaHistorial} />
+        ) : (
         <ReactFlow
           nodes={nodosVista}
           edges={edges}
@@ -888,6 +925,7 @@ export function Branches() {
           <Background color="#2b313f" gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
+        )}
 
         {/* Buscador: por número, título o nombre de rama; abiertas y terminadas. */}
         <div className="absolute right-3 top-3 z-10 w-72">
@@ -901,7 +939,7 @@ export function Branches() {
               if (e.key === 'Escape') setBusqueda('');
             }}
           />
-          {busqueda.trim() && (
+          {busqueda.trim() && vista === 'arbol' && (
             <div className="mt-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface-2 py-1 shadow-pop">
               {resultados.length === 0 ? (
                 <div className="px-3 py-2 text-xs text-faint">Sin resultados</div>
