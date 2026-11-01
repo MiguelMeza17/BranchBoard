@@ -52,6 +52,8 @@ export const tipoMeta: Record<TipoTarea, { color: string; emoji: string }> = {
   Video: { color: '#f87171', emoji: '🎬' },
   Testing: { color: '#fb7185', emoji: '🐞' },
   Corrección: { color: '#f59e0b', emoji: '🔧' },
+  Ajustes: { color: '#cbd5e1', emoji: '⚙️' },
+  'Sin definir': { color: '#6b7385', emoji: '❔' },
 };
 
 export function iniciales(nombre: string, apellido?: string): string {
@@ -66,4 +68,20 @@ export function avatarColor(email: string): string {
   let h = 0;
   for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) >>> 0;
   return palette[h % palette.length];
+}
+
+// Palabras de confirmación ("asignar", "autorizar", "eliminar", "traer"...): no distinguen
+// mayúsculas/minúsculas ni tildes, y se ignoran los espacios al inicio y al final.
+export function coincidePalabra(texto: string, palabra: string): boolean {
+  const n = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  return n(texto) === n(palabra);
+}
+
+// Un check-in ES un commit (en Unity VC, hacer check-in es confirmar un cambio). Para una tarea
+// que se trabaja con check-in directo (sin rama propia) se dice "check-in", no "commit".
+export function esCheckinTarea(t: { modo_trabajo: string | null; rama_asociada: string | null }): boolean {
+  return t.modo_trabajo === 'checkin' && !t.rama_asociada;
+}
+export function palabraCambios(n: number, checkin: boolean): string {
+  return checkin ? (n === 1 ? 'check-in' : 'check-ins') : n === 1 ? 'commit' : 'commits';
 }

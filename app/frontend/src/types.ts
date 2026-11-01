@@ -16,7 +16,11 @@ export type TipoTarea =
   | 'Música'
   | 'Video'
   | 'Testing'
-  | 'Corrección';
+  | 'Corrección'
+  | 'Ajustes'
+  // Solo para la subtarea "En espera": su tipo lo decide el bot cuando llega el check-in. No está en
+  // TIPOS_TAREA, así que no aparece en Categorías ni se puede elegir al crear una tarea.
+  | 'Sin definir';
 
 export const TIPOS_TAREA: TipoTarea[] = [
   'Scripting',
@@ -30,6 +34,7 @@ export const TIPOS_TAREA: TipoTarea[] = [
   'Video',
   'Testing',
   'Corrección',
+  'Ajustes',
 ];
 
 export type EstadoTarea = 'por hacer' | 'en producción' | 'en revisión' | 'terminada';
@@ -70,7 +75,9 @@ export interface Sprint {
 export interface Tarea {
   id: string;
   titulo: string;
-  descripcion: string;
+  // Detalles: texto opcional — qué hay que hacer, los pasos, dónde está cada cosa. Vacío si no hay
+  // (la interfaz muestra "Sin detalles."). Reemplaza a la antigua "descripción".
+  detalles: string;
   tipo: TipoTarea;
   tarea_padre_id: string | null;
   archivo_ruta: string | null;

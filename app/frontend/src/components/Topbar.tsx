@@ -3,19 +3,19 @@ import { useStore } from '../store/useStore';
 import { ROLES, type Rol } from '../types';
 import { Avatar } from './primitives';
 import { NotificationsPanel } from './NotificationsPanel';
+import { AbrirEnUnityModal } from './AbrirEnUnityModal';
 
 export function Topbar() {
   const user = useStore((s) => s.currentUser());
   const vpnOn = useStore((s) => s.vpnOn);
   const toggleVpn = useStore((s) => s.toggleVpn);
-  const toggleCmSesion = useStore((s) => s.toggleCmSesion);
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
   const setRolActual = useStore((s) => s.setRolActual);
-  const showToast = useStore((s) => s.showToast);
   const notifs = useStore((s) => s.notificaciones);
   const email = useStore((s) => s.currentEmail);
 
   const [showNotifs, setShowNotifs] = useState(false);
+  const [abrirUnity, setAbrirUnity] = useState(false);
   const [vistas, setVistas] = useState(false);
   const notifsWrapRef = useRef<HTMLDivElement>(null);
   const notifsPanelRef = useRef<HTMLDivElement>(null);
@@ -41,9 +41,12 @@ export function Topbar() {
   }, [showNotifs]);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-surface/80 px-5 backdrop-blur">
+    <>
+    {/* whitespace-nowrap: los botones nunca parten su texto en dos renglones (se desbordaban de la
+        barra). Si no cabe, el grupo de la izquierda se desplaza en horizontal; el de la derecha no se encoge. */}
+    <header className="flex h-14 shrink-0 items-center justify-between gap-4 whitespace-nowrap border-b border-border bg-surface/80 px-5 backdrop-blur">
       {/* VPN switch */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3 overflow-x-auto [scrollbar-width:none]">
         <button
           onClick={toggleVpn}
           className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium transition hover:border-border-strong"
@@ -65,20 +68,8 @@ export function Topbar() {
           </span>
         </button>
 
-        <button
-          className="btn-outline btn-sm"
-          onClick={() => showToast('Lanzando el Editor de Unity sobre el workspace…', 'info')}
-        >
+        <button className="btn-outline btn-sm shrink-0" onClick={() => setAbrirUnity(true)}>
           🎮 Abrir en Unity
-        </button>
-
-        {/* Demo: simula perder la sesión de Unity VC (cm whoami falla al arrancar) */}
-        <button
-          className="btn-ghost btn-sm text-faint"
-          title="Demo: simular que no hay sesión de Unity VC (cm whoami falla)"
-          onClick={toggleCmSesion}
-        >
-          🔒 Simular sin sesión Unity VC
         </button>
 
         {/* Demo: volver a las pantallas de acceso al proyecto */}
@@ -91,7 +82,7 @@ export function Topbar() {
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {/* Role selector (simula autenticación) */}
         <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
           <span className="text-faint">Ver como</span>
@@ -148,5 +139,8 @@ export function Topbar() {
         </div>
       </div>
     </header>
+    {/* Fuera del header: su backdrop-blur atraparía a la ventana (position: fixed) dentro de la barra. */}
+    <AbrirEnUnityModal open={abrirUnity} onClose={() => setAbrirUnity(false)} />
+    </>
   );
 }

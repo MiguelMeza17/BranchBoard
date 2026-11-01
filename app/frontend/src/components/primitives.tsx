@@ -109,13 +109,15 @@ export function Card({
   children,
   className = '',
   id,
+  onClick,
 }: {
   children: ReactNode;
   className?: string;
   id?: string;
+  onClick?: () => void;
 }) {
   return (
-    <div id={id} className={`card p-5 ${className}`}>
+    <div id={id} onClick={onClick} className={`card p-5 ${className}`}>
       {children}
     </div>
   );

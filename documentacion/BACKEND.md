@@ -135,6 +135,13 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 5. **El mismo refresco también revisa si la rama se cerró** (mergeada hacia su rama padre). Unity VC guarda el estado de cierre de una rama al mergearla. Si la rama aparece cerrada → la tarea se marca automáticamente como **"terminada"**, sin intervención manual. (Comando `cm` exacto para leer el estado de cierre: pendiente de verificar al implementar.)
 6. (Fase futura) Reemplazar el polling manual por **triggers del servidor de Unity VC** (ej. `after-checkin`) para detección casi en tiempo real, sin depender de que alguien le dé clic a "Refrescar".
 
+**Actualizado (2026-10-31) — la app escucha siempre, no solo con "Refrescar"**: lo normal es que los check-ins se hagan **desde Unity** (plugin de Unity Version Control); hacerlos desde BranchBoard es una forma extra, sin tener que abrir la interfaz de UVCS. Por eso BranchBoard **tiene que estar escuchando Unity VC todo el tiempo** mientras está abierta, y no depender de que alguien le dé a "Refrescar" (que se mantiene como acción manual inmediata). Esto reemplaza el "no hace falta un proceso en segundo plano para el MVP" del paso 2:
+
+- **Proceso de fondo** mientras la app está abierta: repite el chequeo de los pasos 3–5 cada pocos segundos para las ramas activas (las de tareas abiertas y sus padres) y además al volver la app a primer plano. El intervalo exacto se ajusta al implementar (equilibrio entre inmediatez y el costo de invocar `cm`); los triggers del servidor (paso 6) siguen siendo la mejora futura para tiempo real.
+- **Check-ins hechos desde Unity**: un changeset nuevo en la rama de una tarea aparece solo en BranchBoard (commits de la tarea, Historial, Revisión) sin que nadie haga nada. Si cae en la rama de una tarea padre y su autor tiene un **check-in en curso** de esa tarea padre (ver la regla de un solo check-in en curso), se asocia a esa subtarea de check-in.
+- **Workspace**: también se escucha en qué rama está parado el workspace local (por si alguien cambió de rama desde Unity o desde el cliente de UVCS) y BranchBoard actualiza su "rama actual del workspace" (la que muestra el panel "Abrir en Unity"); si queda en `dev` o en una rama que no es de sus tareas, aplica el aviso de [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app).
+- Lo detectado que es solo indicador local (`modificada`, `ultimo_changeset_visto`, rama del workspace) no pasa por `ops/`; lo que muta estado compartido sigue emitiendo su evento (ver abajo).
+
 **Corregido — el paso 5 debe generar un evento (`revisar_actualizaciones` por sí solo no basta)**: `revisar_actualizaciones` está listado entre los comandos **locales/solo lectura** que no pasan por `ops/` (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)), lo cual es correcto para marcar `modificada`/`ultimo_changeset_visto` (son solo indicadores locales de esa máquina, sin problema si difieren). Pero **el paso 5 sí muta estado compartido** (`estado = 'terminada'`, `fecha_completada`) — si eso se queda solo en el `.db` local de quien hizo el refresco, las demás máquinas nunca se enteran, y se pierde al reconstruir el `.db` desde `ops/` (que no tiene registro de este cambio). Cuando el paso 5 detecta el cierre de rama, además de actualizar localmente, emite un evento nuevo `tarea_cerrada_por_deteccion(tarea_id, fecha_completada)` a `ops/` — ese evento sí migra (agregarlo a la lista de comandos que migran a eventos), y se aplica igual en cualquier máquina que lo reproduzca, sin depender de que esa máquina específica haya hecho el refresco.
 
 ## Detección de ediciones en rama ajena (fuera de la app)
@@ -535,7 +542,7 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 |---|---|---|
 | `id` | — | identificador único |
 | `titulo` | texto | |
-| `descripcion` | texto | viene del modal de confirmación al crear/tomar/mandar a revisar (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)) |
+| `detalles` | texto | **reemplaza a `descripcion`** (2026-10-31): texto opcional, puede ser largo — qué hay que hacer, los pasos, dónde está cada cosa. Vacío si no hay (la interfaz muestra "Sin detalles."). Se escribe al crear la tarea (general o subtarea) y se puede editar |
 | `tipo` | enum | Scripting / Modelado 3D / Modelado 2D / Animación / Imagen / UI-Interfaz / Audio / Música / Video (**corregido**: antes eran 6 valores y no cubrían los 9 tipos reales usados por [Categorías](./PLANNING.md#alcance) y [Pre-revisión](./PLANNING.md#pre-revisión) — Modelado se separó en 2D/3D, y se agregaron UI/Interfaz y Audio como valores propios) |
 | `tarea_padre_id` | nullable | si es subtarea (rama hija); `null` si es tarea general |
 | `archivo_ruta` | nullable | solo subtareas simples: ruta del archivo dentro del workspace de Unity VC |
@@ -630,3 +637,28 @@ Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Ad
 - Comando `cm` exacto para leer si una rama está cerrada/mergeada
 - ~~Intervalo exacto de escaneo de la carpeta `ops/`~~, ~~estrategia de compactación/purga de `ops/`~~ y ~~qué comandos migran al mecanismo de eventos~~ — **corregido**: los tres quedaron resueltos más arriba en este mismo documento (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)); esta sección no se había actualizado después de resolverlos.
 - Librería/mecanismo exacto de conversión `.fbx` → glTF para el visor de [Pre-revisión de Modelado 3D](./PLANNING.md#pre-revisión) — la restricción de subir solo `.fbx` ya está decidida, falta elegir qué convierte ese archivo al formato que consume el visor (`model-viewer`/Three.js).
+
+## Check-ins: aprobación, rechazo y corrección
+
+**Definido (2026-10-31).** Una subtarea con check-in directo no tiene rama propia: cada check-in crea un **changeset en la rama de su tarea padre** en el momento en que se hace. Consecuencias:
+
+- **Autorizar es solo una marca de aprobación**: no mueve ni reordena changesets (ya están en la rama). Autorizar en cualquier orden no cambia el código.
+- **Rechazar no saca los cambios de la rama.** El check-in vuelve a **"en producción"** (no a "por hacer": ya tiene progreso y sigue con su responsable) con el motivo, y el responsable lo **corrige con un nuevo check-in encima**. Como se aplica sobre el último, los check-in posteriores no se dañan ni generan conflicto.
+- **Merge sustractivo** (restar el changeset del check-in) queda como opción avanzada a futuro: puede dar conflictos con check-ins posteriores que tocaron lo mismo, o romperlos si dependían de su trabajo.
+- **Una tarea nueva de corrección** (`tarea_origen_id`) solo cuando el error aparece **después** de aprobado o fusionado (ej. en Testing).
+- La tarea padre no puede pasar a revisión mientras tenga check-ins sin aprobar, así nada rechazado o sin revisar llega a `dev`.
+
+## Subtarea "En espera": check-ins que se convierten solos en tareas (a futuro)
+
+**Definido (2026-10-31), pendiente de implementar.** Cada commit termina siendo una tarea. Para que nadie tenga que crear a mano la tarea de cada check-in:
+
+1. **Mientras una tarea está "en producción"**, tiene siempre una subtarea comodín llamada **"En espera"**: representa el próximo check-in que va a llegar a su rama. Su tipo es **"Sin definir"** (valor especial: no es una categoría ni se puede elegir al crear tareas) hasta que llegue el check-in y el bot lo decida.
+2. **Cuando llega un check-in** (lo normal es que se haga desde Unity; BranchBoard lo detecta porque [escucha Unity VC todo el tiempo](#detección-de-cambios-en-unity-version-control-polling)), la subtarea "En espera" **se convierte en el check-in real**:
+   - su **título** pasa a ser el nombre (mensaje) del commit, y sus **detalles** el resto de la descripción;
+   - queda asociada a ese commit/changeset (`modo_trabajo = 'checkin'`, sin rama propia);
+   - un **bot entrenado** lee la descripción y decide su **tipo** (Scripting, Modelado 3D, Audio, …);
+   - pasa sola a **"en revisión"** (entra al flujo de [check-ins en revisión](#check-ins-aprobación-rechazo-y-corrección): se revisa sola o junto con los demás check-ins de su tarea padre);
+   - y se crea una **nueva "En espera"** para el siguiente check-in.
+3. Cuando la tarea deja de estar en producción (pasa a revisión o termina), su "En espera" desaparece: ya no se esperan más check-ins.
+
+**Pendiente de definir al implementar**: el bot clasificador (modelo, entrenamiento, qué hacer si no está seguro del tipo —ej. dejar un tipo por defecto y marcarlo para que alguien lo confirme—); cómo encaja con la regla de un solo check-in en curso por tarea padre (la "En espera" no lo ocupa: no es trabajo en curso hasta que llega el check-in); y cómo se atribuye el check-in si el autor no es el responsable de la tarea.

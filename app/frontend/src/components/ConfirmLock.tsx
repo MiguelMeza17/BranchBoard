@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Modal } from './Modal';
+import { coincidePalabra } from '../lib/ui';
 
 interface Props {
   open: boolean;
@@ -38,7 +39,7 @@ export function ConfirmLock({
     }
   }, [open]);
 
-  const palabraOk = texto.trim().toLowerCase() === palabra.toLowerCase();
+  const palabraOk = coincidePalabra(texto, palabra);
   const justifOk = !requiereJustificacion || justif.trim().length >= 3;
   const enabled = palabraOk && justifOk;
 
