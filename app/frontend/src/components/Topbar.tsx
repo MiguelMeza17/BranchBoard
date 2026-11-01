@@ -129,7 +129,7 @@ export function Topbar() {
 
         {/* Identity */}
         <div className="flex items-center gap-2.5 rounded-lg border border-border bg-surface-2 py-1 pl-1 pr-3">
-          <Avatar email={user.email} size={30} />
+          <Avatar email={user.email} size={30} sinTooltip />
           <div className="leading-tight">
             <div className="text-xs font-semibold text-text">
               {user.nombre} {user.apellido}
