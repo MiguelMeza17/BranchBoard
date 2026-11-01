@@ -25,12 +25,12 @@ const today = () => new Date().toISOString().slice(0, 10);
 // padre (merge liviano, sin el candado de "mergear a dev"). Lo único que se revisa de verdad es
 // la rama total: en cuanto todas las hijas terminan, el padre pasa a "en revisión" él mismo —
 // ahí sí corre el flujo normal de aprobación (Líder/Admin) antes de llegar a "terminada".
-// - todas "por hacer" -> "por hacer", SALVO que el padre ya tenga su rama (alguien la tomó y
-//   empezó a trabajar, hay commits): una rama con trabajo nunca vuelve a "por hacer" -> "en producción"
+// - todas "por hacer" -> "por hacer", SALVO que el padre ya tenga progreso (commits): una rama con
+//   trabajo nunca vuelve a "por hacer" -> "en producción"
 // - alguna "por hacer" o "en producción" -> "en producción"
 // - ninguna "por hacer"/"en producción" (todas terminaron su parte) -> "en revisión"
-function estadoDerivadoDeHijas(hijas: Tarea[], padreTieneRama = false): EstadoTarea {
-  if (hijas.every((h) => h.estado === 'por hacer')) return padreTieneRama ? 'en producción' : 'por hacer';
+function estadoDerivadoDeHijas(hijas: Tarea[], padreTieneProgreso = false): EstadoTarea {
+  if (hijas.every((h) => h.estado === 'por hacer')) return padreTieneProgreso ? 'en producción' : 'por hacer';
   if (hijas.some((h) => h.estado === 'por hacer' || h.estado === 'en producción')) return 'en producción';
   return 'en revisión';
 }
@@ -40,7 +40,8 @@ function estadoDerivadoDeHijas(hijas: Tarea[], padreTieneRama = false): EstadoTa
 // tocó avanzar por sus hijas y no tiene asignado_a, hereda el de alguna de ellas.
 // "terminada" es terminal: una vez autorizado el merge de la rama total, no se vuelve a derivar
 // aunque sus hijas ya estuvieran todas en ese estado (si no, nunca se podría salir de "en revisión").
-function normalizarJerarquiaEstados(tareas: Tarea[]): Tarea[] {
+// conProgreso: ids de tareas con commits (progreso = commits).
+function normalizarJerarquiaEstados(tareas: Tarea[], conProgreso: Set<string>): Tarea[] {
   let resultado = tareas;
   for (let i = 0; i < 10; i++) {
     let cambio = false;
@@ -48,7 +49,7 @@ function normalizarJerarquiaEstados(tareas: Tarea[]): Tarea[] {
       if (t.estado === 'terminada') return t;
       const hijas = resultado.filter((h) => h.tarea_padre_id === t.id && !h.eliminada);
       if (hijas.length === 0) return t;
-      const derivado = estadoDerivadoDeHijas(hijas, !!t.rama_asociada);
+      const derivado = estadoDerivadoDeHijas(hijas, conProgreso.has(t.id));
       const necesitaResponsable = derivado !== 'por hacer' && !t.asignado_a;
       if (derivado === t.estado && !necesitaResponsable) return t;
       cambio = true;
@@ -76,6 +77,36 @@ function tieneProgreso(s: { tareas: Tarea[]; commits: { tarea_id: string }[]; sh
     'danger'
   );
   return true;
+}
+
+// Solo puede haber UN check-in EN CURSO a la vez por tarea padre: si una subtarea se está
+// trabajando con check-in directo sobre la rama del padre (todavía no la manda a revisión), la
+// siguiente debe ir en su propia rama o esperar. Al pasar a revisión el turno se libera: así varios
+// check-in se acumulan en revisión, uno después del otro, y se revisan juntos o por separado.
+export function checkinEnCurso(tareas: Tarea[], padreId: string, excluirId?: string): Tarea | undefined {
+  return tareas.find(
+    (t) =>
+      t.tarea_padre_id === padreId &&
+      t.id !== excluirId &&
+      !t.eliminada &&
+      t.modo_trabajo === 'checkin' &&
+      t.asignado_a &&
+      (t.estado === 'por hacer' || t.estado === 'en producción')
+  );
+}
+/** Mensaje de error si tomar `id` con check-in rompería la regla; null si se puede. */
+export function errorCheckinDoble(tareas: Tarea[], usuarios: Usuario[], id: string): string | null {
+  const tarea = tareas.find((t) => t.id === id);
+  if (!tarea?.tarea_padre_id) return null;
+  const otro = checkinEnCurso(tareas, tarea.tarea_padre_id, id);
+  if (!otro) return null;
+  const u = usuarios.find((x) => x.email === otro.asignado_a);
+  const quien = u ? `${u.nombre} ${u.apellido}` : otro.asignado_a;
+  return (
+    `No se puede tomar ${id} con check-in: ${tarea.tarea_padre_id} ya tiene un check-in en curso ` +
+    `(${otro.id}, de ${quien}). Solo puede haber un check-in en curso a la vez por tarea padre: tómala ` +
+    `con rama propia o espera a que ${otro.id} pase a revisión.`
+  );
 }
 
 // Reabrir = devolver una tarea "terminada" (ya mergeada a dev) a "en revisión". Para que no se
@@ -128,7 +159,7 @@ function avisoSubtareasPendientes(pendientes: Tarea[], estado: EstadoTarea): str
 
 export interface NuevaTarea {
   titulo: string;
-  descripcion: string;
+  detalles?: string;
   tipo: TipoTarea;
   tarea_padre_id: string | null;
   sprint_id: string | null;
@@ -162,6 +193,16 @@ interface State {
 
   // toasts efímeros
   toast: { id: number; msg: string; tone: 'ok' | 'info' | 'danger' } | null;
+  // Rama en la que está parado el workspace local (solo frontend: simula `cm switch`). null = no
+  // está en ninguna tarea. Nunca debe quedar en dev: trabajar ahí metería cambios directo en la
+  // rama de integración, así que solo se cambia a ramas de tareas.
+  ramaWorkspace: string | null;
+  // Panel "Abrir en Unity": cambia el workspace a la rama de la tarea (o a un commit concreto de
+  // ella) y abre Unity ahí.
+  abrirEnUnity: (tareaId: string, rama: string, hash?: string) => void;
+  // "Traer cambios" (solo frontend, simulado): trae a la rama de una tarea los cambios de otra rama o
+  // check-in terminada o en revisión (en el backend real: merge desde esa rama/changesets).
+  traerCambios: (destinoId: string, ramaDestino: string, origenId: string, hash?: string) => void;
 
   // acciones de sesión
   setEmail: (email: string) => void;
@@ -183,21 +224,31 @@ interface State {
   desasignarTarea: (id: string) => void;
   crearTarea: (data: NuevaTarea) => string;
   crearTareaConSubtareas: (
-    data: NuevaTarea & { subtareas: { tipo: TipoTarea; titulo: string; descripcion: string }[] }
+    data: NuevaTarea & { subtareas: { tipo: TipoTarea; titulo: string; detalles?: string }[] }
   ) => void;
   editarTarea: (id: string, campos: Partial<Tarea>, marcarPendiente: boolean) => void;
-  editarYAprobarTarea: (id: string, campos: { titulo: string; descripcion: string }) => void;
+  editarYAprobarTarea: (id: string, campos: { titulo: string; detalles: string }) => void;
+  // "Editar tarea" desde los detalles (título y detalles): se aplica marcada como edición pendiente y
+  // se envía al Administrador/Líder para aprobarla; si la rechazan, se revierte.
+  proponerEdicion: (id: string, campos: { titulo: string; detalles: string }) => void;
   eliminarTarea: (id: string, justificacion: string) => void;
   eliminarDefinitivo: (id: string) => void;
 
   // pendientes
   aprobarTarea: (id: string) => void;
+  // "Marcar todo como revisado" en Pendientes: aprueba de una vez varias tareas nuevas o ediciones.
+  aprobarTareas: (ids: string[]) => void;
+  aprobarEdiciones: (tareaIds: string[]) => void;
   advertirTarea: (id: string, mensaje: string) => void;
   aprobarEdicion: (tareaId: string) => void;
   rechazarEdicion: (tareaId: string) => void;
 
   // revisión
   autorizarMerge: (id: string) => void;
+  // Aprueba juntos varios check-in en revisión de una misma tarea padre.
+  autorizarCheckins: (ids: string[]) => void;
+  // Rechaza juntos varios check-in en revisión: vuelven a producción con el mismo motivo.
+  rechazarCheckins: (ids: string[], motivo: string) => void;
   /** "terminada" -> "en revisión" con motivo obligatorio; respeta LIMITE_REAPERTURAS. */
   reabrirTarea: (id: string, motivo: string) => void;
   rechazarRevision: (id: string, motivo: string) => void;
@@ -235,6 +286,9 @@ export const useStore = create<State>((set, get) => {
     const destinatarios = get().usuarios.filter((u) => u.rol === 'Líder' || u.rol === 'Administrador');
     destinatarios.forEach((u) => notificar({ ...n, para: u.email }));
   };
+  // Normaliza los estados de la jerarquía con los commits actuales (progreso = commits).
+  const normalizar = (tareas: Tarea[]) =>
+    normalizarJerarquiaEstados(tareas, new Set(get().commits.map((c) => c.tarea_id)));
 
   return {
   currentEmail: fx.usuarios[0].email,
@@ -243,7 +297,7 @@ export const useStore = create<State>((set, get) => {
   accesoCompletado: false,
 
   usuarios: [...fx.usuarios],
-  tareas: normalizarJerarquiaEstados([...fx.tareas]),
+  tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),
   sprints: [...fx.sprints],
   notificaciones: [...fx.notificaciones],
   solicitudes: [...fx.solicitudes],
@@ -254,6 +308,29 @@ export const useStore = create<State>((set, get) => {
   correoContacto: 'ingreso@virustf.dev',
 
   toast: null,
+  ramaWorkspace: null,
+  traerCambios: (destinoId, ramaDestino, origenId, hash) => {
+    const origen = get().tareas.find((t) => t.id === origenId);
+    const aviso =
+      origen?.estado === 'en revisión'
+        ? ' — ojo: todavía sin aprobar'
+        : origen?.estado === 'en producción'
+          ? ' — ojo: es trabajo en curso'
+          : '';
+    const que = hash ? `Commit ${hash} de ${origenId}` : `Todos los cambios de ${origenId}`;
+    get().showToast(`${que} traído${hash ? '' : 's'} a ${ramaDestino} (${destinoId})${aviso}`, aviso ? 'info' : 'ok');
+  },
+  abrirEnUnity: (tareaId, rama, hash) => {
+    const destino = hash ? `${rama} @ ${hash}` : rama;
+    const antes = get().ramaWorkspace;
+    set({ ramaWorkspace: destino });
+    get().showToast(
+      antes === destino
+        ? `Abriendo Unity en ${destino} (${tareaId})…`
+        : `Workspace cambiado a ${destino} — abriendo Unity ahí (${tareaId})…`,
+      'info'
+    );
+  },
 
   setEmail: (email) => set({ currentEmail: email }),
   setRolActual: (rol) =>
@@ -297,7 +374,7 @@ export const useStore = create<State>((set, get) => {
     set((s) => {
       const descendientes = propaga ? descendientesDe(s.tareas, id) : new Set<string>();
       return {
-        tareas: normalizarJerarquiaEstados(
+        tareas: normalizar(
           s.tareas.map((t) =>
             t.id === id || descendientes.has(t.id)
               ? {
@@ -324,7 +401,16 @@ export const useStore = create<State>((set, get) => {
 
   // "checkin" solo tiene sentido para subtareas (tarea_padre_id != null) — se valida en la UI,
   // que no ofrece la opción para tareas raíz. Aquí, por si acaso, cae a "rama" si no se pasa modo.
-  tomarTarea: (id, email, modo = 'rama') =>
+  tomarTarea: (id, email, modo = 'rama') => {
+    // Solo un check-in a la vez por tarea padre (ver checkinEnCurso).
+    if (modo === 'checkin') {
+      const s = get();
+      const error = errorCheckinDoble(s.tareas, s.usuarios, id);
+      if (error) {
+        s.showToast(error, 'danger');
+        return;
+      }
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => {
         if (t.id !== id) return t;
@@ -338,7 +424,8 @@ export const useStore = create<State>((set, get) => {
           rama_asociada: t.rama_asociada ?? `task/${id.toLowerCase()}-${t.tipo.slice(0, 4).toLowerCase()}`,
         };
       }),
-    })),
+    }));
+  },
 
   // En una tarea general, sus subtareas también vuelven a "por hacer"; si no, al siguiente
   // cambio el padre se volvería a derivar a otro estado (y heredaría un responsable).
@@ -347,7 +434,7 @@ export const useStore = create<State>((set, get) => {
     set((s) => {
       const descendientes = descendientesDe(s.tareas, id);
       return {
-        tareas: normalizarJerarquiaEstados(
+        tareas: normalizar(
           s.tareas.map((t) => {
             if (t.id === id) return { ...t, asignado_a: null, estado: 'por hacer' };
             if (descendientes.has(t.id)) return { ...t, estado: 'por hacer' };
@@ -365,7 +452,7 @@ export const useStore = create<State>((set, get) => {
     const nueva: Tarea = {
       id: nextId(),
       titulo: data.titulo,
-      descripcion: data.descripcion,
+      detalles: data.detalles ?? '',
       tipo: data.tipo,
       tarea_padre_id: data.tarea_padre_id,
       archivo_ruta: null,
@@ -411,7 +498,7 @@ export const useStore = create<State>((set, get) => {
     subtareas.forEach((st) => {
       get().crearTarea({
         titulo: st.titulo,
-        descripcion: st.descripcion,
+        detalles: st.detalles ?? '',
         tipo: st.tipo,
         tarea_padre_id: padreId,
         sprint_id: raiz.sprint_id,
@@ -490,6 +577,23 @@ export const useStore = create<State>((set, get) => {
     get().showToast('Tarea aprobada');
   },
 
+  aprobarTareas: (ids) => {
+    const set_ = new Set(ids);
+    set((s) => ({
+      tareas: s.tareas.map((t) => (set_.has(t.id) ? { ...t, pendiente_aprobacion: false } : t)),
+    }));
+    get().showToast(`${ids.length} tareas nuevas aprobadas`);
+  },
+
+  aprobarEdiciones: (tareaIds) => {
+    const set_ = new Set(tareaIds);
+    set((s) => ({
+      tareas: s.tareas.map((t) => (set_.has(t.id) ? { ...t, edicion_pendiente: false } : t)),
+      edicionesPendientes: s.edicionesPendientes.filter((e) => !set_.has(e.tarea_id)),
+    }));
+    get().showToast(`${tareaIds.length} ediciones aprobadas`);
+  },
+
   // Notificación #12 (BACKEND.md): advertencia sobre tarea pendiente — no toca la tarea, solo avisa.
   advertirTarea: (id, mensaje) => {
     const tarea = get().tareas.find((t) => t.id === id);
@@ -504,6 +608,56 @@ export const useStore = create<State>((set, get) => {
         accionable: false,
       });
     }
+  },
+
+  proponerEdicion: (id, campos) => {
+    const s = get();
+    const tarea = s.tareas.find((t) => t.id === id);
+    if (!tarea) return;
+    // Solo en "Sin asignar" / "Por hacer": desde que alguien la toma ya tiene rama en Unity VC.
+    if (tarea.estado !== 'por hacer') {
+      s.showToast('Solo se puede editar una tarea en "Sin asignar" o "Por hacer"', 'danger');
+      return;
+    }
+    const nuevos: Record<string, string> = {};
+    const anteriores: Record<string, string> = {};
+    (['titulo', 'detalles'] as const).forEach((k) => {
+      if (campos[k] !== tarea[k]) {
+        nuevos[k] = campos[k];
+        anteriores[k] = tarea[k];
+      }
+    });
+    if (!Object.keys(nuevos).length) return;
+    // Si ya había una edición pendiente de esta tarea, se suma a ella conservando los valores
+    // anteriores originales (los que se restauran si la rechazan).
+    const previa = s.edicionesPendientes.find((e) => e.tarea_id === id);
+    const edicion: EdicionPendiente = previa
+      ? {
+          ...previa,
+          campos_nuevos: { ...previa.campos_nuevos, ...nuevos },
+          campos_anteriores: { ...anteriores, ...previa.campos_anteriores },
+        }
+      : {
+          id: `EP-${Date.now().toString().slice(-5)}`,
+          tarea_id: id,
+          campos_nuevos: nuevos,
+          campos_anteriores: anteriores,
+          motivo: null,
+          creado_por: s.currentEmail,
+          fecha: today(),
+        };
+    set({
+      tareas: s.tareas.map((t) => (t.id === id ? { ...t, ...nuevos, edicion_pendiente: true } : t)),
+      edicionesPendientes: [...s.edicionesPendientes.filter((e) => e.tarea_id !== id), edicion],
+    });
+    get().showToast('Edición enviada — la aprueba un Administrador o Líder', 'info');
+    notificarLideres({
+      tipo: 'edicion_pendiente',
+      titulo: 'Hay una edición de tarea por aprobar',
+      cuerpo: `"${campos.titulo}" (${id}) fue editada (${Object.keys(nuevos).join(', ')}).`,
+      tarea_id: id,
+      accionable: true,
+    });
   },
 
   aprobarEdicion: (tareaId) => {
@@ -522,8 +676,9 @@ export const useStore = create<State>((set, get) => {
         if (t.id !== tareaId) return t;
         const rev: Partial<Tarea> = { edicion_pendiente: false };
         if (ep) {
-          if (ep.campos_anteriores.titulo) rev.titulo = ep.campos_anteriores.titulo;
-          if (ep.campos_anteriores.descripcion) rev.descripcion = ep.campos_anteriores.descripcion;
+          // !== undefined: unos detalles anteriores vacíos también se restauran.
+          if (ep.campos_anteriores.titulo !== undefined) rev.titulo = ep.campos_anteriores.titulo;
+          if (ep.campos_anteriores.detalles !== undefined) rev.detalles = ep.campos_anteriores.detalles;
         }
         return { ...t, ...rev };
       }),
@@ -539,12 +694,47 @@ export const useStore = create<State>((set, get) => {
     set((s) => {
       const hoy = today();
       return {
-        tareas: normalizarJerarquiaEstados(
+        tareas: normalizar(
           s.tareas.map((t) => (t.id === id ? { ...t, estado: 'terminada', fecha_completada: hoy } : t))
         ),
       };
     });
     get().showToast('Merge autorizado — tarea terminada');
+  },
+
+  // Un check-in ya está en la rama del padre (sus commits se hicieron directo ahí): aprobarlo solo lo
+  // da por terminado. Aquí se aprueban varios de una vez ("revisar en conjunto").
+  autorizarCheckins: (ids) => {
+    const hoy = today();
+    const set_ = new Set(ids);
+    set((s) => ({
+      tareas: normalizar(
+        s.tareas.map((t) => (set_.has(t.id) ? { ...t, estado: 'terminada', fecha_completada: hoy } : t))
+      ),
+    }));
+    get().showToast(`${ids.length} check-in aprobados juntos: ${ids.join(', ')}`);
+  },
+
+  rechazarCheckins: (ids, motivo) => {
+    const set_ = new Set(ids);
+    const afectadas = get().tareas.filter((t) => set_.has(t.id));
+    set((s) => ({
+      tareas: normalizar(
+        s.tareas.map((t) => (set_.has(t.id) ? { ...t, estado: 'en producción', motivo_rechazo: motivo } : t))
+      ),
+    }));
+    get().showToast(`${ids.length} check-in rechazados — vuelven a producción`, 'danger');
+    afectadas.forEach((t) => {
+      if (!t.asignado_a) return;
+      notificar({
+        tipo: 'tarea_rechazada',
+        para: t.asignado_a,
+        titulo: 'Tu check-in fue rechazado en revisión',
+        cuerpo: `"${t.titulo}" (${t.id}) volvió a producción. Motivo: ${motivo}`,
+        tarea_id: t.id,
+        accionable: false,
+      });
+    });
   },
 
   // Las subtareas se quedan "terminada": solo se reabre la rama total. normalizarJerarquiaEstados
@@ -561,7 +751,7 @@ export const useStore = create<State>((set, get) => {
     }
     const reaperturas = (tarea.reaperturas ?? 0) + 1;
     set((s) => ({
-      tareas: normalizarJerarquiaEstados(
+      tareas: normalizar(
         s.tareas.map((t) =>
           t.id === id ? { ...t, estado: 'en revisión', fecha_completada: null, reaperturas } : t
         )
@@ -583,7 +773,7 @@ export const useStore = create<State>((set, get) => {
     set((s) => {
       const descendientes = descendientesDe(s.tareas, id);
       return {
-        tareas: normalizarJerarquiaEstados(
+        tareas: normalizar(
           s.tareas.map((t) => {
             if (t.id === id) return { ...t, estado: 'en producción', motivo_rechazo: motivo };
             if (descendientes.has(t.id)) return { ...t, estado: 'en producción' };

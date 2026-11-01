@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
-import { avatarColor, estadoMeta, iniciales } from '../lib/ui';
+import { Modal } from './Modal';
+import { avatarColor, esCheckinTarea, estadoMeta, iniciales } from '../lib/ui';
 import type { Commit, Tarea, Usuario } from '../types';
 
 // Vista "Historial" de Branches: cada rama es una caja que contiene a sus hijas (main guarda a
@@ -46,7 +47,15 @@ export function HistorialRamas({ busqueda, abierta, onAbrir }: {
     const mergesDev = (hijas.get(null) ?? []).filter((t) => t.estado === 'terminada').sort(porFecha);
     const hijasFusionadas = (id: string) => (hijas.get(id) ?? []).filter((t) => t.estado === 'terminada').sort(porFecha);
     const commitsDe = new Map<string, typeof commits>();
-    commits.forEach((c) => commitsDe.set(c.tarea_id, [...(commitsDe.get(c.tarea_id) ?? []), c]));
+    // Los commits de una subtarea con check-in directo (sin rama propia) van en la rama de su padre.
+    const ramaDeCommit = (tareaId: string) => {
+      const tt = porId.get(tareaId);
+      return tt && !tt.rama_asociada && tt.modo_trabajo === 'checkin' && tt.tarea_padre_id ? tt.tarea_padre_id : tareaId;
+    };
+    commits.forEach((c) => {
+      const r = ramaDeCommit(c.tarea_id);
+      commitsDe.set(r, [...(commitsDe.get(r) ?? []), c]);
+    });
     commitsDe.forEach((lista) => lista.sort((a, b) => b.fecha.localeCompare(a.fecha)));
     return { hijas, mergesDev, commitsDe, hijasFusionadas, porId, padreDe };
   }, [tareasAll, commits]);
@@ -277,6 +286,14 @@ function haceCuanto(iso: string) {
 
 function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: string; usuarios: Usuario[] }) {
   const showToast = useStore((s) => s.showToast);
+  const tareas = useStore((s) => s.tareas);
+  // Si el cambio viene de una subtarea con check-in directo, se marca como check-in de esa tarea.
+  const checkinDe = (c: Commit) => {
+    const t = tareas.find((x) => x.id === c.tarea_id);
+    return t && esCheckinTarea(t) ? t.id : null;
+  };
+  // Click en cualquier parte de un commit abre sus detalles (como las tareas en el Scrum).
+  const [seleccionado, setSeleccionado] = useState<number | null>(null);
   if (!commits.length) return <div className="text-xs text-faint">Sin commits todavía</div>;
 
   const usuario = (email: string) => usuarios.find((u) => u.email === email);
@@ -330,7 +347,11 @@ function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: 
               const u = usuario(c.autor);
               const nombre = u ? `${u.nombre} ${u.apellido}` : c.autor;
               return (
-                <div key={c.id} className="group relative flex items-center gap-3 rounded-md py-1.5 pr-2 transition hover:bg-surface-2">
+                <div
+                  key={c.id}
+                  onClick={() => setSeleccionado(commits.indexOf(c))}
+                  className="group relative flex cursor-pointer items-center gap-3 rounded-md py-1.5 pr-2 transition hover:bg-surface-2"
+                >
                   <span className="absolute -left-[21px] top-1/2 z-10 h-2 w-2 -translate-y-1/2 rounded-full" style={{ background: color }} />
                   <span
                     className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[10px] font-semibold text-white"
@@ -340,14 +361,24 @@ function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: 
                     {u ? iniciales(u.nombre, u.apellido) : c.autor.slice(0, 2).toUpperCase()}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs text-text">{c.mensaje}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-xs text-text">{c.mensaje}</span>
+                      {checkinDe(c) && (
+                        <span className="shrink-0 rounded border border-border bg-surface-3 px-1.5 py-px text-[10px] text-muted">
+                          check-in · {checkinDe(c)}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[11px] text-faint" title={c.fecha.replace('T', ' ')}>
                       {nombre} · {haceCuanto(c.fecha)} · {c.fecha.slice(11, 16)}
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => copiar(c.hash)}
+                    onClick={(e) => {
+                      e.stopPropagation(); // la pastilla copia; no abre los detalles
+                      copiar(c.hash);
+                    }}
                     className="shrink-0 rounded-md border border-border bg-surface-3 px-2 py-0.5 font-mono text-[11px] text-muted transition hover:border-border-strong hover:text-text"
                     title="Copiar hash"
                   >
@@ -359,6 +390,106 @@ function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: 
           </div>
         ))}
       </div>
+
+      {seleccionado !== null && commits[seleccionado] && (
+        <DetalleCommit
+          commit={commits[seleccionado]}
+          posicion={commits.length - seleccionado}
+          total={commits.length}
+          usuario={usuario(commits[seleccionado].autor)}
+          onCerrar={() => setSeleccionado(null)}
+          onCopiar={copiar}
+          // la lista va del más reciente al más antiguo: "anterior" en el tiempo = índice mayor
+          onAnterior={seleccionado < commits.length - 1 ? () => setSeleccionado(seleccionado + 1) : undefined}
+          onSiguiente={seleccionado > 0 ? () => setSeleccionado(seleccionado - 1) : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+// Detalles de un commit: mensaje, rama/tarea, autor, fecha exacta y hash; con anterior/siguiente
+// para recorrer los commits de la rama sin cerrar.
+export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCopiar, onAnterior, onSiguiente }: {
+  commit: Commit;
+  posicion: number;
+  total: number;
+  usuario?: Usuario;
+  onCerrar: () => void;
+  onCopiar: (hash: string) => void;
+  onAnterior?: () => void;
+  onSiguiente?: () => void;
+}) {
+  const tarea = useStore((s) => s.tareas.find((t) => t.id === commit.tarea_id));
+  const nombre = usuario ? `${usuario.nombre} ${usuario.apellido}` : commit.autor;
+  const [d, h] = commit.fecha.split('T');
+  const fechaLarga = `${Number(d.slice(8, 10))} ${MESES[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}, ${(h ?? '').slice(0, 5)}`;
+  return (
+    <Modal
+      open
+      onClose={onCerrar}
+      title={commit.mensaje}
+      subtitle={
+        tarea && esCheckinTarea(tarea)
+          ? `Check-in de ${tarea.id} sobre la rama de ${tarea.tarea_padre_id ?? '—'}`
+          : `Commit ${posicion} de ${total} en esta rama`
+      }
+      footer={
+        <div className="flex w-full items-center justify-between gap-2">
+          <button type="button" className="btn-ghost btn-sm" onClick={onAnterior} disabled={!onAnterior}>
+            ← Anterior
+          </button>
+          <button type="button" className="btn-ghost btn-sm" onClick={onSiguiente} disabled={!onSiguiente}>
+            Siguiente →
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        {tarea && (
+          <FilaDetalle k="Rama">
+            <span className="font-mono text-text">{tarea.rama_asociada}</span>
+            <span className="ml-2 text-muted">
+              {tarea.id} · {tarea.titulo}
+            </span>
+          </FilaDetalle>
+        )}
+        <FilaDetalle k="Autor">
+          <span className="inline-flex items-center gap-2">
+            <span
+              className="grid h-6 w-6 place-items-center rounded-full text-[10px] font-semibold text-white"
+              style={{ background: avatarColor(commit.autor) }}
+            >
+              {usuario ? iniciales(usuario.nombre, usuario.apellido) : commit.autor.slice(0, 2).toUpperCase()}
+            </span>
+            <span className="text-text">{nombre}</span>
+            {usuario && <span className="text-faint">· {usuario.rol}</span>}
+          </span>
+        </FilaDetalle>
+        <FilaDetalle k="Fecha">
+          <span className="text-text">{fechaLarga}</span>
+          <span className="ml-2 text-faint">{haceCuanto(commit.fecha)}</span>
+        </FilaDetalle>
+        <FilaDetalle k="Hash">
+          <span className="font-mono text-text">{commit.hash}</span>
+          <button
+            type="button"
+            onClick={() => onCopiar(commit.hash)}
+            className="ml-2 rounded-md border border-border bg-surface-3 px-2 py-0.5 text-[11px] text-muted transition hover:border-border-strong hover:text-text"
+          >
+            Copiar
+          </button>
+        </FilaDetalle>
+      </div>
+    </Modal>
+  );
+}
+
+function FilaDetalle({ k, children }: { k: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <span className="w-14 shrink-0 text-faint">{k}</span>
+      <span className="min-w-0 flex-1">{children}</span>
     </div>
   );
 }

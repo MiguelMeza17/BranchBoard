@@ -7,18 +7,18 @@ interface SubtareaEntry {
   uid: string;
   tipo: TipoTarea;
   titulo: string;
-  descripcion: string;
+  detalles: string;
   guardada: boolean;
 }
 
 export interface NuevaTareaData {
   titulo: string;
-  descripcion: string;
+  detalles: string;
   tipo: TipoTarea;
   sprint_id: string | null;
   con_fecha: boolean;
   fecha_limite: string | null;
-  subtareas: { tipo: TipoTarea; titulo: string; descripcion: string }[];
+  subtareas: { tipo: TipoTarea; titulo: string; detalles: string }[];
 }
 
 export function CrearTareaModal({
@@ -45,7 +45,7 @@ export function CrearTareaModal({
   const [modo, setModo] = useState<'elegir' | 'general' | 'especifica'>(modoInicial);
 
   const [titulo, setTitulo] = useState('');
-  const [descripcion, setDescripcion] = useState('');
+  const [detalles, setDetalles] = useState('');
   const [tipo, setTipo] = useState<TipoTarea>(tipoFijo ?? 'Scripting');
   const [subtareas, setSubtareas] = useState<SubtareaEntry[]>([]);
   const subUidRef = useRef(0);
@@ -63,9 +63,9 @@ export function CrearTareaModal({
   // Como ahora son una lista y no un Set por tipo, una misma categoría puede repetirse.
   const agregarSubtarea = (tp: TipoTarea) => {
     const uid = `s${subUidRef.current++}`;
-    setSubtareas((prev) => [...prev, { uid, tipo: tp, titulo: '', descripcion: '', guardada: false }]);
+    setSubtareas((prev) => [...prev, { uid, tipo: tp, titulo: '', detalles: '', guardada: false }]);
   };
-  const editarSubtarea = (uid: string, campos: Partial<Pick<SubtareaEntry, 'titulo' | 'descripcion'>>) =>
+  const editarSubtarea = (uid: string, campos: Partial<Pick<SubtareaEntry, 'titulo' | 'detalles'>>) =>
     setSubtareas((prev) => prev.map((s) => (s.uid === uid ? { ...s, ...campos } : s)));
   const guardarSubtarea = (uid: string) =>
     setSubtareas((prev) => prev.map((s) => (s.uid === uid && s.titulo.trim() ? { ...s, guardada: true } : s)));
@@ -89,13 +89,13 @@ export function CrearTareaModal({
   function crear() {
     onCreate({
       titulo: titulo.trim(),
-      descripcion: descripcion.trim(),
+      detalles: detalles.trim(),
       tipo,
       sprint_id: sprintId || null,
       con_fecha: conFecha,
       fecha_limite: conFecha && fecha ? fecha : null,
       subtareas: esGeneral
-        ? subtareas.map((s) => ({ tipo: s.tipo, titulo: s.titulo.trim(), descripcion: s.descripcion.trim() }))
+        ? subtareas.map((s) => ({ tipo: s.tipo, titulo: s.titulo.trim(), detalles: s.detalles.trim() }))
         : [],
     });
   }
@@ -171,8 +171,15 @@ export function CrearTareaModal({
               <input className="input" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej. Sistema de inventario" />
             </div>
             <div>
-              <label className="label">Descripción</label>
-              <textarea className="input min-h-[80px] resize-y" value={descripcion} onChange={(e) => setDescripcion(e.target.value)} />
+              <label className="label">
+                Detalles <span className="text-faint">(opcional)</span>
+              </label>
+              <textarea
+                className="input min-h-[140px] resize-y"
+                value={detalles}
+                onChange={(e) => setDetalles(e.target.value)}
+                placeholder="Qué hay que hacer a detalle: los pasos, dónde está cada cosa, lo que haga falta explicar…"
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -279,10 +286,10 @@ export function CrearTareaModal({
                               autoFocus
                             />
                             <textarea
-                              className="input min-h-[50px] resize-y"
-                              placeholder="Descripción"
-                              value={st.descripcion}
-                              onChange={(e) => editarSubtarea(st.uid, { descripcion: e.target.value })}
+                              className="input min-h-[70px] resize-y"
+                              placeholder="Detalles (opcional): pasos, dónde está cada cosa…"
+                              value={st.detalles}
+                              onChange={(e) => editarSubtarea(st.uid, { detalles: e.target.value })}
                             />
                             <div className="flex justify-end">
                               <button
