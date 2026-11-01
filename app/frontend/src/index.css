@@ -76,3 +76,64 @@
     @apply bg-primary-soft text-text;
   }
 }
+
+/* Branches: el nodo con el mouse encima queda por arriba, para que su recuadro de información no lo tapen otros nodos. */
+.react-flow .react-flow__node:hover {
+  z-index: 1000 !important;
+}
+
+/* Branches: botones de zoom (+, −, ajustar) con el mismo estilo que los botones de la barra superior. */
+.react-flow .react-flow__controls {
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.react-flow .react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #2b313f; /* border */
+  border-radius: 8px;
+  background: #1d212c; /* surface-2 */
+  color: #9aa2b1; /* muted */
+  transition: border-color 150ms, color 150ms, background-color 150ms;
+}
+.react-flow .react-flow__controls-button:hover {
+  background: #252a37; /* surface-3 */
+  border-color: #3a4252; /* border-strong */
+  color: #e7e9ee; /* text */
+}
+.react-flow .react-flow__controls-button svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* Branches: resaltado breve de la rama a la que lleva el buscador. */
+@keyframes resaltar-rama {
+  0%,
+  45% {
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.9), 0 0 22px 6px rgba(255, 255, 255, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+}
+.react-flow .react-flow__node.resaltado {
+  animation: resaltar-rama 1.8s ease-out;
+}
+
+/* Branches: cabeza de dev elegida (viaje en el tiempo) — brilla mientras esté elegida. */
+@keyframes brillo-cabeza {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55), 0 0 10px 2px rgba(255, 255, 255, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.95), 0 0 22px 6px rgba(255, 255, 255, 0.45);
+  }
+}
+.react-flow .react-flow__node.cabeza-dev {
+  animation: brillo-cabeza 1.6s ease-in-out infinite;
+}
