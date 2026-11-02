@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore';
 export function EstadoBadge({ estado }: { estado: EstadoTarea }) {
   const m = estadoMeta[estado];
   return (
-    <span className={`chip ${m.bg} ${m.text} border ${m.border}`}>
+    <span className={`chip whitespace-nowrap ${m.bg} ${m.text} border ${m.border}`}>
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.dot }} />
       {m.label}
     </span>
@@ -18,7 +18,7 @@ export function TipoBadge({ tipo }: { tipo: TipoTarea }) {
   const m = tipoMeta[tipo];
   return (
     <span
-      className="chip border"
+      className="chip whitespace-nowrap border"
       style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}18` }}
     >
       <span>{m.emoji}</span>

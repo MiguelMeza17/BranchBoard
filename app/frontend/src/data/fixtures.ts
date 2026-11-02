@@ -135,6 +135,7 @@ function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' |
     asignado_a: null,
     lider_revision_asignado: null,
     sprint_id: 'sp1',
+    fecha_creacion: '2026-08-15',
     con_fecha: false,
     fecha_limite: null,
     fecha_completada: null,

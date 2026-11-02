@@ -100,8 +100,9 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
         </button>
       </div>
 
-      {/* Contraído: no se muestra ningún botón de navegación, solo la franja con el logo y el toggle. */}
-      <nav className={`flex-1 space-y-0.5 overflow-y-auto px-3 pb-4 ${colapsado ? 'hidden' : ''}`}>
+      {/* Contraído: solo los íconos (centrados, con el nombre al pasar el mouse); el número o el punto
+          de aviso van como una marca pequeña en la esquina del ícono. */}
+      <nav className={`flex-1 space-y-0.5 overflow-y-auto pb-4 ${colapsado ? 'px-2' : 'px-3'}`}>
         {NAV.map((item) => {
           const badge = badgeByPath[item.to];
           const punto = puntoDeRuta(item.to);
@@ -110,24 +111,46 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
             <NavLink
               key={item.to}
               to={item.to}
-              className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}
+              title={colapsado ? item.label + (badge ? ` (${badge})` : '') : undefined}
+              aria-label={item.label}
+              className={({ isActive }) =>
+                `nav-link ${isActive ? 'nav-link-active' : ''} ${colapsado ? 'relative justify-center px-0' : ''}`
+              }
             >
               <span className="text-base leading-none">{item.icon}</span>
-              <span className="truncate">{item.label}</span>
-              {punto && (
-                <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className={`absolute h-2.5 w-2.5 rounded-full blur-[2px] ${punto.halo}`} />
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${punto.solido}`} />
-                </span>
-              )}
-              {badge !== undefined && (
-                <span
-                  className={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
-                    badge > 0 ? colorBadgePorRuta[item.to] ?? 'bg-primary text-white' : 'bg-surface-3 text-faint'
-                  }`}
-                >
-                  {badge}
-                </span>
+              {colapsado ? (
+                <>
+                  {badge !== undefined && badge > 0 ? (
+                    <span
+                      className={`absolute right-1 top-0.5 grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[9px] font-bold ${
+                        colorBadgePorRuta[item.to] ?? 'bg-primary text-white'
+                      }`}
+                    >
+                      {badge}
+                    </span>
+                  ) : (
+                    punto && <span className={`absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full ${punto.solido}`} />
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="truncate">{item.label}</span>
+                  {punto && (
+                    <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
+                      <span className={`absolute h-2.5 w-2.5 rounded-full blur-[2px] ${punto.halo}`} />
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${punto.solido}`} />
+                    </span>
+                  )}
+                  {badge !== undefined && (
+                    <span
+                      className={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
+                        badge > 0 ? colorBadgePorRuta[item.to] ?? 'bg-primary text-white' : 'bg-surface-3 text-faint'
+                      }`}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </>
               )}
             </NavLink>
           );

@@ -46,7 +46,7 @@ Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + 
 ⚙️  Ajustes
 ```
 
-**Menú lateral desplegable**: un botón de tres rayas (☰), ubicado siempre debajo de la cabecera "BranchBoard" y en la misma posición en ambos estados, contrae el menú a una franja angosta (64px) o lo vuelve a expandir (240px). Contraído, la franja solo muestra el logo y el botón ☰ — los botones de navegación se ocultan por completo hasta volver a expandirlo. El contenido principal aprovecha el espacio liberado (su ancho máximo pasa de 1400px a 1640px). La preferencia se recuerda localmente entre sesiones.
+**Menú lateral desplegable**: un botón de tres rayas (☰), ubicado siempre debajo de la cabecera "BranchBoard" y en la misma posición en ambos estados, contrae el menú a una franja angosta (64px) o lo vuelve a expandir (240px). Contraído, la franja muestra el logo, el botón ☰ y **los íconos de cada pantalla, que siguen funcionando como botones** (llevan a su pantalla, marcan la activa y muestran su nombre al pasar el mouse); los números de Pendientes/Revisión/Papelera y los puntos de aviso quedan como una marca pequeña en la esquina del ícono (actualizado 2026-11-02). El contenido principal aprovecha el espacio liberado (su ancho máximo pasa de 1400px a 1640px). La preferencia se recuerda localmente entre sesiones.
 
 Barra superior persistente: switch de VPN, campana de notificaciones, botón "Abrir en Unity", identidad (correo + rol).
 

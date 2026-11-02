@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { ESTADOS, type EstadoTarea, type Tarea, type TipoTarea } from '../types';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { PageHeader, EstadoBadge, TipoBadge, Avatar, EmptyState } from '../components/primitives';
 import { CrearTareaModal } from '../components/CrearTareaModal';
+import { DetalleTareaModal } from '../components/DetalleTareaModal';
+import { ConfirmLock } from '../components/ConfirmLock';
+import { TIPOS_TAREA } from '../types';
+import { avatarColor } from '../lib/ui';
 
 // Orden dentro de cada nivel del árbol: "Sin asignar" (por hacer sin dueño, igual que la
 // columna visual del Tablero Scrum) va primero, luego el resto de estados en orden de flujo;
@@ -21,10 +25,25 @@ function compararTareas(a: Tarea, b: Tarea): number {
 // Etiqueta de estado de aprobación con una explicación corta en gris al pasar el mouse.
 // La ayuda se abre siempre a la derecha, centrada con la etiqueta, para que quede dentro de
 // su propia fila y no se salga de la tarjeta en la última.
-function EtiquetaConAyuda({ className, ayuda, children }: { className: string; ayuda: string; children: React.ReactNode }) {
+function EtiquetaConAyuda({
+  className,
+  ayuda,
+  children,
+  onClick,
+}: {
+  className: string;
+  ayuda: string;
+  children: React.ReactNode;
+  onClick?: (e: React.MouseEvent) => void;
+}) {
   return (
     <span className="group relative">
-      <span className={`chip cursor-help border ${className}`}>{children}</span>
+      <span
+        className={`chip border ${onClick ? 'cursor-pointer hover:brightness-125' : 'cursor-help'} ${className}`}
+        onClick={onClick}
+      >
+        {children}
+      </span>
       <span className="pointer-events-none absolute left-full top-1/2 z-20 ml-2 hidden w-80 -translate-y-1/2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-normal text-muted shadow-lg group-hover:block">
         {ayuda}
       </span>
@@ -43,6 +62,27 @@ export function ListaTareas() {
   const [filtroEstado, setFiltroEstado] = useState<EstadoTarea | ''>('');
   const [busqueda, setBusqueda] = useState('');
   const [showCrear, setShowCrear] = useState(false);
+  // Detalles de la tarea (se guarda el id para mostrar siempre su versión actual del store).
+  const [detalleId, setDetalleId] = useState<string | null>(null);
+  const todasLasTareas = useStore((s) => s.tareas);
+  const detalle = detalleId ? todasLasTareas.find((t) => t.id === detalleId) ?? null : null;
+  const navigate = useNavigate();
+  const usuarios = useStore((s) => s.usuarios);
+  const asignarTarea = useStore((s) => s.asignarTarea);
+  // Asignar desde la lista: solo Líder/Administrador, en tareas sin subtareas que no estén terminadas.
+  const puedeAsignar = user.rol === 'Líder' || user.rol === 'Administrador';
+  const [asignando, setAsignando] = useState<Tarea | null>(null);
+  const [asignarA, setAsignarA] = useState('');
+  // Cada celda hace lo suyo sin disparar el click de la fila.
+  const celda = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+  const nombreDe = (email: string) => {
+    const u = usuarios.find((x) => x.email === email);
+    return u ? `${u.nombre} ${u.apellido}` : email;
+  };
+  const irAPendientes = (id: string) => navigate('/pendientes', { state: { focusTareaId: id } });
   const buscadorRef = useRef<HTMLInputElement>(null);
 
   // Atajos de teclado: "/" enfoca la búsqueda, "n" abre "Nueva tarea" — se ignoran
@@ -131,26 +171,44 @@ export function ListaTareas() {
       const fila = (
         <tr
           key={t.id}
-          className={`border-b border-border/50 transition-colors hover:bg-surface-2 ${hijos.length ? 'cursor-pointer' : ''} ${
+          className={`cursor-pointer border-b border-border/50 transition-colors hover:bg-surface-2 ${
             filtrando && !coincide.has(t.id) ? 'opacity-50' : ''
           }`}
-          onClick={hijos.length ? () => alternar(t.id) : undefined}
+          // Fuera de las celdas con acción propia: con subtareas despliega/oculta la carpeta; sin
+          // subtareas abre sus detalles. ID → la tarea en el Scrum; título → detalles; etiquetas →
+          // Pendientes; tipo → su categoría; asignado → asignar (Líder/Admin).
+          onClick={() => (hijos.length ? alternar(t.id) : setDetalleId(t.id))}
         >
           <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-faint">
             <div className="flex items-center gap-1.5" style={{ paddingLeft: profundidad * 20 }}>
               <span className="w-3 text-center text-muted">{hijos.length ? (abierta ? '▾' : '▸') : ''}</span>
               <span className="font-sans text-sm">{hijos.length ? (abierta ? '📂' : '📁') : '📄'}</span>
-              <span>{t.id}</span>
+              <button
+                type="button"
+                className="rounded px-0.5 text-text underline-offset-2 hover:text-primary hover:underline"
+                title="Ver esta tarea en el Tablero Scrum"
+                onClick={celda(() => navigate('/scrum', { state: { focusTareaId: t.id } }))}
+              >
+                {t.id}
+              </button>
               {hijos.length > 0 && <span className="font-sans text-[10px] text-faint">({hijos.length})</span>}
             </div>
           </td>
           <td className="px-4 py-3">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-text">{t.titulo}</span>
+              <button
+                type="button"
+                className="text-left font-medium text-text underline-offset-2 hover:text-primary hover:underline"
+                title="Ver los detalles de la tarea"
+                onClick={celda(() => setDetalleId(t.id))}
+              >
+                {t.titulo}
+              </button>
               {t.pendiente_aprobacion && (
                 <EtiquetaConAyuda
                   className="border-amber-500/40 bg-amber-500/15 text-amber-300"
-                  ayuda="La creó un Desarrollador o Tester y falta que un Líder o Admin la apruebe. Se puede trabajar, pero no enviar a revisión."
+                  ayuda="La creó un Desarrollador o Tester y falta que un Líder o Admin la apruebe. Se puede trabajar, pero no enviar a revisión. Click: verla en Pendientes."
+                  onClick={celda(() => irAPendientes(t.id))}
                 >
                   ⏳ Pendiente
                 </EtiquetaConAyuda>
@@ -158,18 +216,62 @@ export function ListaTareas() {
               {t.edicion_pendiente && (
                 <EtiquetaConAyuda
                   className="border-warn/40 bg-yellow-500/15 text-yellow-300"
-                  ayuda="Se modificó después de aprobada. Un Líder o Admin debe confirmar o revertir los cambios."
+                  ayuda="Se modificó después de aprobada. Un Líder o Admin debe confirmar o revertir los cambios. Click: verla en Pendientes."
+                  onClick={celda(() => irAPendientes(t.id))}
                 >
                   ✏️ Edición
                 </EtiquetaConAyuda>
               )}
             </div>
           </td>
-          <td className="px-4 py-3"><TipoBadge tipo={t.tipo} /></td>
+          <td className="px-4 py-3">
+            {TIPOS_TAREA.includes(t.tipo) ? (
+              <button
+                type="button"
+                className="rounded-md transition hover:brightness-125"
+                title={`Ver la tarea en la categoría ${t.tipo}`}
+                onClick={celda(() => navigate(`/categorias/${encodeURIComponent(t.tipo)}`, { state: { focusTareaId: t.id } }))}
+              >
+                <TipoBadge tipo={t.tipo} />
+              </button>
+            ) : (
+              <TipoBadge tipo={t.tipo} />
+            )}
+          </td>
           <td className="px-4 py-3"><EstadoBadge estado={t.estado} /></td>
           <td className="px-4 py-3">
-            {t.asignado_a ? <Avatar email={t.asignado_a} size={24} /> : <span className="text-faint">Sin asignar</span>}
+            {puedeAsignar && hijos.length === 0 && t.estado !== 'terminada' ? (
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-xs text-muted transition hover:border-border hover:text-text"
+                title="Asignar a alguien"
+                onClick={celda(() => {
+                  setAsignando(t);
+                  setAsignarA(t.asignado_a ?? '');
+                })}
+              >
+                {t.asignado_a ? (
+                  <>
+                    <span
+                      className="grid h-6 w-6 place-items-center rounded-full text-[10px] font-semibold text-white"
+                      style={{ background: avatarColor(t.asignado_a) }}
+                    >
+                      {t.asignado_a.slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="max-w-[110px] truncate">{nombreDe(t.asignado_a)}</span>
+                  </>
+                ) : (
+                  <span className="text-faint">Sin asignar</span>
+                )}
+                <span className="text-faint">▾</span>
+              </button>
+            ) : t.asignado_a ? (
+              <Avatar email={t.asignado_a} size={24} />
+            ) : (
+              <span className="text-faint">Sin asignar</span>
+            )}
           </td>
+          <td className="whitespace-nowrap px-4 py-3 text-muted">{t.fecha_creacion}</td>
           <td className="px-4 py-3 text-muted">{t.con_fecha ? t.fecha_limite : 'Sin fecha'}</td>
         </tr>
       );
@@ -251,13 +353,47 @@ export function ListaTareas() {
                 <th className="px-4 py-3 font-medium">Tipo</th>
                 <th className="px-4 py-3 font-medium">Estado</th>
                 <th className="px-4 py-3 font-medium">Asignado</th>
-                <th className="px-4 py-3 font-medium">Fecha</th>
+                <th className="px-4 py-3 font-medium">Fecha de creación</th>
+                <th className="px-4 py-3 font-medium">Fecha límite</th>
               </tr>
             </thead>
             <tbody>{filas(raices, 0)}</tbody>
           </table>
         </div>
       )}
+
+      <DetalleTareaModal tarea={detalle} onClose={() => setDetalleId(null)} />
+
+      {/* Asignar (Líder/Admin): elegir a quién y confirmar escribiendo "asignar" */}
+      <ConfirmLock
+        open={!!asignando}
+        onClose={() => setAsignando(null)}
+        onConfirm={() => {
+          if (asignando && asignarA) asignarTarea(asignando.id, asignarA);
+          setAsignando(null);
+        }}
+        title={asignando ? `Asignar ${asignando.id}` : 'Asignar'}
+        tone="primary"
+        palabra="asignar"
+        confirmLabel="Asignar"
+        description={
+          <div className="space-y-2">
+            <p>
+              {asignando?.titulo}. {asignando?.rama_asociada ? 'Ya tiene rama: solo cambia el responsable.' : 'Se crea su rama (sin cambiar tu workspace).'}
+            </p>
+            <select className="input" value={asignarA} onChange={(e) => setAsignarA(e.target.value)}>
+              <option value="" disabled>
+                Elige a quién…
+              </option>
+              {usuarios.map((u) => (
+                <option key={u.email} value={u.email}>
+                  {u.nombre} {u.apellido} · {u.rol}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+      />
 
       {showCrear && (
         <CrearTareaModal

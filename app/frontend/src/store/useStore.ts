@@ -22,6 +22,13 @@ const nextId = () => `T-${++idSeq}`;
 let notifSeq = 1000;
 const nextNotifId = () => `N-${++notifSeq}`;
 const today = () => new Date().toISOString().slice(0, 10);
+// Fecha LOCAL del equipo (AAAA-MM-DD). toISOString() da la fecha en UTC, que en Colombia ya es
+// "mañana" desde las 7 p. m.; la de creación tiene que ser la que muestra el reloj del PC.
+const hoyLocal = () => {
+  const d = new Date();
+  const dos = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}`;
+};
 
 // Las subtareas nunca pasan por "en revisión" — se terminan directo contra la rama de su tarea
 // padre (merge liviano, sin el candado de "mergear a dev"). Lo único que se revisa de verdad es
@@ -257,6 +264,11 @@ interface State {
   borrarProgreso: (id: string) => void;
   tomarTarea: (id: string, email: string) => void;
   desasignarTarea: (id: string) => void;
+  /**
+   * Líder/Administrador asigna (o reasigna) una tarea a alguien desde la Lista de tareas. Si todavía
+   * no tiene rama, se crea (sin auto-switch: el workspace de quien asigna no cambia).
+   */
+  asignarTarea: (id: string, email: string) => void;
   crearTarea: (data: NuevaTarea) => string;
   crearTareaConSubtareas: (
     data: NuevaTarea & { subtareas: { tipo: TipoTarea; titulo: string; detalles?: string }[] }
@@ -615,6 +627,24 @@ export const useStore = create<State>((set, get) => {
 
   // En una tarea general, sus subtareas también vuelven a "por hacer"; si no, al siguiente
   // cambio el padre se volvería a derivar a otro estado (y heredaría un responsable).
+  asignarTarea: (id, email) => {
+    const t = get().tareas.find((x) => x.id === id);
+    if (!t || t.asignado_a === email) return;
+    set((s) => ({
+      tareas: s.tareas.map((x) =>
+        x.id === id
+          ? {
+              ...x,
+              asignado_a: email,
+              modo_trabajo: 'rama',
+              rama_asociada: x.rama_asociada ?? `task/${id.toLowerCase()}-${x.tipo.slice(0, 4).toLowerCase()}`,
+            }
+          : x
+      ),
+    }));
+    const u = get().usuarios.find((x) => x.email === email);
+    get().showToast(`${id} asignada a ${u ? `${u.nombre} ${u.apellido}` : email}`);
+  },
   desasignarTarea: (id) => {
     if (tieneProgreso(get(), id)) return;
     set((s) => {
@@ -648,6 +678,7 @@ export const useStore = create<State>((set, get) => {
       modo_trabajo: null,
       modificada: false,
       creado_por: user.email,
+      fecha_creacion: hoyLocal(),
       asignado_a: null,
       lider_revision_asignado: null,
       sprint_id: data.sprint_id,
