@@ -90,6 +90,8 @@ export interface Tarea {
   modo_trabajo: 'rama' | null;
   modificada: boolean; // badge "hay cambios nuevos"
   creado_por: string;
+  // AAAA-MM-DD, se pone sola al crear la tarea con la fecha local del equipo (no se edita).
+  fecha_creacion: string;
   asignado_a: string | null;
   lider_revision_asignado: string | null;
   sprint_id: string | null;

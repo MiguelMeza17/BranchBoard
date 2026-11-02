@@ -24,17 +24,32 @@ export function App() {
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
 
-  if (!showSplash && !cmSesionActiva) {
-    return <SesionUnityVCRequerida />;
+  // Debajo de la pantalla de carga va siempre lo que sigue después de ella: sin sesión o sin haber
+  // entrado a un proyecto, la pantalla de acceso. Así, al desvanecerse la carga, nunca se ve la
+  // interfaz de BranchBoard antes de iniciar sesión.
+  const splash = showSplash && <SplashScreen onDone={() => setShowSplash(false)} />;
+
+  if (!cmSesionActiva) {
+    return (
+      <>
+        {splash}
+        <SesionUnityVCRequerida />
+      </>
+    );
   }
 
-  if (!showSplash && !accesoCompletado) {
-    return <AccesoProyecto />;
+  if (!accesoCompletado) {
+    return (
+      <>
+        {splash}
+        <AccesoProyecto />
+      </>
+    );
   }
 
   return (
     <>
-      {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
+      {splash}
       <HashRouter>
         <Routes>
           <Route element={<Layout />}>

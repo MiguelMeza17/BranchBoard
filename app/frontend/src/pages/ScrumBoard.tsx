@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -21,8 +21,7 @@ import { ConfirmLock } from '../components/ConfirmLock';
 import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
 import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
-import { AccionesRama, CambiosTraidos, RamaDeLaTarea } from '../components/AccionesRama';
-import { CambiosEntrantes, CheckinsDeLaRama, PendingChanges } from '../components/CheckinsDeLaRama';
+import { DetalleTareaModal } from '../components/DetalleTareaModal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
 // Columnas del tablero: "Sin asignar" no es un estado real de la tarea — es un
@@ -48,7 +47,9 @@ function DraggableCard({
   footer,
   ocultarResponsable,
   disabled,
+  resaltada,
 }: {
+  resaltada?: boolean;
   tarea: Tarea;
   childCount: number;
   onOpenFolder?: () => void;
@@ -62,7 +63,12 @@ function DraggableCard({
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id, disabled });
   return (
-    <div ref={setNodeRef} className={isDragging ? 'opacity-40' : ''}>
+    <div
+      ref={setNodeRef}
+      id={`scrum-tarea-${tarea.id}`}
+      className={`rounded-xl transition-shadow duration-300 ${isDragging ? 'opacity-40' : ''}`}
+      style={resaltada ? { boxShadow: '0 0 0 2px rgb(99 102 241 / 0.8), 0 0 18px 4px rgb(99 102 241 / 0.45)' } : undefined}
+    >
       <TaskCard
         tarea={tarea}
         childCount={childCount}
@@ -115,6 +121,7 @@ function Column({
 
 export function ScrumBoard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useStore((s) => s.currentUser());
   const tareasAll = useStore((s) => s.tareas);
   const moverTarea = useStore((s) => s.moverTarea);
@@ -128,6 +135,9 @@ export function ScrumBoard() {
   const showToast = useStore((s) => s.showToast);
 
   const [focusId, setFocusId] = useState<string | null>(null); // navegación tipo carpeta
+  // Llegada desde otra pantalla (ej. el ID en Lista de tareas): abre la carpeta donde está la tarea,
+  // hace scroll hasta ella y la resalta un momento.
+  const [resaltada, setResaltada] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);
   const [salto, setSalto] = useState<{ id: string; to: EstadoTarea } | null>(null);
@@ -208,6 +218,26 @@ export function ScrumBoard() {
     if (!focusId) return visibles.filter((t) => t.tarea_padre_id === null);
     return visibles.filter((t) => t.tarea_padre_id === focusId);
   }, [visibles, focusId]);
+
+  useEffect(() => {
+    const focusTareaId = (location.state as { focusTareaId?: string } | null)?.focusTareaId;
+    if (!focusTareaId) return;
+    const t = tareasAll.find((x) => x.id === focusTareaId);
+    if (!t) return;
+    setFocusId(t.tarea_padre_id);
+    setResaltada(focusTareaId);
+    const scroll = setTimeout(
+      () => document.getElementById(`scrum-tarea-${focusTareaId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+      60
+    );
+    const apagar = setTimeout(() => setResaltada(null), 1600);
+    return () => {
+      clearTimeout(scroll);
+      clearTimeout(apagar);
+    };
+    // Solo al llegar con un destino nuevo, no cada vez que cambian las tareas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const tareaEnFoco = useMemo(
     () => (focusId ? tareasAll.find((t) => t.id === focusId) ?? null : null),
@@ -414,6 +444,7 @@ export function ScrumBoard() {
         footer={footer}
         ocultarResponsable={t.estado === 'por hacer'}
         disabled={!!tomarId}
+        resaltada={resaltada === t.id}
       />
     );
   }
@@ -717,62 +748,7 @@ export function ScrumBoard() {
       )}
 
       {/* Detalle de tarea */}
-      <Modal
-        open={!!detalle}
-        onClose={() => setDetalle(null)}
-        title={detalle?.titulo ?? ''}
-        subtitle={detalle ? `${detalle.id} · ${detalle.tipo}` : ''}
-        size="md"
-        // Abrir en Unity (directo al workspace de esta tarea) y Traer cambios de otras ramas/check-ins.
-        footer={detalle ? <AccionesRama tarea={detalle} onCerrar={() => setDetalle(null)} /> : undefined}
-      >
-        {detalle && (
-          <div className="space-y-4 text-sm">
-            {/* Arriba: su rama o "Sin rama"; abajo, en el pie, solo los botones. */}
-            <RamaDeLaTarea tarea={detalle} />
-            <PendingChanges tarea={detalle} />
-            <CambiosEntrantes tarea={detalle} />
-            <CheckinsDeLaRama tarea={detalle} />
-            <CambiosTraidos tarea={detalle} />
-            <div className="rounded-xl border border-border bg-surface p-3">
-              <dt className="mb-2 text-xs font-semibold text-muted">Detalles</dt>
-              {detalle.detalles ? (
-                <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2 px-3 py-2 leading-relaxed text-text">
-                  {detalle.detalles}
-                </p>
-              ) : (
-                <p className="text-faint">Sin detalles.</p>
-              )}
-            </div>
-            <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
-              <div>
-                <dt className="text-xs text-faint">Estado</dt>
-                <dd className="text-text">{estadoMeta[detalle.estado].label}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Rama</dt>
-                <dd className="font-mono text-accent">{detalle.rama_asociada ?? '— sin rama —'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Asignado a</dt>
-                <dd className="text-text">{detalle.asignado_a ?? 'Sin asignar'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Creado por</dt>
-                <dd className="text-text">{detalle.creado_por}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Fecha límite</dt>
-                <dd className="text-text">{detalle.fecha_limite ?? 'Sin fecha'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Pendiente aprobación</dt>
-                <dd className="text-text">{detalle.pendiente_aprobacion ? 'Sí' : 'No'}</dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </Modal>
+      <DetalleTareaModal tarea={detalle} onClose={() => setDetalle(null)} />
     </div>
   );
 }
