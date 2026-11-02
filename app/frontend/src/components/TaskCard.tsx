@@ -50,7 +50,18 @@ export function TaskCard({
       className={`group relative cursor-grab rounded-xl border bg-surface-2 shadow-card transition-all duration-200 active:cursor-grabbing hover:border-border-strong hover:shadow-pop ${
         tarea.edicion_pendiente ? 'border-warn/70 shadow-edit-pending' : 'border-border'
       } ${childCount > 0 || onOpenDetalle ? 'cursor-pointer' : ''}`}
-      onClick={childCount > 0 ? () => onOpenFolder?.() : onOpenDetalle}
+      onClick={(e) => {
+        // Con subtareas: el click abre su Scrum interno (carpeta), como siempre.
+        if (childCount > 0) {
+          onOpenFolder?.();
+          return;
+        }
+        // Sin subtareas (rama o check-in): click en cualquier punto abre los detalles, también en
+        // espacios vacíos. Solo si cayó en un control de adentro (botón, enlace…), manda ese control.
+        const control = (e.target as HTMLElement).closest('button, a, input, select, textarea, label');
+        if (control && control !== e.currentTarget && e.currentTarget.contains(control)) return;
+        onOpenDetalle?.();
+      }}
       {...dragHandleProps}
     >
       {/* type accent stripe: un solo color, o un color por cada tipo de subtarea que contiene */}
@@ -73,7 +84,7 @@ export function TaskCard({
       <div className={`pl-4 pr-3 ${compact ? 'py-2.5' : 'py-3'}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="mb-1.5 flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5" onClick={childCount > 0 ? (e) => e.stopPropagation() : undefined}>
               <span className="font-mono text-[11px] text-faint">{tarea.id}</span>
               {tarea.pendiente_aprobacion && (
                 <button
@@ -144,13 +155,13 @@ export function TaskCard({
             )}
           </div>
           {tarea.asignado_a && !ocultarResponsable && (
-            <span onClick={(e) => e.stopPropagation()}>
+            <span onClick={childCount > 0 ? (e) => e.stopPropagation() : undefined}>
               <Avatar email={tarea.asignado_a} size={24} />
             </span>
           )}
         </div>
 
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5" onClick={childCount > 0 ? (e) => e.stopPropagation() : undefined}>
           {childCount > 0 ? (
             tipoResumen?.map(({ tipo, count }) => {
               const m = tipoMeta[tipo];
@@ -178,7 +189,7 @@ export function TaskCard({
         </div>
 
         {footer && (
-          <div className="mt-3 border-t border-border/60 pt-2.5" onClick={(e) => e.stopPropagation()}>
+          <div className="mt-3 border-t border-border/60 pt-2.5" onClick={childCount > 0 ? (e) => e.stopPropagation() : undefined}>
             {footer}
           </div>
         )}
