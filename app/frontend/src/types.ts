@@ -18,7 +18,8 @@ export type TipoTarea =
   | 'Testing'
   | 'Corrección'
   | 'Ajustes'
-  // Solo para la subtarea "En espera": su tipo lo decide el bot cuando llega el check-in. No está en
+  // Solo para la subtarea "En espera" (trabajo sin check-in en la rama de su padre); al llegar el
+  // check-in, el bot decide su tipo. No está en
   // TIPOS_TAREA, así que no aparece en Categorías ni se puede elegir al crear una tarea.
   | 'Sin definir';
 
@@ -116,9 +117,14 @@ export interface Commit {
   id: string;
   tarea_id: string;
   hash: string;
+  /** Título del check-in (primera línea del comentario en Unity VC). */
   mensaje: string;
   autor: string;
   fecha: string;
+  /** Descripción del check-in (resto del comentario). Los check-ins antiguos del mockup no la tienen. */
+  descripcion?: string;
+  /** Tipo del check-in (Scripting, Modelado 3D…). Los check-ins antiguos del mockup no lo tienen. */
+  tipo?: TipoTarea;
 }
 
 /**

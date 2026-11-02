@@ -186,13 +186,14 @@ export const tareas: Tarea[] = [
     creado_por: DEV,
     tarea_padre_id: 'T-101-1',
   }),
-  // Subtarea comodín "En espera" de T-101-1 (ver BACKEND.md, "Subtarea En espera"): representa el
-  // próximo check-in que llegue a su rama; al llegar, se convierte en el check-in real (título del
-  // commit, tipo decidido por el bot, en revisión) y aparece una nueva. Tipo "Sin definir" hasta entonces.
+  // Subtarea comodín "En espera" de T-101-1 (ver BACKEND.md, "Subtarea En espera"): avisa que
+  // alguien está trabajando en la rama y aún no ha guardado (cambios sin check-in). T-101-1 tiene
+  // subtareas, así que al hacer el check-in esta "En espera" se convierte en la tarea de ese
+  // check-in y aparece otra nueva.
   t({
     id: 'T-101-1-2',
     titulo: 'En espera',
-    detalles: 'Esperando el próximo check-in de T-101-1. Al llegar, se convierte en el check-in real.',
+    detalles: 'Trabajo en curso en la rama de T-101-1 que todavía no tiene check-in. Al hacer el check-in se convierte en su tarea.',
     tipo: 'Sin definir',
     estado: 'en producción',
     creado_por: LIDER,
@@ -511,7 +512,14 @@ export const tareas: Tarea[] = [
 // "Traer cambios" en producción.
 export const cambiosSinCheckin: Record<string, number> = {
   'task/T-107-doble-salto': 3,
+  // Lo que muestra la subtarea "En espera" de T-101-1: trabajo en curso que aún no tiene check-in.
+  'task/T-101-1-arma': 2,
 };
+
+// Subtareas con rama propia ya terminadas (mergeadas a la rama de su padre) que el workspace todavía
+// no tiene: salen como "Cambios entrantes" en los detalles del padre. Las demás terminadas se dan
+// por recibidas.
+export const entrantesSinRecibir: string[] = ['T-101-2'];
 
 // "Traer cambios" ya hechos. T-103 (en revisión) tomó prestados cambios de T-107 y después modificó
 // uno de esos archivos: sirve para ver la alerta "se tocaron cambios ajenos". En la app real la

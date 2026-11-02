@@ -22,6 +22,7 @@ import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
 import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { AccionesRama, CambiosTraidos, RamaDeLaTarea } from '../components/AccionesRama';
+import { CambiosEntrantes, CheckinsDeLaRama, PendingChanges } from '../components/CheckinsDeLaRama';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
 // Tablero Scrum de una categoría: distinto del tablero principal — no agrupa por
@@ -546,9 +547,12 @@ export function CategoriaScrum() {
           <div className="space-y-4 text-sm">
             {/* Arriba: su rama o "Sin rama"; abajo, en el pie, solo los botones. */}
             <RamaDeLaTarea tarea={detalle} />
+            <PendingChanges tarea={detalle} />
+            <CambiosEntrantes tarea={detalle} />
+            <CheckinsDeLaRama tarea={detalle} />
             <CambiosTraidos tarea={detalle} />
-            <div>
-              <dt className="mb-1 text-xs text-faint">Detalles</dt>
+            <div className="rounded-xl border border-border bg-surface p-3">
+              <dt className="mb-2 text-xs font-semibold text-muted">Detalles</dt>
               {detalle.detalles ? (
                 <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2 px-3 py-2 leading-relaxed text-text">
                   {detalle.detalles}

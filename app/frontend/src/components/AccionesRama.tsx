@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore } from '../store/useStore';
+import { entrantesDe, estadoEntrante, useStore } from '../store/useStore';
 import { coincidePalabra, esCheckinTarea, esTareaEnEspera, estadoMeta, palabraCambios } from '../lib/ui';
 import { Modal } from './Modal';
 import { EditarTareaModal } from './EditarTareaModal';
@@ -47,22 +47,29 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
   // Detección automática (backend): archivos prestados que se modificaron en esta rama.
   const tocados = traidos.filter((c) => !c.quitado_en && c.archivos_tocados.length > 0);
   const aceptarTocados = () => tocados.forEach((c) => eliminarAjenos(c.id));
+  // "Continuar sin eliminar" (o la X) solo cierra el aviso: no borra nada. Queda el recuadro rojo
+  // con el botón para eliminarlos después (hay que hacerlo antes de mandarla a terminada).
+  const [avisoCerrado, setAvisoCerrado] = useState(false);
   return (
     <div>
       <dt className="mb-1 text-xs text-faint">🤝 Cambios prestados</dt>
-      {/* Aviso automático: sale solo y se cierra con Aceptar, que elimina lo modificado en lo prestado. */}
-      {tocados.length > 0 &&
+      {/* Aviso automático al abrir la tarea: "Aceptar y eliminar" elimina lo modificado en lo prestado;
+          "Continuar sin eliminar" y la X solo cierran el aviso. */}
+      {tocados.length > 0 && !avisoCerrado &&
         createPortal(
         <Modal
           open
-          onClose={aceptarTocados}
+          onClose={() => setAvisoCerrado(true)}
           title="⛔ Se tocaron cambios ajenos en esta tarea"
           subtitle={tarea.id}
           size="sm"
           footer={
-            <div className="flex w-full justify-end">
+            <div className="flex w-full justify-end gap-2">
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setAvisoCerrado(true)}>
+                Continuar sin eliminar
+              </button>
               <button type="button" className="btn-primary btn-sm" onClick={aceptarTocados}>
-                Aceptar
+                Aceptar y eliminar
               </button>
             </div>
           }
@@ -80,13 +87,25 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
               )}
             </ul>
             <p className="text-muted">
-              Esas modificaciones no le corresponden a esta tarea y se van a eliminar: los archivos vuelven a como llegaron en
-              el préstamo.
+              Esas modificaciones no le corresponden a esta tarea. Con <b className="text-text">Aceptar y eliminar</b> se borran y los
+              archivos vuelven a como llegaron en el préstamo. Si continúas sin eliminar, habrá que eliminarlas antes de
+              mandar la tarea a terminada.
             </p>
           </div>
         </Modal>,
           document.body
         )}
+      {tocados.length > 0 && avisoCerrado && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2">
+          <p className="min-w-0 flex-1 text-[12px] text-red-300">
+            ⛔ Se tocaron cambios ajenos:{' '}
+            {tocados.flatMap((c) => c.archivos_tocados.map((a) => a.split('/').pop())).join(', ')}
+          </p>
+          <button type="button" className="btn-danger btn-sm shrink-0" onClick={aceptarTocados}>
+            Eliminar
+          </button>
+        </div>
+      )}
       {activos > 0 && (
         <p className="mb-1.5 text-[11px] text-amber-300">
           ⚠️ {aviso}
@@ -273,7 +292,11 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
   const commits = useStore((s) => s.commits);
   const [busqueda, setBusqueda] = useState('');
   // Lo elegido: toda una tarea ("Traer todo") o un solo commit de ella ("Traer este").
-  const [eleccion, setEleccion] = useState<{ tarea: Tarea; hash?: string } | null>(null);
+  // entrante = incoming change de una subtarea ya mergeada a esta rama (no es un préstamo).
+  const [eleccion, setEleccion] = useState<{ tarea: Tarea; hash?: string; entrante?: boolean } | null>(null);
+  const recibirEntrante = useStore((s) => s.recibirEntrante);
+  const recibidos = useStore((s) => s.entrantesRecibidos);
+  const entrantes = useMemo(() => entrantesDe(tareas, recibidos, tarea.id), [tareas, recibidos, tarea.id]);
   const elegida = eleccion?.tarea ?? null;
   const [desplegada, setDesplegada] = useState<string | null>(null);
   // Traer cambios es delicado: hay que escribir "traer" para confirmar.
@@ -292,6 +315,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
         (t) =>
           t.id !== tarea.id &&
           !t.eliminada &&
+          !entrantes.some((e) => e.id === t.id) &&
           (t.estado === 'terminada' ||
             t.estado === 'en revisión' ||
             (t.estado === 'en producción' && commits.some((c) => c.tarea_id === t.id))) &&
@@ -299,7 +323,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
           (!q || `${t.id} ${t.titulo}`.toLowerCase().includes(q))
       )
       .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-  }, [tareas, tarea.id, busqueda, commits]);
+  }, [tareas, tarea.id, busqueda, commits, entrantes]);
   const terminadas = opciones.filter((t) => t.estado === 'terminada');
   const enRevision = opciones.filter((t) => t.estado === 'en revisión');
   const enProduccion = opciones.filter((t) => t.estado === 'en producción');
@@ -415,13 +439,16 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
             disabled={!eleccion || !fraseOk}
             onClick={() => {
               if (!eleccion) return;
-              traerCambios(tarea.id, rama, eleccion.tarea.id, eleccion.hash);
+              if (eleccion.entrante) recibirEntrante(tarea.id, eleccion.tarea.id);
+              else traerCambios(tarea.id, rama, eleccion.tarea.id, eleccion.hash);
               onClose();
             }}
           >
             {!eleccion
               ? 'Elige qué traer'
-              : eleccion.hash
+              : eleccion.entrante
+                ? `Unir los cambios de ${eleccion.tarea.id}`
+                : eleccion.hash
                 ? `Traer commit ${eleccion.hash} de ${eleccion.tarea.id}`
                 : `Traer todo de ${eleccion.tarea.id}`}
           </button>
@@ -459,6 +486,55 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
       )}
 
       <div className="max-h-[380px] space-y-3 overflow-y-auto">
+        {/* Primero, en azul: incoming changes, lo que ya le llegó a ESTA rama (subtareas terminadas y
+            mergeadas aquí) y todavía no está en el workspace. Recibirlo es opcional. */}
+        {entrantes.length > 0 && (
+          <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-2.5">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-sky-300">
+              ⇣ Incoming changes — llegaron a esta rama
+            </div>
+            <p className="mb-2 text-[11px] text-sky-200/80">
+              Son de subtareas de {tarea.id} cuyos cambios ya están en <span className="font-mono">{rama}</span>,
+              pero tu workspace todavía no los tiene. Ya son de esta rama: no es un préstamo y no hay que devolverlos.
+              Unirlos es opcional.
+            </p>
+            <div className="space-y-1.5">
+              {[...entrantes]
+                .sort((a, b) => Number(a.estado !== 'terminada') - Number(b.estado !== 'terminada'))
+                .map((h) => {
+                const n = commits.filter((c) => c.tarea_id === h.id).length;
+                const elegido = !!eleccion?.entrante && eleccion.tarea.id === h.id;
+                return (
+                  <div
+                    key={h.id}
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${
+                      elegido ? 'border-sky-400 bg-sky-500/20' : 'border-sky-500/30 bg-surface-2'
+                    }`}
+                  >
+                    <span className="shrink-0 font-mono font-semibold text-sky-300">{h.id}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-text">{h.titulo}</span>
+                      <span className="block truncate text-[11px] text-faint">
+                        <span className={h.estado !== 'terminada' ? 'text-amber-300' : ''}>{estadoEntrante(h)}</span> · {n}{' '}
+                        {n === 1 ? 'check-in' : 'check-ins'} ·{' '}
+                        {h.rama_asociada ? <>desde <span className="font-mono">{h.rama_asociada}</span></> : 'check-in directo en esta rama'}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEleccion({ tarea: h, entrante: true })}
+                      className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] transition ${
+                        elegido ? 'border-sky-400 bg-sky-500 text-white' : 'border-sky-500/40 text-sky-200 hover:border-sky-400'
+                      }`}
+                    >
+                      Unir cambios
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div>
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">Terminadas</div>
           {terminadas.length ? <div className="space-y-1.5">{terminadas.map(fila)}</div> : <div className="text-xs text-faint">Ninguna.</div>}
