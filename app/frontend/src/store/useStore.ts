@@ -343,6 +343,8 @@ interface State {
   // sprints
   crearSprint: (nombre: string, descripcion: string, con_fecha: boolean, duracion_dias: number | null) => void;
   cerrarSprint: (id: string) => void;
+  /** Mete o saca una tarea de un sprint/backlog (null = sin sprint). Desde Planificación. */
+  asignarTareaASprint: (tareaId: string, sprintId: string | null) => void;
 }
 
 export const useStore = create<State>((set, get) => {
@@ -1194,7 +1196,16 @@ export const useStore = create<State>((set, get) => {
     s.showToast('Sprint creado');
   },
 
+  asignarTareaASprint: (tareaId, sprintId) => {
+    set((s) => ({ tareas: s.tareas.map((t) => (t.id === tareaId ? { ...t, sprint_id: sprintId } : t)) }));
+  },
+
   cerrarSprint: (id) => {
+    // Solo el Administrador cierra sprints y backlogs.
+    if (get().currentUser().rol !== 'Administrador') {
+      get().showToast('Solo el Administrador puede cerrar un sprint', 'danger');
+      return;
+    }
     set((s) => ({
       sprints: s.sprints.map((sp) =>
         sp.id === id ? { ...sp, cerrado: true, fecha_cierre_real: today() } : sp

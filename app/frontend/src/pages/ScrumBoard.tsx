@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -121,6 +121,10 @@ function Column({
 
 export function ScrumBoard() {
   const navigate = useNavigate();
+  // Filtro por sprint o backlog (?sprint=<id>, al lado de "Todas / Mis tareas"): solo sus tareas (las
+  // del sprint y sus subtareas). Planificación abre el tablero con uno ya elegido.
+  const [params, setParams] = useSearchParams();
+  const sprintId = params.get('sprint') ?? undefined;
   const location = useLocation();
   const user = useStore((s) => s.currentUser());
   const tareasAll = useStore((s) => s.tareas);
@@ -157,10 +161,24 @@ export function ScrumBoard() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 12 } }));
 
 
-  const visibles = useMemo(
-    () => tareasAll.filter((t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user)),
-    [tareasAll, user]
-  );
+  const sprintActual = useStore((s) => (sprintId ? s.sprints.find((sp) => sp.id === sprintId) : undefined));
+  const visibles = useMemo(() => {
+    const base = tareasAll.filter((t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user));
+    if (!sprintId || !sprintActual) return base;
+    // De un sprint: la tarea está en él, o alguno de sus ancestros lo está (sus subtareas van con ella).
+    const porId = new Map(tareasAll.map((t) => [t.id, t]));
+    const enSprint = (t: Tarea): boolean => {
+      for (let cur: Tarea | undefined = t; cur; cur = cur.tarea_padre_id ? porId.get(cur.tarea_padre_id) : undefined) {
+        if (cur.sprint_id === sprintId) return true;
+      }
+      return false;
+    };
+    return base.filter(enSprint);
+  }, [tareasAll, user, sprintId, sprintActual]);
+  // Raíz del tablero: sin padre, o con un padre que no está en este tablero (ej. una subtarea que
+  // está en el sprint aunque su padre no).
+  const idsVisibles = useMemo(() => new Set(visibles.map((t) => t.id)), [visibles]);
+  const esRaiz = (t: Tarea) => !t.tarea_padre_id || !idsVisibles.has(t.tarea_padre_id);
 
   const childrenCount = (id: string) => visibles.filter((t) => t.tarea_padre_id === id).length;
 
@@ -215,7 +233,7 @@ export function ScrumBoard() {
   // Navegación tipo explorador de carpetas — solo las subtareas van en las columnas;
   // la tarea padre se muestra aparte (franja de contexto), nunca mezclada como otra tarjeta más.
   const nivelActual = useMemo(() => {
-    if (!focusId) return visibles.filter((t) => t.tarea_padre_id === null);
+    if (!focusId) return visibles.filter(esRaiz);
     return visibles.filter((t) => t.tarea_padre_id === focusId);
   }, [visibles, focusId]);
 
@@ -514,7 +532,10 @@ export function ScrumBoard() {
               </div>
               <EstadoBadge estado={tareaEnFoco.estado} />
               {tareaEnFoco.asignado_a && <Avatar email={tareaEnFoco.asignado_a} size={22} />}
-              <button className="btn-outline btn-sm" onClick={() => setFocusId(tareaEnFoco.tarea_padre_id)}>
+              <button
+                className="btn-outline btn-sm"
+                onClick={() => setFocusId(esRaiz(tareaEnFoco) ? null : tareaEnFoco.tarea_padre_id)}
+              >
                 ← Volver
               </button>
             </div>
@@ -523,10 +544,14 @@ export function ScrumBoard() {
       ) : (
         <PageHeader
           title="Tablero Scrum"
-          desc="Arrastra las tarjetas para cambiar su estado."
+          desc={
+            sprintActual
+              ? `Viendo solo las tareas de ${sprintActual.nombre}${sprintActual.con_fecha ? ` (${sprintActual.fecha_inicio} → ${sprintActual.fecha_fin})` : ''}.`
+              : 'Arrastra las tarjetas para cambiar su estado.'
+          }
           actions={
             <span className="chip border border-border bg-surface-2 text-muted">
-              {visibles.filter((t) => t.tarea_padre_id === null).length} tareas raíz
+              {visibles.filter(esRaiz).length} tareas raíz
             </span>
           }
         />
@@ -563,6 +588,45 @@ export function ScrumBoard() {
                 Mis tareas
               </button>
             </div>
+            {/* Sprints y backlogs: elegir uno deja en el tablero solo sus tareas. */}
+            <select
+              className={`rounded-lg border bg-surface-2 px-2.5 py-1 text-xs font-medium outline-none transition ${
+                sprintActual ? 'border-primary/50 text-text' : 'border-border text-muted'
+              }`}
+              value={sprintActual ? sprintActual.id : ''}
+              onChange={(e) => {
+                setFocusId(null);
+                if (e.target.value) params.set('sprint', e.target.value);
+                else params.delete('sprint');
+                setParams(params);
+              }}
+              title="Ver solo las tareas de un sprint o backlog"
+            >
+              <option value="">Todos los sprints y backlogs</option>
+              {sprints.some((sp) => sp.con_fecha) && (
+                <optgroup label="Sprints">
+                  {sprints
+                    .filter((sp) => sp.con_fecha)
+                    .map((sp) => (
+                      <option key={sp.id} value={sp.id}>
+                        🏃 {sp.nombre}
+                        {sp.cerrado ? ' (cerrado)' : ''}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+              {sprints.some((sp) => !sp.con_fecha) && (
+                <optgroup label="Backlogs">
+                  {sprints
+                    .filter((sp) => !sp.con_fecha)
+                    .map((sp) => (
+                      <option key={sp.id} value={sp.id}>
+                        📦 {sp.nombre}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
             {breadcrumb.map((c) => (
               <span key={c.id} className="flex items-center gap-1.5">
                 <span className="text-faint">/</span>
@@ -744,6 +808,7 @@ export function ScrumBoard() {
           rolUsuario={user.rol}
           sprints={sprints}
           modoForzado={modoForzadoCrear}
+          sprintInicial={sprintActual?.id}
         />
       )}
 

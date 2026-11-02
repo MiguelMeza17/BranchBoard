@@ -13,6 +13,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/scrum', icon: '🗂️', label: 'Tareas (Scrum)' },
   { to: '/lista', icon: '📋', label: 'Lista de tareas' },
+  { to: '/planificacion', icon: '🗓️', label: 'Planificación' },
   { to: '/categorias', icon: '🗃️', label: 'Categorías' },
   { to: '/revision', icon: '🔀', label: 'Revisión' },
   { to: '/resumen', icon: '📊', label: 'Resumen' },

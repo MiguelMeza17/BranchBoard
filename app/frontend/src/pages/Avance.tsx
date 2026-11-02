@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
-import { PageHeader, Card } from '../components/primitives';
+import { PageHeader, Card, EmptyState } from '../components/primitives';
 import { BurndownChart } from '../components/BurndownChart';
 
 export function Avance() {
@@ -25,15 +25,23 @@ export function Avance() {
         title="Avance"
         desc="¿Vamos bien o mal respecto al tiempo? Curva de tareas restantes del sprint."
         actions={
-          <select className="input max-w-[240px]" value={sprintId} onChange={(e) => setSprintId(e.target.value)}>
-            {sprints.map((sp) => (
-              <option key={sp.id} value={sp.id}>{sp.nombre}</option>
-            ))}
-          </select>
+          sprints.length > 0 ? (
+            <select className="input max-w-[240px]" value={sprintId} onChange={(e) => setSprintId(e.target.value)}>
+              {sprints.map((sp) => (
+                <option key={sp.id} value={sp.id}>{sp.nombre}</option>
+              ))}
+            </select>
+          ) : undefined
         }
       />
 
-      <Card>{sprint && <BurndownChart sprint={sprint} tareas={delSprint} />}</Card>
+      {sprint ? (
+        <Card>
+          <BurndownChart sprint={sprint} tareas={delSprint} />
+        </Card>
+      ) : (
+        <EmptyState icon="📈" title="Todavía no hay sprints" desc="Crea un sprint para ver aquí su curva de avance." />
+      )}
     </div>
   );
 }

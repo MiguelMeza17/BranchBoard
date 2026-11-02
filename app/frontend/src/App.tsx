@@ -8,6 +8,7 @@ import { AccesoProyecto } from './components/AccesoProyecto';
 import { ScrumBoard } from './pages/ScrumBoard';
 import { Resumen } from './pages/Resumen';
 import { ListaTareas } from './pages/ListaTareas';
+import { Planificacion } from './pages/Planificacion';
 import { Avance } from './pages/Avance';
 import { Branches } from './pages/Branches';
 import { Revision } from './pages/Revision';
@@ -57,6 +58,7 @@ export function App() {
             <Route path="/scrum" element={<ScrumBoard />} />
             <Route path="/resumen" element={<Resumen />} />
             <Route path="/lista" element={<ListaTareas />} />
+            <Route path="/planificacion" element={<Planificacion />} />
             <Route path="/avance" element={<Avance />} />
             <Route path="/branches" element={<Branches />} />
             <Route path="/revision" element={<Revision />} />

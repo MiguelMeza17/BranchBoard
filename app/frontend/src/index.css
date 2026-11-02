@@ -17,10 +17,18 @@
   ::selection {
     background: rgba(99, 102, 241, 0.35);
   }
-  /* scrollbars */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: #2b313f transparent;
+  /* Tema oscuro también para los controles nativos del navegador (flechas, etc.). */
+  html {
+    color-scheme: dark;
+  }
+  /* scrollbars: en Chrome/Edge, si se usan scrollbar-width/scrollbar-color se ignora
+     ::-webkit-scrollbar y salen las flechas nativas; por eso esas dos propiedades solo
+     se aplican en navegadores sin ::-webkit-scrollbar (Firefox). */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #2b313f transparent;
+    }
   }
   *::-webkit-scrollbar {
     width: 10px;
