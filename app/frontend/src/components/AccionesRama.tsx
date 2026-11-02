@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '../store/useStore';
 import { coincidePalabra, esCheckinTarea, esTareaEnEspera, estadoMeta, palabraCambios } from '../lib/ui';
 import { Modal } from './Modal';
@@ -29,24 +30,78 @@ export function RamaDeLaTarea({ tarea }: { tarea: Tarea }) {
 }
 
 // Debajo de la rama, en los detalles: de qué tareas trajo cambios esta tarea ("Traer cambios").
-// Si la tarea origen todavía no está terminada (mergeada a dev), se avisa: al mergear esta tarea,
-// ese trabajo sin aprobar llegaría a dev con ella.
+// Son un préstamo: se usan sin modificarlos y se quitan antes de revisión/merge (si no, no deja
+// avanzar). Los ya quitados quedan como historial.
 export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
   const tareas = useStore((s) => s.tareas);
   const commits = useStore((s) => s.commits);
+  const quitar = useStore((s) => s.quitarCambiosTraidos);
+  const eliminarAjenos = useStore((s) => s.eliminarCambiosAjenos);
   const traidos = useStore((s) => s.cambiosTraidos).filter((c) => c.tarea_id === tarea.id);
   if (traidos.length === 0) return null;
+  const aviso =
+    tarea.estado === 'en revisión'
+      ? 'Úsalos sin modificarlos y devuélvelos antes de mandar la tarea a terminada.'
+      : 'Úsalos sin modificarlos. Si no hacen falta para revisarla, devuélvelos antes de mandarla a revisión; si no, el revisor los devolverá antes de marcarla como terminada.';
+  const activos = traidos.filter((c) => !c.quitado_en).length;
+  // Detección automática (backend): archivos prestados que se modificaron en esta rama.
+  const tocados = traidos.filter((c) => !c.quitado_en && c.archivos_tocados.length > 0);
+  const aceptarTocados = () => tocados.forEach((c) => eliminarAjenos(c.id));
   return (
     <div>
-      <dt className="mb-1 text-xs text-faint">Cambios traídos de otras tareas</dt>
+      <dt className="mb-1 text-xs text-faint">🤝 Cambios prestados</dt>
+      {/* Aviso automático: sale solo y se cierra con Aceptar, que elimina lo modificado en lo prestado. */}
+      {tocados.length > 0 &&
+        createPortal(
+        <Modal
+          open
+          onClose={aceptarTocados}
+          title="⛔ Se tocaron cambios ajenos en esta tarea"
+          subtitle={tarea.id}
+          size="sm"
+          footer={
+            <div className="flex w-full justify-end">
+              <button type="button" className="btn-primary btn-sm" onClick={aceptarTocados}>
+                Aceptar
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-2 text-sm">
+            <p className="text-text">Se modificaron archivos que llegaron prestados de otra tarea:</p>
+            <ul className="space-y-0.5 text-[12px]">
+              {tocados.flatMap((c) =>
+                c.archivos_tocados.map((a) => (
+                  <li key={c.id + a}>
+                    <span className="font-mono text-red-300">{a}</span>{' '}
+                    <span className="text-faint">(prestado de {c.origen_id})</span>
+                  </li>
+                ))
+              )}
+            </ul>
+            <p className="text-muted">
+              Esas modificaciones no le corresponden a esta tarea y se van a eliminar: los archivos vuelven a como llegaron en
+              el préstamo.
+            </p>
+          </div>
+        </Modal>,
+          document.body
+        )}
+      {activos > 0 && (
+        <p className="mb-1.5 text-[11px] text-amber-300">
+          ⚠️ {aviso}
+        </p>
+      )}
       <ul className="space-y-1.5">
         {[...traidos].reverse().map((c) => {
           const origen = tareas.find((t) => t.id === c.origen_id);
           const commit = c.hash ? commits.find((x) => x.hash === c.hash) : undefined;
           const est = origen ? estadoMeta[origen.estado] : null;
-          const sinMergear = origen && origen.estado !== 'terminada';
           return (
-            <li key={c.id} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
+            <li
+              key={c.id}
+              className={`rounded-lg border border-border px-3 py-2 ${c.quitado_en ? 'bg-surface opacity-60' : 'bg-surface-2'}`}
+            >
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] text-faint">{c.origen_id}</span>
                 <span className="min-w-0 flex-1 truncate text-text">{origen?.titulo ?? 'Tarea eliminada'}</span>
@@ -71,10 +126,17 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
                   </span>
                 )}
               </div>
-              {sinMergear && (
-                <p className="mt-1 text-[11px] text-amber-300">
-                  ⚠️ {c.origen_id} todavía no está en dev: si esta tarea se mergea antes, su trabajo llega a dev sin aprobar.
+              {c.quitado_en ? (
+                <p className="mt-1 text-[11px] text-faint">
+                  ↩ Devuelto el {new Date(c.quitado_en).toLocaleString()}
+                  {c.quitado_por && <> por {c.quitado_por.split('@')[0]}</>}
                 </p>
+              ) : (
+                <div className="mt-1.5 flex justify-end">
+                  <button type="button" className="btn-outline btn-sm" onClick={() => quitar(c.id)}>
+                    ↩ Devolver
+                  </button>
+                </div>
               )}
             </li>
           );
@@ -104,9 +166,29 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
   const tareas = useStore((s) => s.tareas);
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
   const [traer, setTraer] = useState(false);
+  const [avisoCheckin, setAvisoCheckin] = useState(false);
+  const sinCheckinPorRama = useStore((s) => s.cambiosSinCheckin);
+  const rol = useStore((s) => s.currentUser().rol);
   const [editar, setEditar] = useState(false);
   const rama = ramaDeTarea(tarea, tareas);
   const enEspera = esTareaEnEspera(tarea);
+  // Traer cambios: en "Por hacer" (ya tomada, con rama) o "En producción" cualquier rol; en "En
+  // revisión" solo Líder/Administrador (son quienes la mandan a terminada). En producción, si la
+  // rama tiene cambios sin check-in, primero hay que hacer el check-in: si no, lo propio y lo
+  // prestado quedan mezclados en el workspace.
+  const esLider = rol === 'Líder' || rol === 'Administrador';
+  const estadoPermite =
+    (tarea.estado === 'por hacer' && !!tarea.asignado_a) ||
+    tarea.estado === 'en producción' ||
+    (tarea.estado === 'en revisión' && esLider);
+  const sinCheckin = rama ? sinCheckinPorRama[rama] ?? 0 : 0;
+  const motivoNoTraer = enEspera
+    ? 'No se puede traer cambios: esta tarea todavía tiene cambios sin guardar (sin check-in)'
+    : rama && !estadoPermite
+      ? tarea.estado === 'en revisión'
+        ? 'En revisión solo el Líder o el Administrador pueden traer cambios'
+        : 'Solo se pueden traer cambios a una tarea en "Por hacer", "En producción" o (Líder/Administrador) "En revisión"'
+      : undefined;
 
   return (
     <div className="flex w-full flex-wrap items-center justify-end gap-2">
@@ -128,9 +210,9 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
       <button
         type="button"
         className="btn-outline btn-sm"
-        disabled={!rama || enEspera}
-        onClick={() => setTraer(true)}
-        title={enEspera ? 'No se puede traer cambios: esta tarea todavía tiene cambios sin guardar (sin check-in)' : undefined}
+        disabled={!rama || !!motivoNoTraer}
+        onClick={() => (tarea.estado === 'en producción' && sinCheckin > 0 ? setAvisoCheckin(true) : setTraer(true))}
+        title={motivoNoTraer}
       >
         ⇣ Traer cambios
       </button>
@@ -147,6 +229,39 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
         🎮 Abrir en Unity
       </button>
       {editar && <EditarTareaModal tarea={tarea} onClose={() => setEditar(false)} />}
+      {avisoCheckin && rama && (
+        <Modal
+          open
+          onClose={() => setAvisoCheckin(false)}
+          title="Primero haz check-in"
+          subtitle={`${rama} (${tarea.id})`}
+          size="sm"
+          footer={
+            <div className="flex w-full justify-end gap-2">
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setAvisoCheckin(false)}>
+                Cerrar
+              </button>
+              <button
+                type="button"
+                className="btn-primary btn-sm"
+                onClick={() => {
+                  abrirEnUnity(tarea.id, rama);
+                  setAvisoCheckin(false);
+                  onCerrar();
+                }}
+              >
+                🎮 Abrir en Unity
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm leading-relaxed text-text">
+            Esta rama tiene <span className="font-semibold text-amber-300">{sinCheckin} {sinCheckin === 1 ? 'cambio' : 'cambios'} sin check-in</span>.
+            Haz el check-in en Unity antes de traer cambios: así tu trabajo queda guardado aparte y lo que traigas
+            no se mezcla con él.
+          </p>
+        </Modal>
+      )}
       {traer && rama && <TraerCambiosModal tarea={tarea} rama={rama} onClose={() => setTraer(false)} />}
     </div>
   );

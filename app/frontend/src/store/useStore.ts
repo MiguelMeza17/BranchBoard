@@ -69,9 +69,13 @@ function normalizarJerarquiaEstados(tareas: Tarea[], conProgreso: Set<string>): 
 
 // Una rama con commits ya tiene progreso: ni ella ni (al mover un padre) ninguna de sus
 // subtareas puede volver a "por hacer" / "sin asignar". Si alguna tiene commits, avisa y bloquea.
+/** IDs (la tarea y sus subtareas) que ya tienen commits, es decir, progreso. */
+export function progresoDe(tareas: Tarea[], commits: { tarea_id: string }[], id: string): string[] {
+  const afectadas = [id, ...descendientesDe(tareas, id)];
+  return afectadas.filter((x) => commits.some((c) => c.tarea_id === x));
+}
 function tieneProgreso(s: { tareas: Tarea[]; commits: { tarea_id: string }[]; showToast: (m: string, tono?: 'ok' | 'info' | 'danger') => void }, id: string): boolean {
-  const afectadas = [id, ...descendientesDe(s.tareas, id)];
-  const conCommits = afectadas.filter((x) => s.commits.some((c) => c.tarea_id === x));
+  const conCommits = progresoDe(s.tareas, s.commits, id);
   if (!conCommits.length) return false;
   s.showToast(
     `No se puede volver a "Por hacer": ${conCommits.join(', ')} ya ${conCommits.length === 1 ? 'tiene' : 'tienen'} commits (hay progreso).`,
@@ -192,6 +196,8 @@ interface State {
   commits: Commit[];
   /** Registro de "Traer cambios": se muestra en los detalles de la tarea que los recibió. */
   cambiosTraidos: CambioTraido[];
+  /** Cambios sin check-in por rama (pending changes de Unity VC, simulados). */
+  cambiosSinCheckin: Record<string, number>;
   correoContacto: string;
 
   // toasts efímeros
@@ -206,6 +212,13 @@ interface State {
   // "Traer cambios" (solo frontend, simulado): trae a la rama de una tarea los cambios de otra rama o
   // check-in terminada o en revisión (en el backend real: merge desde esa rama/changesets).
   traerCambios: (destinoId: string, ramaDestino: string, origenId: string, hash?: string) => void;
+  /** Quita de la rama los cambios traídos (en Unity VC, un merge sustractivo). El registro queda como historial. */
+  quitarCambiosTraidos: (registroId: string) => void;
+  /**
+   * "Se tocaron cambios ajenos": elimina lo que se modificó en los archivos prestados (vuelven a
+   * como llegaron en el préstamo). El préstamo sigue ahí hasta que se devuelva.
+   */
+  eliminarCambiosAjenos: (registroId: string) => void;
 
   // acciones de sesión
   setEmail: (email: string) => void;
@@ -223,6 +236,12 @@ interface State {
   /** Si la tarea no puede pasar a "en revisión"/"terminada" por tener subtareas pendientes, avisa con un toast y devuelve false. */
   puedeAvanzar: (id: string, estado: EstadoTarea) => boolean;
   moverTarea: (id: string, estado: EstadoTarea) => void;
+  /**
+   * "En producción" -> "Por hacer" con progreso (confirmado escribiendo "eliminar"): borra los
+   * commits de la tarea y sus subtareas, sus cambios prestados y sus cambios sin check-in, y la
+   * deja en "Por hacer" (sigue tomada, con su rama). Para todos los roles.
+   */
+  borrarProgreso: (id: string) => void;
   tomarTarea: (id: string, email: string, modo?: 'rama' | 'checkin') => void;
   desasignarTarea: (id: string) => void;
   crearTarea: (data: NuevaTarea) => string;
@@ -307,7 +326,8 @@ export const useStore = create<State>((set, get) => {
   colaboradores: [...fx.colaboradores],
   edicionesPendientes: [...fx.edicionesPendientes],
   commits: [...fx.commits],
-  cambiosTraidos: [],
+  cambiosTraidos: [...fx.cambiosTraidos],
+  cambiosSinCheckin: { ...fx.cambiosSinCheckin },
   backups: [...fx.backups],
   correoContacto: 'ingreso@virustf.dev',
 
@@ -322,6 +342,11 @@ export const useStore = create<State>((set, get) => {
           ? ' — ojo: es trabajo en curso'
           : '';
     const que = hash ? `Commit ${hash} de ${origenId}` : `Todos los cambios de ${origenId}`;
+    const destino = get().tareas.find((t) => t.id === destinoId);
+    const recuerda =
+      destino?.estado === 'en revisión'
+        ? '. Recuerda devolverlos antes de mandarla a terminada'
+        : '. Si no hacen falta para la revisión, devuélvelos antes de mandarla; si no, el revisor los devolverá antes de marcarla como terminada';
     const registro: CambioTraido = {
       id: `CT-${Date.now()}`,
       tarea_id: destinoId,
@@ -329,9 +354,37 @@ export const useStore = create<State>((set, get) => {
       hash: hash ?? null,
       autor: get().currentEmail,
       fecha: new Date().toISOString(),
+      // En la app real: cm diff del merge. En el mockup no se conocen los archivos.
+      archivos: [],
+      archivos_tocados: [],
+      quitado_en: null,
+      quitado_por: null,
     };
     set((s) => ({ cambiosTraidos: [...s.cambiosTraidos, registro] }));
-    get().showToast(`${que} traído${hash ? '' : 's'} a ${ramaDestino} (${destinoId})${aviso}`, aviso ? 'info' : 'ok');
+    get().showToast(`${que} traído${hash ? '' : 's'} a ${ramaDestino} (${destinoId})${aviso}${recuerda}`, 'info');
+  },
+  quitarCambiosTraidos: (registroId) => {
+    const r = get().cambiosTraidos.find((c) => c.id === registroId);
+    if (!r || r.quitado_en) return;
+    set((s) => ({
+      cambiosTraidos: s.cambiosTraidos.map((c) =>
+        c.id === registroId ? { ...c, quitado_en: new Date().toISOString(), quitado_por: s.currentEmail } : c
+      ),
+    }));
+    const que = r.hash ? `el commit ${r.hash} de ${r.origen_id}` : `los cambios de ${r.origen_id}`;
+    get().showToast(`Se devolvió ${que}: ya no está en ${r.tarea_id}`, 'ok');
+  },
+  eliminarCambiosAjenos: (registroId) => {
+    const r = get().cambiosTraidos.find((c) => c.id === registroId);
+    if (!r || r.archivos_tocados.length === 0) return;
+    set((s) => ({
+      cambiosTraidos: s.cambiosTraidos.map((c) => (c.id === registroId ? { ...c, archivos_tocados: [] } : c)),
+    }));
+    const n = r.archivos_tocados.length;
+    get().showToast(
+      `Se eliminó lo que se modificó en ${n === 1 ? '1 archivo prestado' : `${n} archivos prestados`} de ${r.origen_id} (${r.tarea_id})`,
+      'ok'
+    );
   },
   abrirEnUnity: (tareaId, rama, hash) => {
     const destino = hash ? `${rama} @ ${hash}` : rama;
@@ -369,10 +422,44 @@ export const useStore = create<State>((set, get) => {
 
   puedeAvanzar: (id, estado) => {
     if (estado !== 'en revisión' && estado !== 'terminada') return true;
+    // Los cambios traídos de otras tareas son prestados. A revisión pueden ir (puede que hagan falta
+    // para revisarla), con un aviso; a terminada (merge) no: hay que devolverlos antes. Para todos
+    // los roles. Cuenta los de la tarea y los de sus subtareas (un check-in trabaja sobre la rama
+    // del padre).
+    const tareas = get().tareas;
+    const ids = new Set([id]);
+    for (let creció = true; creció; ) {
+      creció = false;
+      for (const t of tareas) {
+        if (t.tarea_padre_id && ids.has(t.tarea_padre_id) && !ids.has(t.id)) {
+          ids.add(t.id);
+          creció = true;
+        }
+      }
+    }
+    const prestados = get().cambiosTraidos.filter((c) => ids.has(c.tarea_id) && !c.quitado_en);
+    const origenes = [...new Set(prestados.map((c) => c.origen_id))].join(', ');
+    // Al merge (terminada) no pueden llegar: bloquea.
+    if (estado === 'terminada' && prestados.length > 0) {
+      get().showToast(
+        `Antes de mergear, devuelve los cambios prestados de ${origenes} (en los detalles de la tarea)`,
+        'danger'
+      );
+      return false;
+    }
     const pendientes = subtareasPendientes(get().tareas, id, estado);
-    if (pendientes.length === 0) return true;
-    get().showToast(avisoSubtareasPendientes(pendientes, estado), 'danger');
-    return false;
+    if (pendientes.length > 0) {
+      get().showToast(avisoSubtareasPendientes(pendientes, estado), 'danger');
+      return false;
+    }
+    // A revisión sí pueden ir (a veces hacen falta para revisarla): solo se avisa.
+    if (estado === 'en revisión' && prestados.length > 0) {
+      get().showToast(
+        `Ojo: va con cambios prestados de ${origenes}. Si no hacen falta para revisarla, devuélvelos antes; si no, el revisor los devolverá antes de marcarla como terminada.`,
+        'info'
+      );
+    }
+    return true;
   },
 
   moverTarea: (id, estado) => {
@@ -410,6 +497,25 @@ export const useStore = create<State>((set, get) => {
         accionable: false,
       });
     }
+  },
+
+  borrarProgreso: (id) => {
+    const s = get();
+    const ids = new Set([id, ...descendientesDe(s.tareas, id)]);
+    const ramas = new Set(
+      s.tareas.filter((t) => ids.has(t.id) && t.rama_asociada).map((t) => t.rama_asociada as string)
+    );
+    const nCommits = s.commits.filter((c) => ids.has(c.tarea_id)).length;
+    set((st) => ({
+      commits: st.commits.filter((c) => !ids.has(c.tarea_id)),
+      cambiosTraidos: st.cambiosTraidos.filter((c) => !ids.has(c.tarea_id)),
+      cambiosSinCheckin: Object.fromEntries(Object.entries(st.cambiosSinCheckin).filter(([r]) => !ramas.has(r))),
+    }));
+    get().moverTarea(id, 'por hacer');
+    get().showToast(
+      `${id} volvió a "Por hacer": se eliminó su progreso (${nCommits} ${nCommits === 1 ? 'commit' : 'commits'})`,
+      'info'
+    );
   },
 
   // "checkin" solo tiene sentido para subtareas (tarea_padre_id != null) — se valida en la UI,

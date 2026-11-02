@@ -254,6 +254,50 @@ Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend par
 - **Permisos** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)): cualquier usuario puede mover cambios **entre ramas que le pertenecen a él mismo** (ej. entre una tarea y su subtarea). Mover cambios **entre ramas de dos personas distintas es exclusivo de Líder/Administrador**.
 - **Definido**: cuando un Líder/Administrador mueve cambios hacia la rama de otra persona, se le manda una notificación al dueño de esa rama avisándole — a diferencia del resto de notificaciones del sistema, **esta no es automática**: quien mueve los cambios debe escribir un **nombre** (título corto) y una **descripción** explicando qué se movió y por qué, y eso es lo que se le muestra al dueño de la rama en la notificación.
 
+## Cambios prestados ("Traer cambios")
+
+**Nuevo (2026-11-01)**. "Traer cambios" (en los detalles de una tarea) sirve para usar trabajo de otra tarea que **todavía no está terminada**: se trae a la rama de esta tarea para poder trabajar con él, pero **no le pertenece**. Por eso se trata como un **préstamo**: se usa sin modificarlo y se devuelve antes del merge. No es lo mismo que [Mover cambios entre ramas](#mover-cambios-entre-ramas), que traslada trabajo de forma definitiva.
+
+**Cuándo se puede traer** (todos los roles, salvo lo indicado):
+
+- En **"Por hacer"** (ya tomada, con rama) y en **"En producción"**.
+- En **"En revisión"**, solo **Líder/Administrador**, que son quienes la mandan a terminada.
+- **"En espera"** nunca: sus cambios todavía están sin guardar.
+- **Check-in primero**: en "En producción", si la rama tiene cambios sin check-in (`cm status`), no se trae nada hasta hacer el check-in. Así el trabajo propio queda guardado aparte y no se mezcla con lo prestado.
+
+**Registro del préstamo**: al traer, el backend guarda (tabla `cambios_prestados`, evento `traer_cambios` en `ops/`):
+
+- tarea destino, tarea origen, commit puntual o "todos sus cambios", quién y cuándo;
+- el **changeset del merge** y la **lista de archivos que llegaron** (`cm diff` entre el changeset anterior al merge y el del merge).
+
+Se muestra en los detalles de la tarea, en la sección **"🤝 Cambios prestados"**.
+
+**Devolver**: botón **"↩ Devolver"** en cada préstamo. En Unity VC es un **merge sustractivo** del changeset que se trajo (`cm merge --subtractive`; comando exacto pendiente de verificar al implementar). El registro no se borra: queda como historial ("Devuelto el … por …").
+
+- **A revisión** se puede mandar con préstamos sin devolver (a veces hacen falta para revisarla): solo se avisa.
+- **A terminada (merge)** no: se bloquea hasta devolverlos todos. Si no los devolvió quien trabajó la tarea, los devuelve el revisor antes de autorizar.
+- Cuenta también los préstamos de sus subtareas: un check-in trabaja sobre la rama del padre.
+
+### Detección automática de cambios ajenos tocados
+
+**Problema**: quien trajo los cambios puede modificar, sin darse cuenta, archivos que llegaron en el préstamo. Esas modificaciones no le corresponden a su tarea y, al devolver el préstamo, quedarían mezcladas o darían conflicto.
+
+**Detección (automática, sin intervención)**: la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) ya ve cada check-in nuevo y los cambios sin check-in de la rama. Para cada préstamo activo, el backend **cruza esos archivos con la lista de archivos prestados**:
+
+- **Cambios sin check-in** sobre un archivo prestado: se detectan antes de que se guarden.
+- **Check-in** que modifica un archivo prestado: se detecta en cuanto aparece el changeset (`cm diff` del changeset contra su anterior, intersectado con la lista del préstamo).
+- Los archivos detectados se guardan en el préstamo (`archivos_tocados`).
+
+**Alerta**: al abrir la tarea (detalles en el Tablero Scrum, en el tablero de categoría o en Revisión) sale sola una ventana **"⛔ Se tocaron cambios ajenos en esta tarea"** con la lista de archivos y de qué tarea vienen. Tiene **un solo botón: "Aceptar"**. No hay opción de conservar esas modificaciones.
+
+**Al aceptar se eliminan**: cada archivo tocado **vuelve a como llegó en el préstamo** (se restaura su revisión del changeset del merge). El préstamo sigue activo hasta que se devuelva, como cualquier otro.
+
+- En archivos de texto (scripts `.cs`) se restaura el archivo completo a la revisión prestada. Si en el mismo archivo hubo cambios propios legítimos, también se pierden: el archivo era ajeno.
+- En escenas, prefabs y binarios (texturas, modelos, audio) no se puede separar por dentro: se restaura el archivo entero.
+- Lo restaurado se guarda con un check-in automático en la rama de la tarea, con comentario "Se eliminaron cambios ajenos (prestados de T-xxx)", para que quede en el historial (evento `eliminar_cambios_ajenos` en `ops/`).
+
+**Pendiente por definir**: excluir los archivos que Unity modifica solo (ej. `.meta`), igual que en [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app), para que no cuenten como "tocados".
+
 ## Datos para la gráfica de Avance
 
 Ver definición de la gráfica en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Dos fuentes de datos distintas:
