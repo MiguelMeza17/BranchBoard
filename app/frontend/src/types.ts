@@ -85,9 +85,9 @@ export interface Tarea {
   estado: EstadoTarea;
   pendiente_aprobacion: boolean;
   rama_asociada: string | null;
-  // Solo relevante en subtareas (tarea_padre_id != null): si al tomarla se creó su propia
-  // rama, o si el trabajo se hace con check-in directo sobre la rama de la tarea padre.
-  modo_trabajo: 'rama' | 'checkin' | null;
+  // 'rama' cuando ya se tomó (se creó su rama). Ya no existen tareas de check-in directo: toda
+  // tarea se trabaja en su propia rama y los check-ins son guardados dentro de ella.
+  modo_trabajo: 'rama' | null;
   modificada: boolean; // badge "hay cambios nuevos"
   creado_por: string;
   asignado_a: string | null;

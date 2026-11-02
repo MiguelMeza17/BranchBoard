@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir, errorCheckinDoble } from '../store/useStore';
+import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
@@ -135,7 +135,6 @@ export function ScrumBoard() {
   const [borrarProgresoId, setBorrarProgresoId] = useState<string | null>(null);
   const [tomarId, setTomarId] = useState<string | null>(null);
   const [mostrarTomarModal, setMostrarTomarModal] = useState(false);
-  const [modoTomar, setModoTomar] = useState<'rama' | 'checkin'>('rama');
   const [showCrear, setShowCrear] = useState(false);
   const [modoForzadoCrear, setModoForzadoCrear] = useState<'general' | 'especifica'>('especifica');
   const [detalle, setDetalle] = useState<Tarea | null>(null);
@@ -147,18 +146,6 @@ export function ScrumBoard() {
   // movimiento sin querer ya no se toma como arrastre y sí abre los detalles.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 12 } }));
 
-  // Reinicia la elección rama/check-in cada vez que se abre el modal de "Tomar tarea".
-  useEffect(() => {
-    if (mostrarTomarModal) setModoTomar('rama');
-  }, [mostrarTomarModal]);
-
-  const tareaTomar = tomarId ? tareasAll.find((t) => t.id === tomarId) : null;
-  const esSubtareaTomar = !!tareaTomar?.tarea_padre_id;
-  const usuariosStore = useStore((s) => s.usuarios);
-  // Solo un check-in a la vez por tarea padre: si ya hay uno en curso, este error explica por qué
-  // no se puede y la tarea se toma con rama propia.
-  const errorCheckin = esSubtareaTomar && tomarId ? errorCheckinDoble(tareasAll, usuariosStore, tomarId) : null;
-  const modoEfectivo = errorCheckin ? 'rama' : modoTomar;
 
   const visibles = useMemo(
     () => tareasAll.filter((t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user)),
@@ -664,7 +651,7 @@ export function ScrumBoard() {
         onConfirm={() => {
           if (!salto) return;
           const t = tareasAll.find((x) => x.id === salto.id);
-          if (t && t.estado === 'por hacer' && !t.asignado_a) tomarTarea(salto.id, user.email, 'rama');
+          if (t && t.estado === 'por hacer' && !t.asignado_a) tomarTarea(salto.id, user.email);
           setSalto(null);
           avanzarA(salto.id, salto.to);
         }}
@@ -696,18 +683,14 @@ export function ScrumBoard() {
 
       <BorrarProgresoModal tareaId={borrarProgresoId} onClose={() => setBorrarProgresoId(null)} />
 
-      {/* Tomar tarea (crea rama, o — solo para subtareas — check-in directo sobre la rama padre) */}
+      {/* Tomar tarea: crea su rama (toda tarea se trabaja en su propia rama) */}
       <ConfirmLock
         open={mostrarTomarModal}
         onClose={() => { setMostrarTomarModal(false); setTomarId(null); }}
         onConfirm={() => {
           if (tomarId) {
-            tomarTarea(tomarId, user.email, esSubtareaTomar ? modoEfectivo : 'rama');
-            showToast(
-              esSubtareaTomar && modoEfectivo === 'checkin'
-                ? 'Check-in habilitado sobre la rama de la tarea padre — ¡listo para trabajar!'
-                : 'Rama creada y workspace cambiado — ¡listo para trabajar!'
-            );
+            tomarTarea(tomarId, user.email);
+            showToast('Rama creada y workspace cambiado — ¡listo para trabajar!');
           }
           setMostrarTomarModal(false);
           setTomarId(null);
@@ -715,43 +698,8 @@ export function ScrumBoard() {
         title="Tomar tarea"
         tone="primary"
         palabra="asignar"
-        confirmLabel={esSubtareaTomar && modoEfectivo === 'checkin' ? 'Tomar con check-in' : 'Tomar y crear rama'}
-        description={
-          <div className="space-y-3">
-            <p>
-              {esSubtareaTomar && modoEfectivo === 'checkin'
-                ? 'El check-in se hará directo sobre la rama de la tarea padre — no se crea una rama nueva ni se cambia el workspace.'
-                : 'Al tomar la tarea, el backend crea su rama en Unity Version Control y hace el auto-switch de tu workspace. Podrás abrirla en Unity desde la pantalla de éxito.'}
-            </p>
-            {esSubtareaTomar && (
-              <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setModoTomar('rama')}
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                    modoEfectivo === 'rama' ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
-                  }`}
-                >
-                  🌿 Rama propia
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModoTomar('checkin')}
-                  disabled={!!errorCheckin}
-                  title={errorCheckin ?? undefined}
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    modoEfectivo === 'checkin' ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
-                  }`}
-                >
-                  ✅ Check-in directo
-                </button>
-              </div>
-            )}
-            {errorCheckin && (
-              <p className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-red-200">{errorCheckin}</p>
-            )}
-          </div>
-        }
+        confirmLabel="Tomar y crear rama"
+        description={'Al tomar la tarea, el backend crea su rama en Unity Version Control y hace el auto-switch de tu workspace. Podrás abrirla en Unity desde la pantalla de éxito.'}
       />
 
       {/* Nueva tarea — en la raíz crea una tarea raíz; dentro de una carpeta, una subtarea de ella */}
@@ -803,19 +751,7 @@ export function ScrumBoard() {
               </div>
               <div>
                 <dt className="text-xs text-faint">Rama</dt>
-                {detalle.modo_trabajo === 'checkin' ? (
-                  <dd className="text-accent">
-                    ✅ Check-in directo
-                    {(() => {
-                      const padre = tareasAll.find((x) => x.id === detalle.tarea_padre_id);
-                      return padre?.rama_asociada ? (
-                        <span className="text-muted"> — sobre <span className="font-mono">{padre.rama_asociada}</span></span>
-                      ) : null;
-                    })()}
-                  </dd>
-                ) : (
-                  <dd className="font-mono text-accent">{detalle.rama_asociada ?? '— sin rama —'}</dd>
-                )}
+                <dd className="font-mono text-accent">{detalle.rama_asociada ?? '— sin rama —'}</dd>
               </div>
               <div>
                 <dt className="text-xs text-faint">Asignado a</dt>

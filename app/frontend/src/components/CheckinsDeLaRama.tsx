@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore, entrantesDe, estadoEntrante } from '../store/useStore';
+import { useStore, entrantesDe } from '../store/useStore';
 import { esTareaEnEspera } from '../lib/ui';
 import { ramaDeTarea } from './AccionesRama';
 import { DetalleCommit } from './HistorialRamas';
@@ -15,9 +15,7 @@ const fecha = (iso: string) => new Date(iso).toLocaleString();
 // portal quedarían recortadas dentro de ella.
 const portal = (n: ReactNode) => createPortal(n, document.body);
 
-// Check-ins de la rama, en los detalles de la tarea. En una rama sin subtareas el check-in no se
-// vuelve tarea: queda aquí. En una rama con subtareas también se listan los changesets de sus
-// tareas de check-in (caen en esta misma rama), cada uno con el ID de su tarea.
+// Check-ins de la rama, en los detalles de la tarea: los guardados hechos en su propia rama.
 // Click en un check-in: su detalle, con "Abrir en Unity" en ese changeset.
 export function CheckinsDeLaRama({ tarea }: { tarea: Tarea }) {
   const tareas = useStore((s) => s.tareas);
@@ -28,15 +26,8 @@ export function CheckinsDeLaRama({ tarea }: { tarea: Tarea }) {
   const [ver, setVer] = useState<number | null>(null);
   const rama = ramaDeTarea(tarea, tareas);
   if (esTareaEnEspera(tarea) || !rama) return null;
-  const directos = tarea.rama_asociada
-    ? new Set(
-        tareas
-          .filter((t) => t.tarea_padre_id === tarea.id && t.modo_trabajo === 'checkin' && !t.rama_asociada)
-          .map((t) => t.id)
-      )
-    : new Set<string>();
   const lista: Commit[] = commits
-    .filter((c) => c.tarea_id === tarea.id || directos.has(c.tarea_id))
+    .filter((c) => c.tarea_id === tarea.id)
     .sort((a, b) => b.fecha.localeCompare(a.fecha));
   const viendo = ver !== null ? lista[ver] : undefined;
   return (
@@ -52,7 +43,6 @@ export function CheckinsDeLaRama({ tarea }: { tarea: Tarea }) {
           >
             <span className="font-mono text-[11px] text-faint">{c.hash}</span>
             <span className="min-w-0 flex-1 truncate text-[12px] text-text">{c.mensaje}</span>
-            {c.tarea_id !== tarea.id && <span className="font-mono text-[10px] text-faint">{c.tarea_id}</span>}
             <span className="text-[11px] text-faint">{fecha(c.fecha)}</span>
             <Avatar email={c.autor} size={18} />
           </li>
@@ -95,59 +85,45 @@ export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
   const [ver, setVer] = useState<string | null>(null);
   const entrantes = entrantesDe(tareas, recibidos, tarea.id);
   // Una tarea terminada ya se mergeó y su rama está cerrada: no tiene workspace al que le falte nada.
-  // Solo sale cuando hay algo que unir (terminado o check-in en revisión).
-  if (!tarea.rama_asociada || tarea.estado === 'terminada' || entrantes.length === 0) return null;
+  // Sale en toda rama con subtareas (aunque esté en 0): ahí es donde llegan sus merges. Las ramas sin
+  // subtareas no la muestran.
+  const conHijas = tareas.some((t) => t.tarea_padre_id === tarea.id && !t.eliminada);
+  if (!tarea.rama_asociada || tarea.estado === 'terminada' || !conHijas) return null;
   const rama = tarea.rama_asociada;
   const viendo = entrantes.find((h) => h.id === ver);
   const suyos = viendo ? commits.filter((c) => c.tarea_id === viendo.id).sort((a, b) => b.fecha.localeCompare(a.fecha)) : [];
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
       <dt className="mb-2 text-xs font-semibold text-muted">⇣ Incoming changes ({entrantes.length})</dt>
-      <p className="mb-1.5 text-[11px] text-sky-300">
-        Llegaron cambios a esta rama que tu workspace aún no tiene. Unirlos es opcional.
-      </p>
-      {(
-        [
-          ['Terminados', entrantes.filter((h) => h.estado === 'terminada')],
-          ['En revisión (sin aprobar)', entrantes.filter((h) => h.estado !== 'terminada')],
-        ] as const
-      ).map(([titulo, grupo]) =>
-        grupo.length === 0 ? null : (
-          <div key={titulo} className="mb-1.5">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
-              {titulo} ({grupo.length})
-            </div>
-            <ul className="space-y-1">
-              {grupo.map((h) => {
-                const n = commits.filter((c) => c.tarea_id === h.id).length;
-                const revision = h.estado !== 'terminada';
-                return (
-                  <li
-                    key={h.id}
-                    onClick={() => setVer(h.id)}
-                    className={`cursor-pointer rounded-lg border px-3 py-1.5 transition ${
-                      revision
-                        ? 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20'
-                        : 'border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[11px] text-faint">{h.id}</span>
-                      <span className="min-w-0 flex-1 truncate text-[12px] text-text">{h.titulo}</span>
-                      {h.asignado_a && <Avatar email={h.asignado_a} size={18} />}
-                    </div>
-                    <p className="mt-0.5 text-[11px] text-muted">
-                      <span className={revision ? 'text-amber-300' : ''}>{estadoEntrante(h)}</span> · {n}{' '}
-                      {n === 1 ? 'check-in' : 'check-ins'} ·{' '}
-                      {h.rama_asociada ? <>desde <span className="font-mono">{h.rama_asociada}</span></> : 'check-in directo en esta rama'}
-                    </p>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )
+      {entrantes.length === 0 ? (
+        <p className="text-[12px] text-faint">No hay subtareas terminadas que tu workspace no tenga.</p>
+      ) : (
+        <p className="mb-1.5 text-[11px] text-sky-300">
+          Llegaron cambios a esta rama que tu workspace aún no tiene. Unirlos es opcional.
+        </p>
       )}
+      <ul className="space-y-1">
+        {entrantes.map((h) => {
+          const n = commits.filter((c) => c.tarea_id === h.id).length;
+          return (
+            <li
+              key={h.id}
+              onClick={() => setVer(h.id)}
+              className="cursor-pointer rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 transition hover:bg-sky-500/20"
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] text-faint">{h.id}</span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-text">{h.titulo}</span>
+                {h.asignado_a && <Avatar email={h.asignado_a} size={18} />}
+              </div>
+              <p className="mt-0.5 text-[11px] text-muted">
+                Terminada{h.fecha_completada && <> el {h.fecha_completada}</>} · {n} {n === 1 ? 'check-in' : 'check-ins'} · desde{' '}
+                <span className="font-mono">{h.rama_asociada}</span>
+              </p>
+            </li>
+          );
+        })}
+      </ul>
       {viendo &&
         portal(
           <Modal
@@ -182,24 +158,18 @@ export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
             }
           >
             <div className="space-y-3 text-sm">
-              {viendo.estado !== 'terminada' && (
-                <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
-                  ⚠ Este check-in está en revisión: todavía no está aprobado. Si lo rechazan, se corrige con otro check-in
-                  encima, que también te llegará.
-                </p>
-              )}
               <p className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-200">
-                {viendo.id} {viendo.estado === 'terminada' ? 'ya se terminó' : 'hizo check-in'} y sus cambios están en <span className="font-mono">{rama}</span>, pero tu workspace todavía no
+                {viendo.id} ya se terminó y sus cambios se mergearon a <span className="font-mono">{rama}</span>, pero tu workspace todavía no
                 tiene esos cambios. Ya son de esta rama: no es un préstamo y no hay que devolverlos. Unirlos es opcional.
               </p>
               <dl className="grid grid-cols-2 gap-3">
                 <div>
-                  <dt className="text-xs text-faint">Desde</dt>
-                  <dd className="font-mono text-text">{viendo.rama_asociada ?? 'check-in directo en esta rama'}</dd>
+                  <dt className="text-xs text-faint">Desde la rama</dt>
+                  <dd className="font-mono text-text">{viendo.rama_asociada}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-faint">Estado</dt>
-                  <dd className="text-text">{estadoEntrante(viendo)}</dd>
+                  <dt className="text-xs text-faint">Terminada</dt>
+                  <dd className="text-text">{viendo.fecha_completada ?? '—'}</dd>
                 </div>
                 <div>
                   <dt className="text-xs text-faint">Trabajada por</dt>
@@ -234,16 +204,17 @@ export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
   );
 }
 
-// Pending changes: cambios sin check-in en el workspace de la rama de la tarea (cm status). En la
-// subtarea "En espera" es justamente su razón de ser: avisa que alguien trabaja y aún no guarda.
-// Qué pasa al hacer check-in depende de la rama: en una rama con hijos, el check-in se vuelve una
-// tarea (la "En espera" se convierte en ella); en una rama sin hijos, queda en sus check-ins.
-// Click: su detalle, con "Abrir en Unity" y "Hacer check-in".
+// Pending changes: cambios sin check-in en el workspace de la rama de la tarea (cm status).
+// - Rama sin subtareas: "Hacer check-in" (título, descripción, tipo); queda en sus check-ins.
+// - Rama con subtareas: ahí no se hace check-in. Los cambios salen como "En espera" y se guardan
+//   creando una rama (nombre, detalles, tipo): la "En espera" pasa a ser esa subtarea.
+// Click: su detalle, con "Abrir en Unity" y la acción que corresponda.
 export function PendingChanges({ tarea }: { tarea: Tarea }) {
   const tareas = useStore((s) => s.tareas);
   const sinCheckin = useStore((s) => s.cambiosSinCheckin);
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
   const hacerCheckin = useStore((s) => s.hacerCheckin);
+  const crearRamaDesdeEspera = useStore((s) => s.crearRamaDesdeEspera);
   const [abierto, setAbierto] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [descripcion, setDescripcion] = useState('');
@@ -256,11 +227,14 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
   const quien = (enEspera ? padre?.asignado_a : tarea.asignado_a) ?? null;
   const duena = tareas.find((t) => t.rama_asociada === rama);
   const conHijos = !!duena && tareas.some((t) => t.tarea_padre_id === duena.id && !t.eliminada);
-  const quePasa = conHijos
-    ? `Es una rama con subtareas: al hacer check-in, el check-in se vuelve una tarea${
-        enEspera ? ' (esta "En espera" se convierte en ella)' : ''
-      } de ${duena!.id}.`
-    : 'Al hacer check-in pasan a los check-ins de la rama; no se convierten en tarea.';
+  const espera = enEspera ? tarea : tareas.find((t) => t.tarea_padre_id === duena?.id && esTareaEnEspera(t) && !t.eliminada);
+  // En una rama con subtareas solo se puede crear la rama si existe su "En espera".
+  const crearRama = conHijos;
+  const quePasa = crearRama
+    ? `Es la rama de ${duena!.id}, que tiene subtareas: aquí no se hace check-in. Crea una rama con nombre, detalles y tipo; ${
+        enEspera ? 'esta "En espera"' : 'su "En espera"'
+      } pasa a ser esa subtarea y los cambios se van con ella.`
+    : 'Al hacer check-in pasan a los check-ins de la rama.';
   const cerrar = () => {
     setAbierto(false);
     setMensaje('');
@@ -310,13 +284,17 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
                 <button
                   type="button"
                   className="btn-primary btn-sm"
-                  disabled={!mensaje.trim()}
+                  disabled={!mensaje.trim() || (crearRama && !espera)}
                   onClick={() => {
-                    hacerCheckin(rama, { titulo: mensaje.trim(), descripcion: descripcion.trim(), tipo });
+                    if (crearRama) {
+                      if (espera) crearRamaDesdeEspera(espera.id, { titulo: mensaje.trim(), detalles: descripcion.trim(), tipo });
+                    } else {
+                      hacerCheckin(rama, { titulo: mensaje.trim(), descripcion: descripcion.trim(), tipo });
+                    }
                     cerrar();
                   }}
                 >
-                  ⇡ Hacer check-in
+                  {crearRama ? '🌿 Crear rama' : '⇡ Hacer check-in'}
                 </button>
               </div>
             }
@@ -342,17 +320,17 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
               </dl>
               <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">{quePasa}</p>
               <label className="block">
-                <span className="mb-1 block text-xs text-faint">Título</span>
+                <span className="mb-1 block text-xs text-faint">{crearRama ? 'Nombre de la rama (título de la subtarea)' : 'Título'}</span>
                 <input
                   className="input"
                   value={mensaje}
                   onChange={(e) => setMensaje(e.target.value)}
-                  placeholder="Qué cambiaste, en una línea"
+                  placeholder={crearRama ? 'Qué es este trabajo' : 'Qué cambiaste, en una línea'}
                   autoFocus
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs text-faint">Descripción</span>
+                <span className="mb-1 block text-xs text-faint">{crearRama ? 'Detalles' : 'Descripción'}</span>
                 <textarea
                   className="input min-h-[72px] resize-y"
                   value={descripcion}

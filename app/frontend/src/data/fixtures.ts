@@ -186,19 +186,17 @@ export const tareas: Tarea[] = [
     creado_por: DEV,
     tarea_padre_id: 'T-101-1',
   }),
-  // Subtarea comodín "En espera" de T-101-1 (ver BACKEND.md, "Subtarea En espera"): avisa que
-  // alguien está trabajando en la rama y aún no ha guardado (cambios sin check-in). T-101-1 tiene
-  // subtareas, así que al hacer el check-in esta "En espera" se convierte en la tarea de ese
-  // check-in y aparece otra nueva.
+  // "En espera" de T-101-1 (ver BACKEND.md): cambios sin check-in hechos directamente en la rama de
+  // T-101-1, que tiene subtareas. Ahí no se hace check-in: al crear la rama (nombre, detalles y
+  // tipo) esta "En espera" se convierte en una subtarea con su propia rama y los cambios pasan a ella.
   t({
     id: 'T-101-1-2',
     titulo: 'En espera',
-    detalles: 'Trabajo en curso en la rama de T-101-1 que todavía no tiene check-in. Al hacer el check-in se convierte en su tarea.',
+    detalles: 'Cambios sin check-in hechos directamente en la rama de T-101-1. Crea su rama para guardarlos.',
     tipo: 'Sin definir',
     estado: 'en producción',
     creado_por: LIDER,
     tarea_padre_id: 'T-101-1',
-    modo_trabajo: 'checkin',
   }),
   t({
     id: 'T-101-2',
@@ -213,9 +211,8 @@ export const tareas: Tarea[] = [
     fecha_completada: '2026-09-22',
     sprint_id: 'sp1',
   }),
-  // Subtarea trabajada con check-in directo sobre la rama de su tarea grande (sin rama propia):
-  // sus cambios son commits en task/T-101-combate-jugador. Asignada a Miguel para ver el panel
-  // "Abrir en Unity".
+  // Subtareas de T-101 en revisión, cada una en su propia rama (asignadas a distintas personas
+  // para ver el panel "Abrir en Unity").
   t({
     id: 'T-101-3',
     titulo: 'Partículas del golpe',
@@ -225,10 +222,9 @@ export const tareas: Tarea[] = [
     creado_por: LIDER,
     asignado_a: ADMIN,
     tarea_padre_id: 'T-101',
-    modo_trabajo: 'checkin',
+    rama_asociada: 'task/T-101-3-particulas',
+    modo_trabajo: 'rama',
   }),
-  // Más check-in de T-101 en revisión, hechos uno después del otro (el turno se libera al pasar a
-  // revisión), para ver cómo se revisan juntos o por separado.
   t({
     id: 'T-101-5',
     titulo: 'Rastro del arma al girar',
@@ -238,7 +234,8 @@ export const tareas: Tarea[] = [
     creado_por: LIDER,
     asignado_a: DEV,
     tarea_padre_id: 'T-101',
-    modo_trabajo: 'checkin',
+    rama_asociada: 'task/T-101-5-rastro-arma',
+    modo_trabajo: 'rama',
   }),
   t({
     id: 'T-101-6',
@@ -249,9 +246,10 @@ export const tareas: Tarea[] = [
     creado_por: LIDER,
     asignado_a: LIDER,
     tarea_padre_id: 'T-101',
-    modo_trabajo: 'checkin',
+    rama_asociada: 'task/T-101-6-sfx-critico',
+    modo_trabajo: 'rama',
   }),
-  // Libre, para probar la regla de un solo check-in por tarea padre: T-101 ya tiene el de T-101-3.
+  // Libre, para poder tomarla.
   t({
     id: 'T-101-4',
     titulo: 'Sacudida de cámara al golpear',
@@ -548,7 +546,6 @@ export const commits: Commit[] = [
   { id: 'C-5', tarea_id: 'T-101-1', hash: 'e91c3f2', mensaje: 'Material emisivo del filo', autor: DEV, fecha: '2026-09-18T14:30:00' },
 
   { id: 'C-6', tarea_id: 'T-101-2', hash: 'f12a8d9', mensaje: 'SFX de impacto importado y asignado al combo', autor: LIDER, fecha: '2026-09-21T16:15:00' },
-  // Check-in de T-101-3 directo sobre la rama de T-101 (no tiene rama propia).
   { id: 'C-19', tarea_id: 'T-101-3', hash: 'a3e9b27', mensaje: 'Partículas al conectar el golpe final del combo', autor: ADMIN, fecha: '2026-09-26T15:40:00' },
   { id: 'C-20', tarea_id: 'T-101-5', hash: 'b7d4e10', mensaje: 'Trail del arma con fade al terminar el giro', autor: DEV, fecha: '2026-09-27T11:05:00' },
   { id: 'C-21', tarea_id: 'T-101-5', hash: 'c2f8a93', mensaje: 'Ajuste de ancho del trail', autor: DEV, fecha: '2026-09-27T16:20:00' },
