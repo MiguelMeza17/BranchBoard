@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { entrantesDe, estadoEntrante, useStore } from '../store/useStore';
-import { coincidePalabra, esCheckinTarea, esTareaEnEspera, estadoMeta, palabraCambios } from '../lib/ui';
+import { coincidePalabra, esTareaEnEspera, estadoMeta, palabraCambios } from '../lib/ui';
 import { Modal } from './Modal';
 import { EditarTareaModal } from './EditarTareaModal';
 import { DetalleCommit } from './HistorialRamas';
@@ -13,14 +13,14 @@ import { Avatar } from './primitives';
 export function RamaDeLaTarea({ tarea }: { tarea: Tarea }) {
   const tareas = useStore((s) => s.tareas);
   const rama = ramaDeTarea(tarea, tareas);
-  const checkin = tarea.modo_trabajo === 'checkin' && !tarea.rama_asociada;
+  const enEspera = esTareaEnEspera(tarea);
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="text-faint">Rama</span>
       {rama ? (
         <span className="rounded-md border border-border bg-surface-3 px-2 py-0.5 font-mono text-text">
           {rama}
-          {checkin && <span className="ml-1.5 font-sans text-faint">(check-in sobre la rama de su padre)</span>}
+          {enEspera && <span className="ml-1.5 font-sans text-faint">(cambios hechos en la rama de su padre)</span>}
         </span>
       ) : (
         <span className="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-faint">Sin rama — nadie la ha tomado todavía</span>
@@ -172,10 +172,10 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
 //   terminada, en revisión o en producción con commits. Las en revisión avisan que todavía no están
 //   aprobadas; las en producción, que es trabajo en curso que todavía puede cambiar.
 
-/** Rama donde se trabaja una tarea: la suya, o la del padre si es un check-in directo. */
+/** Rama donde se trabaja una tarea: la suya; una "En espera" usa la de su padre (sus cambios están ahí). */
 export function ramaDeTarea(t: Tarea, tareas: Tarea[]): string | null {
   if (t.rama_asociada) return t.rama_asociada;
-  if (t.modo_trabajo === 'checkin' && t.tarea_padre_id) {
+  if (esTareaEnEspera(t) && t.tarea_padre_id) {
     return tareas.find((p) => p.id === t.tarea_padre_id)?.rama_asociada ?? null;
   }
   return null;
@@ -319,7 +319,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
           (t.estado === 'terminada' ||
             t.estado === 'en revisión' ||
             (t.estado === 'en producción' && commits.some((c) => c.tarea_id === t.id))) &&
-          (t.rama_asociada || t.modo_trabajo === 'checkin') &&
+          !!t.rama_asociada &&
           (!q || `${t.id} ${t.titulo}`.toLowerCase().includes(q))
       )
       .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
@@ -327,7 +327,6 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
   const terminadas = opciones.filter((t) => t.estado === 'terminada');
   const enRevision = opciones.filter((t) => t.estado === 'en revisión');
   const enProduccion = opciones.filter((t) => t.estado === 'en producción');
-  const esCheckin = (t: Tarea) => t.modo_trabajo === 'checkin' && !t.rama_asociada;
 
   // Cada tarea se despliega para ver sus commits: arriba "Traer todo" y en cada commit "Traer este".
   // "Traer todo" solo aparece desplegada, para que no parezca la única opción.
@@ -351,20 +350,20 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
           <span className="min-w-0 flex-1">
             <span className="block truncate text-text">{t.titulo}</span>
             <span className="block truncate font-mono text-[11px] text-faint">
-              {esCheckin(t) ? `check-in sobre ${ramaDeTarea(t, tareas) ?? '—'}` : t.rama_asociada}
+              {t.rama_asociada}
             </span>
           </span>
           {t.estado === 'en revisión' && <span className="shrink-0 text-[11px] text-amber-300">⚠ sin aprobar</span>}
           {t.estado === 'en producción' && <span className="shrink-0 text-[11px] text-red-300">⚠ en curso</span>}
           <span className={`shrink-0 px-2 py-1 text-[11px] text-faint ${suyos.length ? '' : 'opacity-50'}`}>
-            {suyos.length} {palabraCambios(suyos.length, esCheckinTarea(t))} {suyos.length ? (abierta ? '▾' : '▸') : ''}
+            {suyos.length} {palabraCambios(suyos.length)} {suyos.length ? (abierta ? '▾' : '▸') : ''}
           </span>
         </div>
         {abierta && (
           <div className="space-y-0.5 border-t border-border px-2 py-1.5">
             <div className={`flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs ${todoElegido ? 'bg-primary-soft' : ''}`}>
               <span className="text-muted">
-                Todos sus cambios ({suyos.length} {palabraCambios(suyos.length, esCheckinTarea(t))})
+                Todos sus cambios ({suyos.length} {palabraCambios(suyos.length)})
               </span>
               <button
                 type="button"
@@ -517,7 +516,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
                       <span className="block truncate text-[11px] text-faint">
                         <span className={h.estado !== 'terminada' ? 'text-amber-300' : ''}>{estadoEntrante(h)}</span> · {n}{' '}
                         {n === 1 ? 'check-in' : 'check-ins'} ·{' '}
-                        {h.rama_asociada ? <>desde <span className="font-mono">{h.rama_asociada}</span></> : 'check-in directo en esta rama'}
+                        desde <span className="font-mono">{h.rama_asociada}</span>
                       </span>
                     </span>
                     <button

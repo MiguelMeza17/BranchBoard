@@ -13,11 +13,9 @@ export function Revision() {
   const tareas = useStore((s) => s.tareas);
   const usuarios = useStore((s) => s.usuarios);
   const autorizarMerge = useStore((s) => s.autorizarMerge);
-  const autorizarCheckins = useStore((s) => s.autorizarCheckins);
   const commits = useStore((s) => s.commits);
   const puedeAvanzar = useStore((s) => s.puedeAvanzar);
   const rechazarRevision = useStore((s) => s.rechazarRevision);
-  const rechazarCheckins = useStore((s) => s.rechazarCheckins);
   const asignarRevision = useStore((s) => s.asignarRevision);
   const showToast = useStore((s) => s.showToast);
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
@@ -27,10 +25,7 @@ export function Revision() {
   const [autorizar, setAutorizar] = useState<Tarea | null>(null);
   const [rechazar, setRechazar] = useState<Tarea | null>(null);
   const [asignando, setAsignando] = useState<Tarea | null>(null);
-  const [aprobarJuntos, setAprobarJuntos] = useState<Tarea[] | null>(null);
-  const [rechazarJuntos, setRechazarJuntos] = useState<Tarea[] | null>(null);
-  // "Revisar los N juntos": ventana con los check-in del grupo y la opción de autorizarlos o rechazarlos todos.
-  const [revisarJuntos, setRevisarJuntos] = useState<Tarea[] | null>(null);
+
 
   // Antes de asignar, tanto Líder como Administrador pueden elegir revisor.
   // Ya asignada, solo Administrador puede reasignar — un Líder ya no puede tocarlo.
@@ -39,20 +34,7 @@ export function Revision() {
 
   const enRevision = useMemo(() => tareas.filter((t) => t.estado === 'en revisión' && !t.eliminada), [tareas]);
   const grandes = enRevision.filter((t) => t.tarea_padre_id === null);
-  // Check-ins (subtareas trabajadas con check-in directo sobre la rama de su padre): se agrupan por
-  // tarea padre, porque se pueden revisar juntos o uno por uno. El resto de subtareas, como siempre.
-  const esCheckin = (t: Tarea) => t.modo_trabajo === 'checkin' && !t.rama_asociada;
-  const pequenas = enRevision.filter((t) => t.tarea_padre_id !== null && !esCheckin(t));
-  const checkinsPorPadre = useMemo(() => {
-    const m = new Map<string, Tarea[]>();
-    enRevision
-      .filter((t) => t.tarea_padre_id !== null && esCheckin(t))
-      .forEach((t) => m.set(t.tarea_padre_id!, [...(m.get(t.tarea_padre_id!) ?? []), t]));
-    return [...m.entries()].map(([padreId, lista]) => ({
-      padre: tareas.find((x) => x.id === padreId),
-      lista: lista.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })),
-    }));
-  }, [enRevision, tareas]);
+  const pequenas = enRevision.filter((t) => t.tarea_padre_id !== null);
   const commitsDe = (id: string) => commits.filter((c) => c.tarea_id === id).sort((a, b) => b.fecha.localeCompare(a.fecha));
 
   const lideres = usuarios.filter((u) => u.rol === 'Líder' || u.rol === 'Administrador');
@@ -127,96 +109,10 @@ export function Revision() {
         <div className="mb-3 flex items-center gap-2">
           <h2 className="text-sm font-semibold text-text">📁 Tareas pequeñas → tarea padre</h2>
           <span className="chip border border-border bg-surface-2 text-muted">
-            {pequenas.length + checkinsPorPadre.reduce((n, g) => n + g.lista.length, 0)}
+            {pequenas.length}
           </span>
         </div>
-        {/* Check-ins agrupados por tarea padre (se revisan juntos o uno por uno) */}
-        {checkinsPorPadre.length > 0 && (
-          <div className="mb-3">
-          <div className="space-y-3">
-            {checkinsPorPadre.map(({ padre, lista }) => {
-              const puedeActuar =
-                (padre && padre.asignado_a === user.email) || user.rol === 'Administrador' || user.rol === 'Líder';
-              return (
-                <div key={padre?.id ?? lista[0].id} className="card p-4">
-                  <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[11px] text-faint">{padre?.id}</span>
-                        <span className="font-medium text-text">{padre?.titulo ?? '—'}</span>
-                        <span className="chip border border-border bg-surface-2 text-muted">
-                          {lista.length} check-in{lista.length === 1 ? '' : 's'}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-muted">
-                        Sus check-ins ya están en la rama{' '}
-                        <span className="font-mono text-text">{padre?.rama_asociada ?? '—'}</span> (se hicieron directo
-                        ahí, sin rama propia). Aprobar un check-in lo da por terminado; se pueden revisar uno por uno o
-                        todos juntos.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    {lista.map((t) => {
-                      const suyos = commitsDe(t.id);
-                      return (
-                        <div
-                          key={t.id}
-                          // Click en cualquier parte abre sus detalles (como las tareas sin hijas en el Scrum).
-                          onClick={puedeActuar ? () => setRevisando(t) : undefined}
-                          className={`flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 ${
-                            puedeActuar ? 'cursor-pointer transition hover:border-border-strong hover:bg-surface-3' : ''
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-[11px] text-faint">{t.id}</span>
-                              <span className="text-sm text-text">{t.titulo}</span>
-                              <TipoBadge tipo={t.tipo} />
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-faint">
-                              {t.asignado_a && <span>{nombreDe(t.asignado_a)}</span>}
-                              <span>
-                                · {suyos.length} {palabraCambios(suyos.length, true)}
-                              </span>
-                              {suyos[0] && (
-                                <span className="truncate">
-                                  · último: <span className="font-mono">{suyos[0].hash}</span> {suyos[0].mensaje}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          {puedeActuar ? (
-                            <button
-                              className="btn-outline btn-sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRevisando(t);
-                              }}
-                            >
-                              Revisar este
-                            </button>
-                          ) : (
-                            <ReadOnlyTag />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {puedeActuar && lista.length > 1 && (
-                    <div className="mt-3 flex justify-end">
-                      <button className="btn-primary btn-sm" onClick={() => setRevisarJuntos(lista)}>
-                        Revisar los {lista.length} juntos
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          </div>
-        )}
-        {pequenas.length === 0 && checkinsPorPadre.length > 0 ? null : pequenas.length === 0 ? (
+        {pequenas.length === 0 ? (
           <EmptyState icon="🧩" title="No hay subtareas esperando revisión" />
         ) : (
           <div className="space-y-2">
@@ -300,111 +196,6 @@ export function Revision() {
         {preview && <PrevisualizadorTipo tarea={preview} />}
       </Modal>
 
-      {/* Revisar juntos los check-in de una tarea padre */}
-      <Modal
-        open={!!revisarJuntos}
-        onClose={() => setRevisarJuntos(null)}
-        title={`Revisar ${revisarJuntos?.length ?? 0} check-ins juntos`}
-        subtitle={
-          revisarJuntos?.[0]?.tarea_padre_id
-            ? `Tarea padre ${revisarJuntos[0].tarea_padre_id} · sus check-ins ya están en su rama`
-            : ''
-        }
-        footer={
-          <div className="flex w-full justify-end gap-2">
-            <button
-              className="btn-danger btn-sm"
-              onClick={() => {
-                setRechazarJuntos(revisarJuntos);
-                setRevisarJuntos(null);
-              }}
-            >
-              Rechazar los {revisarJuntos?.length ?? 0}
-            </button>
-            <button
-              className="btn-primary btn-sm"
-              onClick={() => {
-                setAprobarJuntos(revisarJuntos);
-                setRevisarJuntos(null);
-              }}
-            >
-              Autorizar los {revisarJuntos?.length ?? 0}
-            </button>
-          </div>
-        }
-      >
-        <div className="space-y-1.5">
-          {revisarJuntos?.map((t) => {
-            const suyos = commitsDe(t.id);
-            return (
-              <div key={t.id} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[11px] text-faint">{t.id}</span>
-                  <span className="text-sm text-text">{t.titulo}</span>
-                  <TipoBadge tipo={t.tipo} />
-                </div>
-                <div className="mt-1 text-[11px] text-faint">
-                  {t.asignado_a ? nombreDe(t.asignado_a) : '—'} · {suyos.length} {palabraCambios(suyos.length, true)}
-                </div>
-                {/* Detalles del check-in (qué había que hacer), antes de sus check-ins. */}
-                <div className="mt-2">
-                  <div className="mb-0.5 text-[11px] text-faint">Detalles</div>
-                  {t.detalles ? (
-                    <p className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs leading-relaxed text-text">
-                      {t.detalles}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-faint">Sin detalles.</p>
-                  )}
-                </div>
-                {suyos.length > 0 && (
-                  <div className="mt-1.5 space-y-0.5">
-                    {suyos.map((c) => (
-                      <div key={c.id} className="flex items-baseline gap-2 text-xs">
-                        <span className="shrink-0 font-mono text-faint">{c.hash}</span>
-                        <span className="truncate text-muted">{c.mensaje}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Modal>
-
-      {/* Rechazar juntos los check-in (doble candado + motivo) */}
-      <ConfirmLock
-        open={!!rechazarJuntos}
-        onClose={() => setRechazarJuntos(null)}
-        onConfirm={(motivo) => {
-          if (rechazarJuntos) rechazarCheckins(rechazarJuntos.map((t) => t.id), motivo ?? '');
-          setRechazarJuntos(null);
-        }}
-        title="Rechazar check-ins juntos"
-        tone="danger"
-        palabra="rechazar"
-        confirmLabel={`Rechazar ${rechazarJuntos?.length ?? 0} check-ins`}
-        requiereJustificacion
-        justificacionLabel="Motivo del rechazo (le llega a cada responsable)"
-        description={`Los check-in ${rechazarJuntos?.map((t) => t.id).join(', ') ?? ''} volverán a "en producción" con el motivo indicado. Sus cambios ya están en la rama de la tarea padre: rechazarlos no los quita; cada responsable debe corregirlo con un nuevo check-in.`}
-      />
-
-      {/* Aprobar juntos los check-in de una tarea padre (doble candado) */}
-      <ConfirmLock
-        open={!!aprobarJuntos}
-        onClose={() => setAprobarJuntos(null)}
-        onConfirm={() => {
-          if (aprobarJuntos) autorizarCheckins(aprobarJuntos.map((t) => t.id));
-          setAprobarJuntos(null);
-        }}
-        title="Autorizar check-ins juntos"
-        tone="primary"
-        palabra="autorizar"
-        confirmLabel={`Autorizar ${aprobarJuntos?.length ?? 0} check-ins`}
-        description={`Vas a aprobar juntos los check-in ${aprobarJuntos?.map((t) => t.id).join(', ') ?? ''}. Sus check-ins ya están en la rama de su tarea padre; quedarán terminados.`}
-      />
-
       {/* Autorizar (doble candado) */}
       <ConfirmLock
         open={!!autorizar}
@@ -428,11 +219,7 @@ export function Revision() {
         confirmLabel="Rechazar"
         requiereJustificacion
         justificacionLabel="Motivo del rechazo (le llega al responsable)"
-        description={`La tarea "${rechazar?.titulo}" volverá a "en producción" con el motivo indicado.${
-          rechazar && rechazar.modo_trabajo === 'checkin' && !rechazar.rama_asociada
-            ? ' Sus cambios ya están en la rama de la tarea padre: rechazar no los quita; el responsable debe corregirlo con un nuevo check-in.'
-            : ''
-        }`}
+        description={`La tarea "${rechazar?.titulo}" volverá a "en producción" con el motivo indicado.`}
       />
 
     </div>

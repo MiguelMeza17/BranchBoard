@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import { Modal } from './Modal';
-import { avatarColor, esCheckinTarea, estadoMeta, iniciales } from '../lib/ui';
+import { avatarColor, estadoMeta, iniciales } from '../lib/ui';
 import type { Commit, Tarea, Usuario } from '../types';
 
 // Vista "Historial" de Branches: cada rama es una caja que contiene a sus hijas (main guarda a
@@ -47,14 +47,8 @@ export function HistorialRamas({ busqueda, abierta, onAbrir }: {
     const mergesDev = (hijas.get(null) ?? []).filter((t) => t.estado === 'terminada').sort(porFecha);
     const hijasFusionadas = (id: string) => (hijas.get(id) ?? []).filter((t) => t.estado === 'terminada').sort(porFecha);
     const commitsDe = new Map<string, typeof commits>();
-    // Los commits de una subtarea con check-in directo (sin rama propia) van en la rama de su padre.
-    const ramaDeCommit = (tareaId: string) => {
-      const tt = porId.get(tareaId);
-      return tt && !tt.rama_asociada && tt.modo_trabajo === 'checkin' && tt.tarea_padre_id ? tt.tarea_padre_id : tareaId;
-    };
     commits.forEach((c) => {
-      const r = ramaDeCommit(c.tarea_id);
-      commitsDe.set(r, [...(commitsDe.get(r) ?? []), c]);
+      commitsDe.set(c.tarea_id, [...(commitsDe.get(c.tarea_id) ?? []), c]);
     });
     commitsDe.forEach((lista) => lista.sort((a, b) => b.fecha.localeCompare(a.fecha)));
     return { hijas, mergesDev, commitsDe, hijasFusionadas, porId, padreDe };
@@ -286,12 +280,6 @@ function haceCuanto(iso: string) {
 
 function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: string; usuarios: Usuario[] }) {
   const showToast = useStore((s) => s.showToast);
-  const tareas = useStore((s) => s.tareas);
-  // Si el cambio viene de una subtarea con check-in directo, se marca como check-in de esa tarea.
-  const checkinDe = (c: Commit) => {
-    const t = tareas.find((x) => x.id === c.tarea_id);
-    return t && esCheckinTarea(t) ? t.id : null;
-  };
   // Click en cualquier parte de un commit abre sus detalles (como las tareas en el Scrum).
   const [seleccionado, setSeleccionado] = useState<number | null>(null);
   if (!commits.length) return <div className="text-xs text-faint">Sin commits todavía</div>;
@@ -363,11 +351,6 @@ function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-xs text-text">{c.mensaje}</span>
-                      {checkinDe(c) && (
-                        <span className="shrink-0 rounded border border-border bg-surface-3 px-1.5 py-px text-[10px] text-muted">
-                          check-in · {checkinDe(c)}
-                        </span>
-                      )}
                     </div>
                     <div className="text-[11px] text-faint" title={c.fecha.replace('T', ' ')}>
                       {nombre} · {haceCuanto(c.fecha)} · {c.fecha.slice(11, 16)}
@@ -431,11 +414,7 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
       open
       onClose={onCerrar}
       title={commit.mensaje}
-      subtitle={
-        tarea && esCheckinTarea(tarea)
-          ? `Check-in de ${tarea.id} sobre la rama de ${tarea.tarea_padre_id ?? '—'}`
-          : `Commit ${posicion} de ${total} en esta rama`
-      }
+      subtitle={`Commit ${posicion} de ${total} en esta rama`}
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <button type="button" className="btn-ghost btn-sm" onClick={onAnterior} disabled={!onAnterior}>

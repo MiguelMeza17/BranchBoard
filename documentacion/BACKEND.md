@@ -138,7 +138,7 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 **Actualizado (2026-10-31) — la app escucha siempre, no solo con "Refrescar"**: lo normal es que los check-ins se hagan **desde Unity** (plugin de Unity Version Control); hacerlos desde BranchBoard es una forma extra, sin tener que abrir la interfaz de UVCS. Por eso BranchBoard **tiene que estar escuchando Unity VC todo el tiempo** mientras está abierta, y no depender de que alguien le dé a "Refrescar" (que se mantiene como acción manual inmediata). Esto reemplaza el "no hace falta un proceso en segundo plano para el MVP" del paso 2:
 
 - **Proceso de fondo** mientras la app está abierta: repite el chequeo de los pasos 3–5 cada pocos segundos para las ramas activas (las de tareas abiertas y sus padres) y además al volver la app a primer plano. El intervalo exacto se ajusta al implementar (equilibrio entre inmediatez y el costo de invocar `cm`); los triggers del servidor (paso 6) siguen siendo la mejora futura para tiempo real.
-- **Check-ins hechos desde Unity**: un changeset nuevo en la rama de una tarea aparece solo en BranchBoard (commits de la tarea, Historial, Revisión) sin que nadie haga nada. Si cae en la rama de una tarea padre y su autor tiene un **check-in en curso** de esa tarea padre (ver la regla de un solo check-in en curso), se asocia a esa subtarea de check-in.
+- **Check-ins hechos desde Unity**: un changeset nuevo en la rama de una tarea aparece solo en BranchBoard (commits de la tarea, Historial, Revisión) sin que nadie haga nada. Si son **cambios sin check-in en la rama de una tarea con subtareas**, aparecen como su subtarea **"En espera"** (ver [Check-ins de la rama](#check-ins-de-la-rama-subtarea-en-espera-y-cambios-entrantes)).
 - **Workspace**: también se escucha en qué rama está parado el workspace local (por si alguien cambió de rama desde Unity o desde el cliente de UVCS) y BranchBoard actualiza su "rama actual del workspace" (la que muestra el panel "Abrir en Unity"); si queda en `dev` o en una rama que no es de sus tareas, aplica el aviso de [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app).
 - Lo detectado que es solo indicador local (`modificada`, `ultimo_changeset_visto`, rama del workspace) no pasa por `ops/`; lo que muta estado compartido sigue emitiendo su evento (ver abajo).
 
@@ -687,44 +687,34 @@ Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Ad
 
 ## Check-ins: aprobación, rechazo y corrección
 
-**Definido (2026-10-31).** Una subtarea con check-in directo no tiene rama propia: cada check-in crea un **changeset en la rama de su tarea padre** en el momento en que se hace. Consecuencias:
-
-- **Autorizar es solo una marca de aprobación**: no mueve ni reordena changesets (ya están en la rama). Autorizar en cualquier orden no cambia el código.
-- **Rechazar no saca los cambios de la rama.** El check-in vuelve a **"en producción"** (no a "por hacer": ya tiene progreso y sigue con su responsable) con el motivo, y el responsable lo **corrige con un nuevo check-in encima**. Como se aplica sobre el último, los check-in posteriores no se dañan ni generan conflicto.
-- **Merge sustractivo** (restar el changeset del check-in) queda como opción avanzada a futuro: puede dar conflictos con check-ins posteriores que tocaron lo mismo, o romperlos si dependían de su trabajo.
-- **Una tarea nueva de corrección** (`tarea_origen_id`) solo cuando el error aparece **después** de aprobado o fusionado (ej. en Testing).
-- La tarea padre no puede pasar a revisión mientras tenga check-ins sin aprobar, así nada rechazado o sin revisar llega a `dev`.
+**Descartado (2026-11-02).** Ya no existen tareas de check-in directo (subtareas sin rama propia que hacían check-in sobre la rama del padre): **toda tarea se trabaja en su propia rama** y los check-ins son guardados dentro de ella. Lo que se revisa, aprueba o rechaza es la **rama** completa, con el flujo normal de [revisión y merge](#flujo-de-revisión-y-merge-a-dev) o de [subtareas hacia su padre](#flujo-de-merge-de-subtareas-pequeñas-hacia-su-tarea-padre). También se eliminan la regla de "un solo check-in en curso por tarea padre" y la revisión de check-ins en conjunto.
 
 ## Check-ins de la rama, subtarea "En espera" y cambios entrantes
 
-**Redefinido (2026-11-02).** Hacer check-in a cada rato es lo normal en Unity VC (respaldo en el servidor, puntos de retorno, menos conflictos). Qué es un check-in en BranchBoard depende de la rama donde se hace:
+**Redefinido (2026-11-02).** Toda tarea tiene **su propia rama** (se crea al tomarla). Hacer check-in a cada rato es lo normal en Unity VC (respaldo en el servidor, puntos de retorno, menos conflictos), y **un check-in nunca se convierte en tarea**: es un guardado dentro de la rama.
 
-| Rama | Al hacer check-in |
-|---|---|
-| **Con subtareas** (rama padre) | Se convierte en una **tarea de check-in** (subtarea de check-in directo). Es lo que hace la subtarea "En espera". |
-| **Sin subtareas** | **No** se convierte en tarea: queda en los detalles de su tarea, en **"📝 Check-ins de la rama"**. |
+| Rama | Cambios sin check-in | Qué se hace |
+|---|---|---|
+| **Sin subtareas** | Se ven en sus detalles, en **"⇡ Pending changes"** | **"⇡ Hacer check-in"** (título, descripción y tipo). Queda en **"📝 Check-ins de la rama"** |
+| **Con subtareas** (rama padre) | Aparece su subtarea **"En espera"** con esos cambios | En la rama padre **no se hace check-in**: se **crea una rama** (nombre, detalles y tipo) y la "En espera" pasa a ser esa subtarea, con los cambios |
 
-### Ramas con subtareas: el check-in se vuelve tarea
+### Ramas sin subtareas: check-ins en los detalles
 
-1. Mientras la tarea está **"en producción"**, tiene una subtarea comodín **"En espera"** de tipo **"Sin definir"** (valor especial: no es una categoría ni se puede elegir al crear tareas).
-2. **"En espera" avisa que alguien está trabajando en esa rama y todavía no ha guardado** (cambios sin check-in, `cm status`). Sus detalles lo muestran en **"⇡ Pending changes"**: quién trabaja y cuántos cambios sin check-in hay.
-3. **Cuando llega un check-in a la rama padre** (desde Unity o desde BranchBoard; lo detecta la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling)), la "En espera" **se convierte en la tarea de ese check-in**:
-   - su **título** pasa a ser el mensaje del commit y sus **detalles** el resto de la descripción;
-   - queda asociada a ese changeset (`modo_trabajo = 'checkin'`, sin rama propia);
-   - un **bot entrenado** lee la descripción y decide su **tipo** (Scripting, Modelado 3D, Audio…);
-   - pasa sola a **"en revisión"** y sigue el flujo de [aprobación y rechazo de check-ins](#check-ins-aprobación-rechazo-y-corrección);
-   - y aparece una **nueva "En espera"** para el siguiente.
-4. "En espera" **no puede traer cambios** ([Cambios prestados](#cambios-prestados-traer-cambios)): sus cambios todavía están sin guardar.
-5. Cuando la tarea deja de estar en producción (pasa a revisión o termina), su "En espera" desaparece.
-6. Las tareas de check-in directo también se pueden **crear a mano**, como hasta ahora.
+- Cada check-in queda en **"📝 Check-ins de la rama"** (título, descripción, tipo, changeset, autor y fecha; a futuro también los archivos). La tarea sigue siendo una sola y avanza normal: producción → revisión → terminada.
+- Los detecta la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) (`cm log` de la rama): se hagan desde Unity o desde BranchBoard, aparecen solos.
+- Si a esa tarea se le crea una subtarea, pasa a ser una rama con subtareas.
 
-Los detalles de la tarea padre también muestran **"📝 Check-ins de la rama"**, con los changesets de esas tareas de check-in (cada uno con el ID de su tarea).
+### Ramas con subtareas: "En espera" y "Crear rama"
 
-### Ramas sin subtareas: el check-in queda en los detalles
+La rama de una tarea con subtareas solo debería recibir los merges de sus subtareas. Si alguien hace cambios directamente en ella:
 
-- El check-in **no se convierte en tarea**: queda como parte de la rama, en **"📝 Check-ins de la rama"** (mensaje, changeset, autor, fecha; a futuro también los archivos). La tarea sigue siendo una sola y avanza normal.
-- Una rama sin subtareas **no tiene "En espera"** (si la tuviera, ya tendría una subtarea). Su trabajo sin guardar se ve en sus propios detalles, en **"⇡ Pending changes"**.
-- Si a esa tarea se le crea una subtarea, pasa a ser una rama con subtareas y desde ahí aplica la regla de arriba.
+1. La [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) ve **cambios sin check-in** en esa rama (`cm status` del workspace) y aparece la subtarea comodín **"En espera"**, de tipo **"Sin definir"** (valor especial: no es una categoría ni se puede elegir al crear tareas). Su tarjeta lleva el indicador **"⇡ N sin check-in"** y sus detalles, en "⇡ Pending changes", muestran quién trabaja y cuántos cambios hay.
+2. Esos cambios **no se guardan con check-in en la rama padre**. Desde "⇡ Pending changes" (en la "En espera" o en la tarea padre) se usa **"🌿 Crear rama"**, que pide **nombre, detalles y tipo**:
+   - la "En espera" **se convierte en una subtarea normal** con ese título, detalles y tipo, en "en producción", asignada a quien trabajaba;
+   - se crea **su rama** (`task/<id>-<nombre>`) y los cambios sin check-in **se mueven a ella** (en Unity VC: crear la rama hija y cambiar el workspace a ella llevando los cambios pendientes; comando exacto pendiente de verificar);
+   - desde ahí se trabaja como cualquier rama: check-ins, revisión y merge hacia el padre (que llegará como incoming change).
+3. "En espera" **no puede traer cambios** ([Cambios prestados](#cambios-prestados-traer-cambios)): sus cambios todavía están sin guardar.
+4. Mientras haya "En espera", la tarea padre no puede pasar a revisión (cuenta como subtarea pendiente).
 
 ### Click en cada elemento: detalle y acciones
 
@@ -732,20 +722,17 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"🎮 Abri
 
 | Sección | Detalle | Acción propia |
 |---|---|---|
-| **⇡ Pending changes** | Rama, quién trabaja, cuántos cambios y los archivos (`cm status`), y qué pasará al hacer check-in según la rama | **"⇡ Hacer check-in"** (`cm checkin`). Un check-in tiene **título, descripción y tipo**; título y descripción van en el comentario del changeset. En una rama con subtareas se vuelve tarea con ese título, descripción y tipo |
+| **⇡ Pending changes** | Rama, quién trabaja, cuántos cambios y los archivos (`cm status`), y qué pasará según la rama | Rama sin subtareas: **"⇡ Hacer check-in"** (`cm checkin`), con **título, descripción y tipo** (título y descripción van en el comentario del changeset). Rama con subtareas: **"🌿 Crear rama"** (nombre, detalles y tipo) |
 | **⇣ Incoming changes** | Subtarea, rama de origen, fecha, quién la trabajó y los check-ins que trae | **"⇣ Unir cambios"** (`cm update` con esos changesets). Opcional |
 | **📝 Check-ins de la rama** | Mensaje, autor, fecha, changeset | Solo "Abrir en Unity", en ese changeset |
 
 ### Cambios entrantes (incoming changes)
 
-- Cuando una **subtarea pasa a "terminada"**, sus cambios quedan en la rama del padre en el servidor: si tiene rama propia, por el merge; si es de check-in directo, porque su check-in ya estaba ahí y ahora está aprobado. Quien tiene el workspace en la rama padre todavía no los tiene: en Unity VC son **incoming changes**.
-- **Se muestran en dos grupos**:
-  - **Terminados**: subtareas con rama propia ya mergeadas y check-ins directos ya aprobados.
-  - **En revisión (sin aprobar)**: solo check-ins directos, cuyo changeset ya está en la rama aunque no esté aprobado (Unity VC también los ve como incoming). Se marcan en ámbar con aviso: si lo rechazan, se corrige con otro check-in encima, que también llegará.
-  - Una subtarea **con rama propia** en revisión **no** sale: todavía no se ha mergeado a la rama del padre. Si se quiere usar antes, es un [préstamo](#cambios-prestados-traer-cambios).
-- BranchBoard lo muestra en los detalles del padre, en la sección **"⇣ Incoming changes"** (solo aparece cuando hay alguno; una tarea terminada nunca la muestra, porque ya se mergeó y su rama está cerrada): qué subtarea, cuándo terminó, cuántos check-ins trae y desde qué rama.
+- Cuando una **subtarea pasa a "terminada"**, su rama se mergea a la rama del padre en el servidor. Quien tiene el workspace en la rama padre todavía no tiene esos cambios: en Unity VC son **incoming changes**.
+- **Solo cuenta lo terminado**: una subtarea en revisión todavía no se ha mergeado, así que no sale. Si alguien necesita su trabajo antes, lo trae como [préstamo](#cambios-prestados-traer-cambios).
+- BranchBoard lo muestra en los detalles del padre, en la sección **"⇣ Incoming changes"** (aparece en **toda rama con subtareas**, en 0 si no hay ninguno; las ramas sin subtareas no la tienen, y una tarea terminada nunca la muestra porque ya se mergeó y su rama está cerrada): qué subtarea, cuándo terminó, cuántos check-ins trae y desde qué rama.
 - **Es solo un aviso y recibirlos no es obligatorio**: no llegan solos al workspace (ni al abrir la rama en Unity). Se reciben desde **"⇣ Traer cambios"**, donde salen **primero y en azul**, en su propio apartado "Incoming changes — llegaron a esta rama", con botón **"Unir cambios"** (misma confirmación escribiendo "traer"), o desde el detalle del incoming change. En Unity VC es actualizar el workspace con esos changesets (`cm update`). **No es un préstamo**: ya son de esta rama, no se registran en `cambios_prestados` ni hay que devolverlos.
 - Se calcula **por máquina**: depende del workspace de cada uno (changeset en el que está el workspace contra el último de la rama). Es un indicador local, no pasa por `ops/`.
 
-**Pendiente de definir al implementar**: el bot clasificador (modelo, entrenamiento, qué hacer si no está seguro del tipo; ej. dejar un tipo por defecto y marcarlo para que alguien lo confirme); cómo se atribuye el check-in si el autor no es el responsable de la tarea; comando `cm` exacto para saber qué changesets de la rama le faltan al workspace (incoming); si "En espera" debe mostrarse solo cuando de verdad hay cambios sin guardar o siempre mientras la tarea esté en producción (en el mockup: siempre); y excluir de la cuenta los archivos que Unity modifica solo (ej. `.meta`).
+**Pendiente de definir al implementar**: comando `cm` exacto para crear la rama hija llevando los cambios pendientes; cómo se atribuye la "En espera" si quien hizo los cambios no es el responsable de la tarea padre; comando `cm` exacto para saber qué changesets de la rama le faltan al workspace (incoming); y excluir de la cuenta los archivos que Unity modifica solo (ej. `.meta`).
 

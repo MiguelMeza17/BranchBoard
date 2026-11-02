@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
-import { esCheckinTarea, estadoMeta, palabraCambios } from '../lib/ui';
+import { estadoMeta, palabraCambios } from '../lib/ui';
 import { Modal } from './Modal';
 import { ramaDeTarea } from './AccionesRama';
 
@@ -15,8 +15,10 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
   const commits = useStore((s) => s.commits);
   const [desplegada, setDesplegada] = useState<string | null>(null);
+  const [ramaWs, commitWs] = (ramaWorkspace ?? '').split(' @ ');
+  const tareaWs = ramaWorkspace ? tareas.find((t) => t.rama_asociada === ramaWs) : undefined;
 
-  // Rama con la que se trabaja una tarea: la suya, o la del padre si se trabaja con check-in directo.
+  // Rama con la que se trabaja una tarea (ver ramaDeTarea).
   const ramaDe = (t: (typeof tareas)[number]) => ramaDeTarea(t, tareas);
   const mias = tareas
     .filter((t) => !t.eliminada && t.asignado_a === user.email && t.estado !== 'terminada' && ramaDe(t))
@@ -29,18 +31,27 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
       title="¿Qué tarea vas a trabajar en Unity?"
       subtitle={`${user.nombre} ${user.apellido} · ${user.rol}`}
     >
-      {ramaWorkspace ? (
-        <div className="mb-3 flex items-center gap-2 text-xs">
-          <span className="text-faint">Workspace ahora en</span>
-          <span className="rounded-md border border-border bg-surface-3 px-2 py-0.5 font-mono text-text">
-            {ramaWorkspace}
-          </span>
+      {/* Dónde está parado el workspace: si es una de tus tareas, se marca en azul en la lista. Aquí arriba
+          solo sale si no está en ninguna, o si está en la rama de una tarea que no es tuya. */}
+      {!ramaWorkspace ? (
+        // Sin rama: nunca se asume dev (trabajar ahí metería cambios directo en la integración).
+        <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-200">
+          Tu workspace no está en ninguna tarea
         </div>
       ) : (
-        // Sin rama: nunca se asume dev (trabajar ahí metería cambios directo en la integración).
-        <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-200">
-          No estás en ninguna tarea
-        </div>
+        !mias.some((t) => ramaDe(t) === ramaWs) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm">
+            <span className="text-faint">Tu workspace está en</span>
+            {tareaWs ? (
+              <span className="text-text">
+                <span className="font-mono font-semibold">{tareaWs.id}</span> {tareaWs.titulo}
+              </span>
+            ) : (
+              <span className="font-mono text-text">{ramaWs}</span>
+            )}
+            {commitWs && <span className="font-mono text-xs text-faint">@ {commitWs}</span>}
+          </div>
+        )
       )}
 
       {mias.length === 0 ? (
@@ -74,10 +85,15 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: m.dot }} />
                     <span className="shrink-0 font-mono font-semibold text-text">{t.id}</span>
                     <span className="min-w-0 flex-1">
+                      {actual && (
+                        <span className="block text-[11px] font-semibold text-primary">
+                          Tu workspace está en
+                          {commitWs && <span className="ml-1 font-mono font-normal text-faint">@ {commitWs}</span>}
+                        </span>
+                      )}
                       <span className="block truncate text-text">{t.titulo}</span>
                       <span className="block truncate font-mono text-[11px] text-faint">{rama}</span>
                     </span>
-                    {actual && <span className="shrink-0 text-[11px] text-faint">rama actual</span>}
                   </button>
                   {/* Desplegar sus commits */}
                   <button
@@ -87,7 +103,7 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
                     className="shrink-0 self-stretch rounded-r-lg border-l border-border px-3 text-[11px] text-faint transition enabled:hover:bg-surface-3 enabled:hover:text-text disabled:opacity-50"
                     title={suyos.length ? 'Ver sus commits' : 'Sin commits'}
                   >
-                    {suyos.length} {palabraCambios(suyos.length, esCheckinTarea(t))} {suyos.length ? (abierta ? '▾' : '▸') : ''}
+                    {suyos.length} {palabraCambios(suyos.length)} {suyos.length ? (abierta ? '▾' : '▸') : ''}
                   </button>
                 </div>
                 {abierta && (

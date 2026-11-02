@@ -77,16 +77,12 @@ export function coincidePalabra(texto: string, palabra: string): boolean {
   return n(texto) === n(palabra);
 }
 
-// Un check-in ES un commit (en Unity VC, hacer check-in es confirmar un cambio). Para una tarea
-// que se trabaja con check-in directo (sin rama propia) se dice "check-in", no "commit".
-export function esCheckinTarea(t: { modo_trabajo: string | null; rama_asociada: string | null }): boolean {
-  return t.modo_trabajo === 'checkin' && !t.rama_asociada;
-}
-// Subtarea comodín "En espera": representa el próximo check-in, cuyos cambios todavía están sin
-// guardar en el workspace. Es la única con tipo "Sin definir" (ver types.ts).
+// Subtarea comodín "En espera": cambios sin check-in hechos directamente en la rama de una tarea con
+// subtareas. No se hace check-in ahí: se crea una rama (subtarea) con nombre, descripción y tipo, y
+// los cambios pasan a ella. Es la única con tipo "Sin definir" (ver types.ts).
 export function esTareaEnEspera(t: { tipo: string }): boolean {
   return t.tipo === 'Sin definir';
 }
-export function palabraCambios(n: number, checkin: boolean): string {
-  return checkin ? (n === 1 ? 'check-in' : 'check-ins') : n === 1 ? 'commit' : 'commits';
+export function palabraCambios(n: number): string {
+  return n === 1 ? 'commit' : 'commits';
 }

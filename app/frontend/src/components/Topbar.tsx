@@ -71,18 +71,17 @@ export function Topbar() {
         <button className="btn-outline btn-sm shrink-0" onClick={() => setAbrirUnity(true)}>
           🎮 Abrir en Unity
         </button>
+      </div>
 
-        {/* Demo: volver a las pantallas de acceso al proyecto */}
+      <div className="flex shrink-0 items-center gap-3">
+        {/* Solo para el mockup (se quitan en la app real): volver a las pantallas de acceso y "Ver como". */}
         <button
-          className="btn-ghost btn-sm text-faint"
-          title="Demo: volver a la Pantalla inicial (acceso al proyecto)"
+          className="shrink-0 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted transition hover:border-border-strong hover:text-text"
+          title="Demo: volver a la Pantalla inicial (acceso al proyecto). Se elimina en la app real."
           onClick={() => setAccesoCompletado(false)}
         >
           🚪 Pantallas de acceso
         </button>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-3">
         {/* Role selector (simula autenticación) */}
         <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
           <span className="text-faint">Ver como</span>
