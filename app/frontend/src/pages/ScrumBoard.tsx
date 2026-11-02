@@ -11,13 +11,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { useStore, LIMITE_REAPERTURAS, puedeReabrir, errorCheckinDoble } from '../store/useStore';
+import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir, errorCheckinDoble } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
+import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
 import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { AccionesRama, CambiosTraidos, RamaDeLaTarea } from '../components/AccionesRama';
@@ -130,6 +131,7 @@ export function ScrumBoard() {
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);
   const [salto, setSalto] = useState<{ id: string; to: EstadoTarea } | null>(null);
   const [reabrirId, setReabrirId] = useState<string | null>(null);
+  const [borrarProgresoId, setBorrarProgresoId] = useState<string | null>(null);
   const [tomarId, setTomarId] = useState<string | null>(null);
   const [mostrarTomarModal, setMostrarTomarModal] = useState(false);
   const [modoTomar, setModoTomar] = useState<'rama' | 'checkin'>('rama');
@@ -334,6 +336,14 @@ export function ScrumBoard() {
     const tarea = useStore.getState().tareas.find((t) => t.id === id);
     if (!tarea) return;
 
+    // En producción -> Por hacer con progreso: se permite, pero borra lo hecho (escribir "eliminar").
+    if (to === 'por hacer' && tarea.estado === 'en producción') {
+      const st = useStore.getState();
+      if (progresoDe(st.tareas, st.commits, id).length > 0) {
+        setBorrarProgresoId(id);
+        return;
+      }
+    }
     // Reabrir (terminada -> en revisión): candado "reabrir" con motivo, y tope de reaperturas.
     if (tarea.estado === 'terminada' && to === 'en revisión') {
       if (!puedeReabrir(tarea, user.rol)) {
@@ -682,6 +692,8 @@ export function ScrumBoard() {
           </>
         }
       />
+
+      <BorrarProgresoModal tareaId={borrarProgresoId} onClose={() => setBorrarProgresoId(null)} />
 
       {/* Tomar tarea (crea rama, o — solo para subtareas — check-in directo sobre la rama padre) */}
       <ConfirmLock

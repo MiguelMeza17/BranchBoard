@@ -8,8 +8,7 @@ import type {
   EdicionPendiente,
   Backup,
   Commit,
-  WorkspaceUnityVC,
-} from '../types';
+  WorkspaceUnityVC, CambioTraido } from '../types';
 
 export const PROYECTO_NOMBRE = 'VirusTF';
 
@@ -507,6 +506,31 @@ export const tareas: Tarea[] = [
 ];
 
 // Commits (checkins) acumulados por rama — una rama puede tener varios.
+// Cambios sin check-in en el workspace de cada rama (lo que Unity VC llama "pending changes"). En la
+// app real los detecta la escucha de Unity VC; aquí se simulan. T-107 tiene 3 para ver el aviso de
+// "Traer cambios" en producción.
+export const cambiosSinCheckin: Record<string, number> = {
+  'task/T-107-doble-salto': 3,
+};
+
+// "Traer cambios" ya hechos. T-103 (en revisión) tomó prestados cambios de T-107 y después modificó
+// uno de esos archivos: sirve para ver la alerta "se tocaron cambios ajenos". En la app real la
+// detección es automática (cruce de los check-ins de la rama con los archivos prestados).
+export const cambiosTraidos: CambioTraido[] = [
+  {
+    id: 'CT-1',
+    tarea_id: 'T-103',
+    origen_id: 'T-107',
+    hash: null,
+    autor: DEV,
+    fecha: '2026-10-30T15:20:00',
+    archivos: ['Assets/Scripts/Player/PlayerJump.cs', 'Assets/Prefabs/Player.prefab'],
+    archivos_tocados: ['Assets/Scripts/Player/PlayerJump.cs'],
+    quitado_en: null,
+    quitado_por: null,
+  },
+];
+
 export const commits: Commit[] = [
   { id: 'C-1', tarea_id: 'T-101', hash: 'a3f91c2', mensaje: 'Detección de golpes contra hitbox de enemigos', autor: DEV, fecha: '2026-09-16T11:20:00' },
   { id: 'C-2', tarea_id: 'T-101', hash: 'b02de7a', mensaje: 'Combo de 3 golpes con ventana de cancelación', autor: DEV, fecha: '2026-09-19T15:05:00' },

@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { puedeAutorizarRevisionGrande } from '../lib/permisos';
 import { PageHeader, TipoBadge, Avatar, EmptyState, ReadOnlyTag } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
-import { ramaDeTarea } from '../components/AccionesRama';
+import { CambiosTraidos, ramaDeTarea } from '../components/AccionesRama';
 import { Modal } from '../components/Modal';
 import type { Tarea, Usuario } from '../types';
 import { coincidePalabra, palabraCambios, tipoMeta } from '../lib/ui';
@@ -497,6 +497,7 @@ function RevisarEnRevisionModal({
         </div>
         {padre && <p className="text-xs text-muted">↳ subtarea de {padre.titulo}</p>}
         {tarea.archivo_ruta && <p className="font-mono text-xs text-faint">{tarea.archivo_ruta}</p>}
+        <CambiosTraidos tarea={tarea} />
         {tarea.lider_revision_asignado && (
           <span className="chip border border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300">
             Revisa: {tarea.lider_revision_asignado.split('@')[0]}

@@ -121,7 +121,11 @@ export interface Commit {
   fecha: string;
 }
 
-/** Cambios que una tarea trajo de otra con "Traer cambios" (toda la tarea o un solo commit). */
+/**
+ * Cambios que una tarea trajo de otra con "Traer cambios" (toda la tarea o un solo commit).
+ * Son un préstamo temporal: se usan sin modificarlos y se quitan antes de mandar la tarea a
+ * revisión, para que no lleguen al merge (evita conflictos). Queda el registro como historial.
+ */
 export interface CambioTraido {
   id: string;
   /** Tarea que recibió los cambios. */
@@ -132,6 +136,17 @@ export interface CambioTraido {
   hash: string | null;
   autor: string;
   fecha: string;
+  /** Archivos que llegaron con el préstamo (cm diff del merge). */
+  archivos: string[];
+  /**
+   * Archivos prestados que se modificaron después en esta rama: el backend lo detecta solo, cruzando
+   * cada check-in (y los cambios sin check-in) contra `archivos`. Si hay alguno, "se tocaron cambios
+   * ajenos" y esas modificaciones se eliminan (el archivo vuelve a como llegó en el préstamo).
+   */
+  archivos_tocados: string[];
+  /** Cuándo se quitaron de la rama; null = todavía están en ella. */
+  quitado_en: string | null;
+  quitado_por: string | null;
 }
 
 export interface EdicionPendiente {
