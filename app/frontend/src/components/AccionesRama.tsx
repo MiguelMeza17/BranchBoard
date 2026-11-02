@@ -6,6 +6,7 @@ import { EditarTareaModal } from './EditarTareaModal';
 import { DetalleCommit } from './HistorialRamas';
 import type { Commit } from '../types';
 import type { Tarea } from '../types';
+import { Avatar } from './primitives';
 
 // Rama de la tarea, arriba en la ventana de detalles: la suya, la de su padre (check-in) o "Sin rama".
 export function RamaDeLaTarea({ tarea }: { tarea: Tarea }) {
@@ -23,6 +24,62 @@ export function RamaDeLaTarea({ tarea }: { tarea: Tarea }) {
       ) : (
         <span className="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-faint">Sin rama — nadie la ha tomado todavía</span>
       )}
+    </div>
+  );
+}
+
+// Debajo de la rama, en los detalles: de qué tareas trajo cambios esta tarea ("Traer cambios").
+// Si la tarea origen todavía no está terminada (mergeada a dev), se avisa: al mergear esta tarea,
+// ese trabajo sin aprobar llegaría a dev con ella.
+export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
+  const tareas = useStore((s) => s.tareas);
+  const commits = useStore((s) => s.commits);
+  const traidos = useStore((s) => s.cambiosTraidos).filter((c) => c.tarea_id === tarea.id);
+  if (traidos.length === 0) return null;
+  return (
+    <div>
+      <dt className="mb-1 text-xs text-faint">Cambios traídos de otras tareas</dt>
+      <ul className="space-y-1.5">
+        {[...traidos].reverse().map((c) => {
+          const origen = tareas.find((t) => t.id === c.origen_id);
+          const commit = c.hash ? commits.find((x) => x.hash === c.hash) : undefined;
+          const est = origen ? estadoMeta[origen.estado] : null;
+          const sinMergear = origen && origen.estado !== 'terminada';
+          return (
+            <li key={c.id} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] text-faint">{c.origen_id}</span>
+                <span className="min-w-0 flex-1 truncate text-text">{origen?.titulo ?? 'Tarea eliminada'}</span>
+                <Avatar email={c.autor} size={20} />
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
+                <span>
+                  {c.hash ? (
+                    <>
+                      Commit <span className="font-mono text-text">{c.hash}</span>
+                      {commit && <> — {commit.mensaje}</>}
+                    </>
+                  ) : (
+                    'Todos sus cambios'
+                  )}
+                </span>
+                <span className="text-faint">· {new Date(c.fecha).toLocaleString()}</span>
+                {est && (
+                  <span className="flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: est.dot }} />
+                    {est.label}
+                  </span>
+                )}
+              </div>
+              {sinMergear && (
+                <p className="mt-1 text-[11px] text-amber-300">
+                  ⚠️ {c.origen_id} todavía no está en dev: si esta tarea se mergea antes, su trabajo llega a dev sin aprobar.
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
