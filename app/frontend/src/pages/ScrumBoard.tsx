@@ -20,7 +20,7 @@ import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
-import { AccionesRama, RamaDeLaTarea } from '../components/AccionesRama';
+import { AccionesRama, CambiosTraidos, RamaDeLaTarea } from '../components/AccionesRama';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
 // Columnas del tablero: "Sin asignar" no es un estado real de la tarea — es un
@@ -769,6 +769,7 @@ export function ScrumBoard() {
           <div className="space-y-4 text-sm">
             {/* Arriba: su rama o "Sin rama"; abajo, en el pie, solo los botones. */}
             <RamaDeLaTarea tarea={detalle} />
+            <CambiosTraidos tarea={detalle} />
             <div>
               <dt className="mb-1 text-xs text-faint">Detalles</dt>
               {detalle.detalles ? (

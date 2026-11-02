@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  CambioTraido,
   Usuario,
   Tarea,
   Sprint,
@@ -189,6 +190,8 @@ interface State {
   edicionesPendientes: EdicionPendiente[];
   backups: Backup[];
   commits: Commit[];
+  /** Registro de "Traer cambios": se muestra en los detalles de la tarea que los recibió. */
+  cambiosTraidos: CambioTraido[];
   correoContacto: string;
 
   // toasts efímeros
@@ -304,6 +307,7 @@ export const useStore = create<State>((set, get) => {
   colaboradores: [...fx.colaboradores],
   edicionesPendientes: [...fx.edicionesPendientes],
   commits: [...fx.commits],
+  cambiosTraidos: [],
   backups: [...fx.backups],
   correoContacto: 'ingreso@virustf.dev',
 
@@ -318,6 +322,15 @@ export const useStore = create<State>((set, get) => {
           ? ' — ojo: es trabajo en curso'
           : '';
     const que = hash ? `Commit ${hash} de ${origenId}` : `Todos los cambios de ${origenId}`;
+    const registro: CambioTraido = {
+      id: `CT-${Date.now()}`,
+      tarea_id: destinoId,
+      origen_id: origenId,
+      hash: hash ?? null,
+      autor: get().currentEmail,
+      fecha: new Date().toISOString(),
+    };
+    set((s) => ({ cambiosTraidos: [...s.cambiosTraidos, registro] }));
     get().showToast(`${que} traído${hash ? '' : 's'} a ${ramaDestino} (${destinoId})${aviso}`, aviso ? 'info' : 'ok');
   },
   abrirEnUnity: (tareaId, rama, hash) => {

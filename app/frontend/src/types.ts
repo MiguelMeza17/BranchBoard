@@ -121,6 +121,19 @@ export interface Commit {
   fecha: string;
 }
 
+/** Cambios que una tarea trajo de otra con "Traer cambios" (toda la tarea o un solo commit). */
+export interface CambioTraido {
+  id: string;
+  /** Tarea que recibió los cambios. */
+  tarea_id: string;
+  /** Tarea de donde salieron los cambios. */
+  origen_id: string;
+  /** Commit puntual; null = todos los cambios de la tarea origen. */
+  hash: string | null;
+  autor: string;
+  fecha: string;
+}
+
 export interface EdicionPendiente {
   id: string;
   tarea_id: string;
