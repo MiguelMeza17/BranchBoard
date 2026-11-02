@@ -11,14 +11,17 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
+import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea, type TipoTarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard } from '../components/TaskCard';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
+import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
+import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
+import { DetalleTareaModal } from '../components/DetalleTareaModal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 
 // Tablero Scrum de una categoría: distinto del tablero principal — no agrupa por
@@ -40,14 +43,16 @@ function DraggableCard({
   onOpenDetalle,
   ocultarResponsable,
   resaltada,
+  disabled,
 }: {
   tarea: Tarea;
   footer: React.ReactNode;
   onOpenDetalle: () => void;
   ocultarResponsable: boolean;
   resaltada: boolean;
+  disabled: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id, disabled });
   const colorTipo = tipoMeta[tarea.tipo].color;
   return (
     <div
@@ -111,10 +116,11 @@ export function CategoriaScrum() {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);
+  const [salto, setSalto] = useState<{ id: string; to: EstadoTarea } | null>(null);
   const [reabrirId, setReabrirId] = useState<string | null>(null);
+  const [borrarProgresoId, setBorrarProgresoId] = useState<string | null>(null);
   const [tomarId, setTomarId] = useState<string | null>(null);
   const [mostrarTomarModal, setMostrarTomarModal] = useState(false);
-  const [modoTomar, setModoTomar] = useState<'rama' | 'checkin'>('rama');
   const [showCrear, setShowCrear] = useState(false);
   const [detalle, setDetalle] = useState<Tarea | null>(null);
   const [bloqueado, setBloqueado] = useState(false);
@@ -132,13 +138,6 @@ export function CategoriaScrum() {
     return () => clearTimeout(t);
   }, [location.state]);
 
-  // Reinicia la elección rama/check-in cada vez que se abre el modal de "Tomar tarea".
-  useEffect(() => {
-    if (mostrarTomarModal) setModoTomar('rama');
-  }, [mostrarTomarModal]);
-
-  const tareaTomar = tomarId ? tareasAll.find((t) => t.id === tomarId) : null;
-  const esSubtareaTomar = !!tareaTomar?.tarea_padre_id;
 
   const toggleColumna = (id: ColVisual) =>
     setOcultas((prev) => {
@@ -148,7 +147,9 @@ export function CategoriaScrum() {
       return next;
     });
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // El arrastre empieza al mover 12px con el botón presionado (antes 6): un click con un pequeño
+  // movimiento sin querer ya no se toma como arrastre y sí abre los detalles.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 12 } }));
 
   const items = useMemo(
     () => tareasAll.filter((t) => !t.eliminada && t.tipo === tipoTarea && tareaVisibleEnTableroPrincipal(t, user)),
@@ -180,6 +181,8 @@ export function CategoriaScrum() {
     }
 
     if (toCol === 'por hacer' && tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      // Solo una tarjeta "en vuelo" a la vez (ver ScrumBoard).
+      if (tomarId) return;
       setTomarId(id);
       setBloqueado(true);
       setTimeout(() => {
@@ -192,6 +195,32 @@ export function CategoriaScrum() {
     const to = toCol;
     if (tarea.estado === to) return;
 
+    // Desde "Sin asignar" solo se pasa a "Por hacer"; forzar otra columna pide confirmación.
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+        showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
+        return;
+      }
+      setSalto({ id, to });
+      return;
+    }
+
+    avanzarA(id, to);
+  }
+
+  // Lee la tarea del store: tras confirmar un salto desde "Sin asignar" se acaba de tomar.
+  function avanzarA(id: string, to: EstadoTarea) {
+    const tarea = useStore.getState().tareas.find((t) => t.id === id);
+    if (!tarea) return;
+
+    // En producción -> Por hacer con progreso: se permite, pero borra lo hecho (escribir "eliminar").
+    if (to === 'por hacer' && tarea.estado === 'en producción') {
+      const st = useStore.getState();
+      if (progresoDe(st.tareas, st.commits, id).length > 0) {
+        setBorrarProgresoId(id);
+        return;
+      }
+    }
     // Reabrir (terminada -> en revisión): candado "reabrir" con motivo, y tope de reaperturas.
     if (tarea.estado === 'terminada' && to === 'en revisión') {
       if (!puedeReabrir(tarea, user.rol)) {
@@ -333,6 +362,7 @@ export function CategoriaScrum() {
                         onOpenDetalle={() => setDetalle(t)}
                         ocultarResponsable={t.estado === 'por hacer'}
                         resaltada={resaltada === t.id}
+                        disabled={!!tomarId}
                       />
                     );
                   })}
@@ -377,6 +407,20 @@ export function CategoriaScrum() {
         }
       />
 
+      {/* Salto de estados: se confirma y luego sigue el flujo normal de la columna destino */}
+      <ConfirmarSaltoModal
+        tarea={salto ? tareasAll.find((t) => t.id === salto.id) ?? null : null}
+        to={salto?.to ?? null}
+        onClose={() => setSalto(null)}
+        onConfirm={() => {
+          if (!salto) return;
+          const t = tareasAll.find((x) => x.id === salto.id);
+          if (t && t.estado === 'por hacer' && !t.asignado_a) tomarTarea(salto.id, user.email);
+          setSalto(null);
+          avanzarA(salto.id, salto.to);
+        }}
+      />
+
       {/* Reabrir una tarea terminada (ya mergeada a dev): candado + motivo obligatorio */}
       <ConfirmLock
         open={!!reabrirId}
@@ -401,18 +445,16 @@ export function CategoriaScrum() {
         }
       />
 
-      {/* Tomar tarea (crea rama, o — solo para subtareas — check-in directo sobre la rama padre) */}
+      <BorrarProgresoModal tareaId={borrarProgresoId} onClose={() => setBorrarProgresoId(null)} />
+
+      {/* Tomar tarea: crea su rama (toda tarea se trabaja en su propia rama) */}
       <ConfirmLock
         open={mostrarTomarModal}
         onClose={() => { setMostrarTomarModal(false); setTomarId(null); }}
         onConfirm={() => {
           if (tomarId) {
-            tomarTarea(tomarId, user.email, esSubtareaTomar ? modoTomar : 'rama');
-            showToast(
-              esSubtareaTomar && modoTomar === 'checkin'
-                ? 'Check-in habilitado sobre la rama de la tarea padre — ¡listo para trabajar!'
-                : 'Rama creada y workspace cambiado — ¡listo para trabajar!'
-            );
+            tomarTarea(tomarId, user.email);
+            showToast('Rama creada y workspace cambiado — ¡listo para trabajar!');
           }
           setMostrarTomarModal(false);
           setTomarId(null);
@@ -420,38 +462,8 @@ export function CategoriaScrum() {
         title="Tomar tarea"
         tone="primary"
         palabra="asignar"
-        confirmLabel={esSubtareaTomar && modoTomar === 'checkin' ? 'Tomar con check-in' : 'Tomar y crear rama'}
-        description={
-          <div className="space-y-3">
-            <p>
-              {esSubtareaTomar && modoTomar === 'checkin'
-                ? 'El check-in se hará directo sobre la rama de la tarea padre — no se crea una rama nueva ni se cambia el workspace.'
-                : 'Al tomar la tarea, el backend crea su rama en Unity Version Control y hace el auto-switch de tu workspace.'}
-            </p>
-            {esSubtareaTomar && (
-              <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setModoTomar('rama')}
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                    modoTomar === 'rama' ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
-                  }`}
-                >
-                  🌿 Rama propia
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModoTomar('checkin')}
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                    modoTomar === 'checkin' ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
-                  }`}
-                >
-                  ✅ Check-in directo
-                </button>
-              </div>
-            )}
-          </div>
-        }
+        confirmLabel="Tomar y crear rama"
+        description={'Al tomar la tarea, el backend crea su rama en Unity Version Control y hace el auto-switch de tu workspace.'}
       />
 
       {/* Nueva tarea — individual y ya con el tipo fijo en esta categoría */}
@@ -469,62 +481,7 @@ export function CategoriaScrum() {
       )}
 
       {/* Detalle de tarea */}
-      <Modal
-        open={!!detalle}
-        onClose={() => setDetalle(null)}
-        title={detalle?.titulo ?? ''}
-        subtitle={detalle ? `${detalle.id} · ${detalle.tipo}` : ''}
-        size="md"
-      >
-        {detalle && (
-          <div className="space-y-4 text-sm">
-            <div>
-              <dt className="mb-1 text-xs text-faint">Descripción</dt>
-              <p className="whitespace-pre-wrap leading-relaxed text-text">
-                {detalle.descripcion || 'Sin descripción.'}
-              </p>
-            </div>
-            <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
-              <div>
-                <dt className="text-xs text-faint">Estado</dt>
-                <dd className="text-text">{estadoMeta[detalle.estado].label}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Rama</dt>
-                {detalle.modo_trabajo === 'checkin' ? (
-                  <dd className="text-accent">
-                    ✅ Check-in directo
-                    {(() => {
-                      const padre = tareasAll.find((x) => x.id === detalle.tarea_padre_id);
-                      return padre?.rama_asociada ? (
-                        <span className="text-muted"> — sobre <span className="font-mono">{padre.rama_asociada}</span></span>
-                      ) : null;
-                    })()}
-                  </dd>
-                ) : (
-                  <dd className="font-mono text-accent">{detalle.rama_asociada ?? '— sin rama —'}</dd>
-                )}
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Asignado a</dt>
-                <dd className="text-text">{detalle.asignado_a ?? 'Sin asignar'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Creado por</dt>
-                <dd className="text-text">{detalle.creado_por}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Fecha límite</dt>
-                <dd className="text-text">{detalle.fecha_limite ?? 'Sin fecha'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Pendiente aprobación</dt>
-                <dd className="text-text">{detalle.pendiente_aprobacion ? 'Sí' : 'No'}</dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </Modal>
+      <DetalleTareaModal tarea={detalle} onClose={() => setDetalle(null)} />
     </div>
   );
 }

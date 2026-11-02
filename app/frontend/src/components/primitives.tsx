@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore';
 export function EstadoBadge({ estado }: { estado: EstadoTarea }) {
   const m = estadoMeta[estado];
   return (
-    <span className={`chip ${m.bg} ${m.text} border ${m.border}`}>
+    <span className={`chip whitespace-nowrap ${m.bg} ${m.text} border ${m.border}`}>
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.dot }} />
       {m.label}
     </span>
@@ -18,7 +18,7 @@ export function TipoBadge({ tipo }: { tipo: TipoTarea }) {
   const m = tipoMeta[tipo];
   return (
     <span
-      className="chip border"
+      className="chip whitespace-nowrap border"
       style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}18` }}
     >
       <span>{m.emoji}</span>
@@ -27,7 +27,16 @@ export function TipoBadge({ tipo }: { tipo: TipoTarea }) {
   );
 }
 
-export function Avatar({ email, size = 28 }: { email: string; size?: number }) {
+export function Avatar({
+  email,
+  size = 28,
+  sinTooltip = false,
+}: {
+  email: string;
+  size?: number;
+  /** Oculta el tooltip con el nombre (ej. en la barra superior, donde el nombre ya está escrito al lado). */
+  sinTooltip?: boolean;
+}) {
   const usuarios = useStore((s) => s.usuarios);
   const navigate = useNavigate();
   const u = usuarios.find((x) => x.email === email);
@@ -49,9 +58,11 @@ export function Avatar({ email, size = 28 }: { email: string; size?: number }) {
       >
         {label}
       </button>
-      <span className="pointer-events-none absolute -top-1.5 left-1/2 z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 py-1 text-xs font-medium text-text opacity-0 shadow-pop transition-opacity duration-150 group-hover/avatar:opacity-100">
-        {nombre}
-      </span>
+      {!sinTooltip && (
+        <span className="pointer-events-none absolute -top-1.5 left-1/2 z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 py-1 text-xs font-medium text-text opacity-0 shadow-pop transition-opacity duration-150 group-hover/avatar:opacity-100">
+          {nombre}
+        </span>
+      )}
     </span>
   );
 }
@@ -109,13 +120,15 @@ export function Card({
   children,
   className = '',
   id,
+  onClick,
 }: {
   children: ReactNode;
   className?: string;
   id?: string;
+  onClick?: () => void;
 }) {
   return (
-    <div id={id} className={`card p-5 ${className}`}>
+    <div id={id} onClick={onClick} className={`card p-5 ${className}`}>
       {children}
     </div>
   );

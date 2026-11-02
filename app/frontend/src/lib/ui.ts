@@ -52,6 +52,8 @@ export const tipoMeta: Record<TipoTarea, { color: string; emoji: string }> = {
   Video: { color: '#f87171', emoji: '🎬' },
   Testing: { color: '#fb7185', emoji: '🐞' },
   Corrección: { color: '#f59e0b', emoji: '🔧' },
+  Ajustes: { color: '#cbd5e1', emoji: '⚙️' },
+  'Sin definir': { color: '#6b7385', emoji: '❔' },
 };
 
 export function iniciales(nombre: string, apellido?: string): string {
@@ -66,4 +68,21 @@ export function avatarColor(email: string): string {
   let h = 0;
   for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) >>> 0;
   return palette[h % palette.length];
+}
+
+// Palabras de confirmación ("asignar", "autorizar", "eliminar", "traer"...): no distinguen
+// mayúsculas/minúsculas ni tildes, y se ignoran los espacios al inicio y al final.
+export function coincidePalabra(texto: string, palabra: string): boolean {
+  const n = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  return n(texto) === n(palabra);
+}
+
+// Subtarea comodín "En espera": cambios sin check-in hechos directamente en la rama de una tarea con
+// subtareas. No se hace check-in ahí: se crea una rama (subtarea) con nombre, descripción y tipo, y
+// los cambios pasan a ella. Es la única con tipo "Sin definir" (ver types.ts).
+export function esTareaEnEspera(t: { tipo: string }): boolean {
+  return t.tipo === 'Sin definir';
+}
+export function palabraCambios(n: number): string {
+  return n === 1 ? 'commit' : 'commits';
 }

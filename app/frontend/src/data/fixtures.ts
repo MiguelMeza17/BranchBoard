@@ -8,9 +8,46 @@ import type {
   EdicionPendiente,
   Backup,
   Commit,
-} from '../types';
+  WorkspaceUnityVC, CambioTraido } from '../types';
 
 export const PROYECTO_NOMBRE = 'VirusTF';
+
+// ---- Workspaces de Unity VC en esta máquina (simula `cm workspace list`) ----
+export const workspaces: WorkspaceUnityVC[] = [
+  {
+    nombre: 'VirusTF',
+    repo: 'VirusTF@MIGUELMEZA',
+    ruta: 'D:\\Unity\\VirusTF',
+    tiene_db_branchboard: true,
+  },
+  // Proyecto ficticio que ya usa BranchBoard: para probar "Cambiar de proyecto" (en el mockup se ven
+  // los mismos datos de VirusTF; solo cambia el nombre del proyecto).
+  {
+    nombre: 'Neon-Runner',
+    repo: 'Neon-Runner@MIGUELMEZA',
+    ruta: 'D:\\Unity\\Neon-Runner',
+    tiene_db_branchboard: true,
+  },
+  {
+    nombre: 'Prototipo-Plataformas',
+    repo: 'Prototipo-Plataformas@MIGUELMEZA',
+    ruta: 'D:\\Unity\\Prototipo-Plataformas',
+    tiene_db_branchboard: false,
+  },
+];
+
+// ---- Proyectos (repositorios) del servidor de Unity VC a los que tienes acceso (simula `cm repo list`) ----
+// Los que no tienen workspace en esta máquina salen como "sin clonar": al elegirlos se clonan.
+export const proyectosServidor: { nombre: string; repo: string; tiene_db_branchboard: boolean }[] = [
+  { nombre: 'VirusTF', repo: 'VirusTF@MIGUELMEZA', tiene_db_branchboard: true },
+  { nombre: 'Neon-Runner', repo: 'Neon-Runner@MIGUELMEZA', tiene_db_branchboard: true },
+  { nombre: 'Prototipo-Plataformas', repo: 'Prototipo-Plataformas@MIGUELMEZA', tiene_db_branchboard: false },
+  { nombre: 'Arena-Battle', repo: 'Arena-Battle@MIGUELMEZA', tiene_db_branchboard: true },
+  { nombre: 'GameJam-Octubre', repo: 'GameJam-Octubre@MIGUELMEZA', tiene_db_branchboard: false },
+];
+
+// Correo de prueba que `cm whoami` puede devolver sin estar en la tabla de usuarios.
+export const CORREO_NO_REGISTRADO = 'ana.torres@estudiante.dev';
 
 // ---- Usuarios (equipo semilla VirusTF + tester + un pendiente de confirmar) ----
 export const usuarios: Usuario[] = [
@@ -107,7 +144,7 @@ const TESTER = 'laura.qa@virustf.dev';
 
 function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' | 'creado_por'>): Tarea {
   return {
-    descripcion: '',
+    detalles: '',
     tarea_padre_id: null,
     archivo_ruta: null,
     pendiente_aprobacion: false,
@@ -116,6 +153,7 @@ function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' |
     asignado_a: null,
     lider_revision_asignado: null,
     sprint_id: 'sp1',
+    fecha_creacion: '2026-08-15',
     con_fecha: false,
     fecha_limite: null,
     fecha_completada: null,
@@ -124,6 +162,7 @@ function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' |
     fecha_eliminacion: null,
     motivo_rechazo: null,
     reporte_testing_origen_id: null,
+    tarea_origen_id: null,
     edicion_pendiente: false,
     modo_trabajo: null,
     ...p,
@@ -135,7 +174,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-101',
     titulo: 'Sistema de combate del jugador',
-    descripcion: 'Ataque melee, combos y detección de golpes contra enemigos.',
+    detalles: 'Ataque melee, combos y detección de golpes contra enemigos.',
     tipo: 'Scripting',
     estado: 'en producción',
     creado_por: LIDER,
@@ -148,7 +187,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-101-1',
     titulo: 'Modelo 3D del arma principal',
-    descripcion: 'Espada de energía con material emisivo.',
+    detalles: 'Espada de energía con material emisivo.',
     tipo: 'Modelado 3D',
     estado: 'en revisión',
     creado_por: DEV,
@@ -160,16 +199,28 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-101-1-1',
     titulo: 'Textura del filo del arma',
-    descripcion: 'Mapa de emisión para el filo.',
+    detalles: 'Mapa de emisión para el filo.',
     tipo: 'Imagen',
     estado: 'por hacer',
     creado_por: DEV,
     tarea_padre_id: 'T-101-1',
   }),
+  // "En espera" de T-101-1 (ver BACKEND.md): cambios sin check-in hechos directamente en la rama de
+  // T-101-1, que tiene subtareas. Ahí no se hace check-in: al crear la rama (nombre, detalles y
+  // tipo) esta "En espera" se convierte en una subtarea con su propia rama y los cambios pasan a ella.
+  t({
+    id: 'T-101-1-2',
+    titulo: 'En espera',
+    detalles: 'Cambios sin check-in hechos directamente en la rama de T-101-1. Crea su rama para guardarlos.',
+    tipo: 'Sin definir',
+    estado: 'en producción',
+    creado_por: LIDER,
+    tarea_padre_id: 'T-101-1',
+  }),
   t({
     id: 'T-101-2',
     titulo: 'SFX de impacto de golpe',
-    descripcion: 'Sonido corto para el impacto del combo.',
+    detalles: 'Sonido corto para el impacto del combo.',
     tipo: 'Audio',
     estado: 'terminada',
     creado_por: LIDER,
@@ -179,12 +230,60 @@ export const tareas: Tarea[] = [
     fecha_completada: '2026-09-22',
     sprint_id: 'sp1',
   }),
+  // Subtareas de T-101 en revisión, cada una en su propia rama (asignadas a distintas personas
+  // para ver el panel "Abrir en Unity").
+  t({
+    id: 'T-101-3',
+    titulo: 'Partículas del golpe',
+    detalles: 'Efecto de partículas al conectar un golpe del combo.',
+    tipo: 'Animación',
+    estado: 'en revisión',
+    creado_por: LIDER,
+    asignado_a: ADMIN,
+    tarea_padre_id: 'T-101',
+    rama_asociada: 'task/T-101-3-particulas',
+    modo_trabajo: 'rama',
+  }),
+  t({
+    id: 'T-101-5',
+    titulo: 'Rastro del arma al girar',
+    detalles: 'Trail visual del arma durante el giro del combo.',
+    tipo: 'Animación',
+    estado: 'en revisión',
+    creado_por: LIDER,
+    asignado_a: DEV,
+    tarea_padre_id: 'T-101',
+    rama_asociada: 'task/T-101-5-rastro-arma',
+    modo_trabajo: 'rama',
+  }),
+  t({
+    id: 'T-101-6',
+    titulo: 'Sonido de impacto crítico',
+    detalles: 'Variante de sonido para los golpes críticos.',
+    tipo: 'Audio',
+    estado: 'en revisión',
+    creado_por: LIDER,
+    asignado_a: LIDER,
+    tarea_padre_id: 'T-101',
+    rama_asociada: 'task/T-101-6-sfx-critico',
+    modo_trabajo: 'rama',
+  }),
+  // Libre, para poder tomarla.
+  t({
+    id: 'T-101-4',
+    titulo: 'Sacudida de cámara al golpear',
+    detalles: 'Pequeña sacudida de cámara al conectar el golpe final del combo.',
+    tipo: 'Scripting',
+    estado: 'por hacer',
+    creado_por: LIDER,
+    tarea_padre_id: 'T-101',
+  }),
 
   // --- IA de enemigos ---
   t({
     id: 'T-102',
     titulo: 'IA de enemigo rastreador',
-    descripcion: 'Máquina de estados: patrulla, persecución y ataque.',
+    detalles: 'Máquina de estados: patrulla, persecución y ataque.',
     tipo: 'Scripting',
     estado: 'por hacer',
     creado_por: LIDER,
@@ -194,12 +293,12 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-102-1',
     titulo: 'Animación de caminar del enemigo',
-    descripcion: 'Loop de caminata sobre el rig del rastreador.',
+    detalles: 'Loop de caminata sobre el rig del rastreador.',
     tipo: 'Animación',
     estado: 'en producción',
     creado_por: DEV,
     tarea_padre_id: 'T-102',
-    asignado_a: DEV,
+    asignado_a: ADMIN, // asignada a Miguel para ver el panel "Abrir en Unity"
     rama_asociada: 'task/T-102-1-anim-walk',
   }),
 
@@ -207,7 +306,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-103',
     titulo: 'HUD de vida y energía',
-    descripcion: 'Barra de vida, barra de energía y contador de combos.',
+    detalles: 'Barra de vida, barra de energía y contador de combos.',
     tipo: 'UI/Interfaz',
     estado: 'en revisión',
     creado_por: LIDER,
@@ -217,7 +316,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-104',
     titulo: 'Música del nivel 1 (loop extendido)',
-    descripcion: 'Tema principal en loop para el primer nivel, versión extendida a 2 minutos.',
+    detalles: 'Tema principal en loop para el primer nivel, versión extendida a 2 minutos.',
     tipo: 'Música',
     estado: 'terminada',
     creado_por: ADMIN,
@@ -232,7 +331,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-105',
     titulo: 'Sistema de partículas de daño',
-    descripcion: 'Efecto de chispas al recibir daño.',
+    detalles: 'Efecto de chispas al recibir daño.',
     tipo: 'Scripting',
     estado: 'por hacer',
     creado_por: DEV,
@@ -243,7 +342,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-106',
     titulo: 'Pantalla de game over',
-    descripcion: 'Mockup de la pantalla de derrota.',
+    detalles: 'Mockup de la pantalla de derrota.',
     tipo: 'UI/Interfaz',
     estado: 'por hacer',
     creado_por: TESTER,
@@ -254,11 +353,11 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-107',
     titulo: 'Salto doble del jugador',
-    descripcion: 'Permite un segundo salto en el aire con reducción de gravedad.',
+    detalles: 'Permite un segundo salto en el aire con reducción de gravedad.',
     tipo: 'Scripting',
     estado: 'en producción',
     creado_por: DEV,
-    asignado_a: DEV,
+    asignado_a: ADMIN, // asignada a Miguel para ver el panel "Abrir en Unity"
     rama_asociada: 'task/T-107-doble-salto',
     edicion_pendiente: true,
   }),
@@ -267,7 +366,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-108',
     titulo: '[Corrección] Colisión atraviesa el suelo al caer rápido',
-    descripcion: 'Generada desde reporte de Testing RT-01.',
+    detalles: 'Generada desde reporte de Testing RT-01.',
     tipo: 'Scripting',
     estado: 'por hacer',
     creado_por: TESTER,
@@ -279,7 +378,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-109',
     titulo: 'Icono de poción de vida',
-    descripcion: 'Sprite 64x64 para el inventario.',
+    detalles: 'Sprite 64x64 para el inventario.',
     tipo: 'Imagen',
     estado: 'en revisión',
     creado_por: 'colab.arte@freelance.dev',
@@ -293,18 +392,22 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-110',
     titulo: 'Cinemática de introducción',
-    descripcion: 'Video pre-renderizado de apertura.',
+    detalles: 'Video pre-renderizado de apertura.',
     tipo: 'Video',
     estado: 'por hacer',
     creado_por: LIDER,
     sprint_id: 'sp3',
+    // Eliminada de ejemplo, para ver en la Papelera que el motivo es distinto de los detalles.
+    eliminada: true,
+    fecha_eliminacion: '2026-10-31',
+    justificacion_eliminacion: 'Se decidió reemplazar la cinemática pre-renderizada por una escena en tiempo real dentro del motor; esta tarea ya no aplica.',
     con_fecha: false,
   }),
   // --- Modelado 2D backlog ---
   t({
     id: 'T-111',
     titulo: 'Concept art del jefe final',
-    descripcion: 'Bocetos y arte 2D del boss.',
+    detalles: 'Bocetos y arte 2D del boss.',
     tipo: 'Modelado 2D',
     estado: 'por hacer',
     creado_por: ADMIN,
@@ -316,12 +419,13 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-211',
     titulo: '[Corrección] Hitbox del combo se desalinea al girar',
-    descripcion: 'El collider de golpe no rota junto con el jugador durante el combo.',
+    detalles: 'El collider de golpe no rota junto con el jugador durante el combo.',
     tipo: 'Scripting',
     estado: 'terminada',
     creado_por: TESTER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-101',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-101',
     rama_asociada: 'task/T-211-fix-hitbox-combo',
     fecha_completada: '2026-08-20',
     sprint_id: 'sp2',
@@ -329,12 +433,13 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-212',
     titulo: '[Corrección] IA se atasca contra paredes al perseguir',
-    descripcion: 'El enemigo rastreador no recalcula ruta al chocar con obstáculos.',
+    detalles: 'El enemigo rastreador no recalcula ruta al chocar con obstáculos.',
     tipo: 'Scripting',
     estado: 'terminada',
     creado_por: TESTER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-102',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-102',
     rama_asociada: 'task/T-212-fix-ia-pathing',
     fecha_completada: '2026-08-23',
     sprint_id: 'sp2',
@@ -342,12 +447,13 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-213',
     titulo: 'Balanceo de daño del combo final',
-    descripcion: 'Ajuste de daño del último golpe del combo tras pruebas de Testing.',
+    detalles: 'Ajuste de daño del último golpe del combo tras pruebas de Testing.',
     tipo: 'Scripting',
     estado: 'terminada',
     creado_por: LIDER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-101',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-101',
     rama_asociada: 'task/T-213-balance-combo',
     fecha_completada: '2026-08-26',
     sprint_id: 'sp2',
@@ -355,12 +461,13 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-214',
     titulo: '[Corrección] Salto doble no cancela el dash',
-    descripcion: 'El segundo salto no interrumpe el dash en curso, se acumulan velocidades.',
+    detalles: 'El segundo salto no interrumpe el dash en curso, se acumulan velocidades.',
     tipo: 'Scripting',
     estado: 'terminada',
     creado_por: TESTER,
     asignado_a: DEV,
-    tarea_padre_id: 'T-107',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-107',
     rama_asociada: 'task/T-214-fix-salto-dash',
     fecha_completada: '2026-08-29',
     sprint_id: 'sp2',
@@ -368,23 +475,25 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-215',
     titulo: 'Pulido de animación de muerte del enemigo',
-    descripcion: 'Transición más natural entre el golpe final y la caída del enemigo.',
+    detalles: 'Transición más natural entre el golpe final y la caída del enemigo.',
     tipo: 'Animación',
     estado: 'en producción',
     creado_por: LIDER,
-    asignado_a: DEV,
-    tarea_padre_id: 'T-102',
+    asignado_a: ADMIN, // asignada a Miguel para ver el panel "Abrir en Unity"
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-102',
     rama_asociada: 'task/T-215-anim-muerte-enemigo',
     sprint_id: 'sp2',
   }),
   t({
     id: 'T-216',
     titulo: '[Corrección] Sonido de impacto se corta en combos rápidos',
-    descripcion: 'El SFX de golpe se interrumpe si los golpes del combo van muy seguidos.',
+    detalles: 'El SFX de golpe se interrumpe si los golpes del combo van muy seguidos.',
     tipo: 'Audio',
     estado: 'por hacer',
     creado_por: TESTER,
-    tarea_padre_id: 'T-101',
+    // Sale de dev (la rama de la original ya está mergeada); solo referencia.
+    tarea_origen_id: 'T-101',
     sprint_id: 'sp2',
   }),
 
@@ -392,7 +501,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-090',
     titulo: 'Sistema de crafteo',
-    descripcion: 'Descartado por cambio de alcance.',
+    detalles: 'Descartado por cambio de alcance.',
     tipo: 'Scripting',
     estado: 'por hacer',
     creado_por: DEV,
@@ -403,7 +512,7 @@ export const tareas: Tarea[] = [
   t({
     id: 'T-091',
     titulo: 'Minimapa duplicado',
-    descripcion: 'Rechazada desde Pendientes por estar duplicada con T-103.',
+    detalles: 'Rechazada desde Pendientes por estar duplicada con T-103.',
     tipo: 'UI/Interfaz',
     estado: 'por hacer',
     creado_por: TESTER,
@@ -415,6 +524,38 @@ export const tareas: Tarea[] = [
 ];
 
 // Commits (checkins) acumulados por rama — una rama puede tener varios.
+// Cambios sin check-in en el workspace de cada rama (lo que Unity VC llama "pending changes"). En la
+// app real los detecta la escucha de Unity VC; aquí se simulan. T-107 tiene 3 para ver el aviso de
+// "Traer cambios" en producción.
+export const cambiosSinCheckin: Record<string, number> = {
+  'task/T-107-doble-salto': 3,
+  // Lo que muestra la subtarea "En espera" de T-101-1: trabajo en curso que aún no tiene check-in.
+  'task/T-101-1-arma': 2,
+};
+
+// Subtareas con rama propia ya terminadas (mergeadas a la rama de su padre) que el workspace todavía
+// no tiene: salen como "Cambios entrantes" en los detalles del padre. Las demás terminadas se dan
+// por recibidas.
+export const entrantesSinRecibir: string[] = ['T-101-2'];
+
+// "Traer cambios" ya hechos. T-103 (en revisión) tomó prestados cambios de T-107 y después modificó
+// uno de esos archivos: sirve para ver la alerta "se tocaron cambios ajenos". En la app real la
+// detección es automática (cruce de los check-ins de la rama con los archivos prestados).
+export const cambiosTraidos: CambioTraido[] = [
+  {
+    id: 'CT-1',
+    tarea_id: 'T-103',
+    origen_id: 'T-107',
+    hash: null,
+    autor: DEV,
+    fecha: '2026-10-30T15:20:00',
+    archivos: ['Assets/Scripts/Player/PlayerJump.cs', 'Assets/Prefabs/Player.prefab'],
+    archivos_tocados: ['Assets/Scripts/Player/PlayerJump.cs'],
+    quitado_en: null,
+    quitado_por: null,
+  },
+];
+
 export const commits: Commit[] = [
   { id: 'C-1', tarea_id: 'T-101', hash: 'a3f91c2', mensaje: 'Detección de golpes contra hitbox de enemigos', autor: DEV, fecha: '2026-09-16T11:20:00' },
   { id: 'C-2', tarea_id: 'T-101', hash: 'b02de7a', mensaje: 'Combo de 3 golpes con ventana de cancelación', autor: DEV, fecha: '2026-09-19T15:05:00' },
@@ -424,6 +565,10 @@ export const commits: Commit[] = [
   { id: 'C-5', tarea_id: 'T-101-1', hash: 'e91c3f2', mensaje: 'Material emisivo del filo', autor: DEV, fecha: '2026-09-18T14:30:00' },
 
   { id: 'C-6', tarea_id: 'T-101-2', hash: 'f12a8d9', mensaje: 'SFX de impacto importado y asignado al combo', autor: LIDER, fecha: '2026-09-21T16:15:00' },
+  { id: 'C-19', tarea_id: 'T-101-3', hash: 'a3e9b27', mensaje: 'Partículas al conectar el golpe final del combo', autor: ADMIN, fecha: '2026-09-26T15:40:00' },
+  { id: 'C-20', tarea_id: 'T-101-5', hash: 'b7d4e10', mensaje: 'Trail del arma con fade al terminar el giro', autor: DEV, fecha: '2026-09-27T11:05:00' },
+  { id: 'C-21', tarea_id: 'T-101-5', hash: 'c2f8a93', mensaje: 'Ajuste de ancho del trail', autor: DEV, fecha: '2026-09-27T16:20:00' },
+  { id: 'C-22', tarea_id: 'T-101-6', hash: 'd5a1c64', mensaje: 'Sonido de crítico importado y asignado', autor: LIDER, fecha: '2026-09-28T10:30:00' },
 
   { id: 'C-7', tarea_id: 'T-102-1', hash: '0a7b3e6', mensaje: 'Blend tree de caminata del enemigo', autor: DEV, fecha: '2026-09-20T12:00:00' },
 
@@ -454,12 +599,12 @@ export const edicionesPendientes: EdicionPendiente[] = [
     tarea_id: 'T-107',
     campos_nuevos: {
       titulo: 'Salto doble del jugador',
-      descripcion: 'Permite un segundo salto en el aire con reducción de gravedad.',
+      detalles: 'Permite un segundo salto en el aire con reducción de gravedad.',
       fecha_limite: '2026-09-30',
     },
     campos_anteriores: {
       titulo: 'Salto doble',
-      descripcion: 'Segundo salto en el aire.',
+      detalles: 'Segundo salto en el aire.',
       fecha_limite: '(sin fecha)',
     },
     motivo: 'Aclaré el comportamiento de gravedad y agregué fecha límite.',
@@ -471,11 +616,11 @@ export const edicionesPendientes: EdicionPendiente[] = [
     tarea_id: 'T-104',
     campos_nuevos: {
       titulo: 'Música del nivel 1 (loop extendido)',
-      descripcion: 'Tema principal en loop para el primer nivel, versión extendida a 2 minutos.',
+      detalles: 'Tema principal en loop para el primer nivel, versión extendida a 2 minutos.',
     },
     campos_anteriores: {
       titulo: 'Música del nivel 1',
-      descripcion: 'Tema principal en loop para el primer nivel.',
+      detalles: 'Tema principal en loop para el primer nivel.',
     },
     motivo: 'El loop original se sentía muy corto en pruebas de playtesting.',
     creado_por: ADMIN,

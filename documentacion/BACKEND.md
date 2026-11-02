@@ -135,6 +135,13 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 5. **El mismo refresco también revisa si la rama se cerró** (mergeada hacia su rama padre). Unity VC guarda el estado de cierre de una rama al mergearla. Si la rama aparece cerrada → la tarea se marca automáticamente como **"terminada"**, sin intervención manual. (Comando `cm` exacto para leer el estado de cierre: pendiente de verificar al implementar.)
 6. (Fase futura) Reemplazar el polling manual por **triggers del servidor de Unity VC** (ej. `after-checkin`) para detección casi en tiempo real, sin depender de que alguien le dé clic a "Refrescar".
 
+**Actualizado (2026-10-31) — la app escucha siempre, no solo con "Refrescar"**: lo normal es que los check-ins se hagan **desde Unity** (plugin de Unity Version Control); hacerlos desde BranchBoard es una forma extra, sin tener que abrir la interfaz de UVCS. Por eso BranchBoard **tiene que estar escuchando Unity VC todo el tiempo** mientras está abierta, y no depender de que alguien le dé a "Refrescar" (que se mantiene como acción manual inmediata). Esto reemplaza el "no hace falta un proceso en segundo plano para el MVP" del paso 2:
+
+- **Proceso de fondo** mientras la app está abierta: repite el chequeo de los pasos 3–5 cada pocos segundos para las ramas activas (las de tareas abiertas y sus padres) y además al volver la app a primer plano. El intervalo exacto se ajusta al implementar (equilibrio entre inmediatez y el costo de invocar `cm`); los triggers del servidor (paso 6) siguen siendo la mejora futura para tiempo real.
+- **Check-ins hechos desde Unity**: un changeset nuevo en la rama de una tarea aparece solo en BranchBoard (commits de la tarea, Historial, Revisión) sin que nadie haga nada. Si son **cambios sin check-in en la rama de una tarea con subtareas**, aparecen como su subtarea **"En espera"** (ver [Check-ins de la rama](#check-ins-de-la-rama-subtarea-en-espera-y-cambios-entrantes)).
+- **Workspace**: también se escucha en qué rama está parado el workspace local (por si alguien cambió de rama desde Unity o desde el cliente de UVCS) y BranchBoard actualiza su "rama actual del workspace" (la que muestra el panel "Abrir en Unity"); si queda en `dev` o en una rama que no es de sus tareas, aplica el aviso de [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app).
+- Lo detectado que es solo indicador local (`modificada`, `ultimo_changeset_visto`, rama del workspace) no pasa por `ops/`; lo que muta estado compartido sigue emitiendo su evento (ver abajo).
+
 **Corregido — el paso 5 debe generar un evento (`revisar_actualizaciones` por sí solo no basta)**: `revisar_actualizaciones` está listado entre los comandos **locales/solo lectura** que no pasan por `ops/` (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)), lo cual es correcto para marcar `modificada`/`ultimo_changeset_visto` (son solo indicadores locales de esa máquina, sin problema si difieren). Pero **el paso 5 sí muta estado compartido** (`estado = 'terminada'`, `fecha_completada`) — si eso se queda solo en el `.db` local de quien hizo el refresco, las demás máquinas nunca se enteran, y se pierde al reconstruir el `.db` desde `ops/` (que no tiene registro de este cambio). Cuando el paso 5 detecta el cierre de rama, además de actualizar localmente, emite un evento nuevo `tarea_cerrada_por_deteccion(tarea_id, fecha_completada)` a `ops/` — ese evento sí migra (agregarlo a la lista de comandos que migran a eventos), y se aplica igual en cualquier máquina que lo reproduzca, sin depender de que esa máquina específica haya hecho el refresco.
 
 ## Detección de ediciones en rama ajena (fuera de la app)
@@ -247,6 +254,53 @@ Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend par
 - **Permisos** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)): cualquier usuario puede mover cambios **entre ramas que le pertenecen a él mismo** (ej. entre una tarea y su subtarea). Mover cambios **entre ramas de dos personas distintas es exclusivo de Líder/Administrador**.
 - **Definido**: cuando un Líder/Administrador mueve cambios hacia la rama de otra persona, se le manda una notificación al dueño de esa rama avisándole — a diferencia del resto de notificaciones del sistema, **esta no es automática**: quien mueve los cambios debe escribir un **nombre** (título corto) y una **descripción** explicando qué se movió y por qué, y eso es lo que se le muestra al dueño de la rama en la notificación.
 
+## Cambios prestados ("Traer cambios")
+
+**Nuevo (2026-11-01)**. "Traer cambios" (en los detalles de una tarea) sirve para usar trabajo de otra tarea que **todavía no está terminada**: se trae a la rama de esta tarea para poder trabajar con él, pero **no le pertenece**. Por eso se trata como un **préstamo**: se usa sin modificarlo y se devuelve antes del merge. No es lo mismo que [Mover cambios entre ramas](#mover-cambios-entre-ramas), que traslada trabajo de forma definitiva.
+
+**Cuándo se puede traer** (todos los roles, salvo lo indicado):
+
+- En **"Por hacer"** (ya tomada, con rama) y en **"En producción"**.
+- En **"En revisión"**, solo **Líder/Administrador**, que son quienes la mandan a terminada.
+- **"En espera"** nunca: sus cambios todavía están sin guardar.
+- **Check-in primero**: en "En producción", si la rama tiene cambios sin check-in (`cm status`), no se trae nada hasta hacer el check-in. Así el trabajo propio queda guardado aparte y no se mezcla con lo prestado.
+
+**Registro del préstamo**: al traer, el backend guarda (tabla `cambios_prestados`, evento `traer_cambios` en `ops/`):
+
+- tarea destino, tarea origen, commit puntual o "todos sus cambios", quién y cuándo;
+- el **changeset del merge** y la **lista de archivos que llegaron** (`cm diff` entre el changeset anterior al merge y el del merge).
+
+Se muestra en los detalles de la tarea, en la sección **"🤝 Cambios prestados"**.
+
+**Devolver**: botón **"↩ Devolver"** en cada préstamo. En Unity VC es un **merge sustractivo** del changeset que se trajo (`cm merge --subtractive`; comando exacto pendiente de verificar al implementar). El registro no se borra: queda como historial ("Devuelto el … por …").
+
+- **A revisión** se puede mandar con préstamos sin devolver (a veces hacen falta para revisarla): solo se avisa.
+- **A terminada (merge)** no: se bloquea hasta devolverlos todos. Si no los devolvió quien trabajó la tarea, los devuelve el revisor antes de autorizar.
+- Cuenta también los préstamos de sus subtareas: un check-in trabaja sobre la rama del padre.
+
+### Detección automática de cambios ajenos tocados
+
+**Problema**: quien trajo los cambios puede modificar, sin darse cuenta, archivos que llegaron en el préstamo. Esas modificaciones no le corresponden a su tarea y, al devolver el préstamo, quedarían mezcladas o darían conflicto.
+
+**Detección (automática, sin intervención)**: la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) ya ve cada check-in nuevo y los cambios sin check-in de la rama. Para cada préstamo activo, el backend **cruza esos archivos con la lista de archivos prestados**:
+
+- **Cambios sin check-in** sobre un archivo prestado: se detectan antes de que se guarden.
+- **Check-in** que modifica un archivo prestado: se detecta en cuanto aparece el changeset (`cm diff` del changeset contra su anterior, intersectado con la lista del préstamo).
+- Los archivos detectados se guardan en el préstamo (`archivos_tocados`).
+
+**Alerta**: al abrir la tarea (detalles en el Tablero Scrum, en el tablero de categoría o en Revisión) sale sola una ventana **"⛔ Se tocaron cambios ajenos en esta tarea"** con la lista de archivos y de qué tarea vienen. Tiene **dos botones**:
+
+- **"Aceptar y eliminar"**: elimina esas modificaciones (ver abajo).
+- **"Continuar sin eliminar"**: solo cierra el aviso, no borra nada. La **X** hace lo mismo. En los detalles queda un recuadro rojo con los archivos y un botón **"Eliminar"** para hacerlo después. Mientras no se eliminen, la tarea **no puede pasar a terminada**, y el aviso vuelve a salir cada vez que se abre la tarea.
+
+**Con "Aceptar y eliminar" (o con "Eliminar") se eliminan**: cada archivo tocado **vuelve a como llegó en el préstamo** (se restaura su revisión del changeset del merge). El préstamo sigue activo hasta que se devuelva, como cualquier otro.
+
+- En archivos de texto (scripts `.cs`) se restaura el archivo completo a la revisión prestada. Si en el mismo archivo hubo cambios propios legítimos, también se pierden: el archivo era ajeno.
+- En escenas, prefabs y binarios (texturas, modelos, audio) no se puede separar por dentro: se restaura el archivo entero.
+- Lo restaurado se guarda con un check-in automático en la rama de la tarea, con comentario "Se eliminaron cambios ajenos (prestados de T-xxx)", para que quede en el historial (evento `eliminar_cambios_ajenos` en `ops/`).
+
+**Pendiente por definir**: excluir los archivos que Unity modifica solo (ej. `.meta`), igual que en [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app), para que no cuenten como "tocados".
+
 ## Datos para la gráfica de Avance
 
 Ver definición de la gráfica en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Dos fuentes de datos distintas:
@@ -266,6 +320,7 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 - **Eliminar a alguien del equipo** (rol: Administrador o Líder, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)) es tan simple como borrar su fila en la tabla de usuarios: como la identidad se valida contra esa tabla cada vez que se abre la app (no hay sesión persistente que revocar), la persona pierde el acceso **dentro de BranchBoard** de inmediato la próxima vez que intente entrar — su correo ya no aparecería registrado.
   - **Corregido — esto NO revoca su acceso a la carpeta de Drive/OneDrive del proyecto**, que es donde vive todo el dato real (`ops/` con el historial completo de eventos, y todos los `.db` locales de cada quien parten de ahí) — ese acceso lo administra Drive/OneDrive directamente, fuera del control de BranchBoard, y la app no tiene (ni debería tener, ver [Sin servicios en la nube propios](./ARQUITECTURA.md#decisiones-de-arquitectura-ya-tomadas)) forma de tocarlo por API. Alguien eliminado sigue pudiendo leer todo el historial y, en el peor caso, seguir escribiendo eventos si conserva el acceso. `eliminar_usuario` por sí solo **no es suficiente** para sacar a alguien del proyecto.
   - Mitigación: la confirmación de `eliminar_usuario` en la UI incluye un recordatorio explícito, no evitable — "recuerda quitarle a [persona] el acceso a la carpeta de Drive/OneDrive del proyecto; BranchBoard no puede hacerlo por ti" — para que quede como paso manual explícito en vez de una falsa sensación de que ya quedó resuelto.
+- **Actualizado (2026-11-02) — configuración automática, Administrador = dueño del repositorio**: BranchBoard detecta solo un proyecto de Unity VC sin `.db` y lo configura la primera vez que lo abre **el dueño del repositorio** (BranchBoard lo lee de Unity VC; comando `cm` exacto pendiente de verificar), que queda como **Administrador** y genera ahí las llaves de firma. Si lo abre otra persona antes, no se configura: se le avisa que espere a que lo abra su dueño. Así el Administrador nunca depende de quién llegó primero. Lo que sigue describe el diseño anterior, en que el dueño lo inicializaba a mano.
 - **Bootstrapping (primer usuario de un proyecto nuevo) — corregido**: quien inicializa un `.db` de BranchBoard por primera vez para un workspace de Unity VC (ver flujo en [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)) queda registrado con rol **Administrador**, no Líder. Es un cambio respecto al diseño anterior ("Líder, y el Admin se asigna después a mano"): con la [firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac), **solo un Administrador puede ejecutar los comandos que asignan/firman roles** (`asignar_rol`, `ascender_a_lider`) — si el primer usuario quedara como Líder, nunca existiría nadie que pudiera convertirlo (o a cualquier otro) en Administrador, y el proyecto quedaría sin ancla de confianza de forma permanente. En el mismo momento de la inicialización, el backend genera el par de llaves Ed25519 y firma esa primera fila como Administrador. Consistente con que en Unity Cloud el "Propietario" ya es la persona identificada aparte, ver [Usuarios semilla en SEGURIDAD.md](./SEGURIDAD.md#usuarios-semilla-equipo-virustf) — normalmente coincide con quien inicializa el proyecto.
 - **Quién necesita Unity Version Control instalado** — **corregido de nuevo, versión final**: en la práctica, **todos** los roles (incluido el colaborador de subtareas simples) necesitan tener `cm` instalado en su máquina. La diferencia real no es "instalado sí/no", sino **cuánto del proyecto se descarga**:
   - **Administrador, Líder, Desarrollador y Tester**: workspace **completo** — lo necesitan porque trabajan en Unity Editor (programar, modelar, etc.) o, en el caso del Tester, porque necesita **jugar/ejecutar el juego real** para encontrar errores, algo que ninguna interfaz de BranchBoard reemplaza.
@@ -535,7 +590,7 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 |---|---|---|
 | `id` | — | identificador único |
 | `titulo` | texto | |
-| `descripcion` | texto | viene del modal de confirmación al crear/tomar/mandar a revisar (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)) |
+| `detalles` | texto | **reemplaza a `descripcion`** (2026-10-31): texto opcional, puede ser largo — qué hay que hacer, los pasos, dónde está cada cosa. Vacío si no hay (la interfaz muestra "Sin detalles."). Se escribe al crear la tarea (general o subtarea) y se puede editar |
 | `tipo` | enum | Scripting / Modelado 3D / Modelado 2D / Animación / Imagen / UI-Interfaz / Audio / Música / Video (**corregido**: antes eran 6 valores y no cubrían los 9 tipos reales usados por [Categorías](./PLANNING.md#alcance) y [Pre-revisión](./PLANNING.md#pre-revisión) — Modelado se separó en 2D/3D, y se agregaron UI/Interfaz y Audio como valores propios) |
 | `tarea_padre_id` | nullable | si es subtarea (rama hija); `null` si es tarea general |
 | `archivo_ruta` | nullable | solo subtareas simples: ruta del archivo dentro del workspace de Unity VC |
@@ -555,6 +610,7 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `justificacion_eliminacion` / `fecha_eliminacion` | nullable | solo si `eliminada = true` |
 | `motivo_rechazo` | nullable | último motivo de rechazo, si aplica |
 | `reporte_testing_origen_id` | nullable | si esta tarea nació de un reporte de Testing (ver abajo), referencia a ese reporte |
+| `tarea_origen_id` | nullable | tarea ya terminada (mergeada a `dev`) que esta corrige o a la que da seguimiento. **Solo referencia, no jerarquía**: `tarea_padre_id` queda en `null`, la rama sale de `dev` y la tarea lleva su propio número (`T-211`, no `T-101-3`), porque la rama de la original ya está cerrada |
 
 ## Modelo de datos: tabla `sprints`
 
@@ -629,3 +685,55 @@ Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Ad
 - Comando `cm` exacto para leer si una rama está cerrada/mergeada
 - ~~Intervalo exacto de escaneo de la carpeta `ops/`~~, ~~estrategia de compactación/purga de `ops/`~~ y ~~qué comandos migran al mecanismo de eventos~~ — **corregido**: los tres quedaron resueltos más arriba en este mismo documento (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)); esta sección no se había actualizado después de resolverlos.
 - Librería/mecanismo exacto de conversión `.fbx` → glTF para el visor de [Pre-revisión de Modelado 3D](./PLANNING.md#pre-revisión) — la restricción de subir solo `.fbx` ya está decidida, falta elegir qué convierte ese archivo al formato que consume el visor (`model-viewer`/Three.js).
+
+## Check-ins: aprobación, rechazo y corrección
+
+**Descartado (2026-11-02).** Ya no existen tareas de check-in directo (subtareas sin rama propia que hacían check-in sobre la rama del padre): **toda tarea se trabaja en su propia rama** y los check-ins son guardados dentro de ella. Lo que se revisa, aprueba o rechaza es la **rama** completa, con el flujo normal de [revisión y merge](#flujo-de-revisión-y-merge-a-dev) o de [subtareas hacia su padre](#flujo-de-merge-de-subtareas-pequeñas-hacia-su-tarea-padre). También se eliminan la regla de "un solo check-in en curso por tarea padre" y la revisión de check-ins en conjunto.
+
+## Check-ins de la rama, subtarea "En espera" y cambios entrantes
+
+**Redefinido (2026-11-02).** Toda tarea tiene **su propia rama** (se crea al tomarla). Hacer check-in a cada rato es lo normal en Unity VC (respaldo en el servidor, puntos de retorno, menos conflictos), y **un check-in nunca se convierte en tarea**: es un guardado dentro de la rama.
+
+| Rama | Cambios sin check-in | Qué se hace |
+|---|---|---|
+| **Sin subtareas** | Se ven en sus detalles, en **"⇡ Pending changes"** | **"⇡ Hacer check-in"** (título, descripción y tipo). Queda en **"📝 Check-ins de la rama"** |
+| **Con subtareas** (rama padre) | Aparece su subtarea **"En espera"** con esos cambios | En la rama padre **no se hace check-in**: se **crea una rama** (nombre, detalles y tipo) y la "En espera" pasa a ser esa subtarea, con los cambios |
+
+### Ramas sin subtareas: check-ins en los detalles
+
+- Cada check-in queda en **"📝 Check-ins de la rama"** (título, descripción, tipo, changeset, autor y fecha; a futuro también los archivos). La tarea sigue siendo una sola y avanza normal: producción → revisión → terminada.
+- Los detecta la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) (`cm log` de la rama): se hagan desde Unity o desde BranchBoard, aparecen solos.
+- Si a esa tarea se le crea una subtarea, pasa a ser una rama con subtareas.
+
+### Ramas con subtareas: "En espera" y "Crear rama"
+
+La rama de una tarea con subtareas solo debería recibir los merges de sus subtareas. Si alguien hace cambios directamente en ella:
+
+1. La [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) ve **cambios sin check-in** en esa rama (`cm status` del workspace) y aparece la subtarea comodín **"En espera"**, de tipo **"Sin definir"** (valor especial: no es una categoría ni se puede elegir al crear tareas). Su tarjeta lleva el indicador **"⇡ N sin check-in"** y sus detalles, en "⇡ Pending changes", muestran quién trabaja y cuántos cambios hay.
+2. Esos cambios **no se guardan con check-in en la rama padre**. Desde "⇡ Pending changes" (en la "En espera" o en la tarea padre) se usa **"🌿 Crear rama"**, que pide **nombre, detalles y tipo**:
+   - la "En espera" **se convierte en una subtarea normal** con ese título, detalles y tipo, en "en producción", asignada a quien trabajaba;
+   - se crea **su rama** (`task/<id>-<nombre>`) y los cambios sin check-in **se mueven a ella** (en Unity VC: crear la rama hija y cambiar el workspace a ella llevando los cambios pendientes; comando exacto pendiente de verificar);
+   - desde ahí se trabaja como cualquier rama: check-ins, revisión y merge hacia el padre (que llegará como incoming change).
+3. "En espera" **no puede traer cambios** ([Cambios prestados](#cambios-prestados-traer-cambios)): sus cambios todavía están sin guardar.
+4. Mientras haya "En espera", la tarea padre no puede pasar a revisión (cuenta como subtarea pendiente).
+
+### Click en cada elemento: detalle y acciones
+
+Cada fila de las tres secciones abre su detalle al hacer click, con **"🎮 Abrir en Unity"** y su acción propia:
+
+| Sección | Detalle | Acción propia |
+|---|---|---|
+| **⇡ Pending changes** | Rama, quién trabaja, cuántos cambios y los archivos (`cm status`), y qué pasará según la rama | Rama sin subtareas: **"⇡ Hacer check-in"** (`cm checkin`), con **título, descripción y tipo** (título y descripción van en el comentario del changeset). Rama con subtareas: **"🌿 Crear rama"** (nombre, detalles y tipo) |
+| **⇣ Incoming changes** | Subtarea, rama de origen, fecha, quién la trabajó y los check-ins que trae | **"⇣ Unir cambios"** (`cm update` con esos changesets). Opcional |
+| **📝 Check-ins de la rama** | Mensaje, autor, fecha, changeset | Solo "Abrir en Unity", en ese changeset |
+
+### Cambios entrantes (incoming changes)
+
+- Cuando una **subtarea pasa a "terminada"**, su rama se mergea a la rama del padre en el servidor. Quien tiene el workspace en la rama padre todavía no tiene esos cambios: en Unity VC son **incoming changes**.
+- **Solo cuenta lo terminado**: una subtarea en revisión todavía no se ha mergeado, así que no sale. Si alguien necesita su trabajo antes, lo trae como [préstamo](#cambios-prestados-traer-cambios).
+- BranchBoard lo muestra en los detalles del padre, en la sección **"⇣ Incoming changes"** (aparece en **toda rama con subtareas**, en 0 si no hay ninguno; las ramas sin subtareas no la tienen, y una tarea terminada nunca la muestra porque ya se mergeó y su rama está cerrada): qué subtarea, cuándo terminó, cuántos check-ins trae y desde qué rama.
+- **Es solo un aviso y recibirlos no es obligatorio**: no llegan solos al workspace (ni al abrir la rama en Unity). Se reciben desde **"⇣ Traer cambios"**, donde salen **primero y en azul**, en su propio apartado "Incoming changes — llegaron a esta rama", con botón **"Unir cambios"** (misma confirmación escribiendo "traer"), o desde el detalle del incoming change. En Unity VC es actualizar el workspace con esos changesets (`cm update`). **No es un préstamo**: ya son de esta rama, no se registran en `cambios_prestados` ni hay que devolverlos.
+- Se calcula **por máquina**: depende del workspace de cada uno (changeset en el que está el workspace contra el último de la rama). Es un indicador local, no pasa por `ops/`.
+
+**Pendiente de definir al implementar**: comando `cm` exacto para crear la rama hija llevando los cambios pendientes; cómo se atribuye la "En espera" si quien hizo los cambios no es el responsable de la tarea padre; comando `cm` exacto para saber qué changesets de la rama le faltan al workspace (incoming); y excluir de la cuenta los archivos que Unity modifica solo (ej. `.meta`).
+

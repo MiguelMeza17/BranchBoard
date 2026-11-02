@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { avatarColor, iniciales } from '../lib/ui';
 import { useStore } from '../store/useStore';
 import { ROLES, type Rol } from '../types';
 import { Avatar } from './primitives';
 import { NotificationsPanel } from './NotificationsPanel';
+import { AbrirEnUnityModal } from './AbrirEnUnityModal';
 
 export function Topbar() {
   const user = useStore((s) => s.currentUser());
+  const navigate = useNavigate();
   const vpnOn = useStore((s) => s.vpnOn);
   const toggleVpn = useStore((s) => s.toggleVpn);
-  const toggleCmSesion = useStore((s) => s.toggleCmSesion);
+  const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
   const setRolActual = useStore((s) => s.setRolActual);
-  const showToast = useStore((s) => s.showToast);
   const notifs = useStore((s) => s.notificaciones);
   const email = useStore((s) => s.currentEmail);
 
   const [showNotifs, setShowNotifs] = useState(false);
+  const [abrirUnity, setAbrirUnity] = useState(false);
   const [vistas, setVistas] = useState(false);
   const notifsWrapRef = useRef<HTMLDivElement>(null);
   const notifsPanelRef = useRef<HTMLDivElement>(null);
@@ -40,9 +44,12 @@ export function Topbar() {
   }, [showNotifs]);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-surface/80 px-5 backdrop-blur">
+    <>
+    {/* whitespace-nowrap: los botones nunca parten su texto en dos renglones (se desbordaban de la
+        barra). Si no cabe, el grupo de la izquierda se desplaza en horizontal; el de la derecha no se encoge. */}
+    <header className="flex h-14 shrink-0 items-center justify-between gap-4 whitespace-nowrap border-b border-border bg-surface/80 px-5 backdrop-blur">
       {/* VPN switch */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3 overflow-x-auto [scrollbar-width:none]">
         <button
           onClick={toggleVpn}
           className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium transition hover:border-border-strong"
@@ -64,24 +71,20 @@ export function Topbar() {
           </span>
         </button>
 
-        <button
-          className="btn-outline btn-sm"
-          onClick={() => showToast('Lanzando el Editor de Unity sobre el workspace…', 'info')}
-        >
+        <button className="btn-outline btn-sm shrink-0" onClick={() => setAbrirUnity(true)}>
           🎮 Abrir en Unity
-        </button>
-
-        {/* Demo: simula perder la sesión de Unity VC (cm whoami falla al arrancar) */}
-        <button
-          className="btn-ghost btn-sm text-faint"
-          title="Demo: simular que no hay sesión de Unity VC (cm whoami falla)"
-          onClick={toggleCmSesion}
-        >
-          🔒 Simular sin sesión Unity VC
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
+        {/* Solo para el mockup (se quitan en la app real): volver a las pantallas de acceso y "Ver como". */}
+        <button
+          className="shrink-0 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted transition hover:border-border-strong hover:text-text"
+          title="Demo: volver a la Pantalla inicial (acceso al proyecto). Se elimina en la app real."
+          onClick={() => setAccesoCompletado(false)}
+        >
+          🚪 Pantallas de acceso
+        </button>
         {/* Role selector (simula autenticación) */}
         <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
           <span className="text-faint">Ver como</span>
@@ -126,17 +129,30 @@ export function Topbar() {
           )}
         </div>
 
-        {/* Identity */}
-        <div className="flex items-center gap-2.5 rounded-lg border border-border bg-surface-2 py-1 pl-1 pr-3">
-          <Avatar email={user.email} size={30} />
-          <div className="leading-tight">
-            <div className="text-xs font-semibold text-text">
+        {/* Identidad: todo el recuadro (iniciales, nombre y rol) lleva a tu perfil. */}
+        <button
+          type="button"
+          onClick={() => navigate(`/perfil/${encodeURIComponent(user.email)}`)}
+          title="Ver tu perfil"
+          className="flex items-center gap-2.5 rounded-lg border border-border bg-surface-2 py-1 pl-1 pr-3 text-left transition hover:border-border-strong hover:bg-surface-3"
+        >
+          <span
+            className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full text-[11px] font-semibold text-white ring-1 ring-black/20"
+            style={{ background: avatarColor(user.email) }}
+          >
+            {iniciales(user.nombre, user.apellido)}
+          </span>
+          <span className="leading-tight">
+            <span className="block text-xs font-semibold text-text">
               {user.nombre} {user.apellido}
-            </div>
-            <div className="font-mono text-[10px] text-faint">{user.rol}</div>
-          </div>
-        </div>
+            </span>
+            <span className="block font-mono text-[10px] text-faint">{user.rol}</span>
+          </span>
+        </button>
       </div>
     </header>
+    {/* Fuera del header: su backdrop-blur atraparía a la ventana (position: fixed) dentro de la barra. */}
+    <AbrirEnUnityModal open={abrirUnity} onClose={() => setAbrirUnity(false)} />
+    </>
   );
 }

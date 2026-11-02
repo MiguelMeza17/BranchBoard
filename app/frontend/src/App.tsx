@@ -4,6 +4,7 @@ import { useStore } from './store/useStore';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
+import { AccesoProyecto } from './components/AccesoProyecto';
 import { ScrumBoard } from './pages/ScrumBoard';
 import { Resumen } from './pages/Resumen';
 import { ListaTareas } from './pages/ListaTareas';
@@ -21,14 +22,34 @@ import { PerfilUsuario } from './pages/PerfilUsuario';
 export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
+  const accesoCompletado = useStore((s) => s.accesoCompletado);
 
-  if (!showSplash && !cmSesionActiva) {
-    return <SesionUnityVCRequerida />;
+  // Debajo de la pantalla de carga va siempre lo que sigue después de ella: sin sesión o sin haber
+  // entrado a un proyecto, la pantalla de acceso. Así, al desvanecerse la carga, nunca se ve la
+  // interfaz de BranchBoard antes de iniciar sesión.
+  const splash = showSplash && <SplashScreen onDone={() => setShowSplash(false)} />;
+
+  if (!cmSesionActiva) {
+    return (
+      <>
+        {splash}
+        <SesionUnityVCRequerida />
+      </>
+    );
+  }
+
+  if (!accesoCompletado) {
+    return (
+      <>
+        {splash}
+        <AccesoProyecto />
+      </>
+    );
   }
 
   return (
     <>
-      {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
+      {splash}
       <HashRouter>
         <Routes>
           <Route element={<Layout />}>
