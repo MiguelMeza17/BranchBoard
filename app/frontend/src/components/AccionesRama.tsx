@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
-import { coincidePalabra, esCheckinTarea, estadoMeta, palabraCambios } from '../lib/ui';
+import { coincidePalabra, esCheckinTarea, esTareaEnEspera, estadoMeta, palabraCambios } from '../lib/ui';
 import { Modal } from './Modal';
 import { EditarTareaModal } from './EditarTareaModal';
 import { DetalleCommit } from './HistorialRamas';
@@ -49,6 +49,7 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
   const [traer, setTraer] = useState(false);
   const [editar, setEditar] = useState(false);
   const rama = ramaDeTarea(tarea, tareas);
+  const enEspera = esTareaEnEspera(tarea);
 
   return (
     <div className="flex w-full flex-wrap items-center justify-end gap-2">
@@ -66,7 +67,14 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
       >
         ✏️ Editar tarea
       </button>
-      <button type="button" className="btn-outline btn-sm" disabled={!rama} onClick={() => setTraer(true)}>
+      {/* "En espera" tiene cambios sin guardar (aún no hay check-in): traerle cambios encima no se permite. */}
+      <button
+        type="button"
+        className="btn-outline btn-sm"
+        disabled={!rama || enEspera}
+        onClick={() => setTraer(true)}
+        title={enEspera ? 'No se puede traer cambios: esta tarea todavía tiene cambios sin guardar (sin check-in)' : undefined}
+      >
         ⇣ Traer cambios
       </button>
       <button

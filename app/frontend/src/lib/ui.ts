@@ -82,6 +82,11 @@ export function coincidePalabra(texto: string, palabra: string): boolean {
 export function esCheckinTarea(t: { modo_trabajo: string | null; rama_asociada: string | null }): boolean {
   return t.modo_trabajo === 'checkin' && !t.rama_asociada;
 }
+// Subtarea comodín "En espera": representa el próximo check-in, cuyos cambios todavía están sin
+// guardar en el workspace. Es la única con tipo "Sin definir" (ver types.ts).
+export function esTareaEnEspera(t: { tipo: string }): boolean {
+  return t.tipo === 'Sin definir';
+}
 export function palabraCambios(n: number, checkin: boolean): string {
   return checkin ? (n === 1 ? 'check-in' : 'check-ins') : n === 1 ? 'commit' : 'commits';
 }
