@@ -38,7 +38,6 @@ Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + 
 📈  Avance
 🌳  Branches
 🔀  Revisión
-🐞  Testing
 📌  Pendientes
 🗑  Papelera
 🗃  Categorías
@@ -57,7 +56,6 @@ Barra superior persistente: switch de VPN, campana de notificaciones, botón "Ab
 **Corregido — una tarea con subtareas no debe mostrar su propio tipo como si fuera lo único que contiene**: una tarea general de tipo Scripting con subtareas de Modelado 3D y Audio no es "solo código" — es un contenedor de varias disciplinas. Por eso, tanto en la tarjeta como en la franja de contexto de arriba, **una tarea con subtareas no muestra su badge de tipo propio** — en su lugar muestra un ícono por cada tipo distinto que contiene en todo su subárbol (hijas, nietas, etc.), con un número si hay más de una del mismo tipo. **Cada ícono es un botón**: al hacer clic, salta directo a esa subtarea específica (entra a la carpeta que la contiene y abre su detalle) — sin tener que navegar carpeta por carpeta a mano. Una tarea sin subtareas (hoja) sigue mostrando su badge de tipo normal, sin cambios.
 
 **Pendiente/dudas a resolver** (marcando explícitamente lo que no tengo claro, en vez de asumir):
-- **Visibilidad de "Testing" en el menú**: ¿aparece para todos los roles en modo lectura, o solo el Tester lo ve?
 - **Cerrar la app**: si hay una acción en curso (ej. sincronizando, creando una rama), ¿se bloquea el cierre con una advertencia, o simplemente se puede cerrar y esa operación queda a medias? Tampoco está definido si hace falta algún tipo de "guardado" al cerrar, dado que las escrituras a SQLite son inmediatas por acción (no hay un estado de app sin guardar en el sentido tradicional).
 - **Confirmación al cerrar sesión/cambiar de proyecto**: como no hay login/logout real (es `cm whoami`), ¿"cambiar de proyecto" desde dentro de la app vuelve a la Pantalla inicial sin más, o pide confirmar si hay algo en curso?
 

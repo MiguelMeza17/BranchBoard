@@ -8,7 +8,7 @@
 
 ## Componentes
 
-- **Frontend**: React + TypeScript, corriendo dentro de la webview de Tauri. Renderiza las pantallas (Scrum, Resumen, Lista de tareas, Avance, Branches, Revisión, Testing, Pendientes, Papelera, Categorías, Reportes, Ajustes) y dispara acciones vía `invoke(...)` hacia el backend.
+- **Frontend**: React + TypeScript, corriendo dentro de la webview de Tauri. Renderiza las pantallas (Scrum, Resumen, Lista de tareas, Avance, Branches, Revisión, Pendientes, Papelera, Categorías, Reportes, Ajustes) y dispara acciones vía `invoke(...)` hacia el backend.
 - **Backend**: Rust, dentro del mismo proceso de Tauri. Expone comandos que el frontend invoca (`tomar_tarea`, `aprobar_tarea`, `crear_reporte_testing`, etc.), valida permisos por rol, y es el único que toca SQLite y `cm`.
 - ~~**Bot clasificador (a futuro)**~~: **descartado (2026-11-02)**. Solo hacía falta para decidir el tipo de las tareas que nacían de un check-in; ya no existen tareas de check-in (ver [BACKEND.md](./BACKEND.md#check-ins-de-la-rama-subtarea-en-espera-y-cambios-entrantes)).
 - **Persistencia (SQLite)**: cada máquina tiene su propio `.db` local, que **no se sincroniza directamente**. Lo que se comparte por la nube (Drive/OneDrive) es un log de eventos (carpeta `ops/`); cada máquina reproduce esos eventos sobre su `.db` local para llegar al mismo estado — ver [Sincronización entre máquinas en BACKEND.md](./BACKEND.md#sincronización-entre-máquinas-arquitectura-de-eventos). Guarda tareas, usuarios, solicitudes de ingreso, notificaciones, colaboradores externos — todo excepto el código/archivos versionados en sí.
