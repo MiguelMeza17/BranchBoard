@@ -15,6 +15,7 @@ import type {
   TipoTarea,
 } from '../types';
 import * as fx from '../data/fixtures';
+import { esTareaEnEspera } from '../lib/ui';
 
 let idSeq = 1000;
 const nextId = () => `T-${++idSeq}`;
@@ -139,6 +140,31 @@ function descendientesDe(tareas: Tarea[], id: string): Set<string> {
   return ids;
 }
 
+/**
+ * Incoming changes de una tarea: cambios de sus subtareas directas que ya están en su rama y que el
+ * workspace todavía no unió. Se muestran en dos grupos:
+ * - terminadas: las de rama propia (se mergearon a esta rama) y las de check-in directo aprobadas;
+ * - en revisión: solo las de check-in directo (su check-in ya está en esta rama, pero sin aprobar).
+ *   Una subtarea con rama propia en revisión no cuenta: todavía no se ha mergeado aquí.
+ */
+export function entrantesDe(tareas: Tarea[], recibidos: string[], id: string): Tarea[] {
+  return tareas.filter(
+    (t) =>
+      t.tarea_padre_id === id &&
+      !t.eliminada &&
+      !recibidos.includes(t.id) &&
+      ((t.estado === 'terminada' && (!!t.rama_asociada || t.modo_trabajo === 'checkin')) ||
+        (t.estado === 'en revisión' && t.modo_trabajo === 'checkin' && !t.rama_asociada))
+  );
+}
+
+/** Texto corto del estado de un incoming change: "Terminada el …" o "En revisión, sin aprobar". */
+export function estadoEntrante(t: Tarea): string {
+  return t.estado === 'terminada'
+    ? `Terminada${t.fecha_completada ? ` el ${t.fecha_completada}` : ''}`
+    : '⚠ En revisión, sin aprobar';
+}
+
 // Subtareas (de cualquier nivel) que impiden que una tarea avance. Para mandarla a revisión no
 // puede quedar ninguna en "por hacer"/"en producción". Para el merge (orden de abajo hacia arriba,
 // BACKEND.md) todas deben estar ya "terminada", es decir, mergeadas antes a su rama padre.
@@ -198,6 +224,11 @@ interface State {
   cambiosTraidos: CambioTraido[];
   /** Cambios sin check-in por rama (pending changes de Unity VC, simulados). */
   cambiosSinCheckin: Record<string, number>;
+  /**
+   * Subtareas con rama propia ya terminadas cuyo merge ya está en el workspace (cm update). Las
+   * terminadas que no estén aquí salen como "Cambios entrantes" en los detalles de su padre.
+   */
+  entrantesRecibidos: string[];
   correoContacto: string;
 
   // toasts efímeros
@@ -219,6 +250,19 @@ interface State {
    * como llegaron en el préstamo). El préstamo sigue ahí hasta que se devuelva.
    */
   eliminarCambiosAjenos: (registroId: string) => void;
+  /**
+   * Recibe en el workspace los incoming changes de una subtarea terminada (ya mergeada a esta rama).
+   * No es obligatorio ni automático: se hace desde "Traer cambios". No es un préstamo: el cambio ya
+   * es de esta rama.
+   */
+  recibirEntrante: (destinoId: string, hijoId: string) => void;
+  /**
+   * Check-in de los pending changes de una rama (simulado). En una rama con subtareas el check-in se
+   * vuelve una tarea: la "En espera" se convierte en ella (título = mensaje, tipo = el que decide el
+   * bot; en el mockup se elige) y sale otra "En espera". En una rama sin subtareas queda como un
+   * check-in más de su tarea.
+   */
+  hacerCheckin: (rama: string, campos: { titulo: string; descripcion: string; tipo: TipoTarea }) => void;
 
   // acciones de sesión
   setEmail: (email: string) => void;
@@ -328,6 +372,9 @@ export const useStore = create<State>((set, get) => {
   commits: [...fx.commits],
   cambiosTraidos: [...fx.cambiosTraidos],
   cambiosSinCheckin: { ...fx.cambiosSinCheckin },
+  entrantesRecibidos: fx.tareas
+    .filter((t) => t.estado === 'terminada' && !fx.entrantesSinRecibir.includes(t.id))
+    .map((t) => t.id),
   backups: [...fx.backups],
   correoContacto: 'ingreso@virustf.dev',
 
@@ -385,6 +432,74 @@ export const useStore = create<State>((set, get) => {
       `Se eliminó lo que se modificó en ${n === 1 ? '1 archivo prestado' : `${n} archivos prestados`} de ${r.origen_id} (${r.tarea_id})`,
       'ok'
     );
+  },
+  recibirEntrante: (destinoId, hijoId) => {
+    if (get().entrantesRecibidos.includes(hijoId)) return;
+    set((s) => ({ entrantesRecibidos: [...s.entrantesRecibidos, hijoId] }));
+    get().showToast(`Se unieron a ${destinoId} los cambios de ${hijoId}`, 'ok');
+  },
+  hacerCheckin: (rama, { titulo: mensaje, descripcion, tipo }) => {
+    const s = get();
+    const duena = s.tareas.find((t) => t.rama_asociada === rama && !t.eliminada);
+    if (!duena || !mensaje) return;
+    const user = s.currentUser();
+    const hash = Math.random().toString(16).slice(2, 9).padEnd(7, '0');
+    const ahora = new Date().toISOString().slice(0, 19);
+    const hijas = s.tareas.filter((t) => t.tarea_padre_id === duena.id && !t.eliminada);
+    let destinoCommit = duena.id;
+    let tareas = s.tareas;
+    let aviso = `Check-in ${hash} en ${rama}`;
+    if (hijas.length > 0) {
+      // Rama con subtareas: el check-in se vuelve tarea (la "En espera" se convierte en ella).
+      const espera = hijas.find((t) => esTareaEnEspera(t));
+      const base: Tarea = espera ?? { ...duena, id: nextId(), rama_asociada: null, fecha_completada: null };
+      const tareaCheckin: Tarea = {
+        ...base,
+        titulo: mensaje,
+        detalles: descripcion,
+        tipo,
+        tarea_padre_id: duena.id,
+        archivo_ruta: null,
+        estado: 'en revisión',
+        pendiente_aprobacion: false,
+        rama_asociada: null,
+        modo_trabajo: 'checkin',
+        asignado_a: user.email,
+        creado_por: espera?.creado_por ?? user.email,
+        motivo_rechazo: null,
+        edicion_pendiente: false,
+      };
+      const nuevaEspera: Tarea = {
+        ...tareaCheckin,
+        id: nextId(),
+        titulo: 'En espera',
+        detalles: `Trabajo en curso en la rama de ${duena.id} que todavía no tiene check-in. Al hacer el check-in se convierte en su tarea.`,
+        tipo: 'Sin definir',
+        estado: 'en producción',
+        asignado_a: null,
+        creado_por: user.email,
+      };
+      tareas = espera
+        ? [nuevaEspera, ...s.tareas.map((t) => (t.id === espera.id ? tareaCheckin : t))]
+        : [nuevaEspera, tareaCheckin, ...s.tareas];
+      destinoCommit = tareaCheckin.id;
+      aviso = `Check-in ${hash}: se volvió la tarea ${tareaCheckin.id} de ${duena.id} (en revisión)`;
+    }
+    const commit: Commit = {
+      id: `C-${hash}`,
+      tarea_id: destinoCommit,
+      hash,
+      mensaje,
+      descripcion: descripcion || undefined,
+      tipo,
+      autor: user.email,
+      fecha: ahora,
+    };
+    const sinCheckin = { ...s.cambiosSinCheckin };
+    delete sinCheckin[rama];
+    set({ commits: [...s.commits, commit], cambiosSinCheckin: sinCheckin });
+    set({ tareas: normalizar(tareas) });
+    get().showToast(aviso, 'ok');
   },
   abrirEnUnity: (tareaId, rama, hash) => {
     const destino = hash ? `${rama} @ ${hash}` : rama;

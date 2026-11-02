@@ -410,7 +410,7 @@ function LineaCommits({ commits, color, usuarios }: { commits: Commit[]; color: 
 
 // Detalles de un commit: mensaje, rama/tarea, autor, fecha exacta y hash; con anterior/siguiente
 // para recorrer los commits de la rama sin cerrar.
-export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCopiar, onAnterior, onSiguiente }: {
+export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCopiar, onAnterior, onSiguiente, onAbrirUnity }: {
   commit: Commit;
   posicion: number;
   total: number;
@@ -419,6 +419,8 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
   onCopiar: (hash: string) => void;
   onAnterior?: () => void;
   onSiguiente?: () => void;
+  /** Si se pasa, sale "🎮 Abrir en Unity" (en ese changeset) entre Anterior y Siguiente. */
+  onAbrirUnity?: () => void;
 }) {
   const tarea = useStore((s) => s.tareas.find((t) => t.id === commit.tarea_id));
   const nombre = usuario ? `${usuario.nombre} ${usuario.apellido}` : commit.autor;
@@ -439,6 +441,11 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
           <button type="button" className="btn-ghost btn-sm" onClick={onAnterior} disabled={!onAnterior}>
             ← Anterior
           </button>
+          {onAbrirUnity && (
+            <button type="button" className="btn-outline btn-sm" onClick={onAbrirUnity}>
+              🎮 Abrir en Unity
+            </button>
+          )}
           <button type="button" className="btn-ghost btn-sm" onClick={onSiguiente} disabled={!onSiguiente}>
             Siguiente →
           </button>
@@ -453,6 +460,14 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
               {tarea.id} · {tarea.titulo}
             </span>
           </FilaDetalle>
+        )}
+        {commit.tipo && (
+          <FilaDetalle k="Tipo">
+            <span className="text-text">{commit.tipo}</span>
+          </FilaDetalle>
+        )}
+        {commit.descripcion && (
+          <p className="whitespace-pre-wrap rounded-lg border border-border bg-surface-2 px-3 py-2 text-text">{commit.descripcion}</p>
         )}
         <FilaDetalle k="Autor">
           <span className="inline-flex items-center gap-2">
