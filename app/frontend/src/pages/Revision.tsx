@@ -70,9 +70,11 @@ export function Revision() {
             {grandes.map((t) => (
               <div
                 key={t.id}
+                // Click en cualquier parte abre sus detalles, igual que en Tareas pequeñas.
+                onClick={puedeActuarGrande ? () => setRevisando(t) : undefined}
                 className={`card flex flex-wrap items-center gap-4 p-4 ${
                   t.lider_revision_asignado ? 'bg-fuchsia-500/5' : ''
-                }`}
+                } ${puedeActuarGrande ? 'cursor-pointer transition hover:border-border-strong' : ''}`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -87,7 +89,8 @@ export function Revision() {
                 </div>
 
                 {puedeActuarGrande ? (
-                  <div className="flex items-center gap-2">
+                  // Los botones hacen lo suyo sin abrir los detalles de la fila.
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     {puedeAsignar(t) && (
                       <button className="btn-outline btn-sm" onClick={() => setAsignando(t)}>
                         {t.lider_revision_asignado ? `${nombreDe(t.lider_revision_asignado)} ▾` : 'Asignar a un líder'}

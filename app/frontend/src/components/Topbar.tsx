@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { avatarColor, iniciales } from '../lib/ui';
 import { useStore } from '../store/useStore';
 import { ROLES, type Rol } from '../types';
 import { Avatar } from './primitives';
@@ -7,6 +9,7 @@ import { AbrirEnUnityModal } from './AbrirEnUnityModal';
 
 export function Topbar() {
   const user = useStore((s) => s.currentUser());
+  const navigate = useNavigate();
   const vpnOn = useStore((s) => s.vpnOn);
   const toggleVpn = useStore((s) => s.toggleVpn);
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
@@ -126,16 +129,26 @@ export function Topbar() {
           )}
         </div>
 
-        {/* Identity */}
-        <div className="flex items-center gap-2.5 rounded-lg border border-border bg-surface-2 py-1 pl-1 pr-3">
-          <Avatar email={user.email} size={30} sinTooltip />
-          <div className="leading-tight">
-            <div className="text-xs font-semibold text-text">
+        {/* Identidad: todo el recuadro (iniciales, nombre y rol) lleva a tu perfil. */}
+        <button
+          type="button"
+          onClick={() => navigate(`/perfil/${encodeURIComponent(user.email)}`)}
+          title="Ver tu perfil"
+          className="flex items-center gap-2.5 rounded-lg border border-border bg-surface-2 py-1 pl-1 pr-3 text-left transition hover:border-border-strong hover:bg-surface-3"
+        >
+          <span
+            className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full text-[11px] font-semibold text-white ring-1 ring-black/20"
+            style={{ background: avatarColor(user.email) }}
+          >
+            {iniciales(user.nombre, user.apellido)}
+          </span>
+          <span className="leading-tight">
+            <span className="block text-xs font-semibold text-text">
               {user.nombre} {user.apellido}
-            </div>
-            <div className="font-mono text-[10px] text-faint">{user.rol}</div>
-          </div>
-        </div>
+            </span>
+            <span className="block font-mono text-[10px] text-faint">{user.rol}</span>
+          </span>
+        </button>
       </div>
     </header>
     {/* Fuera del header: su backdrop-blur atraparía a la ventana (position: fixed) dentro de la barra. */}

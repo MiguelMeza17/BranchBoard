@@ -20,12 +20,30 @@ export const workspaces: WorkspaceUnityVC[] = [
     ruta: 'D:\\Unity\\VirusTF',
     tiene_db_branchboard: true,
   },
+  // Proyecto ficticio que ya usa BranchBoard: para probar "Cambiar de proyecto" (en el mockup se ven
+  // los mismos datos de VirusTF; solo cambia el nombre del proyecto).
+  {
+    nombre: 'Neon-Runner',
+    repo: 'Neon-Runner@MIGUELMEZA',
+    ruta: 'D:\\Unity\\Neon-Runner',
+    tiene_db_branchboard: true,
+  },
   {
     nombre: 'Prototipo-Plataformas',
     repo: 'Prototipo-Plataformas@MIGUELMEZA',
     ruta: 'D:\\Unity\\Prototipo-Plataformas',
     tiene_db_branchboard: false,
   },
+];
+
+// ---- Proyectos (repositorios) del servidor de Unity VC a los que tienes acceso (simula `cm repo list`) ----
+// Los que no tienen workspace en esta máquina salen como "sin clonar": al elegirlos se clonan.
+export const proyectosServidor: { nombre: string; repo: string; tiene_db_branchboard: boolean }[] = [
+  { nombre: 'VirusTF', repo: 'VirusTF@MIGUELMEZA', tiene_db_branchboard: true },
+  { nombre: 'Neon-Runner', repo: 'Neon-Runner@MIGUELMEZA', tiene_db_branchboard: true },
+  { nombre: 'Prototipo-Plataformas', repo: 'Prototipo-Plataformas@MIGUELMEZA', tiene_db_branchboard: false },
+  { nombre: 'Arena-Battle', repo: 'Arena-Battle@MIGUELMEZA', tiene_db_branchboard: true },
+  { nombre: 'GameJam-Octubre', repo: 'GameJam-Octubre@MIGUELMEZA', tiene_db_branchboard: false },
 ];
 
 // Correo de prueba que `cm whoami` puede devolver sin estar en la tabla de usuarios.

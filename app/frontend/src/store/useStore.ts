@@ -13,6 +13,7 @@ import type {
   EstadoTarea,
   Rol,
   TipoTarea,
+  WorkspaceUnityVC,
 } from '../types';
 import * as fx from '../data/fixtures';
 import { esTareaEnEspera } from '../lib/ui';
@@ -185,6 +186,32 @@ interface State {
   // Si ya se pasó por las pantallas de acceso al proyecto (Pantalla inicial →
   // workspaces → validación del .db). En el mockup nunca bloquea: se pueden saltar.
   accesoCompletado: boolean;
+  /** Proyecto (workspace de Unity VC) en el que se entró. */
+  proyectoActual: string;
+  /** "Cambiar de proyecto": vuelve al acceso directo a la lista de workspaces (sin la pantalla inicial). */
+  accesoIrAWorkspaces: boolean;
+  cambiarDeProyecto: () => void;
+  /**
+   * Cerrar sesión: BranchBoard no tiene login propio, la identidad es la sesión de Unity VC
+   * (`cm whoami`). Cerrarla deja la app en "No se detectó una sesión de Unity VC" y, al volver a
+   * iniciarla, se pasa otra vez por el acceso al proyecto.
+   */
+  cerrarSesion: () => void;
+  /** Correo con el que se inició sesión en Unity VC desde BranchBoard (null = todavía no). */
+  sesionUnityVC: string | null;
+  setSesionUnityVC: (correo: string | null) => void;
+  /**
+   * "Crear un nuevo proyecto" sin Unity VC: proyecto vacío (sin tareas, sprints ni equipo) con quien
+   * lo crea como único usuario y Administrador. En el mockup la contraseña no se guarda.
+   */
+  crearProyectoNuevo: (datos: { proyecto: string; nombre: string; correo: string }) => void;
+  /** Workspaces de Unity VC en esta máquina (`cm workspace list`). */
+  workspaces: WorkspaceUnityVC[];
+  setWorkspaces: (ws: WorkspaceUnityVC[]) => void;
+  /** Proyecto del servidor que se eligió para clonar (lleva al acceso, paso "Clonar"). */
+  proyectoAClonar: string | null;
+  irAClonar: (nombre: string) => void;
+  entrarAProyecto: (nombre: string) => void;
 
   // datos
   usuarios: Usuario[];
@@ -338,6 +365,11 @@ export const useStore = create<State>((set, get) => {
   vpnOn: true,
   cmSesionActiva: true,
   accesoCompletado: false,
+  proyectoActual: fx.PROYECTO_NOMBRE,
+  accesoIrAWorkspaces: false,
+  sesionUnityVC: null,
+  workspaces: [...fx.workspaces],
+  proyectoAClonar: null,
 
   usuarios: [...fx.usuarios],
   tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),
@@ -497,7 +529,56 @@ export const useStore = create<State>((set, get) => {
     })),
   toggleVpn: () => set((s) => ({ vpnOn: !s.vpnOn })),
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),
-  setAccesoCompletado: (v) => set({ accesoCompletado: v }),
+  setAccesoCompletado: (v) => set({ accesoCompletado: v, accesoIrAWorkspaces: false, proyectoAClonar: null }),
+  cambiarDeProyecto: () => set({ accesoCompletado: false, accesoIrAWorkspaces: true }),
+  cerrarSesion: () =>
+    set({ cmSesionActiva: false, accesoCompletado: false, accesoIrAWorkspaces: false, sesionUnityVC: null }),
+  setSesionUnityVC: (correo) => set({ sesionUnityVC: correo }),
+  crearProyectoNuevo: ({ proyecto, nombre, correo }) => {
+    const [primero, ...resto] = nombre.trim().split(/\s+/);
+    const hoy = today();
+    set({
+      usuarios: [
+        {
+          email: correo,
+          nombre: primero ?? nombre,
+          apellido: resto.join(' '),
+          rol: 'Administrador',
+          fecha_alta: hoy,
+          firma: 'firma-local',
+          firmado_en: hoy,
+        },
+      ],
+      currentEmail: correo,
+      tareas: [],
+      sprints: [],
+      notificaciones: [],
+      solicitudes: [],
+      colaboradores: [],
+      edicionesPendientes: [],
+      commits: [],
+      cambiosTraidos: [],
+      cambiosSinCheckin: {},
+      entrantesRecibidos: [],
+      backups: [],
+      ramaWorkspace: null,
+      proyectoActual: proyecto,
+      accesoCompletado: true,
+      accesoIrAWorkspaces: false,
+      proyectoAClonar: null,
+      // Aparece en "Tus proyectos". No está en Unity VC: no tiene repositorio ni carpeta de workspace.
+      workspaces: [
+        ...get().workspaces.filter((w) => w.nombre !== proyecto),
+        // Carpeta local del proyecto (sin Unity VC): ahí se guardan sus datos de BranchBoard.
+        { nombre: proyecto, repo: `${proyecto}@local`, ruta: `D:\\BranchBoard\\${proyecto}`, tiene_db_branchboard: true },
+      ],
+    });
+    get().showToast(`Proyecto ${proyecto} creado — eres su Administrador`);
+  },
+  setWorkspaces: (ws) => set({ workspaces: ws }),
+  irAClonar: (nombre) => set({ accesoCompletado: false, accesoIrAWorkspaces: false, proyectoAClonar: nombre }),
+  entrarAProyecto: (nombre) =>
+    set({ proyectoActual: nombre, accesoCompletado: true, accesoIrAWorkspaces: false, proyectoAClonar: null }),
   showToast: (msg, tone = 'ok') => {
     const id = Date.now();
     set({ toast: { id, msg, tone } });

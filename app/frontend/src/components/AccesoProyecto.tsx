@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import type { WorkspaceUnityVC } from '../types';
+import { SelectorCarpeta } from './SelectorCarpeta';
+import { LoginUnityVCModal } from './LoginUnityVCModal';
+import { Modal } from './Modal';
 import { Toast } from './Toast';
 
 // Pantallas de entrada antes de los tableros — ver documentacion/FRONTEND.md,
@@ -21,17 +24,75 @@ export function AccesoProyecto() {
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
   const showToast = useStore((s) => s.showToast);
 
-  const [paso, setPaso] = useState<Paso>('inicio');
-  const [workspaces, setWorkspaces] = useState<WorkspaceUnityVC[]>(fx.workspaces);
+  const entrarAProyecto = useStore((s) => s.entrarAProyecto);
+  // Desde "Cambiar de proyecto" se llega directo a la lista de workspaces.
+  // Proyecto del servidor elegido para clonar (desde el menú de BranchBoard), si lo hay.
+  const proyectoAClonar = useStore((s) => s.proyectoAClonar);
+  const [paso, setPaso] = useState<Paso>(
+    useStore.getState().proyectoAClonar ? 'clonar' : useStore.getState().accesoIrAWorkspaces ? 'workspaces' : 'inicio'
+  );
+  const workspaces = useStore((s) => s.workspaces);
+  const setWorkspaces = useStore((s) => s.setWorkspaces);
   const [elegido, setElegido] = useState<WorkspaceUnityVC | null>(null);
   // Simula el correo que devuelve `cm whoami` — de ahí sale cuál de los casos aplica.
-  const [correo, setCorreo] = useState(usuarios[0].email);
+  const [correo, setCorreo] = useState(useStore.getState().sesionUnityVC ?? usuarios[0].email);
 
   const usuario = usuarios.find((u) => u.email === correo);
+  // Sesión de Unity VC: hasta iniciarla no se puede entrar a un proyecto. Al iniciarla, su correo es
+  // lo que devuelve `cm whoami`. Se guarda en el store: no se pide otra vez al cambiar de proyecto.
+  const sesion = useStore((s) => s.sesionUnityVC);
+  const setSesion = useStore((s) => s.setSesionUnityVC);
+  const [login, setLogin] = useState(false);
+  const [sinUvcs, setSinUvcs] = useState(false);
+  // "Crear un nuevo proyecto": nombre del proyecto y tus datos; quedas como Administrador.
+  const crearProyectoNuevo = useStore((s) => s.crearProyectoNuevo);
+  const [crear, setCrear] = useState(false);
+  // "Ingresar a un proyecto existente" sin Unity VC: abre el buscador de carpetas del equipo.
+  const [abrirLocal, setAbrirLocal] = useState(false);
+  const [carpetaLocal, setCarpetaLocal] = useState('');
+  const [errorLocal, setErrorLocal] = useState<string | null>(null);
+  const entrarAProyectoLocal = useStore((s) => s.entrarAProyecto);
+  const abrirCarpetaLocal = () => {
+    const ruta = carpetaLocal.trim().replace(/[\\/]+$/, '');
+    const ws = workspaces.find((w) => w.repo.endsWith('@local') && w.ruta.toLowerCase() === ruta.toLowerCase());
+    if (!ws) {
+      setErrorLocal('En esa carpeta no hay un proyecto de BranchBoard.');
+      return;
+    }
+    setAbrirLocal(false);
+    setErrorLocal(null);
+    entrarAProyectoLocal(ws.nombre);
+    showToast(`Abriste ${ws.nombre}`);
+  };
+  const [nuevo, setNuevo] = useState({ proyecto: '', nombre: '', correo: '', clave: '' });
+  const correoNuevoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nuevo.correo.trim());
+  // Errores por campo: se marcan en cuanto sales del campo (o al pulsar "Crear", si nunca entraste).
+  type CampoNuevo = 'proyecto' | 'nombre' | 'correo' | 'clave';
+  const errorNuevo: Record<CampoNuevo, string | null> = {
+    proyecto: nuevo.proyecto.trim() ? null : 'Escribe el nombre del proyecto.',
+    nombre: nuevo.nombre.trim() ? null : 'Escribe tu nombre.',
+    correo: !nuevo.correo.trim()
+      ? 'Escribe tu correo.'
+      : correoNuevoOk
+        ? null
+        : 'El correo no es válido (ej. nombre@correo.com).',
+    clave: !nuevo.clave
+      ? 'Escribe una contraseña.'
+      : nuevo.clave.length < 8
+        ? 'La contraseña debe tener al menos 8 caracteres.'
+        : null,
+  };
+  const [tocados, setTocados] = useState<Set<CampoNuevo>>(new Set());
+  const tocar = (c: CampoNuevo) => setTocados((t) => new Set(t).add(c));
+  const errorVisible = (c: CampoNuevo) => (tocados.has(c) ? errorNuevo[c] : null);
+  const cerrarCrear = () => {
+    setCrear(false);
+    setTocados(new Set());
+  };
 
-  const entrar = (msg: string) => {
+  const entrar = (ws: WorkspaceUnityVC, msg: string) => {
     if (usuario) setEmail(usuario.email);
-    setAccesoCompletado(true);
+    entrarAProyecto(ws.nombre);
     showToast(msg);
   };
 
@@ -40,7 +101,7 @@ export function AccesoProyecto() {
     if (!ws.tiene_db_branchboard) return setPaso('inicializar');
     if (!usuario) return setPaso('no-registrado');
     if (!usuario.firma) return setPaso('pendiente');
-    entrar(`Conectado a ${ws.nombre} como ${usuario.rol}`);
+    entrar(ws, `Conectado a ${ws.nombre} como ${usuario.rol}`);
   };
 
   return (
@@ -51,8 +112,15 @@ export function AccesoProyecto() {
             <span className="text-text">Branch</span>
             <span className="text-accent">Board</span>
           </div>
-          {paso !== 'inicio' && (
-            <button className="btn-ghost btn-sm" onClick={() => setPaso(paso === 'solicitud' ? 'no-registrado' : paso === 'clonar' ? 'workspaces' : 'inicio')}>
+          {(paso !== 'inicio' || sinUvcs) && (
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() =>
+                paso === 'inicio'
+                  ? setSinUvcs(false)
+                  : setPaso(paso === 'solicitud' ? 'no-registrado' : paso === 'clonar' ? 'workspaces' : 'inicio')
+              }
+            >
               ← Volver
             </button>
           )}
@@ -60,10 +128,16 @@ export function AccesoProyecto() {
 
         {paso === 'inicio' && (
           <PasoInicio
+            sesion={sesion}
+            onLogin={() => setLogin(true)}
+            sinUvcs={sinUvcs}
+            onSinUvcs={() => setSinUvcs(true)}
             vpnOn={vpnOn}
             onToggleVpn={toggleVpn}
-            onCrear={() => showToast('"Crear un nuevo proyecto" todavía no está disponible', 'info')}
-            onIngresar={() => setPaso('workspaces')}
+            onCrear={() => setCrear(true)}
+            // Con sesión: tus proyectos de Unity VC. Sin Unity VC: buscar en tu equipo la carpeta de un
+            // proyecto de BranchBoard que no está conectado a Unity VC.
+            onIngresar={() => (sinUvcs && !sesion ? setAbrirLocal(true) : setPaso('workspaces'))}
           />
         )}
 
@@ -79,8 +153,9 @@ export function AccesoProyecto() {
 
         {paso === 'clonar' && (
           <PasoClonar
+            nombre={proyectoAClonar ?? fx.PROYECTO_NOMBRE}
             onListo={(ws) => {
-              setWorkspaces((prev) => [...prev, ws]);
+              setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
               showToast(`Workspace ${ws.nombre} clonado en ${ws.ruta}`);
               setPaso('workspaces');
             }}
@@ -129,7 +204,8 @@ export function AccesoProyecto() {
                 if (!usuario) setEmail(usuarios[0].email);
                 else setEmail(usuario.email);
                 setRolActual('Administrador');
-                setAccesoCompletado(true);
+                if (elegido) entrarAProyecto(elegido.nombre);
+                else setAccesoCompletado(true);
                 showToast(`${elegido?.nombre} inicializado — eres su Administrador`);
               }}
             >
@@ -139,6 +215,135 @@ export function AccesoProyecto() {
         )}
       </div>
 
+      <Modal
+        open={crear}
+        onClose={cerrarCrear}
+        title="Crear un nuevo proyecto"
+        subtitle="Quedarás como Administrador del proyecto"
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button type="button" className="btn-ghost btn-sm" onClick={cerrarCrear}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              onClick={() => {
+                if (Object.values(errorNuevo).some(Boolean)) {
+                  setTocados(new Set(['proyecto', 'nombre', 'correo', 'clave']));
+                  return;
+                }
+                crearProyectoNuevo({ proyecto: nuevo.proyecto.trim(), nombre: nuevo.nombre.trim(), correo: nuevo.correo.trim() });
+                cerrarCrear();
+                setNuevo({ proyecto: '', nombre: '', correo: '', clave: '' });
+              }}
+            >
+              Crear
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          {/* El nombre del proyecto va destacado: más grande que tus datos. */}
+          <label className="block pb-1">
+            <span className="mb-1.5 block text-sm font-semibold text-text">Nombre del proyecto</span>
+            <input
+              className={`input h-12 text-lg font-semibold placeholder:font-normal placeholder:opacity-30 ${errorVisible('proyecto') ? 'border-red-500/70' : ''}`}
+              autoFocus
+              placeholder="Mi proyecto"
+              value={nuevo.proyecto}
+              onBlur={() => tocar('proyecto')}
+              onChange={(e) => setNuevo({ ...nuevo, proyecto: e.target.value })}
+            />
+            {errorVisible('proyecto') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('proyecto')}</span>}
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-faint">Tu nombre</span>
+            <input
+              className={`input ${errorVisible('nombre') ? 'border-red-500/70' : ''}`}
+              value={nuevo.nombre}
+              onBlur={() => tocar('nombre')}
+              onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })}
+            />
+            {errorVisible('nombre') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('nombre')}</span>}
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-faint">Tu correo</span>
+            <input
+              className={`input ${errorVisible('correo') ? 'border-red-500/70' : ''}`}
+              type="email"
+              value={nuevo.correo}
+              onBlur={() => tocar('correo')}
+              onChange={(e) => setNuevo({ ...nuevo, correo: e.target.value })}
+            />
+            {errorVisible('correo') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('correo')}</span>}
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-faint">Tu contraseña (mínimo 8 caracteres)</span>
+            <input
+              className={`input ${errorVisible('clave') ? 'border-red-500/70' : ''}`}
+              type="password"
+              autoComplete="new-password"
+              value={nuevo.clave}
+              onBlur={() => tocar('clave')}
+              onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })}
+            />
+            {errorVisible('clave') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('clave')}</span>}
+          </label>
+        </div>
+      </Modal>
+
+      <Modal
+        open={abrirLocal}
+        onClose={() => {
+          setAbrirLocal(false);
+          setErrorLocal(null);
+        }}
+        title="Abrir un proyecto de BranchBoard"
+        subtitle="Busca en tu equipo la carpeta de un proyecto que no está conectado a Unity VC"
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setAbrirLocal(false)}>
+              Cancelar
+            </button>
+            <button type="button" className="btn-primary btn-sm" onClick={abrirCarpetaLocal}>
+              Abrir
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-2 text-sm">
+          <SelectorCarpeta
+            value={carpetaLocal}
+            onChange={(v) => {
+              setCarpetaLocal(v);
+              setErrorLocal(null);
+            }}
+            placeholder="Carpeta del proyecto"
+          />
+          {errorLocal && <p className="text-[11px] text-red-300">⚠ {errorLocal}</p>}
+          <p className="text-[11px] text-faint">
+            En la app de escritorio, el botón 📁 abre el explorador de carpetas de Windows.
+          </p>
+        </div>
+      </Modal>
+
+      <LoginUnityVCModal
+        open={login}
+        onClose={() => setLogin(false)}
+        correoDemo={correo}
+        onSesionIniciada={(c) => {
+          setLogin(false);
+          setSesion(c);
+          setCorreo(c);
+          showToast(`Sesión de Unity VC iniciada como ${c}`);
+          // Con la sesión iniciada se pasa directo a elegir el workspace.
+          setPaso('workspaces');
+        }}
+      />
+
       {/* Controles del mockup: elegir qué devuelve `cm whoami` y saltarse el flujo */}
       <div className="flex w-full max-w-lg flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs">
         <label className="flex items-center gap-2">
@@ -146,7 +351,10 @@ export function AccesoProyecto() {
           <select
             className="bg-transparent font-medium text-text outline-none"
             value={correo}
-            onChange={(e) => setCorreo(e.target.value)}
+            onChange={(e) => {
+              setCorreo(e.target.value);
+              if (sesion) setSesion(e.target.value);
+            }}
           >
             {usuarios.map((u) => (
               <option key={u.email} value={u.email} className="bg-surface text-text">
@@ -179,11 +387,19 @@ function Aviso({ icono, tono, titulo, children }: { icono: string; tono: string;
 }
 
 function PasoInicio({
+  sesion,
+  onLogin,
+  sinUvcs,
+  onSinUvcs,
   vpnOn,
   onToggleVpn,
   onCrear,
   onIngresar,
 }: {
+  sesion: string | null;
+  onLogin: () => void;
+  sinUvcs: boolean;
+  onSinUvcs: () => void;
   vpnOn: boolean;
   onToggleVpn: () => void;
   onCrear: () => void;
@@ -191,6 +407,7 @@ function PasoInicio({
 }) {
   return (
     <>
+      {/* Primero la VPN: sin ella, en algunas redes Unity VC no conecta (ni para iniciar sesión). */}
       <button
         onClick={onToggleVpn}
         className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition hover:border-border-strong"
@@ -215,14 +432,52 @@ function PasoInicio({
         </span>
       </button>
 
+      {/* Sesión de Unity VC: es la identidad en BranchBoard (no hay login propio). */}
+      {sinUvcs && !sesion ? null : sesion ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-done/40 bg-done/10 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-text">Sesión de Unity VC iniciada</div>
+            <div className="truncate font-mono text-xs text-muted">{sesion}</div>
+          </div>
+          <div className="flex shrink-0 gap-1.5">
+            <button className="btn-ghost btn-sm" onClick={onLogin}>
+              Cambiar de cuenta
+            </button>
+            <button className="btn-primary btn-sm" onClick={onIngresar}>
+              Mis proyectos →
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={onLogin}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+        >
+          Iniciar sesión con Unity VC
+        </button>
+      )}
+
+      {/* Sin sesión de Unity VC solo se puede crear un proyecto nuevo (que todavía no está en Unity VC);
+          para entrar a uno existente hace falta la sesión. */}
+      {!sesion && !sinUvcs && (
+        <button
+          onClick={onSinUvcs}
+          className="w-full rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:border-border-strong hover:text-text"
+        >
+          Continuar sin Unity VC
+        </button>
+      )}
+
+      {/* Las dos opciones solo salen al elegir "Continuar sin Unity VC". Con sesión, se va directo a tus
+          workspaces. */}
+      {sinUvcs && !sesion && (
       <div className="grid gap-3 sm:grid-cols-2">
         <button
           onClick={onCrear}
-          className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-border p-4 text-left opacity-60 transition hover:opacity-80"
+          className="flex flex-col items-start gap-1 rounded-xl border border-border bg-surface-2 p-4 text-left transition hover:border-primary"
         >
           <span className="text-xl">✨</span>
           <span className="text-sm font-semibold text-text">Crear un nuevo proyecto</span>
-          <span className="text-xs text-faint">Próximamente</span>
         </button>
         <button
           onClick={onIngresar}
@@ -230,9 +485,9 @@ function PasoInicio({
         >
           <span className="text-xl">📂</span>
           <span className="text-sm font-semibold text-text">Ingresar a un proyecto existente</span>
-          <span className="text-xs text-muted">Elige uno de tus workspaces de Unity VC</span>
         </button>
       </div>
+      )}
     </>
   );
 }
@@ -301,7 +556,7 @@ function PasoWorkspaces({
   );
 }
 
-function PasoClonar({ onListo }: { onListo: (ws: WorkspaceUnityVC) => void }) {
+function PasoClonar({ nombre, onListo }: { nombre: string; onListo: (ws: WorkspaceUnityVC) => void }) {
   const [carpeta, setCarpeta] = useState('D:\\Unity');
   const [progreso, setProgreso] = useState<number | null>(null);
   const terminado = useRef(false);
@@ -311,13 +566,18 @@ function PasoClonar({ onListo }: { onListo: (ws: WorkspaceUnityVC) => void }) {
     if (progreso === null || terminado.current) return;
     if (progreso >= 100) {
       terminado.current = true;
-      const nombre = fx.PROYECTO_NOMBRE;
-      onListo({ nombre, repo: `${nombre}@MIGUELMEZA`, ruta: `${carpeta.replace(/\\$/, '')}\\${nombre}`, tiene_db_branchboard: true });
+      const delServidor = fx.proyectosServidor.find((p) => p.nombre === nombre);
+      onListo({
+        nombre,
+        repo: delServidor?.repo ?? `${nombre}@MIGUELMEZA`,
+        ruta: `${carpeta.replace(/\\$/, '')}\\${nombre}`,
+        tiene_db_branchboard: delServidor?.tiene_db_branchboard ?? true,
+      });
       return;
     }
     const t = setTimeout(() => setProgreso((p) => Math.min(100, (p ?? 0) + 8)), 120);
     return () => clearTimeout(t);
-  }, [progreso, carpeta, onListo]);
+  }, [progreso, carpeta, onListo, nombre]);
 
   return (
     <>
@@ -330,16 +590,11 @@ function PasoClonar({ onListo }: { onListo: (ws: WorkspaceUnityVC) => void }) {
       </div>
       <div>
         <label className="label">Carpeta de destino</label>
-        <input
-          className="input"
-          value={carpeta}
-          disabled={progreso !== null}
-          onChange={(e) => setCarpeta(e.target.value)}
-        />
+        <SelectorCarpeta value={carpeta} onChange={setCarpeta} disabled={progreso !== null} />
       </div>
       {progreso === null ? (
         <button className="btn-primary w-full" disabled={!carpeta.trim()} onClick={() => setProgreso(0)}>
-          Clonar {fx.PROYECTO_NOMBRE}
+          Clonar {nombre}
         </button>
       ) : (
         <div className="flex flex-col gap-1.5">
