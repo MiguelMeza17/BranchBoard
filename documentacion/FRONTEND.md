@@ -35,6 +35,7 @@ Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + 
 🗂  Tareas (Scrum)
 📊  Resumen
 📋  Lista de tareas
+🗓  Planificación
 📈  Avance
 🌳  Branches
 🔀  Revisión
@@ -44,6 +45,8 @@ Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + 
 📄  Reportes
 ⚙️  Ajustes
 ```
+
+**Planificación** (2026-11-02, debajo de Lista de tareas): lista los **sprints** (con fecha de inicio y fin; "En curso"/"Cerrado"; generan su reporte) y los **backlogs** (sin fecha, agrupan tareas sin plazo), con cuántas tareas tiene cada uno. Líder y Administrador ven **"+ Nuevo sprint"** (nombre, descripción, duración en días) y **"+ Nuevo backlog"** (nombre, descripción); **"Cerrar sprint" / "Cerrar backlog" solo lo ve el Administrador**; los demás roles solo los ven. Cada sprint (no cerrado) y cada backlog tiene **"Asignar tareas"**: ventana con todas las tareas del proyecto, buscador y filtro "solo las que no están en otro sprint"; marcar una la mete ahí, desmarcarla la deja sin sprint, y si estaba en otro se avisa ("en Sprint X") y al marcarla se mueve. En el modelo de datos los dos son filas de `sprints` (`con_fecha` true/false, ver [BACKEND.md](./BACKEND.md#modelo-de-datos-tabla-sprints)). Una tarea se asigna a un sprint o backlog al crearla o con "Asignar tareas". **Click en un sprint o backlog** abre el **Tablero Scrum** con ese sprint elegido en su selector (`/scrum?sprint=<id>`). En el Tablero Scrum, junto a "Todas las tareas / Mis tareas", hay un selector **"Todos los sprints y backlogs"** (agrupado en Sprints y Backlogs): al elegir uno quedan solo sus tareas (las del sprint y sus subtareas; una subtarea que está en el sprint sin su padre sale en la raíz). Lo que se crea con "+ Nueva tarea" mientras hay uno elegido ya viene con ese sprint.
 
 **Menú lateral desplegable**: un botón de tres rayas (☰), ubicado siempre debajo de la cabecera "BranchBoard" y en la misma posición en ambos estados, contrae el menú a una franja angosta (64px) o lo vuelve a expandir (240px). Contraído, la franja muestra el logo, el botón ☰ y **los íconos de cada pantalla, que siguen funcionando como botones** (llevan a su pantalla, marcan la activa y muestran su nombre al pasar el mouse); los números de Pendientes/Revisión/Papelera y los puntos de aviso quedan como una marca pequeña en la esquina del ícono (actualizado 2026-11-02). El contenido principal aprovecha el espacio liberado (su ancho máximo pasa de 1400px a 1640px). La preferencia se recuerda localmente entre sesiones.
 

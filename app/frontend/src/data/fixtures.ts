@@ -98,39 +98,17 @@ export const usuarios: Usuario[] = [
   },
 ];
 
+// Un sprint vacío (sin tareas) de ejemplo, para ver Planificación y el selector del Scrum. El resto
+// de sprints y backlogs los crea el equipo desde la app.
 export const sprints: Sprint[] = [
   {
     id: 'sp1',
-    nombre: 'Sprint 1 — Combate y enemigos',
-    descripcion: 'Sistema de combate cuerpo a cuerpo del jugador, IA de persecución de los enemigos rastreadores y el HUD de vida/energía.',
+    nombre: 'Sprint 1',
+    descripcion: '',
     con_fecha: true,
-    fecha_inicio: '2026-09-15',
+    fecha_inicio: '2026-11-02',
     duracion_dias: 14,
-    fecha_fin: '2026-09-29',
-    cerrado: false,
-    fecha_cierre_real: null,
-    creado_por: 'arteagacristobal957@gmail.com',
-  },
-  {
-    id: 'sp2',
-    nombre: 'Sprint 2 — Correcciones de combate y enemigos',
-    descripcion: 'Corregir los bugs de combate e IA reportados por Testing durante el Sprint 1, y pulir detalles menores antes de avanzar a nuevas mecánicas.',
-    con_fecha: true,
-    fecha_inicio: '2026-08-18',
-    duracion_dias: 14,
-    fecha_fin: '2026-08-31',
-    cerrado: true,
-    fecha_cierre_real: '2026-08-31',
-    creado_por: 'arteagacristobal957@gmail.com',
-  },
-  {
-    id: 'sp3',
-    nombre: 'Backlog de arte (sin fecha)',
-    descripcion: 'Tareas de arte 2D/3D y video sin sprint ni fecha asignada todavía.',
-    con_fecha: false,
-    fecha_inicio: '2026-08-20',
-    duracion_dias: null,
-    fecha_fin: null,
+    fecha_fin: '2026-11-16',
     cerrado: false,
     fecha_cierre_real: null,
     creado_por: 'miguellmezza123@gmail.com',
@@ -152,7 +130,7 @@ function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' |
     modificada: false,
     asignado_a: null,
     lider_revision_asignado: null,
-    sprint_id: 'sp1',
+    sprint_id: null,
     fecha_creacion: '2026-08-15',
     con_fecha: false,
     fecha_limite: null,
@@ -228,7 +206,6 @@ export const tareas: Tarea[] = [
     asignado_a: LIDER,
     rama_asociada: 'task/T-101-2-sfx',
     fecha_completada: '2026-09-22',
-    sprint_id: 'sp1',
   }),
   // Subtareas de T-101 en revisión, cada una en su propia rama (asignadas a distintas personas
   // para ver el panel "Abrir en Unity").
@@ -323,7 +300,6 @@ export const tareas: Tarea[] = [
     asignado_a: ADMIN,
     rama_asociada: 'task/T-104-musica-nivel1',
     fecha_completada: '2026-09-20',
-    sprint_id: 'sp1',
     edicion_pendiente: true,
   }),
 
@@ -371,7 +347,6 @@ export const tareas: Tarea[] = [
     estado: 'por hacer',
     creado_por: TESTER,
     reporte_testing_origen_id: 'RT-01',
-    sprint_id: 'sp1',
   }),
 
   // --- Subtarea simple de colaborador externo, en revisión (tarea pequeña) ---
@@ -396,14 +371,13 @@ export const tareas: Tarea[] = [
     tipo: 'Video',
     estado: 'por hacer',
     creado_por: LIDER,
-    sprint_id: 'sp3',
     // Eliminada de ejemplo, para ver en la Papelera que el motivo es distinto de los detalles.
     eliminada: true,
     fecha_eliminacion: '2026-10-31',
     justificacion_eliminacion: 'Se decidió reemplazar la cinemática pre-renderizada por una escena en tiempo real dentro del motor; esta tarea ya no aplica.',
     con_fecha: false,
   }),
-  // --- Modelado 2D backlog ---
+  // --- Modelado 2D ---
   t({
     id: 'T-111',
     titulo: 'Concept art del jefe final',
@@ -411,11 +385,10 @@ export const tareas: Tarea[] = [
     tipo: 'Modelado 2D',
     estado: 'por hacer',
     creado_por: ADMIN,
-    sprint_id: 'sp3',
     con_fecha: false,
   }),
 
-  // --- Sprint 2 — Correcciones de combate y enemigos (cerrado, ligado al Sprint 1) ---
+  // --- Correcciones de combate y enemigos (ya terminadas) ---
   t({
     id: 'T-211',
     titulo: '[Corrección] Hitbox del combo se desalinea al girar',
@@ -428,7 +401,6 @@ export const tareas: Tarea[] = [
     tarea_origen_id: 'T-101',
     rama_asociada: 'task/T-211-fix-hitbox-combo',
     fecha_completada: '2026-08-20',
-    sprint_id: 'sp2',
   }),
   t({
     id: 'T-212',
@@ -442,7 +414,6 @@ export const tareas: Tarea[] = [
     tarea_origen_id: 'T-102',
     rama_asociada: 'task/T-212-fix-ia-pathing',
     fecha_completada: '2026-08-23',
-    sprint_id: 'sp2',
   }),
   t({
     id: 'T-213',
@@ -456,7 +427,6 @@ export const tareas: Tarea[] = [
     tarea_origen_id: 'T-101',
     rama_asociada: 'task/T-213-balance-combo',
     fecha_completada: '2026-08-26',
-    sprint_id: 'sp2',
   }),
   t({
     id: 'T-214',
@@ -470,7 +440,6 @@ export const tareas: Tarea[] = [
     tarea_origen_id: 'T-107',
     rama_asociada: 'task/T-214-fix-salto-dash',
     fecha_completada: '2026-08-29',
-    sprint_id: 'sp2',
   }),
   t({
     id: 'T-215',
@@ -483,7 +452,6 @@ export const tareas: Tarea[] = [
     // Sale de dev (la rama de la original ya está mergeada); solo referencia.
     tarea_origen_id: 'T-102',
     rama_asociada: 'task/T-215-anim-muerte-enemigo',
-    sprint_id: 'sp2',
   }),
   t({
     id: 'T-216',
@@ -494,7 +462,6 @@ export const tareas: Tarea[] = [
     creado_por: TESTER,
     // Sale de dev (la rama de la original ya está mergeada); solo referencia.
     tarea_origen_id: 'T-101',
-    sprint_id: 'sp2',
   }),
 
   // --- Tareas eliminadas (papelera) ---

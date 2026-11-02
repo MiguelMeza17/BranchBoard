@@ -624,16 +624,27 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `fecha_inicio` | fecha | se fija al crear el sprint, siempre tiene valor (con o sin `con_fecha`) |
 | `duracion_dias` | entero, nullable | solo si `con_fecha = true` — cuántos días dura, lo pregunta el modal de creación |
 | `fecha_fin` | fecha, nullable | calculada = `fecha_inicio + duracion_dias` al crear el sprint (no se recalcula después); solo si `con_fecha = true`. Es lo que dispara el [Reporte automático de cierre](./PLANNING.md#reportes) al llegar esa fecha |
-| `cerrado` | booleano | `true` cuando el sprint ya terminó — automático al llegar `fecha_fin` (sprints con fecha) o manual (sprints sin fecha, ver abajo) |
-| `fecha_cierre_real` | fecha, nullable | cuándo se cerró de verdad (coincide con `fecha_fin` en sprints con fecha; es la fecha del cierre manual en sprints sin fecha) |
+| `cerrado` | booleano | `true` cuando el sprint ya terminó. Sprint con fecha: automático al llegar `fecha_fin` **solo si todas sus tareas están terminadas** (si no, sigue abierto, ver [Cierre de sprints](#cierre-de-sprints)); o manual por el Administrador, también antes de tiempo. Backlog (sin fecha): manual |
+| `fecha_cierre_real` | fecha, nullable | cuándo se cerró de verdad: `fecha_fin` si se cerró solo, o la fecha del cierre manual (antes de tiempo, después de `fecha_fin` si se había pasado, o la de un backlog) |
 | `creado_por` | email | |
 
 **Comandos Tauri**:
 - `crear_sprint(nombre, con_fecha, duracion_dias?)` — exclusivo Líder/Administrador, mismo criterio que crear/organizar el resto de la estructura del proyecto. Si `con_fecha = true`, `duracion_dias` es obligatorio y el backend calcula `fecha_fin` de una vez.
-- `cerrar_sprint(sprint_id)` — exclusivo Líder/Administrador, **solo aplica a sprints sin fecha** (`con_fecha = false`): como no tienen un punto de cierre automático, alguien tiene que cerrarlo a mano para que dispare el mismo Reporte que un sprint con fecha genera solo. Un sprint con fecha no se puede cerrar manualmente antes de tiempo con este comando (**pendiente por definir**: si hace falta un `cerrar_sprint_anticipado` aparte para ese caso, o si simplemente no se soporta en el MVP).
+- `cerrar_sprint(sprint_id)` — **actualizado (2026-11-02): exclusivo del Administrador** (antes Líder/Administrador; crear sprints y asignarles tareas sigue siendo de Líder/Administrador). Puede cerrar un sprint con fecha antes de su fin y también un backlog: ver [Cierre de sprints](#cierre-de-sprints). Texto anterior (reemplazado): exclusivo Líder/Administrador, **solo aplica a sprints sin fecha** (`con_fecha = false`): como no tienen un punto de cierre automático, alguien tiene que cerrarlo a mano para que dispare el mismo Reporte que un sprint con fecha genera solo. Un sprint con fecha no se puede cerrar manualmente antes de tiempo con este comando (**pendiente por definir**: si hace falta un `cerrar_sprint_anticipado` aparte para ese caso, o si simplemente no se soporta en el MVP).
+
 - `listar_sprints()` — cualquier rol, para poblar la vista de sprints y el selector al crear/editar una tarea.
 
 Asignar una tarea a un sprint es simplemente escribir su `sprint_id` — no hay un comando dedicado, se hace como parte de `crear_tarea`/`editar_tarea`.
+
+### Cierre de sprints
+
+**Definido (2026-11-02):**
+
+- **Solo el Administrador** cierra sprints y backlogs a mano (`cerrar_sprint`), y puede hacerlo **antes de la fecha de fin**. Al cerrarlo se genera su reporte.
+- **Al llegar `fecha_fin`** (lo revisa el proceso de fondo / al abrir la app):
+  - **si todas sus tareas están terminadas**: el sprint **se cierra solo** (`cerrado = true`, `fecha_cierre_real = fecha_fin`) y genera su reporte;
+  - **si no**: se genera **un reporte en esa fecha** (lo hecho y lo que faltó) pero el sprint **sigue abierto** y se continúa trabajando en él. Desde ahí se cierra solo en cuanto se terminen todas sus tareas, o cuando el Administrador lo cierre a mano (con un reporte final).
+- Un backlog (sin fecha) nunca se cierra solo.
 
 ## Modelo de datos: tabla `ediciones_pendientes`
 

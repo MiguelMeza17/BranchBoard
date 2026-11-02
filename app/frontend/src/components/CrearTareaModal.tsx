@@ -28,6 +28,7 @@ export function CrearTareaModal({
   sprints,
   tipoFijo,
   modoForzado,
+  sprintInicial,
 }: {
   onClose: () => void;
   onCreate: (data: NuevaTareaData) => void;
@@ -39,6 +40,8 @@ export function CrearTareaModal({
    * "Tareas generales" solo debe crear generales; el de "Tareas individuales" o dentro de una
    * carpeta solo debe crear específicas — una tarea general no puede contener otra general). */
   modoForzado?: 'general' | 'especifica';
+  /** Sprint elegido de entrada (ej. al crear desde el tablero de un sprint). */
+  sprintInicial?: string;
 }) {
   const modoInicial = tipoFijo ? 'especifica' : modoForzado ?? 'elegir';
   const saltaElegir = modoInicial !== 'elegir';
@@ -51,7 +54,7 @@ export function CrearTareaModal({
   const subUidRef = useRef(0);
   const [conFecha, setConFecha] = useState(false);
   const [fecha, setFecha] = useState('');
-  const [sprintId, setSprintId] = useState<string>('');
+  const [sprintId, setSprintId] = useState<string>(sprintInicial ?? '');
   const [avisoLeido, setAvisoLeido] = useState(false);
 
   const necesitaAviso = rolUsuario === 'Desarrollador' || rolUsuario === 'Tester';
@@ -199,8 +202,14 @@ export function CrearTareaModal({
               </div>
               <div>
                 <label className="label">Sprint</label>
-                <select className="input" value={sprintId} onChange={(e) => setSprintId(e.target.value)}>
-                  <option value="">Sin sprint (backlog)</option>
+                {/* Sin ningún sprint creado no hay nada que elegir: la tarea queda sin sprint (en el backlog). */}
+                <select
+                  className="input disabled:cursor-not-allowed disabled:opacity-60"
+                  value={sprintId}
+                  disabled={sprints.length === 0}
+                  onChange={(e) => setSprintId(e.target.value)}
+                >
+                  <option value="">{sprints.length === 0 ? 'No hay sprints todavía' : 'Sin sprint (backlog)'}</option>
                   {sprints.map((sp) => (
                     <option key={sp.id} value={sp.id}>{sp.nombre}</option>
                   ))}
