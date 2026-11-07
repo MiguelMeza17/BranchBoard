@@ -45,10 +45,8 @@ function SeccionCrearUsuario() {
   const crearUsuario = useStore((s) => s.crearUsuario);
 
   const [correo, setCorreo] = useState('');
-  const [clave, setClave] = useState('');
   const [rol, setRol] = useState<Rol>('Desarrollador');
   const correoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo.trim());
-  const claveOk = clave.length >= 8;
   // Un Líder no puede crear Líderes ni Administradores.
   const rolesAsignables = ROLES.filter((r) => (user.rol === 'Líder' ? r !== 'Líder' && r !== 'Administrador' : true));
 
@@ -65,16 +63,6 @@ function SeccionCrearUsuario() {
             onChange={(e) => setCorreo(e.target.value)}
           />
         </div>
-        <div className="min-w-[12rem] flex-1">
-          <label className="label">Contraseña (mínimo 8 caracteres)</label>
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={clave}
-            onChange={(e) => setClave(e.target.value)}
-          />
-        </div>
         <div>
           <label className="label">Rol</label>
           <select className="input" value={rol} onChange={(e) => setRol(e.target.value as Rol)}>
@@ -83,23 +71,16 @@ function SeccionCrearUsuario() {
         </div>
         <button
           className="btn-primary"
-          disabled={!correoOk || !claveOk}
+          disabled={!correoOk}
           onClick={() => {
-            if (crearUsuario(correo, clave, rol)) {
+            if (crearUsuario(correo, rol)) {
               setCorreo('');
-              setClave('');
             }
           }}
         >
           Crear usuario
         </button>
       </div>
-      {clave && !claveOk && <p className="mt-1 text-[11px] text-red-300">⚠ La contraseña debe tener al menos 8 caracteres.</p>}
-      <p className="mt-2 text-[11px] text-faint">
-        Pásale a la persona su correo y contraseña. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive
-        y el repositorio en Unity VC.
-        {user.rol === 'Líder' && ' Como Líder, el usuario queda pendiente hasta que el Administrador lo confirme.'}
-      </p>
     </Seccion>
   );
 }

@@ -38,6 +38,7 @@ Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + 
 🗓  Planificación
 📈  Avance
 🌳  Branches
+👥  Usuarios
 🔀  Revisión
 📌  Pendientes
 🗑  Papelera
@@ -171,33 +172,43 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 
 **Restaurar backup de la base de datos** (solo Administrador, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos), lógica en [BACKEND.md](./BACKEND.md#copias-de-seguridad-y-restauración-de-la-bd)): pantalla que lista los backups automáticos disponibles con fecha, y al elegir uno pide el mismo doble candado que las demás acciones destructivas (confirmación + palabra literal, pendiente definir cuál). Un Líder o Desarrollador que quiera pedir esto no ve este botón — en su lugar tienen un botón **"Reportar problema con la base de datos"** que envía la notificación a los Administradores con un campo de motivo (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 9).
 
+## Usuarios
+
+**Actualizado (2026-11-07)**: pantalla propia en el menú (👥, debajo de Branches). Antes la gestión de usuarios vivía dentro de Ajustes.
+
+- **Todos los roles** ven la lista de usuarios del proyecto con **nombre y rol**, sin correo ni botones. Click en el nombre → [perfil](#perfil-de-usuario) de esa persona. Tu propia fila lleva "(tú)".
+- **Líder y Administrador** además ven:
+  - Panel plegable **"Crear usuario"**: correo (el de Unity VC) y rol, sin contraseña — la identidad es `cm whoami`. El usuario queda creado al momento (ver [Crear usuario en BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes)). El nombre se toma del correo (`ana.lopez@…` → "Ana Lopez") hasta que la persona lo cambie.
+  - Columna **Correo** y la columna **Rol** como selector para cambiar el rol.
+  - Botones **"Confirmar"** (solo Administrador, solo aparece en filas **sin firma** — p. ej. una fila escrita a mano en el archivo —, etiqueta "Pendiente de confirmar") y **"Eliminar" (con el candado de escribir "eliminar").
+- **Qué puede asignar cada uno** (selector de rol y "Crear usuario"):
+  - Administrador: Líder, Desarrollador, Tester o Colaborador externo, sobre cualquiera menos otro Administrador. No nombra Administradores.
+  - Líder: solo entre Desarrollador, Tester y Colaborador externo, y solo sobre personas con esos roles. No crea ni asciende Líderes.
+  - **Actualizado (2026-11-07)**: el alta o el cambio de rol **queda firmado al momento** por quien lo hace (Administrador o Líder: los Líderes también firman, ver [Firma del rol en BACKEND.md](./BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)). La persona entra y trabaja como siempre, sin esperar al Administrador.
+- **Eliminar**: Administrador a cualquiera; Líder solo a Desarrolladores y Colaboradores externos. **Se deja así por ahora** (el Líder no puede eliminar Testers); revisar más adelante.
+- **Punto azul en el menú**: se enciende cuando hay un usuario nuevo o un cambio de rol que no has visto, y se apaga al entrar a Usuarios. Lo ven todos los roles.
+- Ya **no hay "solicitar ingreso"**: quien no tiene cuenta le pide a un Líder o Administrador que lo cree. Solicitar ingreso queda para la versión 2 (ver issue #57; invitar por correo con código: #58).
+
+## Perfil de usuario
+
+Pantalla `/perfil/:email`, a la que se llega desde el avatar de cualquier responsable, desde la barra superior (tu perfil) o desde la lista de [Usuarios](#usuarios). Muestra nombre, correo, rol, fecha de alta, un calendario de actividad y sus tareas asignadas por estado.
+
+- **"💬 Enviar mensaje"** (en el perfil de otra persona, no en el tuyo): abre un cuadro de texto (máx. 500 caracteres) y el mensaje le llega a esa persona como [notificación](#notificaciones) de tipo `mensaje`. No es un chat: es un aviso suelto, sin respuesta encadenada.
+
 ## Ajustes
 
-Pantalla nueva que agrupa las acciones administrativas — antes estaban definidas sueltas sin un lugar fijo donde vivir. Se organiza en secciones, cada una visible según el rol de quien la abre:
+Pantalla que agrupa las acciones administrativas que quedan. **Actualizado (2026-11-07)**: cada sección es un **panel plegable** (cerrado solo muestra el nombre, con una flecha › que gira al abrirlo). Crear y gestionar usuarios se movió a [Usuarios](#usuarios).
 
-1. **Solicitudes de ingreso** (Líder y Administrador): lista las filas de `solicitudes_ingreso` en estado "pendiente" — nombre, apellido, correo, ID de organización, fecha. Cada fila tiene:
-   - **"Aceptar"**: abre un selector de rol (Administrador/Líder/Desarrollador/Tester — con las mismas restricciones ya definidas, ej. un Líder no puede asignar el rol Líder) y confirma, insertando la fila en `usuarios`; junto con la confirmación, ofrece el botón **"Avisar por correo"** (ver [Solicitud de ingreso vía mailto en BACKEND.md](./BACKEND.md#solicitud-de-ingreso-vía-mailto-resuelto))
-   - **"Rechazar"**: marca la solicitud como rechazada, sin crear usuario
-   - Botón **"Registrar solicitud manual"** (`crear_solicitud_manual`): para cuando alguien recibió la solicitud por el `mailto:` fuera de la app y quiere darle curso — mismos campos que la pantalla de solicitud (nombre, apellido, correo, ID de organización), aparece en esta misma lista como si el solicitante la hubiera enviado
-   - Campo **"Correo de contacto para solicitudes"** (solo Administrador): el email al que apunta el `mailto:` que ve un solicitante externo en la [Pantalla inicial](#autenticación--acceso-al-proyecto)
-   - Las solicitudes ya resueltas (aceptada/rechazada) se pueden ver como historial debajo, colapsado por defecto
+1. **Copias de seguridad**:
+   - Administrador: arriba siempre la fila **"Actual"** (la base de datos en uso, con la fecha de hoy, resaltada y sin botón). Debajo, los backups con fecha y tamaño, cada uno con "Restaurar" y su doble candado. **Al restaurar**, la base actual se guarda primero como una copia más, tal cual estaba (con la nota "Guardada antes de restaurar la copia del …"), y la elegida pasa a ser la "Actual".
+   - Líder/Desarrollador: en vez de la lista, el botón **"Reportar problema con la base de datos"** (campo de motivo → notificación a los Administradores).
 
-2. **Gestión de usuarios** (Líder y Administrador, con matices de permiso): tabla con todos los usuarios actuales del proyecto (email, nombre, rol). Botón "Eliminar" por fila:
-   - Administrador: puede eliminar a cualquiera
-   - Líder: solo puede eliminar Desarrolladores (el botón no aparece sobre otro Líder ni sobre el Administrador)
-   - El Administrador además tiene un botón **"Ascender a Líder"** sobre las filas de Desarrollador/Tester (exclusivo suyo, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos))
-   - Fila con `firma = NULL` (alta reciente vía Líder, ver [Confirmación de usuarios nuevos en BACKEND.md](./BACKEND.md#confirmación-de-usuarios-nuevos-resuelto)): etiqueta **"Pendiente de confirmar"**. El Administrador ve el botón **"Confirmar"** (`confirmar_usuario`); el Líder que la dio de alta la ve en solo lectura con esa misma etiqueta, sin poder confirmarla él mismo.
-   - **Nuevo (validado en el mockup de UI): esta tabla funciona como el "perfil" de cada usuario** — no hay una pantalla de perfil aparte. En cualquier parte de la app donde se muestra el avatar de un responsable (tarjetas del Scrum, Revisión, Testing, etc.), el avatar es un botón: al pasar el mouse muestra el nombre completo (tooltip; en la barra superior no, porque ahí el nombre ya está escrito al lado del avatar), y al hacer clic navega directo aquí (Ajustes → Gestión de usuarios) resaltando brevemente la fila de esa persona. Solo funciona para quien tiene acceso a esta sección (Líder/Administrador) — para Desarrollador/Tester el clic navega igual a Ajustes, pero no encuentran la tabla ahí (ver el aviso de "sin acciones administrativas" más abajo).
+2. **Proyecto** (solo Administrador, en rojo — antes "Zona de peligro"):
+   - **Nombre del proyecto**: campo + "Guardar". Cambia el nombre en BranchBoard (menú lateral y lista de proyectos); el repositorio de Unity VC conserva el suyo.
+   - **Eliminar proyecto**: recuadro rojo con "Eliminar proyecto completo" y el candado de escribir el nombre exacto del proyecto.
+   - Ideas para más adelante: transferir el rol de Administrador, ver el repositorio de Unity VC y la carpeta de Drive/OneDrive del proyecto.
 
-3. **Copias de seguridad**:
-   - Administrador: ve la lista de backups con fecha (`listar_backups()`) y el botón "Restaurar" con su doble candado (ver [Confirmación al arrastrar tareas](#confirmación-al-arrastrar-tareas-drag--drop))
-   - Líder/Desarrollador: en vez de la lista, ven el botón **"Reportar problema con la base de datos"** (campo de motivo → notificación a los Administradores)
-
-4. **Zona de peligro** (solo Administrador): el botón de **"Eliminar proyecto completo"**, con el candado de escribir el nombre exacto del proyecto — separado visualmente del resto (ej. al final, con estilo de advertencia) para que no se confunda con una acción cualquiera
-
-5. **Permisos de subtareas simples** (Líder y Administrador): panel donde se gestiona **quién puede crear subtareas simples** (colaboradores con workspace parcial vía Gluon — sí tienen `cm` instalado, pero nunca el proyecto completo, ver [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)) — a diferencia de un Desarrollador normal, estas personas no pueden hacerlo libremente.
-   - Lista de correos con permiso otorgado, con botón para agregar uno nuevo (nombre + correo) y otro para revocarlo
-   - Al revocar, esa persona deja de poder subir nada la próxima vez que lo intente
+El panel **"Permisos de subtareas simples"** se eliminó: los colaboradores externos ahora son un **rol** ("Colaborador externo"), ver [Roles y permisos](#roles-y-permisos-ui).
 
 ## Animación de inicio (splash)
 
@@ -215,7 +226,7 @@ Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **ani
 
 Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco actual: el flujo de "ingresar a un proyecto existente". "Crear un nuevo proyecto" queda en blanco/stub por ahora, no se implementa todavía.**
 
-**Implementado en el mockup** (`AccesoProyecto.tsx`, se muestra después del splash): Pantalla inicial con el switch de VPN → lista de workspaces (fixture que simula `cm workspace list`, con aviso si la VPN está apagada) o, si no hay ninguno, "Clonar proyecto" con carpeta de destino y barra de progreso → según el workspace y el correo detectado: entra directo (registrado y firmado), "pendiente de confirmación" (`firma = NULL`), "no registrado" → formulario de solicitud que abre el `mailto:` prellenado hacia el correo de contacto, o "inicializar" (workspace sin `.db`, queda como Administrador). Como todavía no hay backend, **no actúa como gate real**: debajo de la tarjeta hay controles de demo para elegir qué correo devuelve `cm whoami` y un botón **"Saltar al tablero"** siempre visible; desde el Topbar, "🚪 Pantallas de acceso" vuelve a la Pantalla inicial.
+**Implementado en el mockup** (`AccesoProyecto.tsx`, se muestra después del splash): Pantalla inicial con el switch de VPN → lista de workspaces (fixture que simula `cm workspace list`, con aviso si la VPN está apagada) o, si no hay ninguno, "Clonar proyecto" con carpeta de destino y barra de progreso → según el workspace y el correo detectado: entra directo (registrado y firmado), "pendiente de confirmación" (`firma = NULL`), "no registrado" (aviso de pedirle a un Líder o Administrador que le cree un usuario), o "inicializar" (workspace sin `.db`, queda como Administrador). Como todavía no hay backend, **no actúa como gate real**: debajo de la tarjeta hay controles de demo para elegir qué correo devuelve `cm whoami` y un botón **"Saltar al tablero"** siempre visible; desde el Topbar, "🚪 Pantallas de acceso" vuelve a la Pantalla inicial.
 
 1. **Pantalla inicial**: incluye un **switch de "Conexión VPN" (Cloudflare WARP)**, visible siempre en esta pantalla — enciende/apaga la VPN desde la propia app (ver [Conexión VPN (Cloudflare WARP) en BACKEND.md](./BACKEND.md#conexión-vpn-cloudflare-warp)). Necesario porque en redes como la de la universidad, `cm` no conecta sin la VPN activa; el switch evita que el usuario tenga que ir a buscar el ícono de WARP fuera de la app. Si `warp-cli` no está instalado en la máquina, el switch aparece deshabilitado con instrucciones para instalarlo.
 
@@ -229,22 +240,20 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
      - La app revisa si ese proyecto **coincide con una base de datos de BranchBoard** ya existente (el `.db` asociado a ese workspace):
        - **Coincide, registrado y firmado** → corre `cm whoami` para identificar al usuario, busca su correo en la tabla de usuarios de ese proyecto, y si está registrado con `firma` válida, entra mostrando todo el contenido (tableros, tareas, etc.) con el rol asignado
        - **Registrado pero sin confirmar** (`firma = NULL`, ver [Confirmación de usuarios nuevos en BACKEND.md](./BACKEND.md#confirmación-de-usuarios-nuevos-resuelto)) → pantalla mostrando "tu cuenta fue agregada por [quien la dio de alta], está pendiente de que el Administrador la confirme" — sin botón de solicitar ingreso, ya está en proceso
-       - **El correo no está registrado en ese proyecto** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía", con botón "Solicitar ingreso a una organización" (punto 2)
+       - **El correo no está registrado en ese proyecto** → pantalla mostrando "tu cuenta (correo detectado) no está registrada en este proyecto todavía" y que le pida a un Líder o Administrador que le cree un usuario (ver [Usuarios](#usuarios)). **Actualizado (2026-11-07)**: ya no hay botón de solicitar ingreso (ver issue #57; invitar por correo con código: #58).
        - **No coincide con ningún `.db` de BranchBoard** (proyecto de Unity VC que nunca se ha configurado con BranchBoard) → **actualizado (2026-11-02): se detecta y se configura solo**, sin botón de inicializar ni etiqueta "sin BranchBoard". El Administrador es siempre el **dueño del repositorio en Unity VC**: si quien lo abre es el dueño, se configura en ese momento y entra como Administrador; si es otra persona, ve el aviso "Este proyecto todavía no usa BranchBoard: se configura solo cuando lo abra su dueño". (Texto anterior:) se ofrecía **inicializarlo ahí mismo**. Quien lo inicializa queda asignado automáticamente como **Administrador** de ese proyecto (**corregido**: antes era Líder — ver [Bootstrapping en BACKEND.md](./BACKEND.md#identidad-de-usuario), necesario para que exista alguien capaz de generar las llaves de firma y asignar los demás roles). Mismo criterio aplica a "Crear un nuevo proyecto" cuando se implemente (sigue siendo stub por ahora).
 
 **Panel "Abrir en Unity"**: una vez dentro de un proyecto cargado (después de todo el flujo de la Pantalla inicial), aparece de forma general dentro de la app — no escondido en Ajustes — un botón para lanzar el Editor de Unity apuntando a la carpeta del workspace local. Mismo patrón de invocar un ejecutable externo ya usado para `cm` y `warp-cli` (ver [Comando "Abrir en Unity" en BACKEND.md](./BACKEND.md#comando-abrir-en-unity)). Solo visible para roles con workspace local (Administrador/Líder/Desarrollador/Tester) — no aplica a colaboradores de subtareas simples. **Definido (2026-10-31, mockup)**: el botón abre un panel **"¿Qué tarea vas a trabajar en Unity?"** con el nombre y rol de quien lo usa, la rama en la que está ahora el workspace (**nunca `dev`**: trabajar ahí metería cambios directo en la rama de integración; si no está en ninguna tarea, un aviso dice "No estás en ninguna tarea") y la lista de **sus tareas abiertas** (asignadas a él, no terminadas) con su estado, título y rama (una subtarea con check-in directo usa la rama de su padre). Click en una tarea: el workspace cambia a esa rama (`cm switch`) y se abre el Editor de Unity parado en ella. En el mockup es simulado: se guarda la rama del workspace en el estado de la app y se muestra un aviso.
 
-2. **Pantalla de solicitud de ingreso a una organización** (**corregido** — ver [Solicitud de ingreso vía mailto en BACKEND.md](./BACKEND.md#solicitud-de-ingreso-vía-mailto-resuelto)):
-   - Campos: Nombre, Apellido, Correo (idealmente pre-rellenado con el correo detectado por `cm whoami`, ya que debe ser el mismo con el que luego se valide), ID de la organización
-   - Al enviar, la app **no** guarda nada por su cuenta (quien solicita todavía no tiene acceso al proyecto) — abre un enlace `mailto:` con esos datos ya escritos en el cuerpo, dirigido al correo de contacto que el Administrador configuró en Ajustes. El solicitante manda ese correo desde su propio cliente.
-   - Un Líder/Administrador que reciba el correo y decida darle curso lo registra dentro de BranchBoard (`crear_solicitud_manual`), y de ahí sigue el flujo normal de [Solicitudes de ingreso](#ajustes) (aceptar/rechazar).
-   - Si la solicitud es aceptada, el Admin/Líder asocia ese correo a un rol en la tabla de usuarios — no se genera ni se envía ninguna clave/contraseña. Con un botón **"Avisar por correo"** se abre otro `mailto:` prellenado hacia el solicitante (lo manda quien aprobó, desde su propio cliente) — la próxima vez que la persona abra BranchBoard, `cm whoami` ya la identifica y entra directo.
+2. **Pantalla de solicitud de ingreso**: **quitada (2026-11-07)**, queda para la versión 2 (ver issue #57; invitar por correo con código: #58). El alta la hace un Líder o Administrador desde [Usuarios](#usuarios).
+
+**"Cargar proyecto"** (menú de proyectos, clic en el logo, encima de "Nuevo proyecto"): lista los proyectos del servidor de Unity VC a los que tienes acceso y que aún no están en este equipo, con la etiqueta "Con tareas" (ya usan BranchBoard: llegan con sus tareas) o "Sin tareas". Al elegir uno se va al paso "Clonar proyecto".
 
 ## Roles y permisos (UI)
 
-Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 4 roles confirmados (Administrador, Líder, Desarrollador, Tester). La UI debe mostrar/ocultar acciones y pantallas según el rol del usuario logueado (ej. "eliminar proyecto" solo visible para Administrador; "aprobar solicitud de ingreso" visible para Líder y Administrador). **Corregido**: el Desarrollador ya no "recibe autorización" para modificar — es al revés, él edita directamente y el Líder/Admin recibe la notificación para confirmar o revertir (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 4); el Desarrollador solo recibe la notificación del resultado final (aprobado o rechazado).
+Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 5 roles (Administrador, Líder, Desarrollador, Tester y **Colaborador externo**, nuevo 2026-11-07 — reemplaza la lista aparte de colaboradores con permiso de subtareas simples). La UI debe mostrar/ocultar acciones y pantallas según el rol del usuario logueado (ej. "eliminar proyecto" solo visible para Administrador; "crear usuario" visible para Líder y Administrador). **Corregido**: el Desarrollador ya no "recibe autorización" para modificar — es al revés, él edita directamente y el Líder/Admin recibe la notificación para confirmar o revertir (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 4); el Desarrollador solo recibe la notificación del resultado final (aprobado o rechazado).
 
-Cuando un Desarrollador o Tester crea una tarea, la interfaz debe dejar claro que está **pendiente de aprobación** (ej. una etiqueta o color distinto en la tarjeta, sin ocultarla ni impedir tomarla) hasta que un Líder/Administrador la apruebe desde [Pendientes](#alcance) — ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
+Cuando un Desarrollador, Tester o Colaborador externo crea una tarea, la interfaz debe dejar claro que está **pendiente de aprobación** (ej. una etiqueta o color distinto en la tarjeta, sin ocultarla ni impedir tomarla) hasta que un Líder/Administrador la apruebe desde [Pendientes](#alcance) — ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
 
 **Nuevo**: cuando un Desarrollador edita una tarea propia ya aprobada (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 4), la tarjeta muestra una **sombra amarilla** debajo mientras la edición sigue sin confirmar por un Líder/Administrador — distinto de la etiqueta de "pendiente de aprobación" de una tarea recién creada.
 
@@ -258,7 +267,7 @@ Cuando un Desarrollador o Tester crea una tarea, la interfaz debe dejar claro qu
 4. **Líder/Administrador** (**corregido, flujo invertido** — ver punto 4 en [BACKEND.md](./BACKEND.md#notificaciones)): "[Desarrollador] editó [tarea], tiene una edición pendiente de tu revisión" — con acción directa de aprobar/rechazar desde la misma notificación (`aprobar_modificacion` / `rechazar_modificacion`); también aparece listada en [Pendientes](#alcance) con la etiqueta "Edición". El Desarrollador no recibe esta notificación de entrada — solo si `rechazar_modificacion` revierte su cambio (con el motivo incluido); si se aprueba, la edición ya estaba aplicada desde que la hizo, solo desaparece la sombra amarilla
 5. **Líder/Administrador**: "la tarea [tarea] pasó a revisión"
 6. **Líder**: "se te asignó revisar [tarea]" (cuando el Administrador usa `asignar_revision`, ver [BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev))
-7. **Quien solicitó ingreso** (**corregido**): no llega como notificación in-app — hasta ese momento la persona no tiene acceso a BranchBoard para verla. Llega como el `mailto:` de "Avisar por correo" (ver [Solicitud de ingreso vía mailto en BACKEND.md](./BACKEND.md#solicitud-de-ingreso-vía-mailto-resuelto)), enviado por quien aprobó desde su propio cliente de correo
+7. **Mensaje de un compañero** (nuevo 2026-11-07): "Mensaje de [nombre]" con el texto, enviado desde su [perfil](#perfil-de-usuario). Ícono 💬.
 8. **Desarrollador**: recordatorio de inactividad — "llevas X días sin actividad en [tarea]" (generado automáticamente por el backend, sin que nadie lo envíe manualmente)
 9. **Todos los Administradores**: "[Líder/Desarrollador] solicita revisar la base de datos: [motivo]" (ver `solicitar_accion_bd` en [BACKEND.md](./BACKEND.md#notificaciones), punto 9)
 10. **Dueño de la rama destino**: "[nombre escrito por Líder/Admin]: [descripción escrita]" — cuando un Líder/Administrador mueve cambios hacia su rama (ver [Mover cambios en BACKEND.md](./BACKEND.md#mover-cambios-entre-ramas), punto 10). A diferencia de las demás, el contenido de esta notificación no lo arma el sistema solo — lo escribe quien mueve los cambios.
@@ -274,4 +283,3 @@ Cuando un Desarrollador o Tester crea una tarea, la interfaz debe dejar claro qu
 - Diseño de la vista de sprint (cómo se agrupan tareas dentro de un sprint, con y sin fechas)
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
 - Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada (¿deshabilitado? ¿mensaje "próximamente"?)
-- Validaciones del formulario de solicitud de ingreso (formato de correo, ID de organización válido, y que el correo puesto coincida con el que da `cm whoami`)

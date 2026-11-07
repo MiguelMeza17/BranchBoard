@@ -37,3 +37,24 @@ Explicaciones que el agente debería poder dar (salen de lo conversado al diseñ
 - **¿Por qué unas líneas son más gruesas?** Entre más arriba en el árbol, más cambios trae la conexión: `main`–`main` es la más gruesa, luego `main`→`dev`, luego `dev`→tarea, y cada nivel de subtarea más delgado.
 - **¿Por qué algunas líneas van punteadas y moviéndose?** Son las de tareas "En producción": alguien está trabajando en ellas ahora mismo.
 - **¿Por qué en los recuadros solo sale el número de la tarea?** Es corto, nunca se corta y su forma (`T-101` → `T-101-1`) ya dice quién es hija de quién. El nombre completo, el título y el estado salen al pasar el mouse.
+
+### Usuarios
+
+Textos que estaban en pantalla y se quitaron:
+
+- **Crear usuario**: "Pásale a la persona su correo. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive y el repositorio en Unity VC."
+
+Explicaciones que el agente debería poder dar:
+
+- **¿Por qué un usuario dice "Pendiente de confirmar"?** Su fila no tiene firma (por ejemplo, alguien la escribió a mano en el archivo). Lo que crean o cambian el Administrador o un Líder ya queda firmado; una fila sin firma no entra hasta que el Administrador la confirme.
+- **Creé el usuario pero no puede abrir el proyecto.** Crear el usuario no le da acceso a la carpeta de Drive/OneDrive ni al repositorio de Unity VC: eso se comparte aparte.
+- **¿Qué es el punto azul en Usuarios?** Hay un usuario nuevo o un cambio de rol que no has visto; se apaga al entrar.
+
+### Ajustes → Proyecto
+
+- **Nombre del proyecto**: "Solo cambia el nombre en BranchBoard; el repositorio de Unity VC conserva el suyo."
+
+### Perfil
+
+- **Enviar mensaje**: "Le llega como notificación en la campana 🔔." No es un chat: es un aviso suelto.
+

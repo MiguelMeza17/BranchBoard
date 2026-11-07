@@ -45,7 +45,7 @@ Regla adicional: una rama hija debe mergearse a su rama padre antes de que la ra
 
 - **Sí se sincroniza con Unity Version Control**: técnicamente es una subtarea normal (rama hija). La diferencia es solo de experiencia: el colaborador no técnico nunca ve ni entiende que hay una rama detrás; solo sube su archivo y la app crea la rama y hace el checkin por él.
 - **Corregido**: sí necesita Unity Version Control instalado (liviano, mismo instalador que todos), pero usa un **workspace parcial** (modo Gluon, `cm partial`) — nunca descarga el proyecto completo, solo la carpeta de su archivo. Ver [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples). Su identidad es `cm whoami`, igual que todos los demás roles — no hay ninguna cuenta de servicio ni mecanismo aparte.
-- **Requiere permiso**: a diferencia de un Desarrollador normal, un colaborador no especializado necesita que un Líder/Administrador le otorgue el permiso de crear este tipo de subtarea, desde un panel en [Ajustes](./FRONTEND.md#ajustes) — no puede hacerlo libremente por su cuenta.
+- **Requiere permiso**: a diferencia de un Desarrollador normal, un colaborador no especializado necesita que un Líder/Administrador le dé el rol **Colaborador externo** desde [Usuarios](./FRONTEND.md#usuarios) (actualizado 2026-11-07: antes era un panel de permisos en Ajustes).
 - Un rechazo no borra la subtarea: simplemente se pide una nueva implementación (nuevos checkins sobre esa misma rama hija) y, cuando se aprueba, se mergea hacia la tarea general — igual que cualquier merge de rama.
 
 ### Navegación tipo "explorador de carpetas" en el Tablero Scrum
@@ -130,7 +130,7 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 8. **"Papelera"** — **nuevo**: lista las tareas eliminadas (soft-delete), con eliminación definitiva exclusiva de Líder/Administrador. Va justo después de "Pendientes" y antes de "Categorías". Ver detalle en [Papelera en BACKEND.md](./BACKEND.md#papelera).
 9. **"Categorías"** — **nuevo**: vista tipo explorador de carpetas, aparte de la Lista de tareas (que es plana). Son **solo carpetas visuales para organizar/filtrar, nunca ramas** — abrir una carpeta simplemente filtra las tareas de ese tipo. Carpetas: **Scripting, Modelado 3D, Modelado 2D, Animación, Imagen, UI/Interfaz, Audio, Música, Video, Testing, Corrección, Ajustes**.
 10. **"Reportes"** — reporte automático de cierre de sprint (con fecha), visible para todos los roles. Ver detalle en [Reportes](#reportes).
-11. **"Ajustes"** — **nuevo**: agrupa acciones administrativas que antes estaban definidas sueltas (gestión de usuarios, solicitudes de ingreso, backups, eliminar proyecto). Ver detalle en [Ajustes](./FRONTEND.md#ajustes).
+11. **"Ajustes"** — **nuevo**: agrupa acciones administrativas que antes estaban definidas sueltas (backups y el panel Proyecto: cambiar nombre y eliminar). **Actualizado (2026-11-07)**: la gestión de usuarios pasó a su propia pantalla [Usuarios](./FRONTEND.md#usuarios), y las solicitudes de ingreso a la versión 2 (issue #57). Ver detalle en [Ajustes](./FRONTEND.md#ajustes).
 
 ## Pendiente por definir
 
@@ -142,4 +142,4 @@ Equipo pequeño de desarrollo de un proyecto Unity.
 - **Resuelto**: el orden de merge de abajo hacia arriba se valida en el backend antes de ejecutar el merge — ver [Flujo de revisión y merge a dev en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)
 - **Resuelto**: se bloquea antes de crear la rama — ver [Protección de ramas en BACKEND.md](./BACKEND.md#protección-de-ramas-main-y-dev)
 - Si una subtarea simple puede tener más de un archivo adjunto o es siempre 1 subtarea = 1 archivo
-- **Resuelto**: el permiso es **por persona, no por tarea** — un colaborador con permiso otorgado (ver [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes)) puede crear su subtarea dentro de **cualquier** tarea general existente, no hay una lista de tareas específicas habilitadas. Ya estaba decidido por el diseño de ese panel (solo lista correos con permiso, sin granularidad por tarea), faltaba propagarlo aquí.
+- **Resuelto**: el permiso es **por persona, no por tarea** — un usuario con rol Colaborador externo (ver [Usuarios en FRONTEND.md](./FRONTEND.md#usuarios)) puede crear su subtarea dentro de **cualquier** tarea general existente, no hay una lista de tareas específicas habilitadas. Ya estaba decidido por el diseño de ese panel (solo lista correos con permiso, sin granularidad por tarea), faltaba propagarlo aquí.

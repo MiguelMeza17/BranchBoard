@@ -332,13 +332,13 @@ interface State {
   marcarTodasLeidas: (email: string) => void;
 
   // usuarios / ajustes
-  /** Crea el usuario con su correo, contraseña y rol. Devuelve false si ya existe. */
-  crearUsuario: (correo: string, clave: string, rol: Rol) => boolean;
+  /** Crea el usuario con su correo y rol (la identidad es `cm whoami`, sin contraseña). Devuelve false si ya existe. */
+  crearUsuario: (correo: string, rol: Rol) => boolean;
   confirmarUsuario: (email: string) => void;
   /** Antes de restaurar, el estado actual se guarda como una copia más, tal cual estaba. */
   restaurarBackup: (id: string) => void;
   eliminarUsuario: (email: string) => void;
-  /** Cambia el rol. Si lo cambia un Líder, queda pendiente hasta que el Administrador lo firme. */
+  /** Cambia el rol; lo firma quien lo cambia (Administrador o Líder). */
   cambiarRol: (email: string, rol: Rol) => void;
   /** Mensaje libre a un compañero: le llega como notificación. */
   enviarMensaje: (para: string, texto: string) => void;
@@ -1102,34 +1102,32 @@ export const useStore = create<State>((set, get) => {
       notificaciones: s.notificaciones.map((n) => (n.para === email ? { ...n, leida: true } : n)),
     })),
 
-  crearUsuario: (correo, clave, rol) => {
+  crearUsuario: (correo, rol) => {
     const s = get();
     const c = correo.trim().toLowerCase();
     if (s.usuarios.some((u) => u.email.toLowerCase() === c)) {
       s.showToast('Ya existe un usuario con ese correo', 'danger');
       return false;
     }
-    // La contraseña no se guarda en el mockup; en el backend se guarda solo su hash.
-    void clave;
     // El nombre sale del correo (ana.lopez@… → Ana Lopez) hasta que la persona lo cambie.
     const [nombre = '', apellido = ''] = c
       .split('@')[0]
       .split(/[._-]+/)
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1));
-    // Si lo crea el Administrador, la firma del rol va de una vez; si lo crea un Líder, queda pendiente
-    // hasta que el Administrador lo confirme (solo él tiene la llave para firmar).
-    const esAdmin = s.currentUser().rol === 'Administrador';
+    // Lo firma quien lo crea: el Administrador o un Líder (cada Líder tiene su propia llave, certificada
+    // por el Administrador). Así la persona entra a trabajar de una vez.
+    const firmante = s.currentUser();
     const nuevo: Usuario = {
       email: c,
       nombre,
       apellido,
       rol,
       fecha_alta: today(),
-      firma: esAdmin ? 'firma-admin' : null,
-      firmado_en: esAdmin ? today() : null,
+      firma: `firma-${firmante.email}`,
+      firmado_en: today(),
     };
     set({ usuarios: [...s.usuarios, nuevo], hayNovedadUsuarios: true });
-    s.showToast(esAdmin ? `Usuario ${c} creado como ${rol}` : `Usuario ${c} creado — falta que el Administrador lo confirme`);
+    s.showToast(`Usuario ${c} creado como ${rol}`);
     return true;
   },
 
@@ -1197,16 +1195,16 @@ export const useStore = create<State>((set, get) => {
 
   cambiarRol: (email, rol) => {
     const s = get();
-    const esAdmin = s.currentUser().rol === 'Administrador';
+    const firmante = s.currentUser();
     set({
       usuarios: s.usuarios.map((u) =>
         u.email === email
-          ? { ...u, rol, firma: esAdmin ? 'firma-admin' : null, firmado_en: esAdmin ? today() : null }
+          ? { ...u, rol, firma: `firma-${firmante.email}`, firmado_en: today() }
           : u
       ),
       hayNovedadUsuarios: true,
     });
-    s.showToast(esAdmin ? `Rol cambiado a ${rol}` : `Rol cambiado a ${rol} — falta que el Administrador lo confirme`);
+    s.showToast(`Rol cambiado a ${rol}`);
   },
 
   crearSprint: (nombre, descripcion, con_fecha, duracion_dias) => {

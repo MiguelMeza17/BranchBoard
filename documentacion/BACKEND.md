@@ -60,7 +60,7 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
 - **Mitigación barata añadida (no requiere red ni credenciales)**: al aplicar un evento de `ops/`, cada máquina compara el `timestamp` del evento contra **su propio reloj local** (el de quien está leyendo, no el de quien lo escribió). Si el evento viene marcado más de **5 minutos en el futuro** respecto al reloj de la máquina que lo procesa, se trata como sospechoso: se aplica igual (para no bloquear el flujo), pero se reordena usando **la hora de llegada a `ops/` en vez del timestamp declarado**, y se registra un aviso interno (no notificación al equipo, solo log). Esto no elimina el riesgo — todas las máquinas confían en su propio reloj, que también podría estar mal por error genuino — pero acota cuánta ventaja puede sacar alguien adelantando su reloj: ya no es ilimitada, queda topada a la tolerancia de 5 minutos frente al reloj de las demás máquinas del equipo.
 
 **Integridad de los eventos — qué está firmado y qué no (resuelto)**: un evento de `ops/` es un JSON plano con `usuario` **autodeclarado** — nada impide, en principio, que alguien con acceso de escritura a la carpeta (todo el equipo, por diseño) suelte un evento suplantando a otro miembro. Distinguir dos niveles de gravedad en vez de tratar esto como un solo problema:
-- **Eventos que solo un Administrador puede emitir legítimamente** (`asignar_rol`, `ascender_a_lider`, `cambiar_rol`, `confirmar_usuario`, `compactar_eventos`, ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)): **se extiende la misma firma Ed25519** que ya protege el campo `rol` de `usuarios` a estos eventos completos — el evento incluye un campo `firma_admin` (firma del JSON del evento con la llave privada del Administrador), y cada máquina la verifica contra la llave pública embebida antes de aplicarlo; si no coincide o falta, el evento se descarta sin aplicar (no se degrada, se ignora — a diferencia de una fila de `usuarios` inconsistente, aquí no hay "rol mínimo" al que degradar un evento). Esto cierra el caso más grave: nadie puede forjar una elevación de rol ni una acción administrativa aunque tenga acceso de escritura a `ops/`.
+- **Eventos que solo un Administrador puede emitir legítimamente** (`asignar_rol`, `cambiar_rol`, `confirmar_usuario`, `compactar_eventos`, ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)): **se extiende la misma firma Ed25519** que ya protege el campo `rol` de `usuarios` a estos eventos completos — el evento incluye un campo `firma_admin` (firma del JSON del evento con la llave privada del Administrador), y cada máquina la verifica contra la llave pública embebida antes de aplicarlo; si no coincide o falta, el evento se descarta sin aplicar (no se degrada, se ignora — a diferencia de una fila de `usuarios` inconsistente, aquí no hay "rol mínimo" al que degradar un evento). Esto cierra el caso más grave: nadie puede forjar una elevación de rol ni una acción administrativa aunque tenga acceso de escritura a `ops/`.
 - **Eventos del día a día de un miembro regular** (`tomar_tarea`, `cambiar_estado`, `eliminar_tarea` sobre su propio trabajo, etc.): **quedan sin firmar, riesgo aceptado**. Firmar esto requeriría un par de llaves por cada persona del equipo (no solo el Administrador) — una PKI completa, desproporcionada para 3 personas de confianza. Además, quien tiene acceso de escritura a la carpeta compartida por diseño ya puede, siendo honesto, borrar o alterar tareas de cualquiera desde la propia app sin necesitar forjar nada — la firma no cambia esa exposición de fondo, que ya depende por completo de la confianza del equipo (mismo criterio que ya aceptan otros riesgos residuales de esta arquitectura, ver el de rollback de `.db` más abajo).
 
 **Intervalo de escaneo de `ops/` (resuelto)**: tres disparadores, no uno solo —
@@ -75,7 +75,7 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
 - **Riesgo aceptado**: una máquina que estuvo offline por más de 30 días y no alcanzó a aplicar eventos ya purgados los pierde (su estado diverge del snapshot en esa franja). Mitigación: la UI de `compactar_eventos()` exige confirmar que todo el equipo sincronizó recientemente antes de habilitar el botón (mismo patrón de doble candado que otras acciones destructivas del Administrador), y no corre automáticamente.
 
 **Qué comandos Tauri pasan por `ops/` y cuáles quedan fuera (resuelto)**:
-- **Sí migran a eventos** (mutan estado compartido entre el equipo): `crear_tarea`, `editar_tarea`, `editar_tarea_con_autorizacion`, `tomar_tarea`, `asignar_tarea`, `mandar_a_revision`, `tarea_cerrada_por_deteccion`, `aprobar_tarea`, `editar_y_aprobar_tarea`, `advertir_tarea_pendiente`, `rechazar_tarea`, `eliminar_tarea`, `eliminar_definitivamente`, `aprobar_modificacion`, `rechazar_modificacion`, `autorizar_merge` / `autorizar_merge_subtarea`, `asignar_revision`, `crear_reporte_testing`, `mover_cambios_entre_ramas`, `solicitar_accion_bd`, `crear_solicitud_manual`, `aceptar_solicitud`, `rechazar_solicitud`, `ascender_a_lider`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `asignar_rol`, `agregar_colaborador_externo`, `revocar_colaborador_externo`, `actualizar_configuracion_proyecto`, `crear_sprint`, `cerrar_sprint` — cualquier comando que escriba en `tareas`, `usuarios`, `solicitudes_ingreso`, `ediciones_pendientes`, `reportes_testing`, `notificaciones` (la fila de notificación misma), `sprints`, `colaboradores_externos` o `configuracion_proyecto`.
+- **Sí migran a eventos** (mutan estado compartido entre el equipo): `crear_tarea`, `editar_tarea`, `editar_tarea_con_autorizacion`, `tomar_tarea`, `asignar_tarea`, `mandar_a_revision`, `tarea_cerrada_por_deteccion`, `aprobar_tarea`, `editar_y_aprobar_tarea`, `advertir_tarea_pendiente`, `rechazar_tarea`, `eliminar_tarea`, `eliminar_definitivamente`, `aprobar_modificacion`, `rechazar_modificacion`, `autorizar_merge` / `autorizar_merge_subtarea`, `asignar_revision`, `crear_reporte_testing`, `mover_cambios_entre_ramas`, `solicitar_accion_bd`, `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `asignar_rol`, `renombrar_proyecto`, `enviar_mensaje`, `restaurar_backup`, `actualizar_configuracion_proyecto`, `crear_sprint`, `cerrar_sprint` — cualquier comando que escriba en `tareas`, `usuarios`, `ediciones_pendientes`, `reportes_testing`, `notificaciones` (la fila de notificación misma), `sprints`, `colaboradores_externos` o `configuracion_proyecto`.
 - **Quedan fuera, son locales por máquina/usuario** (no tienen por qué ser iguales entre todo el equipo):
   - `marcar_leida(notificacion_id)` — el estado de "leída" es personal de quien la lee en su propia máquina; si la misma persona usa dos máquinas, no es grave que difiera.
   - `restaurar_backup(nombre_archivo)` y `listar_backups()` — actúan sobre backups locales de esa máquina (ver [Copias de seguridad](#copias-de-seguridad-y-restauración-de-la-bd)); restaurar un backup ya vuelve a dejar esa máquina desincronizada del resto a propósito (caso de emergencia), no algo que deba replicarse como evento normal.
@@ -409,7 +409,7 @@ Se agrega un **switch de encender/apagar WARP desde la pantalla inicial** de Bra
 
 ## Roles y permisos
 
-Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 4 roles confirmados (Administrador, Líder, Desarrollador, Tester). El modelo de datos de usuario necesita un campo de rol asociado al email de `cm whoami` (ver Identidad de usuario), y cada comando Tauri sensible debe validar permisos en el backend (no solo ocultar en la UI).
+Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 5 roles (Administrador, Líder, Desarrollador, Tester y Colaborador externo — nuevo 2026-11-07, ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo)). El modelo de datos de usuario necesita un campo de rol asociado al email de `cm whoami` (ver Identidad de usuario), y cada comando Tauri sensible debe validar permisos en el backend (no solo ocultar en la UI).
 
 **Comando faltante, ahora definido**: la fila "Modificar tareas de otros" de la matriz no tenía comando Tauri asociado — ver `editar_tarea_ajena` en [Notificaciones, punto 4](#notificaciones).
 
@@ -417,7 +417,7 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 
 Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea relacionada (opcional), leída/no leída, fecha. Casi todos estos casos disparan mensaje **automático**, sin acción manual de quien los envía más allá de la acción que los origina (aprobar, rechazar, asignar, etc.) — las excepciones son el punto 10 (mover cambios entre ramas de distintas personas) y el punto 12 (advertir sobre una tarea pendiente), que sí piden contenido escrito a mano.
 
-**Aclarado**: todas las notificaciones de esta lista son **100% internas a la app** (campana + tabla SQLite) — no se manda ningún correo real por revisión, tareas o permisos. El **único** caso que usa correo de verdad es la solicitud de ingreso a la organización (ver [Solicitud de ingreso vía mailto](#solicitud-de-ingreso-vía-mailto-resuelto)), porque ahí la persona todavía no tiene acceso a BranchBoard para ver una notificación in-app — y ese correo lo manda el cliente de correo de cada quien vía enlaces `mailto:`, nunca la app directamente, para no necesitar un servicio de envío propio.
+**Aclarado**: todas las notificaciones de esta lista son **100% internas a la app** (campana + tabla SQLite) — no se manda ningún correo real por revisión, tareas o permisos. **Actualizado (2026-11-07)**: ya no hay ningún caso que use correo (solicitar ingreso por `mailto:` pasó a la versión 2, issue #57).
 
 1. **Tarea creada por un Desarrollador o Tester esperando aprobación** — destinatarios: todos los usuarios con rol Líder o Administrador (ver [Pendientes en PLANNING.md](./PLANNING.md#pendientes)). También queda listada en el apartado Pendientes, no solo como notificación de campana. Se resuelve con un comando Tauri `aprobar_tarea(tarea_id)` que solo Líder/Admin puede invocar (validación de rol en backend), y que solo pone `pendiente_aprobacion = false` — **no toca el campo `estado`**, que ya venía avanzando por su cuenta desde que se creó la tarea (la tarea nunca estuvo bloqueada: se podía tomar y trabajar desde el primer momento, solo no se podía mandar a revisión). **Nuevo — 4 acciones posibles** sobre esta tarea, todas exclusivas de Líder/Admin (ver [Pendientes en PLANNING.md](./PLANNING.md#pendientes)):
    - `aprobar_tarea(tarea_id)` — tal como está (ya descrito arriba).
@@ -434,7 +434,7 @@ Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea rel
    - **Comando faltante, ahora definido**: la matriz de [Roles y permisos en SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos) ya listaba "Modificar tareas de otros ✅ Administrador/Líder", pero no existía un comando Tauri para eso — todo lo anterior en este punto 4 es para el **dueño** editando su propia tarea. Se agrega **`editar_tarea_ajena(tarea_id, campos_editados)`**, exclusivo Administrador/Líder, válido sobre **cualquier tarea sin importar quién sea el dueño**: aplica los cambios de inmediato y **sin pasar por `ediciones_pendientes`** (a diferencia de `editar_tarea_con_autorizacion`) — al ser quien normalmente aprobaría la edición, no tiene sentido que se autoconfirme a sí mismo. Genera la notificación #14 al dueño de la tarea.
 5. **Tarea llega a "en revisión"** — destinatarios: todos los usuarios con rol Líder o Administrador (no solo que aparezca en el apartado [Revisión](./PLANNING.md#revisión) — también genera notificación en la campana).
 6. **Revisión asignada a un Líder específico** — destinatario: ese Líder. Generada por `asignar_revision(tarea_id, email_lider)` (solo Administrador). Mensaje tipo "se te asignó revisar [tarea]".
-7. **Solicitud de ingreso a la organización aprobada** — destinatario: quien la solicitó, pero solo aplica si ya tiene acceso in-app; el aviso real al aceptarse es el `mailto:` de "Avisar por correo" (ver [Solicitud de ingreso vía mailto](#solicitud-de-ingreso-vía-mailto-resuelto)), ya que hasta ese momento la persona no tiene forma de ver notificaciones dentro de BranchBoard.
+7. **Mensaje de un compañero** (nuevo 2026-11-07) — destinatario: la persona elegida en `enviar_mensaje`. Tipo `mensaje`, título "Mensaje de [nombre]", cuerpo = el texto. No es un chat; viaja como cualquier otra notificación.
 8. **Recordatorio de inactividad en Unity Version Control**: si una tarea con rama (Scripting u otra tarea general) no tiene **changesets nuevos** en un tiempo determinado, se le manda al Desarrollador dueño un recordatorio del tipo "llevas X días sin actividad en [tarea], recuerda [qué le toca hacer]". Se apoya en el mismo mecanismo de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) (`cm log br:/<rama> --xml`), pero a diferencia del polling manual por "Refrescar", **este caso sí necesita revisarse solo, sin que nadie le dé clic a nada** — implica correr esta revisión con un temporizador mientras la app está abierta (ej. cada N horas), no solo bajo demanda. Pendiente definir: el umbral de tiempo exacto (¿3 días? ¿configurable por Líder/Admin?), y si esto corre también para subtareas simples.
 9. **Solicitud de acción sobre la base de datos** — un Líder o Desarrollador que detecta un problema (ej. datos raros, algo se ve corrupto) no puede actuar directamente sobre la BD, así que le manda una notificación a **todos los Administradores** pidiendo que revisen/restauren. Comando Tauri `solicitar_accion_bd(motivo)`, disponible para Líder y Desarrollador (no para Tester, que no tiene relación con el ciclo de tareas/BD del equipo). El `motivo` escrito queda en el mensaje de la notificación para que el Admin sepa qué está pasando antes de actuar.
 10. **Te movieron cambios a tu rama** — destinatario: el dueño de la rama destino, cuando un Líder/Administrador mueve cambios hacia una rama que no es la suya (ver [Mover cambios entre ramas](#mover-cambios-entre-ramas)). **No es automática**: quien mueve los cambios debe escribir un **nombre** (título corto) y una **descripción** al confirmar la acción — eso es lo que arma el mensaje de la notificación, ya que el sistema no puede inferir por su cuenta qué se movió ni por qué.
@@ -449,18 +449,17 @@ Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono d
 
 Pendiente definir: si además de la campana in-app, estas notificaciones también disparan una notificación nativa de escritorio del sistema operativo (Tauri lo soporta) para que lleguen aunque la app esté minimizada.
 
-## Comandos de la pantalla "Ajustes"
+## Comandos de usuarios y ajustes
 
-Ver diseño de la pantalla en [FRONTEND.md](./FRONTEND.md#ajustes).
+Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md → Ajustes](./FRONTEND.md#ajustes). **Actualizado (2026-11-07)**: se quitan `listar_solicitudes_pendientes`, `aceptar_solicitud`, `rechazar_solicitud` y `crear_solicitud_manual` (solicitar ingreso pasa a la versión 2, issue #57).
 
-- `listar_solicitudes_pendientes()` — Líder/Administrador
-- `aceptar_solicitud(solicitud_id, rol)` — Líder/Administrador; valida que el rol elegido esté permitido para quien invoca (ej. un Líder no puede asignar `rol = Líder`, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos))
-- `rechazar_solicitud(solicitud_id)` — Líder/Administrador
-- `listar_usuarios()` — Líder/Administrador
-- `eliminar_usuario(email)` — validado según quién invoca (Administrador: cualquiera; Líder: solo Desarrolladores)
-- `ascender_a_lider(email)` — exclusivo Administrador
-- `cambiar_rol(email, rol_nuevo)` — **nuevo, resuelto**: exclusivo Administrador, cubre lo que `ascender_a_lider` no cubre — degradar a un Líder, o reasignar entre Desarrollador/Tester. Firma la fila igual que los demás comandos de rol (ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)). No permite asignar `rol = Administrador` (eso requeriría transferir también la llave privada, fuera de alcance del MVP — solo se resuelve regenerando llaves y redistribuyendo el build, ver [Respaldo de la llave privada](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)).
-- `confirmar_usuario(email)` — exclusivo Administrador, ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto)
+- `listar_usuarios()` — **todos los roles**; a quien no es Líder/Administrador solo se le devuelven nombre y rol (sin correo).
+- `crear_usuario(email, rol)` — Líder/Administrador. **Sin contraseña** (decidido 2026-11-07): la identidad es `cm whoami`, igual que siempre. Valida el rol según quién invoca (`rolesAsignablesA` en el frontend): el Líder solo Desarrollador/Tester/Colaborador externo. La fila nace **firmada por quien la crea** (Administrador o Líder, ver [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07)).
+- `cambiar_rol(email, rol_nuevo)` — **actualizado**: reemplaza a `ascender_a_lider`. Administrador: cualquier rol menos Administrador, sobre cualquiera menos otro Administrador. Líder: solo entre Desarrollador/Tester/Colaborador externo, y lo firma él mismo con su llave — la persona sigue entrando y trabajando sin interrupción.
+- `eliminar_usuario(email)` — Administrador: cualquiera; Líder: Desarrolladores y Colaboradores externos.
+- `confirmar_usuario(email)` — exclusivo Administrador; ahora solo hace falta para filas **sin firma** (escritas a mano o anteriores a este cambio), ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto).
+- `renombrar_proyecto(nombre)` — exclusivo Administrador; cambia el nombre en BranchBoard (clave `nombre_proyecto` en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto)), no el repositorio de Unity VC.
+- `enviar_mensaje(para, texto)` — todos los roles; crea una notificación de tipo `mensaje` para `para` (máx. 500 caracteres).
 
 ## Copias de seguridad y restauración de la BD
 
@@ -469,6 +468,7 @@ Ver diseño de la pantalla en [FRONTEND.md](./FRONTEND.md#ajustes).
 **Restaurar backup** — **exclusivo del Administrador** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)):
 - Comando Tauri `listar_backups()` (lista las copias disponibles con fecha) y `restaurar_backup(nombre_archivo)`, ambos validados para que solo un Administrador los invoque.
 - Dado lo delicado de la acción (descarta todo lo escrito después del backup elegido), usa el mismo patrón de doble candado que [eliminar una tarea](#eliminar-una-tarea): confirmación + escribir una palabra literal antes de habilitar el botón (palabra exacta pendiente de definir en frontend).
+- **Actualizado (2026-11-07) — "Actual" y guardar antes de restaurar**: la lista siempre muestra arriba la base en uso como **"Actual"** (fecha de hoy, no restaurable). `restaurar_backup` primero copia el `.db` actual como un backup más (con nota "Guardada antes de restaurar la copia del …") y luego aplica el elegido, así siempre se puede volver al estado anterior. Esa copia previa no cuenta para el límite de 10 hasta que se restaure otra.
 - Un Líder o Desarrollador que detecte un problema no puede restaurar directamente — le llega a los Administradores vía la notificación **"Solicitud de acción sobre la base de datos"** (ver [Notificaciones](#notificaciones), punto 9).
 
 ## Modelo de datos: tabla `usuarios`
@@ -476,9 +476,9 @@ Ver diseño de la pantalla en [FRONTEND.md](./FRONTEND.md#ajustes).
 | Campo | Tipo | Notas |
 |---|---|---|
 | `email` | texto (PK) | viene de `cm whoami`, ver [Identidad de usuario](#identidad-de-usuario) — no hay contraseña que guardar |
-| `nombre` | texto | viene del formulario de [solicitud de ingreso](./FRONTEND.md#autenticación--acceso-al-proyecto) |
+| `nombre` | texto | al crear el usuario se toma del correo (`ana.lopez@…` → Ana), editable después |
 | `apellido` | texto | ídem |
-| `rol` | enum | Administrador / Líder / Desarrollador / Tester |
+| `rol` | enum | Administrador / Líder / Desarrollador / Tester / Colaborador externo |
 | `fecha_alta` | fecha | cuándo quedó registrado en el proyecto |
 | `firma` | texto (base64) | **nuevo** — firma Ed25519 de `email\|rol\|firmado_en`, ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac) |
 | `firmado_en` | fecha/hora | **nuevo** — timestamp incluido en el mensaje firmado, evita reutilizar una firma vieja para otro campo |
@@ -496,25 +496,37 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
   3. La **llave privada** nunca entra a ese paso de build — se guarda **fuera de la carpeta sincronizada por Drive/OneDrive** (ej. `%LocalAppData%\BranchBoard\admin.key`, solo en la máquina del Administrador) y nunca viaja por la nube.
      - **Protección en reposo (resuelto)**: por defecto, `admin.key` queda protegida solo por los permisos del sistema operativo (en Windows, el archivo hereda los permisos del perfil de usuario — otros usuarios de esa máquina no pueden leerlo). Es la misma base de confianza que ya usan llaves SSH/GPG típicas en una máquina de desarrollo — comprometer el perfil del Administrador implica comprometer la llave de todas formas. Se ofrece además un **modo opcional recomendado**: cifrar `admin.key` en reposo con la misma passphrase que ya usa `exportar_llave_firma(passphrase)` — al activarlo, cada operación que firma (`asignar_rol`, `cambiar_rol`, etc.) pide la passphrase la primera vez por sesión de la app y la mantiene solo en memoria (nunca en disco) mientras esa sesión sigue abierta. Queda como opción, no obligatorio, para no forzarle a un equipo chico una fricción diaria que quizás no quiere.
   - **Consecuencia asumida**: cada proyecto nuevo de BranchBoard tiene su propio par de llaves y, en sentido estricto, su propia build del binario (aunque el código fuente sea el mismo). Regenerar las llaves (ej. llave privada perdida sin respaldo) implica recompilar y redistribuir el instalador al equipo, no solo un cambio de datos.
-- Cada vez que se asigna o cambia un rol — `asignar_rol(email, rol)`, `ascender_a_lider(email)`, `confirmar_usuario(email)` (ver abajo) — el backend, corriendo en la máquina del Administrador, firma el mensaje `email|rol|firmado_en` con la llave privada y guarda `rol`, `firma` y `firmado_en` en la fila correspondiente de `usuarios`.
+- Cada vez que se asigna o cambia un rol — `asignar_rol(email, rol)`, `cambiar_rol(email, rol)`, `confirmar_usuario(email)` (ver abajo) — el backend, corriendo en la máquina del Administrador, firma el mensaje `email|rol|firmado_en` con la llave privada y guarda `rol`, `firma` y `firmado_en` en la fila correspondiente de `usuarios`.
 - **Al leer la tabla `usuarios`** (arranque de la app, cualquier chequeo de permisos), el backend recalcula la firma esperada con la llave pública embebida y la compara contra `firma`. Hay tres estados posibles, no dos:
   - **Firma presente y coincide** → rol de confianza, se aplica tal cual.
   - **Firma presente pero NO coincide** (fila editada a mano fuera de la app, o campos `rol`/`firmado_en` alterados) → **no confiable**: el usuario se degrada al rol mínimo (Desarrollador) y la UI muestra un aviso de "rol no verificado — posible modificación manual del archivo".
-  - **`firma` es `NULL`** (fila recién creada por `aceptar_solicitud`/`crear_solicitud_manual`, ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto), no por una manipulación) → **bloqueado, no degradado**: la persona no puede entrar a la app todavía, ni siquiera como Desarrollador, hasta que el Administrador la confirme. Es un estado legítimo de "esperando firma", distinto del caso de arriba (que sí es sospechoso).
-- Solo el Administrador puede ejecutar comandos que firman (`asignar_rol`, `ascender_a_lider`, `cambiar_rol`, `confirmar_usuario`) — validado igual que cualquier otro comando sensible.
+  - **`firma` es `NULL`** (fila recién creada o con rol cambiado por un Líder vía `crear_usuario`/`cambiar_rol`, ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto), no por una manipulación) → **bloqueado, no degradado**: la persona no puede entrar a la app todavía, ni siquiera como Desarrollador, hasta que el Administrador la confirme. Es un estado legítimo de "esperando firma", distinto del caso de arriba (que sí es sospechoso).
+- **Actualizado (2026-11-07)**: firman el Administrador **y los Líderes** (ver abajo). Cada firma solo es válida dentro de lo que ese rol puede asignar.
+
+### Firma de los Líderes (nuevo, 2026-11-07)
+
+**Decisión del usuario**: quien es creado o cambiado de rol por un Líder entra y trabaja como siempre, sin esperar al Administrador. Para eso **los Líderes también firman**:
+- Cada Líder tiene su **propio par de llaves**. La privada vive solo en su máquina, igual que la del Administrador (fuera de Drive/OneDrive).
+- Al nombrar a alguien Líder (`cambiar_rol(email, 'Líder')`, exclusivo Administrador), el Administrador **firma la llave pública del Líder** (un "certificado": `email_lider|llave_publica|fecha`). Ese certificado se guarda junto al usuario y viaja por `ops/` como cualquier evento.
+- Al verificar una fila de `usuarios`, el backend acepta la firma si es del Administrador (llave embebida en el build) **o** de un Líder con certificado válido del Administrador, **y** el rol firmado está dentro de lo que un Líder puede asignar (Desarrollador, Tester, Colaborador externo). Una firma de Líder sobre `rol = Líder` o `Administrador` se rechaza.
+- **Quitarle el rol de Líder a alguien** (o eliminarlo) revoca su certificado: sus firmas futuras dejan de valer. Las filas que ya firmó siguen siendo válidas (fueron legítimas cuando las hizo); si se quiere, el Administrador puede volver a firmarlas.
+- Esto sigue cerrando el hueco de C1: escribir a mano una fila con un rol cualquiera no sirve, porque no tendrá una firma válida del Administrador ni de un Líder certificado.
+- **Pendiente para la auditoría de backend**: dónde guarda cada Líder su llave privada y cómo la respalda (mismo esquema que `exportar_llave_firma`), y qué pasa si un Líder la pierde.
 
 ### Confirmación de usuarios nuevos (resuelto)
 
-**Problema**: `aceptar_solicitud`/`crear_solicitud_manual` (ver [Solicitud de ingreso vía mailto](#solicitud-de-ingreso-vía-mailto-resuelto)) los puede invocar un **Líder**, pero solo el **Administrador** tiene la llave privada para firmar — un Líder no puede firmar el rol de la persona que acaba de dar de alta. La versión anterior de este documento listaba `crear_usuario` como uno de los comandos que firman sin notar esta incompatibilidad.
+**Problema**: `crear_usuario`/`cambiar_rol` (antes `aceptar_solicitud`) los puede invocar un **Líder**, pero solo el **Administrador** tiene la llave privada para firmar — un Líder no puede firmar el rol de la persona que acaba de dar de alta. La versión anterior de este documento listaba `crear_usuario` como uno de los comandos que firman sin notar esta incompatibilidad.
+
+**Reemplazado (2026-11-07)** por la [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07): lo que crea o cambia un Líder ya queda firmado y la persona entra de una vez. Lo de abajo solo aplica ahora a filas **sin firma** (escritas a mano o anteriores al cambio). Texto anterior:
 
 **Resuelto** (decisión del usuario: mantener la capacidad de alta del Líder tal como está, sin restringirla al Administrador):
-- `aceptar_solicitud`/`crear_solicitud_manual` insertan la fila en `usuarios` **de inmediato**, con el rol elegido pero `firma = NULL`, `firmado_en = NULL` — igual que hoy, sin pedirle nada extra a quien acepta la solicitud.
+- `crear_usuario` (o `cambiar_rol` hecho por un Líder) escribe la fila en `usuarios` **de inmediato**, con el rol elegido pero `firma = NULL`, `firmado_en = NULL` — sin pedirle nada extra a quien crea el usuario.
 - Esa persona **no puede entrar a BranchBoard todavía**: la [Pantalla inicial](./FRONTEND.md#autenticación--acceso-al-proyecto) reutiliza la misma pantalla de "tu cuenta no está registrada en este proyecto todavía", con el mensaje ajustado a "tu cuenta fue agregada por [quien la dio de alta], está pendiente de que el Administrador la confirme".
 - Nuevo comando `confirmar_usuario(email)`, **exclusivo Administrador**: firma la fila (mismo mecanismo que `asignar_rol`) — a partir de ahí la persona ya puede entrar con el rol que le asignaron.
-- Aparece listado en [Ajustes → Gestión de usuarios](./FRONTEND.md#ajustes) con una etiqueta **"Pendiente de confirmar"**, visible para el Administrador con el botón `confirmar_usuario`, y visible (solo lectura) para el Líder que la dio de alta, para que sepa que todavía no tiene efecto real.
+- Aparece listado en [Usuarios](./FRONTEND.md#usuarios) con una etiqueta **"Pendiente de confirmar"**, visible para el Administrador con el botón `confirmar_usuario`, y visible (solo lectura) para el Líder que la dio de alta, para que sepa que todavía no tiene efecto real.
 - **Trade-off asumido**: alguien dado de alta por un Líder no puede empezar a trabajar hasta que el Administrador confirme, aunque sea de forma asíncrona (no tiene que ser inmediato/en vivo). Para un equipo de 3 personas donde el Administrador está normalmente disponible, es un costo bajo a cambio de mantener el punto único de firma que es el eje de todo C1.
 
-**Aclarado — dar de alta en `usuarios` NO le da acceso a la carpeta de Drive/OneDrive, y sin esa carpeta la persona no puede usar la app en absoluto** (simétrico a lo ya documentado para [eliminar a alguien del equipo](#identidad-de-usuario)): `aceptar_solicitud`/`crear_solicitud_manual`/`confirmar_usuario` solo tocan la tabla `usuarios` — todos comandos de BranchBoard, nada más. Pero como el `.db` local de esa persona se reconstruye leyendo `ops/` (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)), necesita **antes que nada** tener acceso real a esa carpeta compartida. Eso pasa 100% fuera de BranchBoard y de forma manual:
+**Aclarado — dar de alta en `usuarios` NO le da acceso a la carpeta de Drive/OneDrive, y sin esa carpeta la persona no puede usar la app en absoluto** (simétrico a lo ya documentado para [eliminar a alguien del equipo](#identidad-de-usuario)): `crear_usuario`/`cambiar_rol`/`confirmar_usuario` solo tocan la tabla `usuarios` — todos comandos de BranchBoard, nada más. Pero como el `.db` local de esa persona se reconstruye leyendo `ops/` (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)), necesita **antes que nada** tener acceso real a esa carpeta compartida. Eso pasa 100% fuera de BranchBoard y de forma manual:
   1. La persona necesita su propia cuenta de Drive/OneDrive (la que ya use).
   2. Alguien del equipo con acceso a la carpeta del proyecto la comparte con el correo de Drive/OneDrive de esa persona — desde la interfaz normal de Drive/OneDrive, no desde BranchBoard.
   3. La persona instala el cliente de sincronización de escritorio de Drive/OneDrive e inicia sesión — recién ahí esa carpeta aparece en su máquina como una carpeta local normal, y BranchBoard puede apuntar a esa ruta.
@@ -538,49 +550,13 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
 - Queda como **doble candado** sobre la acción más destructiva de la app: hace falta (a) que la firma local diga `rol = Administrador` **y** (b) que Unity Version Control conceda `rmrepository` sobre el repo real — alguien que solo comprometa el `.db` local no puede borrar el proyecto si Unity no se lo permite también.
 - **Pendiente por probar al implementar**: confirmar que `cm showacl` puede ejecutarse con la sesión normal del usuario (sin privilegios de administrador de Unity) para consultar su propio permiso efectivo; si `cm showacl` requiere privilegios elevados, usar como respaldo el resultado de un intento de operación real de bajo impacto y capturar el error de "permission denied" de `cm` como señal equivalente.
 
-## Modelo de datos: tabla `colaboradores_externos`
+## Modelo de datos: tabla `colaboradores_externos` (eliminada)
 
-Separada de `usuarios` — estas personas **sí tienen `cm` instalado** (liviano, solo para el workspace parcial vía Gluon, ver [Workspace parcial (Gluon) para subtareas simples](#workspace-parcial-gluon-para-subtareas-simples)) pero no tienen uno de los 4 roles principales — solo permiso puntual para crear subtareas simples (ver [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes)).
+**Actualizado (2026-11-07)**: ya no existe. Los colaboradores externos son un **rol** más en `usuarios` (`rol = 'Colaborador externo'`), creado desde [Usuarios](./FRONTEND.md#usuarios) con `crear_usuario`. Se quitan `agregar_colaborador_externo` y `revocar_colaborador_externo`. Sigue igual que usan workspace parcial (Gluon), ver [Workspace parcial (Gluon) para subtareas simples](#workspace-parcial-gluon-para-subtareas-simples).
 
-| Campo | Tipo | Notas |
-|---|---|---|
-| `email` | texto (PK) | **corregido**: viene de `cm whoami`, igual que en `usuarios` — no se escribe/selecciona a mano dentro de la app |
-| `nombre` | texto | |
-| `agregado_por` | email | qué Líder/Admin le dio el permiso |
-| `fecha_alta` | fecha | |
+## Modelo de datos: tabla `solicitudes_ingreso` (versión 2, no se implementa)
 
-Borrar una fila = revocar el permiso; la próxima vez que `cm whoami` identifique a esa persona, ya no aparece en la lista de permitidos.
-
-**Comandos Tauri (nuevo, resuelto)** — el panel de [Permisos de subtareas simples en FRONTEND.md](./FRONTEND.md#ajustes) ya describía los botones de agregar/revocar, pero no existía el comando de backend ni estaba en la lista de eventos, así que un alta/revocación hecha en una máquina no llegaba a las demás:
-- `agregar_colaborador_externo(email, nombre)` — Líder/Administrador, inserta la fila.
-- `revocar_colaborador_externo(email)` — Líder/Administrador, la borra.
-- Ambos **migran a eventos** (agregarlos a la lista en [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)) — de lo contrario un colaborador agregado desde la máquina de un Líder seguiría bloqueado en la máquina donde otro Líder/Admin intente verificar su permiso.
-
-## Modelo de datos: tabla `solicitudes_ingreso`
-
-Separada de `usuarios` — una solicitud no es todavía un usuario del proyecto.
-
-| Campo | Tipo | Notas |
-|---|---|---|
-| `id` | — | |
-| `nombre` / `apellido` | texto | |
-| `correo` | texto | debe coincidir con el email de `cm whoami` de quien la aprueba después, ver [Pendiente por definir en FRONTEND.md](./FRONTEND.md#pendiente-por-definir) |
-| `id_organizacion` | texto | |
-| `estado` | enum | pendiente / aceptada / rechazada |
-| `fecha_solicitud` / `fecha_resolucion` | fecha, nullable | |
-| `registrada_por` | email | **nuevo** — el Líder/Administrador que creó la fila al leer el correo del solicitante, ver [Solicitud de ingreso vía mailto (resuelto)](#solicitud-de-ingreso-vía-mailto-resuelto) |
-
-Al aceptarse, se inserta la fila correspondiente en `usuarios` con el rol que le asigne quien aprueba — la solicitud no desaparece, queda como historial con `estado = aceptada`.
-
-### Solicitud de ingreso vía mailto (resuelto)
-
-**Problema**: BACKEND.md prometía que "el solicitante recibe un correo avisando que fue aceptado" y que la solicitud inicial "sale por correo", pero nunca hubo un mecanismo definido para mandarlo — y construir uno (SMTP propio, API de terceros tipo SendGrid) contradice la decisión ya tomada de [Sin servicios en la nube propios](./ARQUITECTURA.md#decisiones-de-arquitectura-ya-tomadas). Además, quien todavía no es parte del equipo **tampoco tiene acceso a la carpeta de Drive/OneDrive del proyecto** — no puede insertar una fila en `solicitudes_ingreso` aunque quisiera, porque ese mecanismo depende de [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos), a la que solo el equipo ya agregado tiene acceso.
-
-**Solución — el correo lo manda el cliente de correo del propio usuario, no la app**:
-- **Ida (solicitante → equipo)**: la pantalla de [Solicitud de ingreso](./FRONTEND.md#autenticación--acceso-al-proyecto) arma un enlace `mailto:` con los datos del formulario (nombre, apellido, correo, ID de organización) ya escritos en el cuerpo del mensaje, dirigido a un **correo de contacto** que el Administrador configuró de antemano en [Ajustes](./FRONTEND.md#ajustes) (nuevo campo `correo_contacto_solicitudes`). Al hacer clic, se abre el cliente de correo por defecto del solicitante (`tauri-plugin-shell`, abrir el URI `mailto:...`) — es su propio correo el que sale, la app nunca envía nada por su cuenta ni guarda credenciales SMTP.
-- Quien recibe ese correo (Líder/Administrador) y decide darle curso, lo registra manualmente dentro de BranchBoard con el comando `crear_solicitud_manual(nombre, apellido, correo, id_organizacion)` — inserta la fila en `solicitudes_ingreso` con `registrada_por = su email`, y de ahí sigue el flujo normal ya definido (aparece en [Solicitudes de ingreso](./FRONTEND.md#ajustes), se acepta/rechaza con `aceptar_solicitud`/`rechazar_solicitud`).
-- **Vuelta (equipo → solicitante, al aceptarse)**: mismo patrón — al aceptar, la UI ofrece un botón **"Avisar por correo"** que arma otro `mailto:` prellenado dirigido al correo del solicitante, y lo manda el cliente de correo de quien aprobó. No es automático (requiere ese clic extra), pero tampoco necesita ningún servicio propio.
-- **Trade-off aceptado**: a diferencia de un correo automático real, este flujo depende de que una persona efectivamente revise su bandeja y haga los dos clics (abrir el mailto, y luego darle "Enviar" en su cliente de correo). Para un equipo chico es aceptable; si algún día se necesita 100% automático, ahí sí haría falta un servicio de envío real, lo que reabriría la discusión de "sin servicios en la nube propios".
+**Actualizado (2026-11-07)**: solicitar ingreso queda para la versión 2 (issue #57, con las decisiones pendientes y cómo lo hacen otras plataformas). Se quitan la tabla `solicitudes_ingreso`, el flujo `mailto:` (ida y vuelta), `crear_solicitud_manual` y la clave `correo_contacto_solicitudes`. El alta la hace un Líder o Administrador con `crear_usuario`. La variante de invitar por correo con un código que vence en 3 días está en el issue #58.
 
 ## Modelo de datos: tabla `tareas`
 
@@ -678,16 +654,16 @@ Comando Tauri `crear_reporte_testing(tarea_revisada_id, descripcion, adjunto?)`,
 
 ## Modelo de datos: tabla `configuracion_proyecto`
 
-**Nuevo, resuelto**: faltaba dónde vivir el campo `correo_contacto_solicitudes` (ver [Solicitud de ingreso vía mailto](#solicitud-de-ingreso-vía-mailto-resuelto)) — no había ninguna tabla de configuración a nivel proyecto en el modelo de datos. Clave/valor simple, pensada para que cualquier ajuste futuro de este tipo (no por tarea, no por usuario, sino del proyecto entero) tenga dónde ir sin agregar una tabla nueva cada vez:
+Tabla clave/valor para ajustes del proyecto entero. **Actualizado (2026-11-07)**: `correo_contacto_solicitudes` ya no se usa (solicitar ingreso pasa a la versión 2); la primera clave real es `nombre_proyecto` (ver `renombrar_proyecto`). Originalmente no había ninguna tabla de configuración a nivel proyecto en el modelo de datos. Clave/valor simple, pensada para que cualquier ajuste futuro de este tipo (no por tarea, no por usuario, sino del proyecto entero) tenga dónde ir sin agregar una tabla nueva cada vez:
 
 | Campo | Tipo | Notas |
 |---|---|---|
-| `clave` | texto (PK) | ej. `correo_contacto_solicitudes` |
+| `clave` | texto (PK) | ej. `nombre_proyecto` |
 | `valor` | texto | |
 | `actualizado_por` | email | |
 | `fecha_actualizacion` | fecha | |
 
-Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Administrador. **Migra a eventos** (agregarlo a la lista en [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)) — de lo contrario cambiar el correo de contacto en una máquina no se reflejaría en las demás.
+Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Administrador. **Migra a eventos** (agregarlo a la lista en [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)) — de lo contrario cambiar un ajuste del proyecto en una máquina no se reflejaría en las demás.
 
 ## Pendiente por definir
 - Cómo se valida el permiso de rol en cada comando Tauri (mecanismo exacto de autorización, ej. middleware/decorador vs. chequeo manual al inicio de cada comando)
