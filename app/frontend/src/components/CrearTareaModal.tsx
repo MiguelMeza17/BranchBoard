@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TIPOS_TAREA, type Rol, type TipoTarea } from '../types';
+import { TIPOS_TAREA, type Rol, type Sprint, type TipoTarea } from '../types';
 import { tipoMeta } from '../lib/ui';
 import { esLiderOAdmin } from '../lib/permisos';
 import { Modal } from './Modal';
@@ -18,6 +18,7 @@ export interface NuevaTareaData {
   detalles: string;
   tipo: TipoTarea;
   sprint_id: string | null;
+  backlog_id: string | null;
   con_fecha: boolean;
   fecha_limite: string | null;
   subtareas: { tipo: TipoTarea; titulo: string; detalles: string }[];
@@ -35,14 +36,15 @@ export function CrearTareaModal({
   onClose: () => void;
   onCreate: (data: NuevaTareaData) => void;
   rolUsuario: Rol;
-  sprints: { id: string; nombre: string }[];
+  /** Sprints y backlogs (se separan por `con_fecha`). */
+  sprints: Sprint[];
   /** Si se da, se salta la elección general/específica y el tipo queda fijo (ej. crear desde una categoría). */
   tipoFijo?: TipoTarea;
   /** Si se da, se salta la elección y el modo queda fijo en ese valor (ej. el botón de la sección
    * "Tareas generales" solo debe crear generales; el de "Tareas individuales" o dentro de una
    * carpeta solo debe crear específicas — una tarea general no puede contener otra general). */
   modoForzado?: 'general' | 'especifica';
-  /** Sprint elegido de entrada (ej. al crear desde el tablero de un sprint). */
+  /** Sprint o backlog elegido de entrada (ej. al crear desde el tablero filtrado por uno). */
   sprintInicial?: string;
 }) {
   const modoInicial = tipoFijo ? 'especifica' : modoForzado ?? 'elegir';
@@ -56,7 +58,13 @@ export function CrearTareaModal({
   const subUidRef = useRef(0);
   const [conFecha, setConFecha] = useState(false);
   const [fecha, setFecha] = useState('');
-  const [sprintId, setSprintId] = useState<string>(sprintInicial ?? '');
+  // Una tarea puede ir en un backlog (cómo se organiza), en un sprint (quién la trabaja ahora), en los
+  // dos o en ninguno.
+  const sprintsAbiertos = sprints.filter((sp) => sp.con_fecha && !sp.cerrado);
+  const backlogs = sprints.filter((sp) => !sp.con_fecha && !sp.cerrado);
+  const inicial = sprints.find((sp) => sp.id === sprintInicial);
+  const [sprintId, setSprintId] = useState<string>(inicial?.con_fecha ? inicial.id : '');
+  const [backlogId, setBacklogId] = useState<string>(inicial && !inicial.con_fecha ? inicial.id : '');
   const [avisoLeido, setAvisoLeido] = useState(false);
 
   const necesitaAviso = !esLiderOAdmin(rolUsuario);
@@ -97,6 +105,7 @@ export function CrearTareaModal({
       detalles: detalles.trim(),
       tipo,
       sprint_id: sprintId || null,
+      backlog_id: backlogId || null,
       con_fecha: conFecha,
       fecha_limite: conFecha && fecha ? fecha : null,
       subtareas: esGeneral
@@ -186,7 +195,7 @@ export function CrearTareaModal({
                 placeholder="Qué hay que hacer a detalle: los pasos, dónde está cada cosa, lo que haga falta explicar…"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="label">Tipo</label>
                 {tipoFijo ? (
@@ -203,16 +212,29 @@ export function CrearTareaModal({
                 )}
               </div>
               <div>
+                <label className="label">Backlog</label>
+                <select
+                  className="input disabled:cursor-not-allowed disabled:opacity-60"
+                  value={backlogId}
+                  disabled={backlogs.length === 0}
+                  onChange={(e) => setBacklogId(e.target.value)}
+                >
+                  <option value="">{backlogs.length === 0 ? 'No hay backlogs todavía' : 'Sin backlog'}</option>
+                  {backlogs.map((sp) => (
+                    <option key={sp.id} value={sp.id}>{sp.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="label">Sprint</label>
-                {/* Sin ningún sprint creado no hay nada que elegir: la tarea queda sin sprint (en el backlog). */}
                 <select
                   className="input disabled:cursor-not-allowed disabled:opacity-60"
                   value={sprintId}
-                  disabled={sprints.length === 0}
+                  disabled={sprintsAbiertos.length === 0}
                   onChange={(e) => setSprintId(e.target.value)}
                 >
-                  <option value="">{sprints.length === 0 ? 'No hay sprints todavía' : 'Sin sprint (backlog)'}</option>
-                  {sprints.map((sp) => (
+                  <option value="">{sprintsAbiertos.length === 0 ? 'No hay sprints en curso' : 'Sin sprint'}</option>
+                  {sprintsAbiertos.map((sp) => (
                     <option key={sp.id} value={sp.id}>{sp.nombre}</option>
                   ))}
                 </select>

@@ -74,6 +74,8 @@ export function BacklogChart({ backlog, tareas }: { backlog: Sprint; tareas: Tar
   const diasFaltan = restantes === 0 ? 0 : ritmoDia > 0 ? Math.min(MAX_PROYECCION_DIAS, Math.ceil(restantes / ritmoDia)) : null;
   const fechaEstimada = diasFaltan !== null ? sumarDias(hoy, diasFaltan) : null;
   const crece = entran > salen;
+  const terminado = total > 0 && restantes === 0;
+  const fechaUltimoCierre = tareas.reduce((max, t) => (t.fecha_completada && t.fecha_completada > max ? t.fecha_completada : max), '');
 
   if (total === 0) {
     return <p className="text-sm text-muted">Este backlog todavía no tiene tareas.</p>;
@@ -123,15 +125,20 @@ export function BacklogChart({ backlog, tareas }: { backlog: Sprint; tareas: Tar
         <dl className="flex gap-8 text-right">
           <Dato titulo="Entran" valor={`${porSemana(entran).toFixed(1)} / semana`} />
           <Dato titulo="Salen" valor={`${porSemana(salen).toFixed(1)} / semana`} />
-          <Dato
-            titulo="Cierre estimado"
-            valor={fechaEstimada ? `${fechaCorta(fechaEstimada)} · ${diasFaltan} días` : 'Sin avance todavía'}
-          />
+          {terminado ? (
+            <Dato titulo="Terminado" valor={fechaCorta(fechaUltimoCierre)} tono="text-green-300" />
+          ) : (
+            <Dato
+              titulo="Cierre estimado"
+              valor={fechaEstimada ? `${fechaCorta(fechaEstimada)} · ${diasFaltan} días` : 'Sin avance todavía'}
+            />
+          )}
         </dl>
       </div>
 
       <div style={{ height: 320 }}>
         <Line
+          key={backlog.id}
           data={{
             datasets: [
               {
@@ -141,7 +148,7 @@ export function BacklogChart({ backlog, tareas }: { backlog: Sprint; tareas: Tar
                 backgroundColor: degradado('34,197,94', 0.22),
                 fill: 'origin',
                 borderWidth: 2.5,
-                stepped: 'after',
+                stepped: 'before',
                 pointRadius: (c: ScriptableContext<'line'>) => (c.dataIndex === idxHoy ? 5 : 0),
                 pointBackgroundColor: VERDE,
                 pointBorderColor: '#151922',
@@ -197,9 +204,13 @@ export function BacklogChart({ backlog, tareas }: { backlog: Sprint; tareas: Tar
               : []),
           ]}
         />
-        <p className={`mt-3 flex items-center gap-1.5 text-xs ${crece ? 'text-orange-300' : 'text-green-300'}`}>
-          <IconoEnLinea nombre={crece ? 'alerta' : 'check'} sinColor />
-          {crece ? 'Entran más tareas de las que se terminan: el backlog crece.' : 'Se terminan más tareas de las que entran: el backlog baja.'}
+        <p className={`mt-3 flex items-center gap-1.5 text-xs ${crece && !terminado ? 'text-orange-300' : 'text-green-300'}`}>
+          <IconoEnLinea nombre={crece && !terminado ? 'alerta' : 'check'} sinColor />
+          {terminado
+            ? `Backlog terminado: las ${total} tareas se cerraron el ${fechaCorta(fechaUltimoCierre)}.`
+            : crece
+              ? 'Entran más tareas de las que se terminan: el backlog crece.'
+              : 'Se terminan más tareas de las que entran: el backlog baja.'}
         </p>
       </div>
     </section>

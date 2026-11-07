@@ -73,6 +73,9 @@ export interface Sprint {
   cerrado: boolean;
   fecha_cierre_real: string | null;
   creado_por: string;
+  // Reporte: copia de sus tareas tal como estaban al cerrarse (solo sprints). El reporte se arma con esta
+  // copia, porque al cerrar las tareas sin terminar quedan libres y siguen cambiando.
+  reporte?: Tarea[];
 }
 
 export interface Tarea {
@@ -96,7 +99,11 @@ export interface Tarea {
   fecha_creacion: string;
   asignado_a: string | null;
   lider_revision_asignado: string | null;
+  // Sprint que la está trabajando ahora (uno a la vez, opcional).
   sprint_id: string | null;
+  // Backlog al que pertenece (cómo se organiza; opcional). Puede estar a la vez en un backlog y en un
+  // sprint: el sprint la "ocupa" sin sacarla de su backlog. También puede estar suelta (sin ninguno).
+  backlog_id: string | null;
   con_fecha: boolean;
   fecha_limite: string | null;
   fecha_completada: string | null;

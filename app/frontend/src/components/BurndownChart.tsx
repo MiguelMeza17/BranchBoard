@@ -54,7 +54,9 @@ function calcularSerie(sprint: Sprint, tareas: Tarea[]): Serie {
   const burndown = dias.map((dia) => total - tareas.filter((t) => t.fecha_completada && t.fecha_completada <= dia).length);
 
   const hoy = new Date().toISOString().slice(0, 10);
-  const nPuntos = sprint.cerrado ? dias.length : dias.filter((d) => d <= hoy).length;
+  // Días con datos reales: hasta hoy, o hasta el cierre si ya se cerró.
+  const tope = sprint.cerrado && sprint.fecha_cierre_real ? sprint.fecha_cierre_real : hoy;
+  const nPuntos = dias.filter((d) => d <= tope).length;
 
   let regresion: Serie['regresion'] = null;
   if (nPuntos >= 2) {
@@ -117,7 +119,7 @@ export function BurndownChart({
   if (s.dias.length === 0) {
     return (
       <>
-        <h3 className="mb-2 text-sm font-semibold text-text">Burndown del sprint</h3>
+        <h3 className="mb-2 text-sm font-semibold text-text">{sprint.nombre}</h3>
         <p className="text-sm text-muted">Este sprint no tiene fechas — no se puede graficar el burndown.</p>
       </>
     );
@@ -126,6 +128,8 @@ export function BurndownChart({
   const ultimo = s.dias.length - 1;
   const idxHoy = s.nPuntos - 1;
   const enCurso = !sprint.cerrado && s.nPuntos > 0 && s.nPuntos < s.dias.length;
+  // Sprint que todavía no empieza: no hay línea real, solo la ideal.
+  const porEmpezar = !sprint.cerrado && s.nPuntos === 0;
   const restantes = s.nPuntos > 0 ? s.burndown[idxHoy] : s.total;
   // El día en que se terminaría es el primero en que la recta ya llegó a 0 (redondeo hacia arriba).
   const diaFin = s.xZero !== null ? Math.ceil(s.xZero - 1e-9) : null;
@@ -133,28 +137,24 @@ export function BurndownChart({
   const aTiempo = diaFin !== null && diaFin <= ultimo;
 
   let veredicto: { texto: string; nivel: 'bien' | 'mejora' | 'mal' } | null = null;
-  if (fechaProyectada) {
+  if (contexto === 'reporte') {
+    // Reporte: cómo terminó, sin proyecciones.
+    const ultimoCierre = tareas.reduce((m, t) => (t.fecha_completada && t.fecha_completada > m ? t.fecha_completada : m), '');
+    veredicto =
+      restantes === 0
+        ? { nivel: 'bien', texto: `${sprint.nombre} terminó sus ${s.total} tareas${ultimoCierre ? ` el ${fechaCorta(ultimoCierre)}` : ''}.` }
+        : { nivel: 'mal', texto: `${sprint.nombre} cerró con ${restantes} de ${s.total} tareas sin terminar.` };
+  } else if (fechaProyectada) {
     const f = fechaCorta(fechaProyectada);
     const limite = fechaCorta(s.dias[ultimo]);
-    veredicto =
-      contexto === 'reporte'
-        ? {
-            nivel: aTiempo ? 'bien' : 'mal',
-            texto: aTiempo
-              ? `${sprint.nombre} va al día: al ritmo mostrado se cierra el ${f}, dentro del plazo.`
-              : `${sprint.nombre} va atrasado: al ritmo mostrado se cerraría el ${f}, después del límite (${limite}).`,
-          }
-        : {
-            nivel: aTiempo ? 'bien' : 'mal',
-            texto: aTiempo
-              ? `Al ritmo actual se termina el ${f}, dentro del sprint.`
-              : `Al ritmo actual se terminaría el ${f}, después del límite (${limite}).`,
-          };
-  } else if (s.nPuntos >= 2) {
     veredicto = {
-      nivel: 'mal',
-      texto: contexto === 'reporte' ? `${sprint.nombre} no tuvo avance.` : 'Sin avance neto: al ritmo actual no se proyecta terminar.',
+      nivel: aTiempo ? 'bien' : 'mal',
+      texto: aTiempo
+        ? `Al ritmo actual se termina el ${f}, dentro del sprint.`
+        : `Al ritmo actual se terminaría el ${f}, después del límite (${limite}).`,
     };
+  } else if (s.nPuntos >= 2) {
+    veredicto = { nivel: 'mal', texto: 'Sin avance neto: al ritmo actual no se proyecta terminar.' };
   }
   if (veredicto?.nivel === 'mal' && comp && s.avance - comp.avance >= 0.15) {
     veredicto = {
@@ -164,7 +164,8 @@ export function BurndownChart({
   }
 
   // Eje X numérico (día del sprint, desde 0) para que la proyección cruce el 0 donde de verdad cae.
-  const maxX = Math.max(ultimo, diaFin ?? 0, comp ? comp.dias.length - 1 : 0);
+  // El eje solo se alarga por la proyección mientras el sprint está en curso.
+  const maxX = Math.max(ultimo, enCurso ? diaFin ?? 0 : 0, comp ? comp.dias.length - 1 : 0);
   const puntos = (ys: number[], hasta: number) => ys.slice(0, hasta).map((y, x) => ({ x, y }));
 
   const relleno = (ctx: ScriptableContext<'line'>) => {
@@ -178,7 +179,8 @@ export function BurndownChart({
 
   const hayProyeccion = !!s.regresion && s.xZero !== null && enCurso;
   const datasets = [
-    {
+    // Sprint por empezar: sin serie real (no hay progreso), solo la ideal.
+    ...(porEmpezar ? [] : [{
       label: 'Restantes',
       data: puntos(s.burndown, Math.max(1, s.nPuntos)),
       borderColor: VERDE,
@@ -192,7 +194,7 @@ export function BurndownChart({
       pointBorderWidth: 2,
       pointHoverRadius: 5,
       order: 1,
-    },
+    }]),
     {
       label: 'Ideal',
       data: [
@@ -242,7 +244,7 @@ export function BurndownChart({
   ];
 
   const leyenda = [
-    { nombre: 'Restantes', estilo: { background: VERDE, height: 3 } },
+    ...(porEmpezar ? [] : [{ nombre: 'Restantes', estilo: { background: VERDE, height: 3 } }]),
     { nombre: 'Ideal', estilo: { backgroundImage: `repeating-linear-gradient(90deg, ${GRIS_IDEAL} 0 5px, transparent 5px 10px)`, height: 2 } },
     ...(hayProyeccion
       ? [{ nombre: 'Proyección', estilo: { backgroundImage: 'repeating-linear-gradient(90deg, rgba(34,197,94,0.75) 0 2px, transparent 2px 6px)', height: 2 } }]
@@ -256,7 +258,7 @@ export function BurndownChart({
     <>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
         <div>
-          <h3 className="text-sm font-semibold text-text">Burndown del sprint</h3>
+          <h3 className="text-sm font-semibold text-text">{sprint.nombre}</h3>
           <div className="mt-1.5 flex items-baseline gap-1.5">
             <span className="text-3xl font-bold tabular-nums text-text">{restantes}</span>
             <span className="text-sm text-muted">de {s.total} tareas restantes</span>
@@ -264,9 +266,9 @@ export function BurndownChart({
         </div>
         <dl className="flex gap-8 text-right">
           <div>
-            <dt className="text-[11px] uppercase tracking-wide text-faint">{enCurso ? 'Día' : 'Duración'}</dt>
+            <dt className="text-[11px] uppercase tracking-wide text-faint">{porEmpezar ? 'Empieza' : enCurso ? 'Día' : 'Duración'}</dt>
             <dd className="mt-0.5 text-sm font-semibold tabular-nums text-text">
-              {enCurso ? `${s.nPuntos} de ${s.dias.length}` : `${s.dias.length} días`}
+              {porEmpezar ? fechaCorta(s.dias[0]) : enCurso ? `${s.nPuntos} de ${s.dias.length}` : `${sprint.duracion_dias ?? s.dias.length} días`}
             </dd>
           </div>
           <div>
@@ -286,6 +288,7 @@ export function BurndownChart({
 
       <div style={{ height: 320 }}>
         <Line
+          key={sprint.id}
           data={{ datasets }}
           plugins={[lineaHoy(enCurso ? idxHoy : null)]}
           options={{

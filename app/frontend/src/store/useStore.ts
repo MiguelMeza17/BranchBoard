@@ -174,6 +174,7 @@ export interface NuevaTarea {
   tipo: TipoTarea;
   tarea_padre_id: string | null;
   sprint_id: string | null;
+  backlog_id: string | null;
   con_fecha: boolean;
   fecha_limite: string | null;
 }
@@ -375,6 +376,10 @@ interface State {
   cerrarSprint: (id: string) => void;
   /** Mete o saca una tarea de un sprint/backlog (null = sin sprint). Desde Planificación. */
   asignarTareaASprint: (tareaId: string, sprintId: string | null) => void;
+  asignarTareaABacklog: (tareaId: string, backlogId: string | null) => void;
+  // El sprint toma de una vez todas las tareas de un backlog (o las sin backlog, con null) que no estén
+  // en otro sprint.
+  asignarBacklogASprint: (backlogId: string | null, sprintId: string) => void;
 }
 
 export const useStore = create<State>((set, get) => {
@@ -884,6 +889,7 @@ export const useStore = create<State>((set, get) => {
       asignado_a: null,
       lider_revision_asignado: null,
       sprint_id: data.sprint_id,
+      backlog_id: data.backlog_id,
       con_fecha: data.con_fecha,
       fecha_limite: data.fecha_limite,
       fecha_completada: null,
@@ -921,6 +927,7 @@ export const useStore = create<State>((set, get) => {
         tipo: st.tipo,
         tarea_padre_id: padreId,
         sprint_id: raiz.sprint_id,
+        backlog_id: raiz.backlog_id,
         con_fecha: false,
         fecha_limite: null,
       });
@@ -1347,8 +1354,24 @@ export const useStore = create<State>((set, get) => {
     s.showToast('Sprint creado');
   },
 
+  // Un sprint no toma tareas de otro sprint, ni un backlog tareas de otro backlog: primero hay que quitarla.
   asignarTareaASprint: (tareaId, sprintId) => {
-    set((s) => ({ tareas: s.tareas.map((t) => (t.id === tareaId ? { ...t, sprint_id: sprintId } : t)) }));
+    const t = get().tareas.find((x) => x.id === tareaId);
+    if (!t || (sprintId && t.sprint_id && t.sprint_id !== sprintId)) return;
+    set((s) => ({ tareas: s.tareas.map((x) => (x.id === tareaId ? { ...x, sprint_id: sprintId } : x)) }));
+  },
+  asignarTareaABacklog: (tareaId, backlogId) => {
+    const t = get().tareas.find((x) => x.id === tareaId);
+    if (!t || (backlogId && t.backlog_id && t.backlog_id !== backlogId)) return;
+    set((s) => ({ tareas: s.tareas.map((x) => (x.id === tareaId ? { ...x, backlog_id: backlogId } : x)) }));
+  },
+  asignarBacklogASprint: (backlogId, sprintId) => {
+    const libres = get().tareas.filter((t) => t.backlog_id === backlogId && !t.sprint_id && !t.eliminada);
+    if (libres.length === 0) return;
+    const ids = new Set(libres.map((t) => t.id));
+    set((s) => ({ tareas: s.tareas.map((t) => (ids.has(t.id) ? { ...t, sprint_id: sprintId } : t)) }));
+    const sp = get().sprints.find((x) => x.id === sprintId);
+    get().showToast(`${libres.length} ${libres.length === 1 ? 'tarea pasó' : 'tareas pasaron'} a ${sp?.nombre ?? 'el sprint'}`);
   },
 
   cerrarSprint: (id) => {
@@ -1357,10 +1380,20 @@ export const useStore = create<State>((set, get) => {
       get().showToast('Solo el Administrador puede cerrar un sprint', 'danger');
       return;
     }
+    // Al cerrar un sprint se guarda la copia de sus tareas para el reporte, y las que no se terminaron
+    // quedan libres otra vez (siguen en su backlog, si tienen).
     set((s) => ({
       sprints: s.sprints.map((sp) =>
-        sp.id === id ? { ...sp, cerrado: true, fecha_cierre_real: today() } : sp
+        sp.id === id
+          ? {
+              ...sp,
+              cerrado: true,
+              fecha_cierre_real: today(),
+              reporte: sp.con_fecha ? s.tareas.filter((t) => t.sprint_id === id && !t.eliminada).map((t) => ({ ...t })) : undefined,
+            }
+          : sp
       ),
+      tareas: s.tareas.map((t) => (t.sprint_id === id && t.estado !== 'terminada' ? { ...t, sprint_id: null } : t)),
     }));
     get().showToast('Sprint cerrado — se generó su reporte');
   },

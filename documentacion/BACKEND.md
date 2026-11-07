@@ -584,7 +584,8 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `asignado_a` | email, nullable | quien la tomó/le fue asignada |
 | `lider_revision_asignado` | email, nullable | ver [asignar_revision en Flujo de revisión](#flujo-de-revisión-y-merge-a-dev) |
 | ~~`autorizada_modificacion`~~ | — | **eliminado** (flujo invertido, ya no es un permiso que se otorga por adelantado) — el estado de "edición pendiente" ahora se deriva de si existe una fila para esta tarea en [`ediciones_pendientes`](#modelo-de-datos-tabla-ediciones_pendientes), ver [Notificaciones](#notificaciones), punto 4 |
-| `sprint_id` | nullable | una tarea puede no pertenecer a ningún sprint (ver [Modelo de datos: tabla `sprints`](#modelo-de-datos-tabla-sprints)) |
+| `sprint_id` | nullable | **sprint** (`con_fecha = true`) que la está trabajando ahora; uno a la vez (ver [Modelo de datos: tabla `sprints`](#modelo-de-datos-tabla-sprints)) |
+| `backlog_id` | nullable | **nuevo (2026-11-07)**: **backlog** (`con_fecha = false`) al que pertenece, es decir, cómo se organiza. Independiente de `sprint_id`: una tarea puede estar suelta, solo en un backlog, solo en un sprint o en los dos (el sprint la "ocupa" sin sacarla de su backlog) |
 | `con_fecha` / `fecha_limite` | booleano / nullable | tareas con y sin tiempo (ver [Sprints y tareas en FRONTEND.md](./FRONTEND.md#alcance)) |
 | `fecha_completada` | nullable | usada para la [gráfica de Avance](#datos-para-la-gráfica-de-avance) |
 | `eliminada` | booleano | **soft-delete** (ver [Eliminar una tarea](#eliminar-una-tarea)) — mientras es `true` la tarea vive en [Papelera](#papelera); `eliminar_definitivamente` sí borra la fila por completo después |
@@ -615,7 +616,11 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 
 - `listar_sprints()` — cualquier rol, para poblar la vista de sprints y el selector al crear/editar una tarea.
 
-Asignar una tarea a un sprint es simplemente escribir su `sprint_id` — no hay un comando dedicado, se hace como parte de `crear_tarea`/`editar_tarea`.
+Asignar una tarea a un sprint es escribir su `sprint_id`, y a un backlog su `backlog_id` — se hace como parte de `crear_tarea`/`editar_tarea` (o desde "Asignar tareas" en Planificación). **Actualizado (2026-11-07)**:
+- `asignar_backlog_a_sprint(backlog_id, sprint_id)` — Líder/Administrador: el sprint toma de una vez todas las tareas del backlog que están **libres** (`sprint_id` nulo) y no eliminadas, terminadas o no. Con `backlog_id = null` toma las tareas **sin backlog**. Las que ya tiene otro sprint no se tocan.
+- Una tarea solo puede estar en **un sprint y un backlog a la vez**: `editar_tarea` rechaza cambiar `sprint_id` (o `backlog_id`) de una tarea que ya tiene otro sprint (u otro backlog); primero hay que quitarla de ese.
+- Al cerrar un sprint (`cerrar_sprint` o cierre automático), **primero se guarda la copia de sus tareas tal como están** (id, título, tipo, estado, responsable, `fecha_completada`) como el reporte del sprint — el reporte se arma siempre con esa copia, no con las tareas vivas. El reporte que se genera al llegar `fecha_fin` sin cerrar el sprint guarda también su copia de ese día. Después, sus tareas **sin terminar** quedan con `sprint_id = null`: vuelven a estar libres en su backlog (si tienen) para el siguiente sprint. Las terminadas conservan su `sprint_id` (para el reporte).
+- Un backlog se puede trabajar sin sprint: sus tareas se toman y terminan igual que cualquier otra.
 
 ### Cierre de sprints
 

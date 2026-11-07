@@ -5,6 +5,7 @@ import { PageHeader, EmptyState } from '../components/primitives';
 import { CrearSprintModal } from '../components/CrearSprintModal';
 import { AsignarTareasSprintModal } from '../components/AsignarTareasSprintModal';
 import type { Sprint } from '../types';
+import { perteneceA } from '../lib/planificacion';
 import { Icono } from '../components/Icono';
 
 // Planificación: sprints (con fecha: empiezan y terminan, generan su reporte) y backlogs (sin fecha:
@@ -25,11 +26,16 @@ export function Planificacion() {
 
   const conFecha = sprints.filter((s) => s.con_fecha);
   const sinFecha = sprints.filter((s) => !s.con_fecha);
-  const tareasDe = (id: string) => tareas.filter((t) => t.sprint_id === id && !t.eliminada);
+  // Un sprint cerrado cuenta las tareas que tenía al cerrarse (la copia de su reporte).
+  const tareasDe = (sp: Sprint) => (sp.cerrado && sp.reporte ? sp.reporte : tareas.filter((t) => perteneceA(t, sp) && !t.eliminada));
 
   const fila = (sp: Sprint) => {
-    const suyas = tareasDe(sp.id);
+    const suyas = tareasDe(sp);
     const hechas = suyas.filter((t) => t.estado === 'terminada').length;
+    // En un backlog: cuántas de sus tareas está trabajando algún sprint ahora.
+    const enSprints = sp.con_fecha ? 0 : suyas.filter((t) => t.sprint_id).length;
+    // Sprint con fecha de inicio en el futuro.
+    const porEmpezar = sp.con_fecha && !sp.cerrado && sp.fecha_inicio > new Date().toISOString().slice(0, 10);
     return (
       <div
         key={sp.id}
@@ -43,10 +49,14 @@ export function Planificacion() {
             {(sp.con_fecha || sp.cerrado) && (
               <span
                 className={`chip border ${
-                  sp.cerrado ? 'border-border bg-surface-3 text-faint' : 'border-green-500/40 bg-green-500/10 text-green-300'
+                  sp.cerrado
+                    ? 'border-border bg-surface-3 text-faint'
+                    : porEmpezar
+                      ? 'border-primary/40 bg-primary-soft text-indigo-300'
+                      : 'border-green-500/40 bg-green-500/10 text-green-300'
                 }`}
               >
-                {sp.cerrado ? 'Cerrado' : 'En curso'}
+                {sp.cerrado ? 'Cerrado' : porEmpezar ? 'Por empezar' : 'En curso'}
               </span>
             )}
           </div>
@@ -59,6 +69,7 @@ export function Planificacion() {
             ) : null}
             {suyas.length} {suyas.length === 1 ? 'tarea' : 'tareas'}
             {suyas.length > 0 && <> · {hechas} terminadas</>}
+            {enSprints > 0 && <> · {enSprints} en sprints</>}
           </p>
         </div>
         {puedeGestionar && (

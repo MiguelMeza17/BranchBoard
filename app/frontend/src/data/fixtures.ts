@@ -112,6 +112,19 @@ export const usuarios: Usuario[] = [
 // Un sprint en curso de ejemplo (con tareas de prueba T-301…T-310, ver abajo), para ver Planificación,
 // el selector del Scrum y el burndown de Reportes. El resto de sprints y backlogs los crea el equipo.
 export const sprints: Sprint[] = [
+  // Sprint ya cerrado: su reporte (copia de las tareas al cierre) se arma al final de este archivo.
+  {
+    id: 'sp0',
+    nombre: 'Sprint 0',
+    descripcion: 'Base jugable: movimiento, cámara y primer enemigo.',
+    con_fecha: true,
+    fecha_inicio: '2026-10-19',
+    duracion_dias: 13,
+    fecha_fin: '2026-11-01',
+    cerrado: true,
+    fecha_cierre_real: '2026-11-01',
+    creado_por: 'miguellmezza123@gmail.com',
+  },
   {
     id: 'sp1',
     nombre: 'Sprint 1',
@@ -124,30 +137,43 @@ export const sprints: Sprint[] = [
     fecha_cierre_real: null,
     creado_por: 'miguellmezza123@gmail.com',
   },
-  // Backlogs de prueba (sin fecha): "General" con avance (T-401…T-416; en Avance tiene su propio botón) e "Ideas" sin empezar.
+  // Backlogs de prueba (sin fecha): "Etapa 1", ya terminado (T-401…T-435), y "Etapa 2", en curso. "General" no es un backlog: en Avance
+  // suma las tareas de todos los sprints y backlogs.
   {
-    id: 'general',
-    nombre: 'General',
-    descripcion: 'Pulido y contenido que se va haciendo sin plazo fijo.',
+    id: 'sp2',
+    nombre: 'Sprint 2',
+    descripcion: 'Bosque: primeras salas y enemigos.',
+    con_fecha: true,
+    fecha_inicio: '2026-11-16',
+    duracion_dias: 14,
+    fecha_fin: '2026-11-30',
+    cerrado: false,
+    fecha_cierre_real: null,
+    creado_por: 'miguellmezza123@gmail.com',
+  },
+  {
+    id: 'bl2',
+    nombre: 'Etapa 1',
+    descripcion: 'Primera etapa del juego.',
     con_fecha: false,
     fecha_inicio: '2026-10-06',
     duracion_dias: null,
     fecha_fin: null,
     cerrado: false,
     fecha_cierre_real: null,
-    creado_por: 'arteagacristobal957@gmail.com',
+    creado_por: 'miguellmezza123@gmail.com',
   },
   {
-    id: 'bl2',
-    nombre: 'Ideas',
-    descripcion: 'Cosas para más adelante.',
+    id: 'bl3',
+    nombre: 'Etapa 2',
+    descripcion: 'Segunda etapa: el bosque.',
     con_fecha: false,
-    fecha_inicio: '2026-10-20',
+    fecha_inicio: '2026-11-03',
     duracion_dias: null,
     fecha_fin: null,
     cerrado: false,
     fecha_cierre_real: null,
-    creado_por: 'miguellmezza123@gmail.com',
+    creado_por: 'arteagacristobal957@gmail.com',
   },
 ];
 
@@ -167,6 +193,7 @@ function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' |
     asignado_a: null,
     lider_revision_asignado: null,
     sprint_id: null,
+    backlog_id: null,
     fecha_creacion: '2026-08-15',
     con_fecha: false,
     fecha_limite: null,
@@ -505,9 +532,9 @@ export const tareas: Tarea[] = [
   t({ id: 'T-302', titulo: 'Guardado automático por checkpoint', detalles: 'Guardar posición, vida y objetos al tocar un checkpoint.', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, asignado_a: DEV, sprint_id: 'sp1', fecha_creacion: '2026-11-02', rama_asociada: 'task/T-302-checkpoint', modo_trabajo: 'rama', fecha_completada: '2026-11-04' }),
   t({ id: 'T-303', titulo: 'Sonido de pasos por superficie', detalles: 'Pasos distintos en piedra, pasto y metal.', tipo: 'Audio', estado: 'terminada', creado_por: ADMIN, asignado_a: LIDER, sprint_id: 'sp1', fecha_creacion: '2026-11-02', rama_asociada: 'task/T-303-pasos', modo_trabajo: 'rama', fecha_completada: '2026-11-06' }),
   t({ id: 'T-304', titulo: 'Enemigo volador', detalles: 'Patrulla en el aire y se lanza en picada hacia el jugador.', tipo: 'Scripting', estado: 'en revisión', creado_por: LIDER, asignado_a: DEV, sprint_id: 'sp1', fecha_creacion: '2026-11-02', rama_asociada: 'task/T-304-enemigo-volador', modo_trabajo: 'rama' }),
-  t({ id: 'T-305', titulo: 'Modelo 3D del enemigo volador', tipo: 'Modelado 3D', estado: 'en producción', creado_por: LIDER, asignado_a: ADMIN, sprint_id: 'sp1', fecha_creacion: '2026-11-03', rama_asociada: 'task/T-305-modelo-volador', modo_trabajo: 'rama', con_fecha: true, fecha_limite: '2026-11-12' }),
-  t({ id: 'T-306', titulo: 'Pantalla de game over', detalles: 'Reintentar desde el último checkpoint o volver al menú.', tipo: 'UI/Interfaz', estado: 'en producción', creado_por: ADMIN, asignado_a: DEV, sprint_id: 'sp1', fecha_creacion: '2026-11-03', rama_asociada: 'task/T-306-game-over', modo_trabajo: 'rama' }),
-  t({ id: 'T-307', titulo: 'Animación de muerte del jugador', tipo: 'Animación', estado: 'por hacer', creado_por: LIDER, asignado_a: LIDER, sprint_id: 'sp1', fecha_creacion: '2026-11-04', rama_asociada: 'task/T-307-anim-muerte', modo_trabajo: 'rama' }),
+  t({ id: 'T-305', titulo: 'Modelo 3D del enemigo volador', tipo: 'Modelado 3D', estado: 'en producción', creado_por: LIDER, asignado_a: ADMIN, sprint_id: 'sp1', backlog_id: 'bl3', fecha_creacion: '2026-11-03', rama_asociada: 'task/T-305-modelo-volador', modo_trabajo: 'rama', con_fecha: true, fecha_limite: '2026-11-12' }),
+  t({ id: 'T-306', titulo: 'Pantalla de game over', detalles: 'Reintentar desde el último checkpoint o volver al menú.', tipo: 'UI/Interfaz', estado: 'en producción', creado_por: ADMIN, asignado_a: DEV, sprint_id: 'sp1', backlog_id: 'bl3', fecha_creacion: '2026-11-03', rama_asociada: 'task/T-306-game-over', modo_trabajo: 'rama' }),
+  t({ id: 'T-307', titulo: 'Animación de muerte del jugador', tipo: 'Animación', estado: 'por hacer', creado_por: LIDER, asignado_a: LIDER, sprint_id: 'sp1', backlog_id: 'bl3', fecha_creacion: '2026-11-04', rama_asociada: 'task/T-307-anim-muerte', modo_trabajo: 'rama' }),
   t({ id: 'T-308', titulo: 'Ícono de checkpoint en el HUD', tipo: 'Imagen', estado: 'por hacer', creado_por: LIDER, sprint_id: 'sp1', fecha_creacion: '2026-11-04' }),
   t({ id: 'T-310', titulo: 'Jefe del nivel 1', detalles: 'Patrón de ataques en dos fases, barra de vida propia y escena de entrada.', tipo: 'Scripting', estado: 'en producción', creado_por: LIDER, asignado_a: DEV, sprint_id: 'sp1', fecha_creacion: '2026-11-02', rama_asociada: 'task/T-310-jefe-nivel1', modo_trabajo: 'rama' }),
   t({ id: 'T-310-1', titulo: 'Fase 1: ataques básicos', tipo: 'Scripting', estado: 'terminada', tarea_padre_id: 'T-310', creado_por: LIDER, asignado_a: DEV, sprint_id: 'sp1', fecha_creacion: '2026-11-02', rama_asociada: 'task/T-310-1-fase1', modo_trabajo: 'rama', fecha_completada: '2026-11-05' }),
@@ -515,27 +542,62 @@ export const tareas: Tarea[] = [
   t({ id: 'T-310-3', titulo: 'Barra de vida del jefe', tipo: 'UI/Interfaz', estado: 'por hacer', tarea_padre_id: 'T-310', creado_por: LIDER, sprint_id: 'sp1', fecha_creacion: '2026-11-03' }),
   t({ id: 'T-309', titulo: 'Música de jefe (intro)', tipo: 'Música', estado: 'por hacer', creado_por: ADMIN, sprint_id: 'sp1', fecha_creacion: '2026-11-05', con_fecha: true, fecha_limite: '2026-11-15' }),
 
-  // --- Backlogs de prueba: 'General' (con avance) e 'Ideas' (sin empezar) ---
-  t({ id: 'T-401', titulo: 'Ajustar colisiones del nivel 1', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-401', modo_trabajo: 'rama', fecha_completada: '2026-10-09' }),
-  t({ id: 'T-402', titulo: 'Texturas del suelo de la cueva', tipo: 'Imagen', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-402', modo_trabajo: 'rama', fecha_completada: '2026-10-13' }),
-  t({ id: 'T-403', titulo: 'Sonido ambiente de la cueva', tipo: 'Audio', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-403', modo_trabajo: 'rama', fecha_completada: '2026-10-16' }),
-  t({ id: 'T-404', titulo: 'Iluminación del nivel 2', tipo: 'Modelado 3D', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-404', modo_trabajo: 'rama', fecha_completada: '2026-10-21' }),
-  t({ id: 'T-405', titulo: 'Tutorial de controles', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-405', modo_trabajo: 'rama', fecha_completada: '2026-10-24' }),
-  t({ id: 'T-406', titulo: 'Optimizar carga de escenas', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-406', modo_trabajo: 'rama', fecha_completada: '2026-10-29' }),
-  t({ id: 'T-407', titulo: 'Ícono de la app', tipo: 'Imagen', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-407', modo_trabajo: 'rama', fecha_completada: '2026-11-02' }),
-  t({ id: 'T-408', titulo: 'Vibración del mando al recibir daño', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-408', modo_trabajo: 'rama', fecha_completada: '2026-11-05' }),
-  t({ id: 'T-409', titulo: 'Créditos finales', tipo: 'UI/Interfaz', estado: 'en revisión', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-409', modo_trabajo: 'rama' }),
-  t({ id: 'T-410', titulo: 'Rocas decorativas', tipo: 'Modelado 3D', estado: 'en producción', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-410', modo_trabajo: 'rama' }),
-  t({ id: 'T-411', titulo: 'Música del menú principal', tipo: 'Música', estado: 'en producción', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-10-29', asignado_a: LIDER, rama_asociada: 'task/T-411', modo_trabajo: 'rama' }),
-  t({ id: 'T-412', titulo: 'Animación de victoria', tipo: 'Animación', estado: 'por hacer', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-11-01', asignado_a: LIDER, rama_asociada: 'task/T-412', modo_trabajo: 'rama' }),
-  t({ id: 'T-413', titulo: 'Subtítulos', tipo: 'UI/Interfaz', estado: 'por hacer', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-11-03' }),
-  t({ id: 'T-414', titulo: 'Partículas de polvo al caer', tipo: 'Animación', estado: 'por hacer', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-11-04' }),
-  t({ id: 'T-415', titulo: 'Logros del juego', tipo: 'Scripting', estado: 'por hacer', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-11-05' }),
-  t({ id: 'T-416', titulo: 'Sonido de cofre', tipo: 'Audio', estado: 'por hacer', creado_por: LIDER, sprint_id: 'general', fecha_creacion: '2026-11-06' }),
-  t({ id: 'T-451', titulo: 'Modo foto', tipo: 'Scripting', estado: 'por hacer', creado_por: LIDER, sprint_id: 'bl2', fecha_creacion: '2026-10-20' }),
-  t({ id: 'T-452', titulo: 'Skins del personaje', tipo: 'Modelado 3D', estado: 'por hacer', creado_por: LIDER, sprint_id: 'bl2', fecha_creacion: '2026-10-20' }),
-  t({ id: 'T-453', titulo: 'Selector de dificultad', tipo: 'UI/Interfaz', estado: 'por hacer', creado_por: LIDER, sprint_id: 'bl2', fecha_creacion: '2026-10-20' }),
-  t({ id: 'T-454', titulo: 'Banda sonora extendida', tipo: 'Música', estado: 'por hacer', creado_por: LIDER, sprint_id: 'bl2', fecha_creacion: '2026-11-04' }),
+  // --- Backlog de prueba 'Etapa 2': T-305…T-307 están ocupadas por Sprint 1 (se ven en gris en el backlog),
+  // T-501…T-503 están libres ---
+  t({ id: 'T-311', titulo: 'Optimizar sombras en el bosque', tipo: 'Scripting', estado: 'por hacer', creado_por: LIDER, sprint_id: 'sp2', fecha_creacion: '2026-11-06' }),
+  t({ id: 'T-312', titulo: 'Sonido de viento entre árboles', tipo: 'Audio', estado: 'por hacer', creado_por: ADMIN, sprint_id: 'sp2', fecha_creacion: '2026-11-06' }),
+  t({ id: 'T-501', titulo: 'Nivel del bosque: diseño de salas', tipo: 'Modelado 3D', estado: 'por hacer', creado_por: LIDER, backlog_id: 'bl3', sprint_id: 'sp2', fecha_creacion: '2026-11-03' }),
+  t({ id: 'T-502', titulo: 'Enemigo planta carnívora', tipo: 'Scripting', estado: 'por hacer', creado_por: LIDER, backlog_id: 'bl3', sprint_id: 'sp2', fecha_creacion: '2026-11-04' }),
+  t({ id: 'T-503', titulo: 'Música del bosque', tipo: 'Música', estado: 'en producción', creado_por: ADMIN, asignado_a: LIDER, backlog_id: 'bl3', fecha_creacion: '2026-11-04', rama_asociada: 'task/T-503', modo_trabajo: 'rama' }),
+
+  // --- Sprint 0 (cerrado el 1 nov): 8 terminadas; T-609 y T-610 no se terminaron y quedaron libres al cierre ---
+  t({ id: 'T-601', titulo: 'Movimiento del jugador', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: DEV, rama_asociada: 'task/T-601', modo_trabajo: 'rama', fecha_completada: '2026-10-21' }),
+  t({ id: 'T-602', titulo: 'Cámara en tercera persona', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: DEV, rama_asociada: 'task/T-602', modo_trabajo: 'rama', fecha_completada: '2026-10-22' }),
+  t({ id: 'T-603', titulo: 'Modelo base del jugador', tipo: 'Modelado 3D', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: ADMIN, rama_asociada: 'task/T-603', modo_trabajo: 'rama', fecha_completada: '2026-10-23' }),
+  t({ id: 'T-604', titulo: 'Animación de correr', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: LIDER, rama_asociada: 'task/T-604', modo_trabajo: 'rama', fecha_completada: '2026-10-25' }),
+  t({ id: 'T-605', titulo: 'Enemigo básico: patrulla', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: DEV, rama_asociada: 'task/T-605', modo_trabajo: 'rama', fecha_completada: '2026-10-27' }),
+  t({ id: 'T-606', titulo: 'Sonido de pasos', tipo: 'Audio', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: LIDER, rama_asociada: 'task/T-606', modo_trabajo: 'rama', fecha_completada: '2026-10-28' }),
+  t({ id: 'T-607', titulo: 'Menú principal', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: ADMIN, rama_asociada: 'task/T-607', modo_trabajo: 'rama', fecha_completada: '2026-10-30' }),
+  t({ id: 'T-608', titulo: 'Iluminación de la sala inicial', tipo: 'Modelado 3D', estado: 'terminada', creado_por: LIDER, sprint_id: 'sp0', fecha_creacion: '2026-10-19', asignado_a: ADMIN, rama_asociada: 'task/T-608', modo_trabajo: 'rama', fecha_completada: '2026-10-31' }),
+  t({ id: 'T-609', titulo: 'Barra de vida del enemigo', tipo: 'UI/Interfaz', estado: 'en revisión', creado_por: LIDER, fecha_creacion: '2026-10-19', asignado_a: DEV, rama_asociada: 'task/T-609', modo_trabajo: 'rama' }),
+  t({ id: 'T-610', titulo: 'Efecto al recibir daño', tipo: 'Animación', estado: 'por hacer', creado_por: LIDER, fecha_creacion: '2026-10-19' }),
+
+  // --- Backlog de prueba 'Etapa 1' (ya terminado: sube y baja hasta 0) ---
+  t({ id: 'T-401', titulo: 'Ajustar colisiones del nivel 1', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-401', modo_trabajo: 'rama', fecha_completada: '2026-10-07' }),
+  t({ id: 'T-402', titulo: 'Texturas del suelo de la cueva', tipo: 'Imagen', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-402', modo_trabajo: 'rama', fecha_completada: '2026-10-08' }),
+  t({ id: 'T-403', titulo: 'Sonido ambiente de la cueva', tipo: 'Audio', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-403', modo_trabajo: 'rama', fecha_completada: '2026-10-09' }),
+  t({ id: 'T-404', titulo: 'Iluminación del nivel 2', tipo: 'Modelado 3D', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-404', modo_trabajo: 'rama', fecha_completada: '2026-10-10' }),
+  t({ id: 'T-405', titulo: 'Tutorial de controles', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-405', modo_trabajo: 'rama', fecha_completada: '2026-10-11' }),
+  t({ id: 'T-406', titulo: 'Optimizar carga de escenas', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-406', modo_trabajo: 'rama', fecha_completada: '2026-10-12' }),
+  t({ id: 'T-407', titulo: 'Ícono de la app', tipo: 'Imagen', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-407', modo_trabajo: 'rama', fecha_completada: '2026-10-13' }),
+  t({ id: 'T-408', titulo: 'Vibración del mando al recibir daño', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-408', modo_trabajo: 'rama', fecha_completada: '2026-10-15' }),
+  t({ id: 'T-409', titulo: 'Créditos finales', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-409', modo_trabajo: 'rama', fecha_completada: '2026-10-16' }),
+  t({ id: 'T-410', titulo: 'Rocas decorativas', tipo: 'Modelado 3D', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-410', modo_trabajo: 'rama', fecha_completada: '2026-10-17' }),
+  t({ id: 'T-411', titulo: 'Música del menú principal', tipo: 'Música', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-411', modo_trabajo: 'rama', fecha_completada: '2026-10-18' }),
+  t({ id: 'T-412', titulo: 'Animación de victoria', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-412', modo_trabajo: 'rama', fecha_completada: '2026-10-19' }),
+  t({ id: 'T-413', titulo: 'Subtítulos', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-413', modo_trabajo: 'rama', fecha_completada: '2026-10-20' }),
+  t({ id: 'T-414', titulo: 'Partículas de polvo al caer', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: ADMIN, rama_asociada: 'task/T-414', modo_trabajo: 'rama', fecha_completada: '2026-10-22' }),
+  t({ id: 'T-415', titulo: 'Logros del juego', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: LIDER, rama_asociada: 'task/T-415', modo_trabajo: 'rama', fecha_completada: '2026-10-23' }),
+  t({ id: 'T-416', titulo: 'Sonido de cofre', tipo: 'Audio', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-06', asignado_a: DEV, rama_asociada: 'task/T-416', modo_trabajo: 'rama', fecha_completada: '2026-10-24' }),
+  t({ id: 'T-417', titulo: 'Menú de opciones de audio', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-14', asignado_a: ADMIN, rama_asociada: 'task/T-417', modo_trabajo: 'rama', fecha_completada: '2026-10-25' }),
+  t({ id: 'T-418', titulo: 'Antorchas animadas', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-14', asignado_a: LIDER, rama_asociada: 'task/T-418', modo_trabajo: 'rama', fecha_completada: '2026-10-25' }),
+  t({ id: 'T-419', titulo: 'Puertas con llave', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-14', asignado_a: DEV, rama_asociada: 'task/T-419', modo_trabajo: 'rama', fecha_completada: '2026-10-26' }),
+  t({ id: 'T-420', titulo: 'Barra de oxígeno bajo el agua', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-21', asignado_a: ADMIN, rama_asociada: 'task/T-420', modo_trabajo: 'rama', fecha_completada: '2026-10-28' }),
+  t({ id: 'T-421', titulo: 'Diálogos del herrero', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-21', asignado_a: LIDER, rama_asociada: 'task/T-421', modo_trabajo: 'rama', fecha_completada: '2026-10-28' }),
+  t({ id: 'T-422', titulo: 'Cámara al entrar a una sala', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-21', asignado_a: DEV, rama_asociada: 'task/T-422', modo_trabajo: 'rama', fecha_completada: '2026-10-29' }),
+  t({ id: 'T-423', titulo: 'Brillo en objetos recogibles', tipo: 'Imagen', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-21', asignado_a: ADMIN, rama_asociada: 'task/T-423', modo_trabajo: 'rama', fecha_completada: '2026-10-30' }),
+  t({ id: 'T-424', titulo: 'Sonido de pasos en agua', tipo: 'Audio', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-27', asignado_a: LIDER, rama_asociada: 'task/T-424', modo_trabajo: 'rama', fecha_completada: '2026-10-31' }),
+  t({ id: 'T-425', titulo: 'Hojas que caen en el bosque', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-27', asignado_a: DEV, rama_asociada: 'task/T-425', modo_trabajo: 'rama', fecha_completada: '2026-11-02' }),
+  t({ id: 'T-426', titulo: 'Cinemática de inicio', tipo: 'Video', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-10-27', asignado_a: ADMIN, rama_asociada: 'task/T-426', modo_trabajo: 'rama', fecha_completada: '2026-11-02' }),
+  t({ id: 'T-427', titulo: 'Pantalla de carga con consejos', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-01', asignado_a: LIDER, rama_asociada: 'task/T-427', modo_trabajo: 'rama', fecha_completada: '2026-11-03' }),
+  t({ id: 'T-428', titulo: 'Arreglar parpadeo de sombras', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-01', asignado_a: DEV, rama_asociada: 'task/T-428', modo_trabajo: 'rama', fecha_completada: '2026-11-04' }),
+  t({ id: 'T-429', titulo: 'Mapa del mundo', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-01', asignado_a: ADMIN, rama_asociada: 'task/T-429', modo_trabajo: 'rama', fecha_completada: '2026-11-05' }),
+  t({ id: 'T-430', titulo: 'Efecto de golpe crítico', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-01', asignado_a: LIDER, rama_asociada: 'task/T-430', modo_trabajo: 'rama', fecha_completada: '2026-11-06' }),
+  t({ id: 'T-431', titulo: 'Ajustar volumen de efectos', tipo: 'Audio', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-01', asignado_a: DEV, rama_asociada: 'task/T-431', modo_trabajo: 'rama', fecha_completada: '2026-11-03' }),
+  t({ id: 'T-432', titulo: 'Reflejos en el agua', tipo: 'Imagen', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-01', asignado_a: ADMIN, rama_asociada: 'task/T-432', modo_trabajo: 'rama', fecha_completada: '2026-11-04' }),
+  t({ id: 'T-433', titulo: 'Guardar configuración de controles', tipo: 'Scripting', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-02', asignado_a: DEV, rama_asociada: 'task/T-433', modo_trabajo: 'rama', fecha_completada: '2026-11-05' }),
+  t({ id: 'T-434', titulo: 'Arreglar texto cortado en el menú', tipo: 'UI/Interfaz', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-02', asignado_a: LIDER, rama_asociada: 'task/T-434', modo_trabajo: 'rama', fecha_completada: '2026-11-06' }),
+  t({ id: 'T-435', titulo: 'Animación de recoger objeto', tipo: 'Animación', estado: 'terminada', creado_por: LIDER, backlog_id: 'bl2', fecha_creacion: '2026-11-03', asignado_a: ADMIN, rama_asociada: 'task/T-435', modo_trabajo: 'rama', fecha_completada: '2026-11-06' }),
 
   // --- Tareas eliminadas (papelera) ---
   t({
@@ -819,3 +881,11 @@ export const notificaciones: Notificacion[] = [
     accionable: false,
   },
 ];
+
+// Reporte de Sprint 0: copia de sus tareas tal como estaban al cerrarse (T-609 en revisión, T-610 por hacer).
+const sprint0 = sprints.find((sp) => sp.id === 'sp0');
+if (sprint0) {
+  sprint0.reporte = tareas
+    .filter((t) => /^T-6(0[1-9]|10)$/.test(t.id))
+    .map((t) => ({ ...t, sprint_id: 'sp0' }));
+}

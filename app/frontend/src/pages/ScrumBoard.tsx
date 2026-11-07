@@ -15,6 +15,7 @@ import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { perteneceA } from '../lib/planificacion';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
@@ -49,8 +50,11 @@ function DraggableCard({
   ocultarResponsable,
   disabled,
   resaltada,
+  atenuada,
 }: {
   resaltada?: boolean;
+  /** En la vista de un backlog: la tarea está ocupada por un sprint (se ve en gris). */
+  atenuada?: boolean;
   tarea: Tarea;
   childCount: number;
   onOpenFolder?: () => void;
@@ -67,7 +71,7 @@ function DraggableCard({
     <div
       ref={setNodeRef}
       id={`scrum-tarea-${tarea.id}`}
-      className={`rounded-xl transition-shadow duration-300 ${isDragging ? 'opacity-40' : ''}`}
+      className={`rounded-xl transition-shadow duration-300 ${isDragging ? 'opacity-40' : atenuada ? 'opacity-50 grayscale' : ''}`}
       style={resaltada ? { boxShadow: '0 0 0 2px rgb(99 102 241 / 0.8), 0 0 18px 4px rgb(99 102 241 / 0.45)' } : undefined}
     >
       <TaskCard
@@ -166,11 +170,11 @@ export function ScrumBoard() {
   const visibles = useMemo(() => {
     const base = tareasAll.filter((t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user));
     if (!sprintId || !sprintActual) return base;
-    // De un sprint: la tarea está en él, o alguno de sus ancestros lo está (sus subtareas van con ella).
+    // De un sprint o backlog: la tarea está en él, o alguno de sus ancestros lo está (sus subtareas van con ella).
     const porId = new Map(tareasAll.map((t) => [t.id, t]));
     const enSprint = (t: Tarea): boolean => {
       for (let cur: Tarea | undefined = t; cur; cur = cur.tarea_padre_id ? porId.get(cur.tarea_padre_id) : undefined) {
-        if (cur.sprint_id === sprintId) return true;
+        if (perteneceA(cur, sprintActual)) return true;
       }
       return false;
     };
@@ -431,8 +435,14 @@ export function ScrumBoard() {
 
   function renderCard(t: Tarea) {
     const nHijos = childrenCount(t.id);
+    // Viendo un backlog: las tareas que ya trabaja un sprint van en gris, con el sprint donde están.
+    const ocupadaPor =
+      sprintActual && !sprintActual.con_fecha && t.sprint_id ? sprints.find((sp) => sp.id === t.sprint_id)?.nombre : undefined;
     const footer = (
       <div className="flex flex-wrap items-center gap-1.5">
+        {ocupadaPor && (
+          <span className="chip w-full justify-center border border-border bg-surface-3 text-muted">en {ocupadaPor}</span>
+        )}
         <button className="btn-ghost btn-sm" onClick={() => setDetalle(t)}>
           Ver detalle
         </button>
@@ -470,6 +480,7 @@ export function ScrumBoard() {
         ocultarResponsable={t.estado === 'por hacer'}
         disabled={!!tomarId}
         resaltada={resaltada === t.id}
+        atenuada={!!ocupadaPor}
       />
     );
   }
