@@ -19,6 +19,7 @@ import { CategoriaScrum } from './pages/CategoriaScrum';
 import { Reportes } from './pages/Reportes';
 import { Ajustes } from './pages/Ajustes';
 import { PerfilUsuario } from './pages/PerfilUsuario';
+import { Usuarios } from './pages/Usuarios';
 
 export function App() {
   const [showSplash, setShowSplash] = useState(true);
@@ -61,6 +62,7 @@ export function App() {
             <Route path="/planificacion" element={<Planificacion />} />
             <Route path="/avance" element={<Avance />} />
             <Route path="/branches" element={<Branches />} />
+            <Route path="/usuarios" element={<Usuarios />} />
             <Route path="/revision" element={<Revision />} />
             <Route path="/pendientes" element={<Pendientes />} />
             <Route path="/papelera" element={<Papelera />} />

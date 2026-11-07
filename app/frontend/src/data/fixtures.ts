@@ -3,8 +3,6 @@ import type {
   Tarea,
   Sprint,
   Notificacion,
-  SolicitudIngreso,
-  ColaboradorExterno,
   EdicionPendiente,
   Backup,
   Commit,
@@ -95,6 +93,15 @@ export const usuarios: Usuario[] = [
     fecha_alta: '2026-09-20',
     firma: null, // pendiente de confirmar por Administrador
     firmado_en: null,
+  },
+  {
+    email: 'colab.arte@freelance.dev',
+    nombre: 'Marta',
+    apellido: 'Freelance',
+    rol: 'Colaborador externo',
+    fecha_alta: '2026-09-05',
+    firma: 'sig_colab_ok',
+    firmado_en: '2026-09-05T10:00:00',
   },
 ];
 
@@ -592,40 +599,6 @@ export const edicionesPendientes: EdicionPendiente[] = [
     motivo: 'El loop original se sentía muy corto en pruebas de playtesting.',
     creado_por: ADMIN,
     fecha: '2026-09-27',
-  },
-];
-
-export const solicitudes: SolicitudIngreso[] = [
-  {
-    id: 'S-1',
-    nombre: 'Ana',
-    apellido: 'López',
-    correo: 'ana.lopez@estudiante.edu',
-    id_organizacion: 'virustf-org',
-    estado: 'pendiente',
-    fecha_solicitud: '2026-09-24',
-    fecha_resolucion: null,
-    registrada_por: LIDER,
-  },
-  {
-    id: 'S-2',
-    nombre: 'Carlos',
-    apellido: 'Mena',
-    correo: 'carlos.mena@estudiante.edu',
-    id_organizacion: 'virustf-org',
-    estado: 'aceptada',
-    fecha_solicitud: '2026-08-30',
-    fecha_resolucion: '2026-09-01',
-    registrada_por: ADMIN,
-  },
-];
-
-export const colaboradores: ColaboradorExterno[] = [
-  {
-    email: 'colab.arte@freelance.dev',
-    nombre: 'Marta Freelance',
-    agregado_por: LIDER,
-    fecha_alta: '2026-09-05',
   },
 ];
 

@@ -7,11 +7,17 @@ export const esLiderOAdmin = (rol: Rol) => rol === 'Administrador' || rol === 'L
 
 export const puedeEliminarProyecto = (rol: Rol) => rol === 'Administrador';
 export const puedeRestaurarBackup = (rol: Rol) => rol === 'Administrador';
-export const puedeAsignarLider = (rol: Rol) => rol === 'Administrador';
+// Roles a los que `actor` puede cambiar a `objetivo` (vacío = no puede cambiarlo). El Administrador
+// cambia a cualquiera menos a otro Administrador (y no da el rol Administrador); el Líder solo mueve
+// entre Desarrollador, Tester y Colaborador externo.
+const ROLES_BASE: Rol[] = ['Desarrollador', 'Tester', 'Colaborador externo'];
+export function rolesAsignablesA(actor: Rol, objetivo: Rol): Rol[] {
+  if (actor === 'Administrador') return objetivo === 'Administrador' ? [] : ['Líder', ...ROLES_BASE];
+  if (actor === 'Líder') return ROLES_BASE.includes(objetivo) ? ROLES_BASE : [];
+  return [];
+}
 export const puedeAsignarRevision = (rol: Rol) => rol === 'Administrador';
 export const puedeAutoasignarseRevision = (rol: Rol) => esLiderOAdmin(rol);
-export const puedeGestionarSolicitudes = (rol: Rol) => esLiderOAdmin(rol);
-export const puedeGestionarColaboradores = (rol: Rol) => esLiderOAdmin(rol);
 export const puedeAprobarPendientes = (rol: Rol) => esLiderOAdmin(rol);
 export const puedeEliminarTareas = (rol: Rol) => esLiderOAdmin(rol);
 export const puedeEliminarDefinitivo = (rol: Rol) => esLiderOAdmin(rol);
@@ -33,7 +39,7 @@ export function tareaVisibleEnTableroPrincipal(tarea: Tarea, user: Usuario): boo
 // ¿Puede eliminar a este usuario?
 export function puedeEliminarUsuario(actor: Rol, objetivo: Rol): boolean {
   if (actor === 'Administrador') return true;
-  if (actor === 'Líder') return objetivo === 'Desarrollador';
+  if (actor === 'Líder') return objetivo === 'Desarrollador' || objetivo === 'Colaborador externo';
   return false;
 }
 

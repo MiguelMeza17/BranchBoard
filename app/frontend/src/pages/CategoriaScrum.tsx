@@ -14,7 +14,7 @@ import {
 import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea, type TipoTarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
-import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { esLiderOAdmin, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard } from '../components/TaskCard';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
@@ -197,7 +197,7 @@ export function CategoriaScrum() {
 
     // Desde "Sin asignar" solo se pasa a "Por hacer"; forzar otra columna pide confirmación.
     if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
-      if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+      if (to === 'terminada' && !esLiderOAdmin(user.rol)) {
         showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
         return;
       }
@@ -234,7 +234,7 @@ export function CategoriaScrum() {
       return;
     }
 
-    if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+    if (to === 'terminada' && !esLiderOAdmin(user.rol)) {
       showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
       return;
     }
@@ -245,7 +245,7 @@ export function CategoriaScrum() {
       return;
     }
 
-    if (to === 'en revisión' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+    if (to === 'en revisión' && !esLiderOAdmin(user.rol)) {
       if (tarea.pendiente_aprobacion) {
         showToast('Esta tarea está pendiente de aprobación — no se puede mandar a revisión', 'danger');
         return;

@@ -5,8 +5,6 @@ import type {
   Tarea,
   Sprint,
   Notificacion,
-  SolicitudIngreso,
-  ColaboradorExterno,
   EdicionPendiente,
   Backup,
   Commit,
@@ -17,6 +15,7 @@ import type {
 } from '../types';
 import * as fx from '../data/fixtures';
 import { esTareaEnEspera } from '../lib/ui';
+import { esLiderOAdmin } from '../lib/permisos';
 
 let idSeq = 1000;
 const nextId = () => `T-${++idSeq}`;
@@ -218,10 +217,13 @@ interface State {
   tareas: Tarea[];
   sprints: Sprint[];
   notificaciones: Notificacion[];
-  solicitudes: SolicitudIngreso[];
-  colaboradores: ColaboradorExterno[];
   edicionesPendientes: EdicionPendiente[];
   backups: Backup[];
+  /** Tamaño de la base de datos actual (la que va arriba como "Actual" en Copias de seguridad). */
+  tamanoActual: string;
+  /** Hay un usuario nuevo o un cambio de rol que no has visto: punto azul en "Usuarios" del menú. */
+  hayNovedadUsuarios: boolean;
+  marcarUsuariosVistos: () => void;
   commits: Commit[];
   /** Registro de "Traer cambios": se muestra en los detalles de la tarea que los recibió. */
   cambiosTraidos: CambioTraido[];
@@ -232,7 +234,6 @@ interface State {
    * terminadas que no estén aquí salen como "Cambios entrantes" en los detalles de su padre.
    */
   entrantesRecibidos: string[];
-  correoContacto: string;
 
   // toasts efímeros
   toast: { id: number; msg: string; tone: 'ok' | 'info' | 'danger' } | null;
@@ -331,14 +332,18 @@ interface State {
   marcarTodasLeidas: (email: string) => void;
 
   // usuarios / ajustes
-  aceptarSolicitud: (id: string, rol: Rol) => void;
-  rechazarSolicitud: (id: string) => void;
+  /** Crea el usuario con su correo, contraseña y rol. Devuelve false si ya existe. */
+  crearUsuario: (correo: string, clave: string, rol: Rol) => boolean;
   confirmarUsuario: (email: string) => void;
+  /** Antes de restaurar, el estado actual se guarda como una copia más, tal cual estaba. */
+  restaurarBackup: (id: string) => void;
   eliminarUsuario: (email: string) => void;
-  ascenderALider: (email: string) => void;
-  agregarColaborador: (email: string, nombre: string) => void;
-  revocarColaborador: (email: string) => void;
-  setCorreoContacto: (correo: string) => void;
+  /** Cambia el rol. Si lo cambia un Líder, queda pendiente hasta que el Administrador lo firme. */
+  cambiarRol: (email: string, rol: Rol) => void;
+  /** Mensaje libre a un compañero: le llega como notificación. */
+  enviarMensaje: (para: string, texto: string) => void;
+  /** Cambia el nombre del proyecto en BranchBoard (el repositorio de Unity VC conserva el suyo). */
+  renombrarProyecto: (nombre: string) => boolean;
 
   // sprints
   crearSprint: (nombre: string, descripcion: string, con_fecha: boolean, duracion_dias: number | null) => void;
@@ -377,8 +382,6 @@ export const useStore = create<State>((set, get) => {
   tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),
   sprints: [...fx.sprints],
   notificaciones: [...fx.notificaciones],
-  solicitudes: [...fx.solicitudes],
-  colaboradores: [...fx.colaboradores],
   edicionesPendientes: [...fx.edicionesPendientes],
   commits: [...fx.commits],
   cambiosTraidos: [...fx.cambiosTraidos],
@@ -387,7 +390,9 @@ export const useStore = create<State>((set, get) => {
     .filter((t) => t.estado === 'terminada' && !fx.entrantesSinRecibir.includes(t.id))
     .map((t) => t.id),
   backups: [...fx.backups],
-  correoContacto: 'ingreso@virustf.dev',
+  tamanoActual: '2.4 MB',
+  hayNovedadUsuarios: true,
+  marcarUsuariosVistos: () => set({ hayNovedadUsuarios: false }),
 
   toast: null,
   ramaWorkspace: null,
@@ -555,8 +560,6 @@ export const useStore = create<State>((set, get) => {
       tareas: [],
       sprints: [],
       notificaciones: [],
-      solicitudes: [],
-      colaboradores: [],
       edicionesPendientes: [],
       commits: [],
       cambiosTraidos: [],
@@ -747,7 +750,7 @@ export const useStore = create<State>((set, get) => {
   crearTarea: (data) => {
     const s = get();
     const user = s.currentUser();
-    const pendiente = user.rol === 'Desarrollador' || user.rol === 'Tester';
+    const pendiente = !esLiderOAdmin(user.rol);
     const nueva: Tarea = {
       id: nextId(),
       titulo: data.titulo,
@@ -1099,35 +1102,51 @@ export const useStore = create<State>((set, get) => {
       notificaciones: s.notificaciones.map((n) => (n.para === email ? { ...n, leida: true } : n)),
     })),
 
-  aceptarSolicitud: (id, rol) => {
+  crearUsuario: (correo, clave, rol) => {
     const s = get();
-    const sol = s.solicitudes.find((x) => x.id === id);
-    if (!sol) return;
-    const nuevoUsuario: Usuario = {
-      email: sol.correo,
-      nombre: sol.nombre,
-      apellido: sol.apellido,
+    const c = correo.trim().toLowerCase();
+    if (s.usuarios.some((u) => u.email.toLowerCase() === c)) {
+      s.showToast('Ya existe un usuario con ese correo', 'danger');
+      return false;
+    }
+    // La contraseña no se guarda en el mockup; en el backend se guarda solo su hash.
+    void clave;
+    // El nombre sale del correo (ana.lopez@… → Ana Lopez) hasta que la persona lo cambie.
+    const [nombre = '', apellido = ''] = c
+      .split('@')[0]
+      .split(/[._-]+/)
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+    // Si lo crea el Administrador, la firma del rol va de una vez; si lo crea un Líder, queda pendiente
+    // hasta que el Administrador lo confirme (solo él tiene la llave para firmar).
+    const esAdmin = s.currentUser().rol === 'Administrador';
+    const nuevo: Usuario = {
+      email: c,
+      nombre,
+      apellido,
       rol,
       fecha_alta: today(),
-      firma: null, // pendiente de confirmar por Administrador
-      firmado_en: null,
+      firma: esAdmin ? 'firma-admin' : null,
+      firmado_en: esAdmin ? today() : null,
     };
-    set({
-      solicitudes: s.solicitudes.map((x) =>
-        x.id === id ? { ...x, estado: 'aceptada', fecha_resolucion: today() } : x
-      ),
-      usuarios: [...s.usuarios, nuevoUsuario],
-    });
-    s.showToast('Solicitud aceptada — usuario pendiente de confirmar');
+    set({ usuarios: [...s.usuarios, nuevo], hayNovedadUsuarios: true });
+    s.showToast(esAdmin ? `Usuario ${c} creado como ${rol}` : `Usuario ${c} creado — falta que el Administrador lo confirme`);
+    return true;
   },
 
-  rechazarSolicitud: (id) => {
-    set((s) => ({
-      solicitudes: s.solicitudes.map((x) =>
-        x.id === id ? { ...x, estado: 'rechazada', fecha_resolucion: today() } : x
-      ),
-    }));
-    get().showToast('Solicitud rechazada', 'danger');
+  restaurarBackup: (id) => {
+    const s = get();
+    const b = s.backups.find((x) => x.id === id);
+    if (!b) return;
+    const d = new Date();
+    const ahora = `${d.toLocaleDateString('en-CA')} ${d.toTimeString().slice(0, 5)}`;
+    const guardada: Backup = {
+      id: `B-${Date.now()}`,
+      fecha: ahora,
+      tamano: s.tamanoActual,
+      nota: `Guardada antes de restaurar la copia del ${b.fecha}`,
+    };
+    set({ backups: [guardada, ...s.backups], tamanoActual: b.tamano });
+    s.showToast(`Copia del ${b.fecha} restaurada — la anterior quedó guardada`);
   },
 
   confirmarUsuario: (email) => {
@@ -1144,31 +1163,50 @@ export const useStore = create<State>((set, get) => {
     get().showToast('Usuario eliminado', 'danger');
   },
 
-  ascenderALider: (email) => {
-    set((s) => ({
-      usuarios: s.usuarios.map((u) => (u.email === email ? { ...u, rol: 'Líder' } : u)),
-    }));
-    get().showToast('Usuario ascendido a Líder');
+  renombrarProyecto: (nombre) => {
+    const s = get();
+    const nuevo = nombre.trim();
+    const anterior = s.proyectoActual;
+    if (!nuevo || nuevo === anterior) return false;
+    if (s.workspaces.some((w) => w.nombre.toLowerCase() === nuevo.toLowerCase() && w.nombre !== anterior)) {
+      s.showToast('Ya tienes otro proyecto con ese nombre', 'danger');
+      return false;
+    }
+    set({
+      proyectoActual: nuevo,
+      workspaces: s.workspaces.map((w) => (w.nombre === anterior ? { ...w, nombre: nuevo } : w)),
+    });
+    s.showToast(`Proyecto renombrado a ${nuevo}`);
+    return true;
   },
 
-  agregarColaborador: (email, nombre) => {
-    set((s) => ({
-      colaboradores: [
-        ...s.colaboradores,
-        { email, nombre, agregado_por: s.currentEmail, fecha_alta: today() },
-      ],
-    }));
-    get().showToast('Colaborador agregado');
+  enviarMensaje: (para, texto) => {
+    const s = get();
+    const yo = s.currentUser();
+    const destino = s.usuarios.find((u) => u.email === para);
+    notificar({
+      tipo: 'mensaje',
+      para,
+      titulo: `Mensaje de ${yo.nombre} ${yo.apellido}`.trim(),
+      cuerpo: texto.trim(),
+      tarea_id: null,
+      accionable: false,
+    });
+    s.showToast(`Mensaje enviado a ${destino ? destino.nombre : para}`);
   },
 
-  revocarColaborador: (email) => {
-    set((s) => ({ colaboradores: s.colaboradores.filter((c) => c.email !== email) }));
-    get().showToast('Permiso revocado', 'danger');
-  },
-
-  setCorreoContacto: (correo) => {
-    set({ correoContacto: correo });
-    get().showToast('Correo de contacto actualizado');
+  cambiarRol: (email, rol) => {
+    const s = get();
+    const esAdmin = s.currentUser().rol === 'Administrador';
+    set({
+      usuarios: s.usuarios.map((u) =>
+        u.email === email
+          ? { ...u, rol, firma: esAdmin ? 'firma-admin' : null, firmado_en: esAdmin ? today() : null }
+          : u
+      ),
+      hayNovedadUsuarios: true,
+    });
+    s.showToast(esAdmin ? `Rol cambiado a ${rol}` : `Rol cambiado a ${rol} — falta que el Administrador lo confirme`);
   },
 
   crearSprint: (nombre, descripcion, con_fecha, duracion_dias) => {

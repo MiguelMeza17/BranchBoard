@@ -14,7 +14,7 @@ import {
 import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
-import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { esLiderOAdmin, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
@@ -355,7 +355,7 @@ export function ScrumBoard() {
     // Desde "Sin asignar" lo normal es pasar solo a "Por hacer" (ya tratado arriba). Forzarla a
     // otra columna pide confirmar el salto; al confirmarlo sigue el flujo normal (avanzarA).
     if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
-      if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+      if (to === 'terminada' && !esLiderOAdmin(user.rol)) {
         showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
         return;
       }
@@ -394,7 +394,7 @@ export function ScrumBoard() {
     }
 
     // Desarrollador/Tester no pueden mandar a "terminada" directo — solo vía revisión
-    if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+    if (to === 'terminada' && !esLiderOAdmin(user.rol)) {
       showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
       return;
     }
@@ -406,7 +406,7 @@ export function ScrumBoard() {
     }
 
     // Mandar a revisión: doble candado ("mandar a revisar") para Desarrollador/Tester
-    if (to === 'en revisión' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+    if (to === 'en revisión' && !esLiderOAdmin(user.rol)) {
       if (tarea.pendiente_aprobacion) {
         showToast('Esta tarea está pendiente de aprobación — no se puede mandar a revisión', 'danger');
         return;
