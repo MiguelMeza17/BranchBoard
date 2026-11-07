@@ -117,9 +117,6 @@ function SeccionProyecto() {
           Guardar
         </button>
       </div>
-      <p className="mt-1 text-[11px] text-faint">
-        Solo cambia el nombre en BranchBoard; el repositorio de Unity VC conserva el suyo.
-      </p>
 
       <div className="mt-5 rounded-lg border border-danger/40 p-4">
         <div className="text-sm font-semibold text-red-300">Eliminar proyecto</div>

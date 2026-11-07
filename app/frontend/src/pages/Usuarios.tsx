@@ -95,11 +95,6 @@ function SeccionCrearUsuario() {
         </button>
       </div>
       {clave && !claveOk && <p className="mt-1 text-[11px] text-red-300">⚠ La contraseña debe tener al menos 8 caracteres.</p>}
-      <p className="mt-2 text-[11px] text-faint">
-        Pásale a la persona su correo y contraseña. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive
-        y el repositorio en Unity VC.
-        {user.rol === 'Líder' && ' Como Líder, el usuario queda pendiente hasta que el Administrador lo confirme.'}
-      </p>
     </Seccion>
   );
 }

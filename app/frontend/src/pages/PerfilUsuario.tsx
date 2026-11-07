@@ -176,7 +176,6 @@ export function PerfilUsuario() {
           open={escribiendo}
           onClose={cerrarMensaje}
           title={`Mensaje para ${u.nombre}`}
-          subtitle="Le llega como notificación en la campana 🔔"
           size="sm"
           footer={
             <div className="flex w-full justify-end gap-2">

@@ -53,3 +53,10 @@ Todo lo de esta sección queda **resuelto en diseño, falta implementarlo en có
 - [x] **N15 — Restricción `.fbx` vs. visor glTF sin conversión definida.** Resuelto/acotado: la restricción a `.fbx` ya estaba decidida, se dejó como pendiente concreto solo la elección de librería de conversión. Ver [PLANNING.md](./PLANNING.md#pendiente-por-definir).
 - [x] **N16 — Pendiente de PLANNING.md ya resuelto por el diseño de Ajustes.** Resuelto: el permiso de subtareas simples es por persona, no por tarea, ya estaba decidido en FRONTEND.md — solo faltaba propagarlo. Ver [PLANNING.md](./PLANNING.md#pendiente-por-definir).
 - [x] **N17 — No había tabla de configuración de proyecto para `correo_contacto_solicitudes`.** Resuelto: nueva tabla `configuracion_proyecto` (clave/valor) + comando `actualizar_configuracion_proyecto`. Ver [BACKEND.md](./BACKEND.md#modelo-de-datos-tabla-configuracion_proyecto).
+
+**Cambios del 2026-11-07 (PR #59) — para la auditoría de backend:**
+
+- [ ] **Contraseña en "Crear usuario"**: el frontend pide correo, contraseña y rol, pero la identidad es `cm whoami` (no hay login propio). Definir para qué se usa la contraseña (¿solo proyectos sin Unity VC?) y cómo se guarda (hash). Ver [BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes).
+- [ ] **Qué ve el Colaborador externo**: hoy ve lo mismo que un Desarrollador. Ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo).
+- [ ] **`cambiar_rol` por un Líder**: deja la fila con `firma = NULL`; revisar que eso no bloquee a alguien que ya estaba trabajando (hoy, sin firma no puede entrar).
+- [x] **Solicitar ingreso** quitado del MVP → versión 2 (issue #57). Invitar por correo con código → issue #58.
