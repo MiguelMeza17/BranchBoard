@@ -6,6 +6,7 @@ import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { Modal } from './Modal';
 import { Toast } from './Toast';
+import { Icono, IconoEnLinea } from './Icono';
 
 // Pantallas de entrada antes de los tableros — ver documentacion/FRONTEND.md,
 // "Autenticación / acceso al proyecto": Pantalla inicial → workspaces de Unity VC
@@ -105,9 +106,9 @@ export function AccesoProyecto() {
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-surface p-4">
       <div className="card flex w-full max-w-lg flex-col gap-5 p-8">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-baseline gap-1 text-2xl font-bold tracking-tight">
+          <div className="flex items-baseline text-2xl font-bold tracking-tight">
             <span className="text-text">Branch</span>
-            <span className="text-accent">Board</span>
+            <span className="text-green-400">Board</span>
           </div>
           {(paso !== 'inicio' || sinUvcs) && (
             <button
@@ -160,7 +161,7 @@ export function AccesoProyecto() {
         )}
 
         {paso === 'pendiente' && (
-          <Aviso icono="⏳" tono="bg-warn/15" titulo="Tu cuenta está pendiente de confirmación">
+          <Aviso icono="reloj" tono="bg-warn/15" titulo="Tu cuenta está pendiente de confirmación">
             Tu cuenta (<span className="font-mono text-xs text-text">{correo}</span>) ya fue agregada a{' '}
             <span className="font-semibold text-text">{elegido?.nombre}</span> por un Líder o Administrador, y está
             pendiente de que el Administrador la confirme. Cuando lo haga, entrarás directo la próxima vez que abras BranchBoard.
@@ -169,7 +170,7 @@ export function AccesoProyecto() {
 
         {paso === 'no-registrado' && (
           <>
-            <Aviso icono="🚫" tono="bg-red-500/15" titulo="Tu cuenta no está registrada en este proyecto">
+            <Aviso icono="prohibido" tono="bg-red-500/15" titulo="Tu cuenta no está registrada en este proyecto">
               La cuenta detectada por Unity VC (<span className="font-mono text-xs text-text">{correo}</span>) todavía no
               está registrada en <span className="font-semibold text-text">{elegido?.nombre}</span>.
             </Aviso>
@@ -182,7 +183,7 @@ export function AccesoProyecto() {
 
         {paso === 'inicializar' && (
           <>
-            <Aviso icono="🧩" tono="bg-primary-soft" titulo="Este proyecto no usa BranchBoard todavía">
+            <Aviso icono="pieza" tono="bg-primary-soft" titulo="Este proyecto no usa BranchBoard todavía">
               <span className="font-semibold text-text">{elegido?.nombre}</span> nunca se ha configurado con BranchBoard.
               Puedes inicializarlo aquí mismo — quien lo inicializa queda como{' '}
               <span className="font-semibold text-text">Administrador</span> del proyecto.
@@ -246,7 +247,7 @@ export function AccesoProyecto() {
               onBlur={() => tocar('proyecto')}
               onChange={(e) => setNuevo({ ...nuevo, proyecto: e.target.value })}
             />
-            {errorVisible('proyecto') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('proyecto')}</span>}
+            {errorVisible('proyecto') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('proyecto')}</span>}
           </label>
           <label className="block">
             <span className="mb-1 block text-xs text-faint">Tu nombre</span>
@@ -256,7 +257,7 @@ export function AccesoProyecto() {
               onBlur={() => tocar('nombre')}
               onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })}
             />
-            {errorVisible('nombre') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('nombre')}</span>}
+            {errorVisible('nombre') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('nombre')}</span>}
           </label>
           <label className="block">
             <span className="mb-1 block text-xs text-faint">Tu correo</span>
@@ -267,7 +268,7 @@ export function AccesoProyecto() {
               onBlur={() => tocar('correo')}
               onChange={(e) => setNuevo({ ...nuevo, correo: e.target.value })}
             />
-            {errorVisible('correo') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('correo')}</span>}
+            {errorVisible('correo') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('correo')}</span>}
           </label>
           <label className="block">
             <span className="mb-1 block text-xs text-faint">Tu contraseña (mínimo 8 caracteres)</span>
@@ -279,7 +280,7 @@ export function AccesoProyecto() {
               onBlur={() => tocar('clave')}
               onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })}
             />
-            {errorVisible('clave') && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorVisible('clave')}</span>}
+            {errorVisible('clave') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('clave')}</span>}
           </label>
         </div>
       </Modal>
@@ -313,9 +314,9 @@ export function AccesoProyecto() {
             }}
             placeholder="Carpeta del proyecto"
           />
-          {errorLocal && <p className="text-[11px] text-red-300">⚠ {errorLocal}</p>}
+          {errorLocal && <p className="text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorLocal}</p>}
           <p className="text-[11px] text-faint">
-            En la app de escritorio, el botón 📁 abre el explorador de carpetas de Windows.
+            En la app de escritorio, el botón de carpeta abre el explorador de carpetas de Windows.
           </p>
         </div>
       </Modal>
@@ -369,7 +370,7 @@ export function AccesoProyecto() {
 function Aviso({ icono, tono, titulo, children }: { icono: string; tono: string; titulo: string; children: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-3 text-center">
-      <div className={`grid h-14 w-14 place-items-center rounded-2xl text-2xl ${tono}`}>{icono}</div>
+      <div className={`grid h-14 w-14 place-items-center rounded-2xl ${tono}`}><Icono nombre={icono} className="h-7 w-7" /></div>
       <h2 className="text-base font-semibold text-text">{titulo}</h2>
       <p className="text-sm text-muted">{children}</p>
     </div>
@@ -466,14 +467,14 @@ function PasoInicio({
           onClick={onCrear}
           className="flex flex-col items-start gap-1 rounded-xl border border-border bg-surface-2 p-4 text-left transition hover:border-primary"
         >
-          <span className="text-xl">✨</span>
+          <Icono nombre="chispa" className="h-6 w-6" />
           <span className="text-sm font-semibold text-text">Crear un nuevo proyecto</span>
         </button>
         <button
           onClick={onIngresar}
           className="flex flex-col items-start gap-1 rounded-xl border border-border bg-surface-2 p-4 text-left transition hover:border-primary"
         >
-          <span className="text-xl">📂</span>
+          <Icono nombre="carpetaAbierta" className="h-6 w-6" />
           <span className="text-sm font-semibold text-text">Ingresar a un proyecto existente</span>
         </button>
       </div>
@@ -506,7 +507,7 @@ function PasoWorkspaces({
 
       {!vpnOn && (
         <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-muted">
-          ⚠️ La VPN está apagada — es posible que Unity VC no pueda conectar con el servidor.
+          <IconoEnLinea nombre="alerta" />La VPN está apagada — es posible que Unity VC no pueda conectar con el servidor.
         </div>
       )}
 
@@ -538,7 +539,8 @@ function PasoWorkspaces({
             primero; luego puedes clonar el proyecto desde aquí.
           </p>
           <button className="btn-primary btn-sm" onClick={onClonar}>
-            ⬇️ Clonar proyecto
+            <Icono nombre="descargar" className="h-3.5 w-3.5" sinColor />
+            Clonar proyecto
           </button>
         </div>
       )}

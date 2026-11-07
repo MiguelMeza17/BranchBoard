@@ -8,6 +8,7 @@ import { Modal } from './Modal';
 import { Avatar } from './primitives';
 import { TIPOS_TAREA } from '../types';
 import type { Commit, Tarea, TipoTarea } from '../types';
+import { Icono, IconoEnLinea } from './Icono';
 
 const fecha = (iso: string) => new Date(iso).toLocaleString();
 
@@ -32,7 +33,7 @@ export function CheckinsDeLaRama({ tarea }: { tarea: Tarea }) {
   const viendo = ver !== null ? lista[ver] : undefined;
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
-      <dt className="mb-2 text-xs font-semibold text-muted">📝 Check-ins de la rama ({lista.length})</dt>
+      <dt className="mb-2 text-xs font-semibold text-muted"><IconoEnLinea nombre="checkin" />Check-ins de la rama ({lista.length})</dt>
       {lista.length === 0 && <p className="text-[12px] text-faint">Todavía no hay check-ins en esta rama.</p>}
       <ul className="max-h-56 space-y-1 overflow-y-auto">
         {lista.map((c, i) => (
@@ -142,7 +143,7 @@ export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
                     setVer(null);
                   }}
                 >
-                  🎮 Abrir en Unity
+                  <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
                 </button>
                 <button
                   type="button"
@@ -251,7 +252,7 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
           <div className="flex items-center gap-2 text-[12px] text-amber-200">
             {quien && <Avatar email={quien} size={20} />}
             <span>
-              ✏️ {quien ? <b>{quien.split('@')[0]}</b> : 'Alguien'} está trabajando:{' '}
+              <IconoEnLinea nombre="lapiz" />{quien ? <b>{quien.split('@')[0]}</b> : 'Alguien'} está trabajando:{' '}
               {n === 1 ? '1 cambio sin check-in' : `${n} cambios sin check-in`}
             </span>
           </div>
@@ -279,7 +280,7 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
                     cerrar();
                   }}
                 >
-                  🎮 Abrir en Unity
+                  <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
                 </button>
                 <button
                   type="button"
@@ -294,7 +295,7 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
                     cerrar();
                   }}
                 >
-                  {crearRama ? '🌿 Crear rama' : '⇡ Hacer check-in'}
+                  {crearRama ? <><Icono nombre="branches" className="h-3.5 w-3.5" sinColor /> Crear rama</> : '⇡ Hacer check-in'}
                 </button>
               </div>
             }

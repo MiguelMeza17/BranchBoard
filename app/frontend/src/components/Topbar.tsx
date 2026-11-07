@@ -6,6 +6,7 @@ import { ROLES, type Rol } from '../types';
 import { Avatar } from './primitives';
 import { NotificationsPanel } from './NotificationsPanel';
 import { AbrirEnUnityModal } from './AbrirEnUnityModal';
+import { Icono } from './Icono';
 
 export function Topbar() {
   const user = useStore((s) => s.currentUser());
@@ -72,18 +73,18 @@ export function Topbar() {
         </button>
 
         <button className="btn-outline btn-sm shrink-0" onClick={() => setAbrirUnity(true)}>
-          🎮 Abrir en Unity
+          <Icono nombre="unity" className="h-3.5 w-3.5" /> Abrir en Unity
         </button>
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
         {/* Solo para el mockup (se quitan en la app real): volver a las pantallas de acceso y "Ver como". */}
         <button
-          className="shrink-0 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted transition hover:border-border-strong hover:text-text"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted transition hover:border-border-strong hover:text-text"
           title="Demo: volver a la Pantalla inicial (acceso al proyecto). Se elimina en la app real."
           onClick={() => setAccesoCompletado(false)}
         >
-          🚪 Pantallas de acceso
+          <Icono nombre="puerta" className="h-3.5 w-3.5" /> Pantallas de acceso
         </button>
         {/* Role selector (simula autenticación) */}
         <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
@@ -111,7 +112,7 @@ export function Topbar() {
             }}
             aria-label={noLeidas > 0 ? `Notificaciones, ${noLeidas} sin leer` : 'Notificaciones'}
           >
-            🔔
+            <Icono nombre="campana" className="h-[18px] w-[18px]" />
             {badgeNum > 0 && (
               <span className="absolute -right-1 -top-1 h-4 w-4 rounded-full bg-primary">
                 <span className="absolute inset-0 flex translate-x-[-0.1px] translate-y-[0.5px] items-center justify-center text-[11px] font-bold leading-none text-white">

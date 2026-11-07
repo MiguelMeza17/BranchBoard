@@ -5,6 +5,7 @@ import { TIPOS_TAREA, type TipoTarea } from '../types';
 import { tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { PageHeader } from '../components/primitives';
+import { Icono } from '../components/Icono';
 
 const CARPETAS = [...TIPOS_TAREA];
 
@@ -80,10 +81,10 @@ export function Categorias() {
                 className="card group flex flex-col items-start gap-3 p-5 text-left transition-all hover:border-border-strong hover:shadow-pop"
               >
                 <div
-                  className="grid h-12 w-12 place-items-center rounded-xl text-2xl transition-transform group-hover:scale-105"
+                  className="grid h-12 w-12 place-items-center rounded-xl transition-transform group-hover:scale-105"
                   style={{ background: `${m.color}20`, border: `1px solid ${m.color}55` }}
                 >
-                  {m.emoji}
+                  <Icono nombre={m.icono} className="h-6 w-6" color={m.color} />
                 </div>
                 <div>
                   <div className="font-semibold text-text">{tp}</div>

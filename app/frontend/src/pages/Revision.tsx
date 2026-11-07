@@ -7,6 +7,7 @@ import { CambiosTraidos, ramaDeTarea } from '../components/AccionesRama';
 import { Modal } from '../components/Modal';
 import type { Tarea, Usuario } from '../types';
 import { coincidePalabra, palabraCambios, tipoMeta } from '../lib/ui';
+import { Icono, IconoEnLinea } from '../components/Icono';
 
 export function Revision() {
   const user = useStore((s) => s.currentUser());
@@ -59,14 +60,14 @@ export function Revision() {
       {/* Tareas grandes */}
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-text">📁 Tareas grandes → dev</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text"><Icono nombre="carpeta" className="h-4 w-4" /> Tareas grandes → dev</h2>
           <span className="chip border border-border bg-surface-2 text-muted">{grandes.length}</span>
           {!puedeActuarGrande && <ReadOnlyTag />}
         </div>
         {grandes.length === 0 ? (
-          <EmptyState icon="🔀" title="Nada esperando merge a dev" />
+          <EmptyState icon="revision" title="Nada esperando merge a dev" />
         ) : (
-          <div className="space-y-2">
+          <div className="acotado space-y-2 pr-1">
             {grandes.map((t) => (
               <div
                 key={t.id}
@@ -83,7 +84,7 @@ export function Revision() {
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <TipoBadge tipo={t.tipo} />
-                    <span className="font-mono text-[11px] text-accent">🌿 {t.rama_asociada}</span>
+                    <span className="font-mono text-[11px] text-accent"><IconoEnLinea nombre="branches" />{t.rama_asociada}</span>
                     {t.asignado_a && <Avatar email={t.asignado_a} size={22} />}
                   </div>
                 </div>
@@ -110,15 +111,15 @@ export function Revision() {
       {/* Tareas pequeñas */}
       <section>
         <div className="mb-3 flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-text">📁 Tareas pequeñas → tarea padre</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text"><Icono nombre="carpeta" className="h-4 w-4" /> Tareas pequeñas → tarea padre</h2>
           <span className="chip border border-border bg-surface-2 text-muted">
             {pequenas.length}
           </span>
         </div>
         {pequenas.length === 0 ? (
-          <EmptyState icon="🧩" title="No hay subtareas esperando revisión" />
+          <EmptyState icon="pieza" title="No hay subtareas esperando revisión" />
         ) : (
-          <div className="space-y-2">
+          <div className="acotado space-y-2 pr-1">
             {pequenas.map((t) => {
               const padre = tareas.find((x) => x.id === t.tarea_padre_id);
               const puedeActuar = esDuenoPadre(t) || user.rol === 'Administrador' || user.rol === 'Líder';
@@ -256,13 +257,13 @@ function RevisarEnRevisionModal({
       subtitle={`${tarea.id} · ${tarea.tipo}`}
       footer={
         <>
-          {padre && <button className="btn-outline btn-sm" onClick={onPreRevisar}>👁️ Pre-revisar</button>}
+          {padre && <button className="btn-outline btn-sm" onClick={onPreRevisar}><Icono nombre="ojo" className="h-3.5 w-3.5" /> Pre-revisar</button>}
           {/* Siempre: no hay mejor forma de revisar que ver el trabajo en Unity. */}
           <button className="btn-outline btn-sm" onClick={onAbrirUnity} disabled={!rama} title={rama ?? 'Sin rama'}>
-            🎮 Abrir en Unity
+            <Icono nombre="unity" className="h-3.5 w-3.5" /> Abrir en Unity
           </button>
           <button className="btn-danger btn-sm" onClick={onRechazar}>Rechazar</button>
-          <button className="btn-primary btn-sm" onClick={onAutorizar}>✓ Autorizar</button>
+          <button className="btn-primary btn-sm" onClick={onAutorizar}><Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Autorizar</button>
         </>
       }
     >
@@ -282,7 +283,7 @@ function RevisarEnRevisionModal({
         <div className="flex items-center gap-2">
           {tarea.asignado_a && <Avatar email={tarea.asignado_a} size={20} />}
           {tarea.rama_asociada && (
-            <span className="font-mono text-[11px] text-accent">🌿 {tarea.rama_asociada}</span>
+            <span className="font-mono text-[11px] text-accent"><IconoEnLinea nombre="branches" />{tarea.rama_asociada}</span>
           )}
         </div>
         {padre && <p className="text-xs text-muted">↳ subtarea de {padre.titulo}</p>}
@@ -375,10 +376,10 @@ function PrevisualizadorTipo({ tarea }: { tarea: Tarea }) {
       return (
         <div className={box} style={{ height: 320 }}>
           <div>
-            <div className="text-5xl">🧊</div>
+            <div className="flex justify-center"><Icono nombre="cubo" className="h-12 w-12" /></div>
             <p className="mt-3 text-sm text-muted">Visor de malla 3D (glTF)</p>
             <p className="text-xs text-faint">12.4k polígonos · normales visibles{tarea.tipo === 'Animación' ? ' · animación en loop' : ''}</p>
-            <button className="btn-outline btn-sm mt-3">🎮 Abrir en Unity</button>
+            <button className="btn-outline btn-sm mt-3"><Icono nombre="unity" className="h-3.5 w-3.5" /> Abrir en Unity</button>
           </div>
         </div>
       );
@@ -387,7 +388,7 @@ function PrevisualizadorTipo({ tarea }: { tarea: Tarea }) {
       return (
         <div className={box} style={{ height: 200 }}>
           <div className="w-full max-w-md px-6">
-            <div className="text-4xl">🔊</div>
+            <div className="flex justify-center"><Icono nombre="altavoz" className="h-10 w-10" /></div>
             <div className="mt-4 flex items-center gap-3">
               <button className="grid h-10 w-10 place-items-center rounded-full bg-primary text-white">▶</button>
               <div className="h-1.5 flex-1 rounded-full bg-surface-3"><div className="h-full w-1/3 rounded-full" style={{ background: c }} /></div>
@@ -399,14 +400,14 @@ function PrevisualizadorTipo({ tarea }: { tarea: Tarea }) {
     case 'Video':
       return (
         <div className="grid place-items-center rounded-xl border border-border bg-black" style={{ height: 320 }}>
-          <div className="text-center"><div className="text-5xl">🎬</div><p className="mt-2 text-sm text-muted">Reproductor de video embebido</p></div>
+          <div className="text-center"><div className="flex justify-center"><Icono nombre="video" className="h-12 w-12" /></div><p className="mt-2 text-sm text-muted">Reproductor de video embebido</p></div>
         </div>
       );
     default:
       return (
         <div className={box} style={{ height: 300 }}>
           <div>
-            <div className="text-5xl">{tipoMeta[tarea.tipo].emoji}</div>
+            <div className="flex justify-center"><Icono nombre={tipoMeta[tarea.tipo].icono} className="h-12 w-12" color={tipoMeta[tarea.tipo].color} /></div>
             <p className="mt-3 text-sm text-muted">Visor de imagen</p>
             <p className="text-xs text-faint">{tarea.archivo_ruta}</p>
           </div>

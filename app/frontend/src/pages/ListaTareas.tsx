@@ -9,6 +9,7 @@ import { DetalleTareaModal } from '../components/DetalleTareaModal';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { TIPOS_TAREA } from '../types';
 import { avatarColor } from '../lib/ui';
+import { Icono } from '../components/Icono';
 
 // Orden dentro de cada nivel del árbol: "Sin asignar" (por hacer sin dueño, igual que la
 // columna visual del Tablero Scrum) va primero, luego el resto de estados en orden de flujo;
@@ -182,7 +183,7 @@ export function ListaTareas() {
           <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-faint">
             <div className="flex items-center gap-1.5" style={{ paddingLeft: profundidad * 20 }}>
               <span className="w-3 text-center text-muted">{hijos.length ? (abierta ? '▾' : '▸') : ''}</span>
-              <span className="font-sans text-sm">{hijos.length ? (abierta ? '📂' : '📁') : '📄'}</span>
+              <Icono nombre={hijos.length ? (abierta ? 'carpetaAbierta' : 'carpeta') : 'documento'} className="h-4 w-4" />
               <button
                 type="button"
                 className="rounded px-0.5 text-text underline-offset-2 hover:text-primary hover:underline"
@@ -210,7 +211,7 @@ export function ListaTareas() {
                   ayuda="La creó un Desarrollador o Tester y falta que un Líder o Admin la apruebe. Se puede trabajar, pero no enviar a revisión. Click: verla en Pendientes."
                   onClick={celda(() => irAPendientes(t.id))}
                 >
-                  ⏳ Pendiente
+                  <Icono nombre="reloj" className="h-3.5 w-3.5" sinColor /> Pendiente
                 </EtiquetaConAyuda>
               )}
               {t.edicion_pendiente && (
@@ -219,7 +220,7 @@ export function ListaTareas() {
                   ayuda="Se modificó después de aprobada. Un Líder o Admin debe confirmar o revertir los cambios. Click: verla en Pendientes."
                   onClick={celda(() => irAPendientes(t.id))}
                 >
-                  ✏️ Edición
+                  <Icono nombre="lapiz" className="h-3.5 w-3.5" sinColor /> Edición
                 </EtiquetaConAyuda>
               )}
             </div>
@@ -326,7 +327,7 @@ export function ListaTareas() {
               setParams(params);
             }}
           >
-            Tipo: {filtroTipo} ✕
+            Tipo: {filtroTipo} <Icono nombre="x" className="h-3 w-3" sinColor />
           </button>
         )}
         {hijosDe.size > 0 && (
@@ -342,11 +343,11 @@ export function ListaTareas() {
       </div>
 
       {raices.length === 0 ? (
-        <EmptyState icon="📋" title="No hay tareas" desc="Crea la primera tarea del proyecto." />
+        <EmptyState icon="lista" title="No hay tareas" desc="Crea la primera tarea del proyecto." />
       ) : (
-        <div className="card">
+        <div className="card acotado">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-surface">
               <tr className="border-b border-border text-left text-xs text-faint">
                 <th className="px-4 py-3 font-medium">ID</th>
                 <th className="px-4 py-3 font-medium">Título</th>

@@ -197,6 +197,42 @@ export interface Notificacion {
   accionable: boolean; // ofrece botón de acción directa
 }
 
+// Grupo general del proyecto: siempre existe, se llama como el proyecto y están todos.
+export const CHAT_GRUPO = 'grupo';
+
+// Grupo de chat creado por alguien del equipo (además del general).
+export interface GrupoChat {
+  id: string;
+  nombre: string;
+  miembros: string[]; // emails, incluye a quien lo creó
+  creado_por: string;
+  fecha: string;
+}
+
+// Mensaje del chat: al grupo del proyecto (para = CHAT_GRUPO) o privado entre dos usuarios.
+export interface Mensaje {
+  id: string;
+  de: string; // email
+  para: string; // email (privado), CHAT_GRUPO (general) o el id de un GrupoChat
+  texto: string;
+  fecha: string; // ISO
+  /** Quiénes ya lo leyeron (en el grupo cada persona lo lee por su cuenta). */
+  leidoPor: string[];
+}
+
+// Documento del proyecto (apartado con el nombre del proyecto, encima de Tareas).
+export interface Documento {
+  id: string;
+  nombre: string;
+  tamano: number; // bytes
+  subido_por: string; // email
+  fecha: string;
+  /** Subido por alguien que no es Líder/Administrador: espera su visto bueno (sale en Pendientes). */
+  pendiente: boolean;
+  /** Solo en el mockup: URL local del archivo subido en esta sesión, para poder abrirlo. */
+  url?: string;
+}
+
 export interface Backup {
   id: string;
   fecha: string;

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { useStore } from '../store/useStore';
+import { Icono } from './Icono';
 
 // Pantalla que reemplaza a los tableros cuando `cm whoami` falla al arrancar —
 // ver documentacion/FRONTEND.md, "Autenticación / acceso al proyecto": BranchBoard
@@ -18,13 +19,13 @@ export function SesionUnityVCRequerida() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface">
       <div className="card flex w-full max-w-md flex-col items-center gap-4 p-8 text-center">
-        <div className="flex items-baseline gap-1 text-2xl font-bold tracking-tight">
+        <div className="flex items-baseline text-2xl font-bold tracking-tight">
           <span className="text-text">Branch</span>
-          <span className="text-accent">Board</span>
+          <span className="text-green-400">Board</span>
         </div>
 
-        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-warn/15 text-2xl">
-          🔒
+        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-warn/15">
+          <Icono nombre="candado" className="h-7 w-7" />
         </div>
 
         <div>

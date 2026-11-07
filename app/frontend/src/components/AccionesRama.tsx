@@ -8,6 +8,7 @@ import { DetalleCommit } from './HistorialRamas';
 import type { Commit } from '../types';
 import type { Tarea } from '../types';
 import { Avatar } from './primitives';
+import { Icono, IconoEnLinea } from './Icono';
 
 // Rama de la tarea, arriba en la ventana de detalles: la suya, la de su padre (check-in) o "Sin rama".
 export function RamaDeLaTarea({ tarea }: { tarea: Tarea }) {
@@ -52,7 +53,7 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
   const [avisoCerrado, setAvisoCerrado] = useState(false);
   return (
     <div>
-      <dt className="mb-1 text-xs text-faint">🤝 Cambios prestados</dt>
+      <dt className="mb-1 text-xs text-faint"><IconoEnLinea nombre="intercambio" />Cambios prestados</dt>
       {/* Aviso automático al abrir la tarea: "Aceptar y eliminar" elimina lo modificado en lo prestado;
           "Continuar sin eliminar" y la X solo cierran el aviso. */}
       {tocados.length > 0 && !avisoCerrado &&
@@ -60,7 +61,7 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
         <Modal
           open
           onClose={() => setAvisoCerrado(true)}
-          title="⛔ Se tocaron cambios ajenos en esta tarea"
+          title="Se tocaron cambios ajenos en esta tarea"
           subtitle={tarea.id}
           size="sm"
           footer={
@@ -98,7 +99,7 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
       {tocados.length > 0 && avisoCerrado && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2">
           <p className="min-w-0 flex-1 text-[12px] text-red-300">
-            ⛔ Se tocaron cambios ajenos:{' '}
+            <IconoEnLinea nombre="prohibido" />Se tocaron cambios ajenos:{' '}
             {tocados.flatMap((c) => c.archivos_tocados.map((a) => a.split('/').pop())).join(', ')}
           </p>
           <button type="button" className="btn-danger btn-sm shrink-0" onClick={aceptarTocados}>
@@ -108,7 +109,7 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
       )}
       {activos > 0 && (
         <p className="mb-1.5 text-[11px] text-amber-300">
-          ⚠️ {aviso}
+          <IconoEnLinea nombre="alerta" />{aviso}
         </p>
       )}
       <ul className="space-y-1.5">
@@ -223,7 +224,7 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
             : undefined
         }
       >
-        ✏️ Editar tarea
+        <Icono nombre="lapiz" className="h-4 w-4" /> Editar tarea
       </button>
       {/* "En espera" tiene cambios sin guardar (aún no hay check-in): traerle cambios encima no se permite. */}
       <button
@@ -245,7 +246,7 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
           onCerrar();
         }}
       >
-        🎮 Abrir en Unity
+        <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
       </button>
       {editar && <EditarTareaModal tarea={tarea} onClose={() => setEditar(false)} />}
       {avisoCheckin && rama && (
@@ -269,7 +270,7 @@ export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () =
                   onCerrar();
                 }}
               >
-                🎮 Abrir en Unity
+                <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
               </button>
             </div>
           }
@@ -353,8 +354,8 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
               {t.rama_asociada}
             </span>
           </span>
-          {t.estado === 'en revisión' && <span className="shrink-0 text-[11px] text-amber-300">⚠ sin aprobar</span>}
-          {t.estado === 'en producción' && <span className="shrink-0 text-[11px] text-red-300">⚠ en curso</span>}
+          {t.estado === 'en revisión' && <span className="shrink-0 text-[11px] text-amber-300"><IconoEnLinea nombre="alerta" sinColor />sin aprobar</span>}
+          {t.estado === 'en producción' && <span className="shrink-0 text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />en curso</span>}
           <span className={`shrink-0 px-2 py-1 text-[11px] text-faint ${suyos.length ? '' : 'opacity-50'}`}>
             {suyos.length} {palabraCambios(suyos.length)} {suyos.length ? (abierta ? '▾' : '▸') : ''}
           </span>
@@ -473,13 +474,13 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
 
       {elegida?.estado === 'en revisión' && (
         <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          ⚠ {elegida.id} está en revisión: este cambio aún no ha sido aprobado. Traerlo puede ser riesgoso — si lo
+          <IconoEnLinea nombre="alerta" sinColor />{elegida.id} está en revisión: este cambio aún no ha sido aprobado. Traerlo puede ser riesgoso — si lo
           rechazan o lo corrigen después, tu rama quedará con una versión sin aprobar.
         </div>
       )}
       {elegida?.estado === 'en producción' && (
         <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-red-200">
-          ⚠ {elegida.id} está en producción: es trabajo en curso, todavía no se ha mandado a revisión ni se ha
+          <IconoEnLinea nombre="alerta" sinColor />{elegida.id} está en producción: es trabajo en curso, todavía no se ha mandado a revisión ni se ha
           aprobado. Traerlo es más riesgoso — puede cambiar o quedar a medias, y tu rama quedaría con esa versión.
         </div>
       )}

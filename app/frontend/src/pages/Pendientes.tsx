@@ -6,6 +6,7 @@ import { PageHeader, Card, EmptyState, TipoBadge, Avatar } from '../components/p
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
 import type { EdicionPendiente, Tarea } from '../types';
+import { Icono } from '../components/Icono';
 
 export function Pendientes() {
   const location = useLocation();
@@ -13,6 +14,10 @@ export function Pendientes() {
   const user = useStore((s) => s.currentUser());
   const tareas = useStore((s) => s.tareas);
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
+  const documentos = useStore((s) => s.documentos);
+  const aprobarDocumento = useStore((s) => s.aprobarDocumento);
+  const eliminarDocumento = useStore((s) => s.eliminarDocumento);
+  const abrirDocumento = useStore((s) => s.abrirDocumento);
   const aprobarTarea = useStore((s) => s.aprobarTarea);
   const aprobarTareas = useStore((s) => s.aprobarTareas);
   const aprobarEdiciones = useStore((s) => s.aprobarEdiciones);
@@ -63,14 +68,14 @@ export function Pendientes() {
           <span className="chip border border-border bg-surface-2 text-muted">{nuevas.length}</span>
           {puedeActuar && nuevas.length > 0 && (
             <button className="btn-outline btn-sm ml-auto" onClick={() => setTodasTareas(true)}>
-              ✓ Marcar todo como revisado
+              <Icono nombre="check" className="h-3.5 w-3.5" /> Marcar todo como revisado
             </button>
           )}
         </div>
         {nuevas.length === 0 ? (
-          <EmptyState icon="📌" title="No hay tareas pendientes de aprobación" />
+          <EmptyState icon="pendientes" title="No hay tareas pendientes de aprobación" />
         ) : (
-          <div className="space-y-2">
+          <div className="acotado space-y-2 pr-1">
             {nuevas.map((t) => {
               const esCreador = t.creado_por === user.email;
               return (
@@ -119,14 +124,14 @@ export function Pendientes() {
           <span className="chip border border-border bg-surface-2 text-muted">{edicionesPendientes.length}</span>
           {puedeActuar && edicionesPendientes.length > 0 && (
             <button className="btn-outline btn-sm ml-auto" onClick={() => setTodasEdiciones(true)}>
-              ✓ Marcar todo como revisado
+              <Icono nombre="check" className="h-3.5 w-3.5" /> Marcar todo como revisado
             </button>
           )}
         </div>
         {edicionesPendientes.length === 0 ? (
-          <EmptyState icon="✏️" title="No hay ediciones esperando confirmación" />
+          <EmptyState icon="lapiz" title="No hay ediciones esperando confirmación" />
         ) : (
-          <div className="space-y-2">
+          <div className="acotado space-y-2 pr-1">
             {edicionesPendientes.map((ep) => {
               const t = tareas.find((x) => x.id === ep.tarea_id);
               return (
@@ -151,6 +156,49 @@ export function Pendientes() {
                 </Card>
               );
             })}
+          </div>
+        )}
+      </section>
+
+      {/* Documentos del proyecto subidos por quien no es Líder/Administrador */}
+      <section className="mt-8">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="chip border border-sky-500/40 bg-sky-500/15 text-sky-300">Documento</span>
+          <h2 className="text-sm font-semibold text-text">Documentos pendientes</h2>
+          <span className="chip border border-border bg-surface-2 text-muted">{documentos.filter((d) => d.pendiente).length}</span>
+        </div>
+        {documentos.every((d) => !d.pendiente) ? (
+          <EmptyState icon="documento" title="No hay documentos esperando visto bueno" />
+        ) : (
+          <div className="acotado space-y-2 pr-1">
+            {documentos.filter((d) => d.pendiente).map((d) => (
+              <Card
+                key={d.id}
+                onClick={() => abrirDocumento(d.id)}
+                className="flex cursor-pointer flex-wrap items-center gap-4 hover:border-border-strong"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-text">{d.nombre}</div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted">subido por</span>
+                    <Avatar email={d.subido_por} size={20} />
+                    <span className="text-xs text-faint">{d.fecha}</span>
+                  </div>
+                </div>
+                {puedeActuar ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button className="btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); aprobarDocumento(d.id); }}>
+                      <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Visto bueno
+                    </button>
+                    <button className="btn-ghost btn-sm text-red-300" onClick={(e) => { e.stopPropagation(); eliminarDocumento(d.id); }}>
+                      Eliminar
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-xs text-faint">Esperando Líder/Administrador</span>
+                )}
+              </Card>
+            ))}
           </div>
         )}
       </section>

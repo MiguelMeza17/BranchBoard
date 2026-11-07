@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Modal } from './Modal';
 import { useStore } from '../store/useStore';
+import { IconoEnLinea } from './Icono';
 
 // "Nuevo sprint" (con fecha: empieza hoy y dura N días; al terminar genera su reporte) y "Nuevo
 // backlog" (sin fecha: agrupa tareas sin plazo). Los dos son sprints en el modelo de datos
@@ -64,7 +65,7 @@ export function CrearSprintModal({ tipo, onClose }: { tipo: 'sprint' | 'backlog'
             onBlur={() => setTocado(true)}
             onChange={(e) => setNombre(e.target.value)}
           />
-          {tocado && errorNombre && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorNombre}</span>}
+          {tocado && errorNombre && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorNombre}</span>}
         </label>
         <label className="block">
           <span className="mb-1 block text-xs text-faint">Descripción (opcional)</span>
@@ -85,7 +86,7 @@ export function CrearSprintModal({ tipo, onClose }: { tipo: 'sprint' | 'backlog'
               onBlur={() => setTocado(true)}
               onChange={(e) => setDias(e.target.value)}
             />
-            {tocado && errorDias && <span className="mt-1 block text-[11px] text-red-300">⚠ {errorDias}</span>}
+            {tocado && errorDias && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorDias}</span>}
           </label>
         )}
       </div>

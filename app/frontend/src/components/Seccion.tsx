@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Icono } from './Icono';
 
 // Panel plegable: cerrado solo muestra el nombre; al hacer click se despliega hacia abajo. La flecha
 // indica que se puede abrir y gira al desplegarse.
@@ -22,7 +23,10 @@ export function Seccion({ title, children, danger }: { title: string; children: 
         >
           <path d="M7 4l6 6-6 6" />
         </svg>
-        <h2 className="flex-1 text-sm font-semibold">{title}</h2>
+        <h2 className="flex flex-1 items-center gap-2 text-sm font-semibold">
+          {danger && <Icono nombre="alerta" className="h-4 w-4" sinColor />}
+          {title}
+        </h2>
       </summary>
       <div className="border-t border-border px-5 pb-5 pt-4">{children}</div>
     </details>

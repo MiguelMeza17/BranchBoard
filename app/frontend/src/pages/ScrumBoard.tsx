@@ -23,6 +23,7 @@ import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { DetalleTareaModal } from '../components/DetalleTareaModal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
+import { Icono } from '../components/Icono';
 
 // Columnas del tablero: "Sin asignar" no es un estado real de la tarea — es un
 // recorte puramente visual de "por hacer" (sin dueño vs ya tomada por alguien).
@@ -108,7 +109,7 @@ function Column({
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 space-y-3 rounded-2xl border p-3 transition-colors ${col.bg} ${
+        className={`acotado flex-1 space-y-3 rounded-2xl border p-3 transition-colors ${col.bg} ${
           col.dashed ? 'border-dashed' : ''
         } ${isOver ? 'border-primary ring-2 ring-primary/30' : col.border}`}
         style={{ minHeight: 200 }}
@@ -435,7 +436,7 @@ export function ScrumBoard() {
             className="btn-outline btn-sm"
             onClick={() => { setTomarId(t.id); setMostrarTomarModal(true); }}
           >
-            🙋 Tomar tarea
+            <Icono nombre="mano" className="h-3.5 w-3.5" sinColor /> Tomar tarea
           </button>
         )}
         {/* Líder/Admin: autorizar su propia tarea directamente */}
@@ -444,7 +445,7 @@ export function ScrumBoard() {
             className="btn-primary btn-sm"
             onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}
           >
-            ✓ Autorizar (merge a dev)
+            <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Autorizar (merge a dev)
           </button>
         )}
       </div>
@@ -524,7 +525,7 @@ export function ScrumBoard() {
                       style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}18` }}
                       title={`Ir a la subtarea de ${tipo}`}
                     >
-                      <span>{m.emoji}</span>
+                      <Icono nombre={m.icono} className="h-3.5 w-3.5" sinColor />
                       {count > 1 && <span className="font-semibold">{count}</span>}
                     </button>
                   );
@@ -568,7 +569,7 @@ export function ScrumBoard() {
                 !focusId ? 'font-semibold text-text' : 'text-muted'
               }`}
             >
-              🗂️ Tareas
+              <span className="inline-flex items-center gap-1.5"><Icono nombre="scrum" className="h-3.5 w-3.5" /> Tareas</span>
             </button>
             <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
               <button
@@ -609,7 +610,7 @@ export function ScrumBoard() {
                     .filter((sp) => sp.con_fecha)
                     .map((sp) => (
                       <option key={sp.id} value={sp.id}>
-                        🏃 {sp.nombre}
+                        {sp.nombre}
                         {sp.cerrado ? ' (cerrado)' : ''}
                       </option>
                     ))}
@@ -621,7 +622,7 @@ export function ScrumBoard() {
                     .filter((sp) => !sp.con_fecha)
                     .map((sp) => (
                       <option key={sp.id} value={sp.id}>
-                        📦 {sp.nombre}
+                        {sp.nombre}
                       </option>
                     ))}
                 </optgroup>
@@ -681,7 +682,7 @@ export function ScrumBoard() {
             <div className="space-y-6">
               <div className="rounded-2xl border border-border border-l-4 border-l-primary bg-surface-2 p-4">
                 <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-text">
-                  📦 Tareas generales
+                  <Icono nombre="caja" className="h-4 w-4" /> Tareas generales
                   <span className="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-normal text-indigo-200">
                     {generales.length}
                   </span>
@@ -690,7 +691,7 @@ export function ScrumBoard() {
               </div>
               <div className="rounded-2xl border border-border border-l-4 border-l-accent bg-surface-2 p-4">
                 <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-text">
-                  👤 Tareas individuales
+                  <Icono nombre="usuario" className="h-4 w-4" /> Tareas individuales
                   <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-normal text-teal-200">
                     {individuales.length}
                   </span>

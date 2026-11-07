@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import {
@@ -19,12 +19,6 @@ import { Seccion } from '../components/Seccion';
 export function Usuarios() {
   const user = useStore((s) => s.currentUser());
   const gestiona = esLiderOAdmin(user.rol);
-  // Al entrar (y al salir, por los cambios que hiciste tú aquí) el punto del menú se apaga.
-  const marcarVistos = useStore((s) => s.marcarUsuariosVistos);
-  useEffect(() => {
-    marcarVistos();
-    return marcarVistos;
-  }, [marcarVistos]);
 
   return (
     <div>
@@ -97,9 +91,9 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
 
   return (
     <Card className="p-0">
-      <div className="overflow-x-auto">
+      <div className="acotado overflow-x-auto">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface">
             <tr className="border-b border-border text-left text-xs text-faint">
               <th className="px-4 py-2.5 font-medium">Usuario</th>
               {gestiona && <th className="px-4 py-2.5 font-medium">Correo</th>}

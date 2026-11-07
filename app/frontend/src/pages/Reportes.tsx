@@ -50,7 +50,7 @@ export function Reportes() {
       />
 
       {!sprint ? (
-        <EmptyState icon="📄" title="No hay sprints con fecha" desc="Los reportes solo se generan al cerrar un sprint con fecha." />
+        <EmptyState icon="reportes" title="No hay sprints con fecha" desc="Los reportes solo se generan al cerrar un sprint con fecha." />
       ) : (
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -85,7 +85,7 @@ export function Reportes() {
 
           <div className="mt-6 border-t border-border pt-6">
             <h3 className="mb-3 text-sm font-semibold text-text">Análisis de tareas del sprint</h3>
-            <div className="space-y-2">
+            <div className="acotado space-y-2 pr-1">
               {delSprint.map((t) => (
                 <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-surface-2 px-3 py-2">
                   <div className="flex items-center gap-2">
@@ -101,7 +101,7 @@ export function Reportes() {
 
           <div className="mt-6 border-t border-border pt-6">
             <h3 className="mb-3 text-sm font-semibold text-text">Desglose de actividad por persona</h3>
-            <div className="space-y-2">
+            <div className="acotado space-y-2 pr-1">
               {porPersona.map(([email, n]) => {
                 const u = usuarios.find((x) => x.email === email);
                 return (

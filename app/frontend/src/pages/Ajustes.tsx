@@ -20,7 +20,7 @@ export function Ajustes() {
         <SeccionBackups />
         {puedeEliminarProyecto(user.rol) && <SeccionProyecto />}
         {!esLiderOAdmin(user.rol) && (
-          <EmptyState icon="🔒" title="Sin acciones administrativas" desc="Con tu rol actual no hay ajustes que gestionar aparte de reportar problemas de BD." />
+          <EmptyState icon="candado" title="Sin acciones administrativas" desc="Con tu rol actual no hay ajustes que gestionar aparte de reportar problemas de BD." />
         )}
       </div>
     </div>
@@ -109,7 +109,7 @@ function SeccionProyecto() {
   const cambio = nombre.trim() && nombre.trim() !== proyecto;
 
   return (
-    <Seccion title="⚠️ Proyecto" danger>
+    <Seccion title="Proyecto" danger>
       <label className="label">Nombre del proyecto</label>
       <div className="flex flex-wrap gap-2">
         <input className="input max-w-sm" value={nombre} onChange={(e) => setNombre(e.target.value)} />
