@@ -5,6 +5,7 @@ import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import { Icono } from './Icono';
+import logoB from '../assets/logo-b.png';
 
 interface NavItem {
   to: string;
@@ -287,14 +288,8 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
             colapsado ? 'w-full justify-center px-0 hover:bg-surface-3' : 'w-full justify-center border border-border/60 bg-surface-2 px-2 hover:bg-surface-3'
           }`}
         >
-          {/* Logo: el cuadro azul con otro debajo hacia abajo a la izquierda (sombra). Cada uno se corre la mitad
-              para que el conjunto quede centrado. */}
-          <div className="relative h-9 w-9 shrink-0">
-            <div className="absolute inset-0 -translate-x-[2.5px] translate-y-[2.5px] rounded-xl bg-primary/35" />
-            <div className="relative grid h-9 w-9 translate-x-[2.5px] -translate-y-[2.5px] place-items-center rounded-xl bg-primary text-lg">
-              {/* placeholder: aquí va el icono/imagen definitiva */}
-            </div>
-          </div>
+          {/* Logo: la B de ramas (la misma de la animación de inicio y del ícono de la pestaña). */}
+          <img src={logoB} alt="" aria-hidden="true" className="h-9 w-9 shrink-0 object-contain" />
           {!colapsado && (
             <>
               <div className="min-w-0 leading-tight">
