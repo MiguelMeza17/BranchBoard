@@ -3,6 +3,7 @@ import { TIPOS_TAREA, type Rol, type TipoTarea } from '../types';
 import { tipoMeta } from '../lib/ui';
 import { esLiderOAdmin } from '../lib/permisos';
 import { Modal } from './Modal';
+import { Icono } from './Icono';
 
 interface SubtareaEntry {
   uid: string;
@@ -152,7 +153,7 @@ export function CrearTareaModal({
               onClick={() => setModo('general')}
               className="card flex flex-col items-start gap-2 p-4 text-left transition-all hover:border-border-strong hover:shadow-pop"
             >
-              <span className="text-2xl">📦</span>
+              <Icono nombre="caja" className="h-6 w-6" />
               <span className="font-semibold text-text">Tarea general</span>
               <span className="text-xs text-muted">Se reparte en subtareas de distintos tipos.</span>
             </button>
@@ -161,7 +162,7 @@ export function CrearTareaModal({
               onClick={() => setModo('especifica')}
               className="card flex flex-col items-start gap-2 p-4 text-left transition-all hover:border-border-strong hover:shadow-pop"
             >
-              <span className="text-2xl">📄</span>
+              <Icono nombre="documento" className="h-6 w-6" />
               <span className="font-semibold text-text">Tarea específica</span>
               <span className="text-xs text-muted">Una sola tarea, de un solo tipo/disciplina.</span>
             </button>
@@ -190,7 +191,7 @@ export function CrearTareaModal({
                 <label className="label">Tipo</label>
                 {tipoFijo ? (
                   <div className="input flex items-center gap-1.5 bg-surface-3 text-muted">
-                    <span>{tipoMeta[tipoFijo].emoji}</span>
+                    <Icono nombre={tipoMeta[tipoFijo].icono} className="h-4 w-4" color={tipoMeta[tipoFijo].color} />
                     {tipoFijo}
                   </div>
                 ) : (
@@ -243,7 +244,7 @@ export function CrearTareaModal({
                         title={`Agregar subtarea de ${tp}`}
                         className="chip border border-border bg-surface-2 text-muted transition hover:border-border-strong hover:text-text"
                       >
-                        <span>{m.emoji}</span>
+                        <Icono nombre={m.icono} className="h-3.5 w-3.5" color={m.color} />
                         {tp}
                       </button>
                     );
@@ -264,7 +265,7 @@ export function CrearTareaModal({
                             className="grid h-10 w-10 shrink-0 place-items-center rounded-full border text-lg transition hover:scale-110"
                             style={{ borderColor: `${m.color}70`, background: `${m.color}18`, color: m.color }}
                           >
-                            {m.emoji}
+                            <Icono nombre={m.icono} className="h-5 w-5" sinColor />
                           </button>
                         );
                       }
@@ -276,7 +277,7 @@ export function CrearTareaModal({
                         >
                           <div className="mb-2 flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-sm font-medium" style={{ color: m.color }}>
-                              <span>{m.emoji}</span>
+                              <Icono nombre={m.icono} className="h-4 w-4" sinColor />
                               {st.tipo}
                             </span>
                             <button
@@ -338,7 +339,7 @@ export function CrearTareaModal({
       <Modal
         open={mostrarAviso}
         onClose={() => setMostrarAviso(false)}
-        title="⏳ Aviso antes de guardar"
+        title="Aviso antes de guardar"
         size="sm"
         footer={
           <>

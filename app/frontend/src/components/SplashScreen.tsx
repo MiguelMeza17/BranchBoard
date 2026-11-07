@@ -38,9 +38,9 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
           </g>
         </svg>
         <div className="flex flex-col items-center gap-1">
-          <div className="splash-wordmark flex items-baseline gap-1 text-3xl font-bold tracking-tight">
+          <div className="splash-wordmark flex items-baseline text-3xl font-bold tracking-tight">
             <span className="text-text">Branch</span>
-            <span className="text-accent">Board</span>
+            <span className="text-green-400">Board</span>
           </div>
           <div className="splash-company text-[11px] font-medium tracking-wide text-faint">Piveta</div>
         </div>

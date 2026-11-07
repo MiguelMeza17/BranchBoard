@@ -41,13 +41,13 @@ export function Papelera() {
 
       <div className="card p-5">
         {eliminadas.length === 0 ? (
-          <EmptyState icon="🗑️" title="La papelera está vacía" desc="No hay tareas eliminadas por ahora." />
+          <EmptyState icon="papelera" title="La papelera está vacía" desc="No hay tareas eliminadas por ahora." />
         ) : (
           <>
             <p className="mb-3 text-xs text-muted">
               {eliminadas.length} tarea{eliminadas.length === 1 ? '' : 's'} en la Papelera · más recientes primero
             </p>
-            <div className="space-y-2">
+            <div className="acotado space-y-2 pr-1">
               {eliminadas.map((t) => (
                 <Card
                   key={t.id}

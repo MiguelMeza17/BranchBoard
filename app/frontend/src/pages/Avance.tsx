@@ -40,7 +40,7 @@ export function Avance() {
           <BurndownChart sprint={sprint} tareas={delSprint} />
         </Card>
       ) : (
-        <EmptyState icon="📈" title="Todavía no hay sprints" desc="Crea un sprint para ver aquí su curva de avance." />
+        <EmptyState icon="avance" title="Todavía no hay sprints" desc="Crea un sprint para ver aquí su curva de avance." />
       )}
     </div>
   );

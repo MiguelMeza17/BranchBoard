@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { Modal } from './Modal';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
+import { Icono } from './Icono';
 
 interface NavItem {
   to: string;
@@ -11,25 +12,42 @@ interface NavItem {
   label: string;
 }
 
-const NAV: NavItem[] = [
-  { to: '/scrum', icon: '🗂️', label: 'Tareas (Scrum)' },
-  { to: '/lista', icon: '📋', label: 'Lista de tareas' },
-  { to: '/planificacion', icon: '🗓️', label: 'Planificación' },
-  { to: '/categorias', icon: '🗃️', label: 'Categorías' },
-  { to: '/revision', icon: '🔀', label: 'Revisión' },
-  { to: '/resumen', icon: '📊', label: 'Resumen' },
-  { to: '/avance', icon: '📈', label: 'Avance' },
-  { to: '/pendientes', icon: '📌', label: 'Pendientes' },
-  { to: '/reportes', icon: '📄', label: 'Reportes' },
-  { to: '/branches', icon: '🌳', label: 'Branches' },
-  { to: '/usuarios', icon: '👥', label: 'Usuarios' },
-  { to: '/papelera', icon: '🗑️', label: 'Papelera' },
-  { to: '/ajustes', icon: '⚙️', label: 'Ajustes' },
+
+// Secciones del menú (el orden es el de siempre). Papelera y Ajustes van abajo, aparte.
+const SECCIONES: { titulo: string | null; items: NavItem[] }[] = [
+  {
+    titulo: 'Trabajo',
+    items: [
+      { to: '/scrum', icon: 'scrum', label: 'Tareas (Scrum)' },
+      { to: '/lista', icon: 'lista', label: 'Lista de tareas' },
+      { to: '/planificacion', icon: 'planificacion', label: 'Planificación' },
+      { to: '/categorias', icon: 'categorias', label: 'Categorías' },
+      { to: '/revision', icon: 'revision', label: 'Revisión' },
+    ],
+  },
+  {
+    titulo: 'Seguimiento',
+    items: [
+      { to: '/resumen', icon: 'resumen', label: 'Resumen' },
+      { to: '/avance', icon: 'avance', label: 'Avance' },
+      { to: '/pendientes', icon: 'pendientes', label: 'Pendientes' },
+      { to: '/reportes', icon: 'reportes', label: 'Reportes' },
+      { to: '/branches', icon: 'branches', label: 'Branches' },
+    ],
+  },
+  { titulo: 'Equipo', items: [{ to: '/usuarios', icon: 'usuarios', label: 'Usuarios' }] },
+];
+const ABAJO: NavItem[] = [
+  { to: '/papelera', icon: 'papelera', label: 'Papelera' },
+  { to: '/ajustes', icon: 'ajustes', label: 'Ajustes' },
 ];
 
 // Clases literales (no armadas con template) para que Tailwind las genere.
 const PUNTO_ROJO = { solido: 'bg-red-500', halo: 'bg-red-500/25' };
 const PUNTO_AZUL = { solido: 'bg-primary', halo: 'bg-primary/25' };
+const PUNTO_AMARILLO = { solido: 'bg-yellow-400', halo: 'bg-yellow-400/25' };
+const PUNTO_VERDE_OSCURO = { solido: 'bg-green-700', halo: 'bg-green-700/30' };
+const PUNTO_BLANCO = { solido: 'bg-white', halo: 'bg-white/25' };
 
 interface SidebarProps {
   colapsado: boolean;
@@ -41,38 +59,112 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
   const sprints = useStore((s) => s.sprints);
 
+  const documentosPendientes = useStore((s) => s.documentos.filter((d) => d.pendiente).length);
   const totalPendientes =
-    tareas.filter((t) => t.pendiente_aprobacion && !t.eliminada).length + edicionesPendientes.length;
+    tareas.filter((t) => t.pendiente_aprobacion && !t.eliminada).length + edicionesPendientes.length + documentosPendientes;
+  // Número del Chat: cuántas conversaciones tienen algo sin leer (no cuántos mensajes).
+  const mensajes = useStore((s) => s.mensajes);
+  const gruposChat = useStore((s) => s.gruposChat);
+  const chatsEliminados = useStore((s) => s.chatsEliminados);
+  const yoEmail = useStore((s) => s.currentEmail);
+  const chatSinLeer = new Set(
+    mensajes
+      .filter((m) => {
+        if (m.de === yoEmail || m.leidoPor.includes(yoEmail)) return false;
+        const conversacion = m.para === yoEmail ? m.de : m.para;
+        const mia =
+          m.para === yoEmail || m.para === 'grupo' || gruposChat.some((g) => g.id === m.para && g.miembros.includes(yoEmail));
+        return mia && m.fecha > (chatsEliminados[conversacion] ?? '');
+      })
+      .map((m) => (m.para === yoEmail ? m.de : m.para))
+  ).size;
   const totalPapelera = tareas.filter((t) => t.eliminada).length;
   const totalRevision = tareas.filter((t) => t.estado === 'en revisión' && !t.eliminada).length;
 
-  const hayReporteActivo = sprints.some((s) => s.con_fecha);
-  const hayCambioBranches = tareas.some((t) => !t.eliminada && t.rama_asociada);
-  const hayTareasActivas = tareas.some((t) => !t.eliminada);
-  const hayNovedadUsuarios = useStore((s) => s.hayNovedadUsuarios);
-  const rutasConPuntoAzul = new Set(['/scrum', '/resumen', '/lista', '/avance', '/categorias']);
+  // Puntos de aviso: cada panel tiene una "huella" de sus datos. El punto se enciende si cambió desde la
+  // última vez que entraste a ese panel, y se apaga al entrar (y mientras estás ahí).
+  const usuarios = useStore((s) => s.usuarios);
+  const documentos = useStore((s) => s.documentos);
+  const vistos = useStore((s) => s.vistos);
+  const marcarVisto = useStore((s) => s.marcarVisto);
+  const location = useLocation();
+  const vivas = tareas.filter((t) => !t.eliminada);
+  const huellaTareas = vivas
+    .map((t) => `${t.id}:${t.estado}:${t.asignado_a ?? ''}:${t.titulo}:${t.pendiente_aprobacion ? 1 : 0}`)
+    .join('|');
+  const huellas: Record<string, string> = {
+    '/proyecto': documentos.map((d) => `${d.id}:${d.pendiente ? 1 : 0}`).join('|'),
+    '/scrum': huellaTareas,
+    '/lista': huellaTareas,
+    '/categorias': huellaTareas,
+    '/resumen': huellaTareas,
+    '/avance': huellaTareas,
+    '/planificacion': sprints.map((s) => `${s.id}:${s.cerrado ? 1 : 0}`).join('|'),
+    '/reportes': sprints.filter((s) => s.con_fecha).map((s) => `${s.id}:${s.cerrado ? 1 : 0}`).join('|'),
+    '/branches': vivas.filter((t) => t.rama_asociada).map((t) => `${t.id}:${t.estado}`).join('|'),
+    '/usuarios': usuarios.map((u) => `${u.email}:${u.rol}`).join('|'),
+  };
+  const rutaActual = Object.keys(huellas).find((r) => location.pathname === r || location.pathname.startsWith(`${r}/`));
+  const huellaActual = rutaActual ? huellas[rutaActual] : undefined;
+  useEffect(() => {
+    if (rutaActual && huellaActual !== undefined) marcarVisto(rutaActual, huellaActual);
+  }, [rutaActual, huellaActual, marcarVisto]);
+  const hayNovedad = (ruta: string) => !!huellas[ruta] && huellas[ruta] !== vistos[ruta];
 
   const badgeByPath: Record<string, number> = {
     '/pendientes': totalPendientes,
     '/papelera': totalPapelera,
     '/revision': totalRevision,
+    ...(chatSinLeer > 0 ? { '/chat': chatSinLeer } : {}),
   };
 
   const colorBadgePorRuta: Record<string, string> = {
     '/pendientes': 'bg-amber-500/20 text-amber-300',
     '/papelera': 'bg-red-500/20 text-red-300',
     '/revision': 'bg-fuchsia-500/20 text-fuchsia-300',
+    '/chat': 'bg-green-500/20 text-green-300',
   };
 
-  const puntoDeRuta = (to: string) => {
-    if (to === '/reportes' && hayReporteActivo) return PUNTO_ROJO;
-    if (to === '/branches' && hayCambioBranches) return PUNTO_AZUL;
-    if (to === '/usuarios' && hayNovedadUsuarios) return PUNTO_AZUL;
-    if (rutasConPuntoAzul.has(to) && hayTareasActivas) return PUNTO_AZUL;
-    return null;
+  // Color del punto de cada panel (solo se muestra si hay algo nuevo, ver huellas arriba).
+  const COLOR_PUNTO: Record<string, { solido: string; halo: string }> = {
+    '/proyecto': PUNTO_BLANCO,
+    '/scrum': PUNTO_AMARILLO,
+    '/lista': PUNTO_AZUL,
+    '/categorias': PUNTO_AZUL,
+    '/resumen': PUNTO_AZUL,
+    '/avance': PUNTO_AZUL,
+    '/planificacion': PUNTO_BLANCO,
+    '/reportes': PUNTO_ROJO,
+    '/branches': PUNTO_VERDE_OSCURO,
+    '/usuarios': PUNTO_AZUL,
   };
+  const puntoDeRuta = (to: string) => (hayNovedad(to) ? COLOR_PUNTO[to] ?? PUNTO_AZUL : null);
 
   const etiquetaToggle = colapsado ? 'Expandir menú' : 'Contraer menú';
+  // Botoncito para contraer/expandir: redondo, pegado al borde derecho del menú y a media altura.
+  const botonToggle = (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={etiquetaToggle}
+      aria-label={etiquetaToggle}
+      aria-expanded={!colapsado}
+      className="absolute right-0 top-1/2 z-40 grid h-12 w-5 -translate-y-1/2 translate-x-1/2 place-items-center rounded-md border border-border-strong bg-surface-3 text-text/80 shadow-pop transition hover:bg-[#30364a] hover:text-text"
+    >
+      <svg
+        viewBox="0 0 20 20"
+        className={`h-3.5 w-3.5 transition-transform ${colapsado ? 'rotate-180' : ''}`}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12.5 5l-5 5 5 5" />
+      </svg>
+    </button>
+  );
 
   // Menú del proyecto (click en BranchBoard): se cierra al hacer click fuera.
   const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
@@ -117,36 +209,117 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
     showToast('En la app de escritorio, aquí se cierra BranchBoard', 'info');
   };
 
+  const renderItem = (item: NavItem) => {
+    const badge = badgeByPath[item.to];
+    const punto = puntoDeRuta(item.to);
+
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        title={colapsado ? item.label + (badge ? ` (${badge})` : '') : undefined}
+        aria-label={item.label}
+        className={({ isActive }) =>
+          `nav-link ${isActive ? 'nav-link-active' : ''} ${colapsado ? 'relative justify-center px-0' : ''}`
+        }
+      >
+        {/* El proyecto todavía no tiene ícono: círculo blanco. */}
+        {item.to === '/proyecto' ? (
+          <span className="grid h-[18px] w-[18px] shrink-0 place-items-center">
+            <span className="h-3.5 w-3.5 rounded-full border border-white/80" />
+          </span>
+        ) : (
+          <Icono nombre={item.icon} className="h-[18px] w-[18px]" />
+        )}
+        {colapsado ? (
+          <>
+            {badge !== undefined && badge > 0 ? (
+              <span
+                className={`absolute right-1 top-0.5 grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[9px] font-bold ${
+                  colorBadgePorRuta[item.to] ?? 'bg-primary text-white'
+                }`}
+              >
+                {badge}
+              </span>
+            ) : (
+              punto && <span className={`absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full ${punto.solido}`} />
+            )}
+          </>
+        ) : (
+          <>
+            <span className="truncate">{item.label}</span>
+            {punto && (
+              <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
+                <span className={`absolute h-2.5 w-2.5 rounded-full blur-[2px] ${punto.halo}`} />
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${punto.solido}`} />
+              </span>
+            )}
+            {badge !== undefined && (
+              <span
+                className={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
+                  badge > 0 ? colorBadgePorRuta[item.to] ?? 'bg-primary text-white' : 'bg-surface-3 text-faint'
+                }`}
+              >
+                {badge}
+              </span>
+            )}
+          </>
+        )}
+      </NavLink>
+    );
+  };
+
   return (
     <aside
-      className={`flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 ${
+      className={`relative flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 ${
         colapsado ? 'w-16' : 'w-60'
       }`}
     >
       {/* Cabecera: click en el logo/nombre abre el menú del proyecto (cambiar de proyecto o salir). */}
       <div ref={menuRef} className={`relative pt-5 ${colapsado ? 'px-2' : 'px-3'}`}>
+        <div className="flex items-center">
         <button
           type="button"
           onClick={() => setMenuProyecto((v) => !v)}
           title="Tus proyectos o salir"
           aria-expanded={menuProyecto}
-          className={`flex w-full items-center gap-2.5 rounded-xl py-1 text-left transition hover:bg-surface-3 ${
-            colapsado ? 'justify-center px-0' : 'px-2'
+          className={`flex min-w-0 items-center gap-2.5 rounded-xl py-1.5 text-left transition ${
+            colapsado ? 'w-full justify-center px-0 hover:bg-surface-3' : 'w-full justify-center border border-border/60 bg-surface-2 px-2 hover:bg-surface-3'
           }`}
         >
-          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-lg shadow-sm">
-            {/* placeholder: aquí va el icono/imagen definitiva */}
+          {/* Logo: el cuadro azul con otro debajo hacia abajo a la izquierda (sombra). Cada uno se corre la mitad
+              para que el conjunto quede centrado. */}
+          <div className="relative h-9 w-9 shrink-0">
+            <div className="absolute inset-0 -translate-x-[2.5px] translate-y-[2.5px] rounded-xl bg-primary/35" />
+            <div className="relative grid h-9 w-9 translate-x-[2.5px] -translate-y-[2.5px] place-items-center rounded-xl bg-primary text-lg">
+              {/* placeholder: aquí va el icono/imagen definitiva */}
+            </div>
           </div>
           {!colapsado && (
             <>
-              <div className="min-w-0 flex-1 leading-tight">
-                <div className="text-sm font-bold text-text">BranchBoard</div>
-                <div className="truncate font-mono text-[11px] text-faint">{proyectoActual}</div>
+              <div className="min-w-0 leading-tight">
+                <div className="text-lg font-bold text-text">
+                  Branch<span className="text-green-400">Board</span>
+                </div>
+                <div className="truncate font-mono text-xs text-faint">{proyectoActual}</div>
               </div>
-              <span className="text-xs text-faint">▾</span>
+              {/* La flecha va centrada en altura respecto a toda la cabecera (logo + nombre + proyecto). */}
+              <svg
+                viewBox="0 0 20 20"
+                className={`h-4 w-4 text-muted transition-transform ${menuProyecto ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M5.5 8l4.5 4.5L14.5 8" />
+              </svg>
             </>
           )}
         </button>
+        </div>
         {menuProyecto && (
           <div
             className={`absolute top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface-2 py-1 shadow-pop ${
@@ -190,7 +363,7 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
                 setCargarProyecto(true);
               }}
             >
-              ⬇️ Cargar proyecto
+              <Icono nombre="descargar" className="h-4 w-4" /> Cargar proyecto
             </button>
             <button
               type="button"
@@ -200,7 +373,7 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
                 setNuevoProyecto(true);
               }}
             >
-              ➕ Nuevo proyecto
+              <Icono nombre="mas" className="h-4 w-4" /> Nuevo proyecto
             </button>
             <div className="my-1 border-t border-border" />
             <button
@@ -221,84 +394,36 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
                 setConfirmarSalir(true);
               }}
             >
-              ⏻ Salir de la app
+              <Icono nombre="apagar" className="h-4 w-4" /> Salir de la app
             </button>
           </div>
         )}
       </div>
 
-      {/* El botón va siempre debajo de la cabecera y a la misma distancia del borde
-          (18px = centrado en la franja contraída de 64px), así no se mueve al alternar. */}
-      <div className="px-[18px] pb-3 pt-2">
-        <button
-          onClick={onToggle}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-3 hover:text-text"
-          title={etiquetaToggle}
-          aria-label={etiquetaToggle}
-          aria-expanded={!colapsado}
-        >
-          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M3 5h14M3 10h14M3 15h14" />
-          </svg>
-        </button>
-      </div>
+      <div className="pb-3" />
+      {botonToggle}
 
       {/* Contraído: solo los íconos (centrados, con el nombre al pasar el mouse); el número o el punto
-          de aviso van como una marca pequeña en la esquina del ícono. */}
-      <nav className={`flex-1 space-y-0.5 overflow-y-auto pb-4 ${colapsado ? 'px-2' : 'px-3'}`}>
-        {NAV.map((item) => {
-          const badge = badgeByPath[item.to];
-          const punto = puntoDeRuta(item.to);
-
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              title={colapsado ? item.label + (badge ? ` (${badge})` : '') : undefined}
-              aria-label={item.label}
-              className={({ isActive }) =>
-                `nav-link ${isActive ? 'nav-link-active' : ''} ${colapsado ? 'relative justify-center px-0' : ''}`
-              }
-            >
-              <span className="text-base leading-none">{item.icon}</span>
-              {colapsado ? (
-                <>
-                  {badge !== undefined && badge > 0 ? (
-                    <span
-                      className={`absolute right-1 top-0.5 grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[9px] font-bold ${
-                        colorBadgePorRuta[item.to] ?? 'bg-primary text-white'
-                      }`}
-                    >
-                      {badge}
-                    </span>
-                  ) : (
-                    punto && <span className={`absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full ${punto.solido}`} />
-                  )}
-                </>
-              ) : (
-                <>
-                  <span className="truncate">{item.label}</span>
-                  {punto && (
-                    <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                      <span className={`absolute h-2.5 w-2.5 rounded-full blur-[2px] ${punto.halo}`} />
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${punto.solido}`} />
-                    </span>
-                  )}
-                  {badge !== undefined && (
-                    <span
-                      className={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
-                        badge > 0 ? colorBadgePorRuta[item.to] ?? 'bg-primary text-white' : 'bg-surface-3 text-faint'
-                      }`}
-                    >
-                      {badge}
-                    </span>
-                  )}
-                </>
-              )}
-            </NavLink>
-          );
-        })}
+          de aviso van como una marca pequeña en la esquina del ícono. Expandido: secciones con título. */}
+      <nav className={`flex-1 overflow-y-auto pb-3 ${colapsado ? 'px-2' : 'px-3'}`}>
+        <div className="space-y-0.5">
+          {renderItem({ to: '/proyecto', icon: '', label: proyectoActual })}
+          {renderItem({ to: '/chat', icon: 'chat', label: 'Chat' })}
+        </div>
+        {SECCIONES.map((sec) => (
+          <div key={sec.titulo} className="mt-4">
+            {colapsado ? (
+              <div className="mx-2 mb-2 border-t border-border" />
+            ) : (
+              <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-faint">{sec.titulo}</div>
+            )}
+            <div className="space-y-0.5">{sec.items.map(renderItem)}</div>
+          </div>
+        ))}
       </nav>
+
+      {/* Papelera y Ajustes, abajo y separados del resto. */}
+      <div className={`space-y-0.5 border-t border-border py-2 ${colapsado ? 'px-2' : 'px-3'}`}>{ABAJO.map(renderItem)}</div>
 
       {!colapsado && (
         <div className="border-t border-border px-4 py-3 text-[11px] text-faint">

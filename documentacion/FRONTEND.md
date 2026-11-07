@@ -172,6 +172,15 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 
 **Restaurar backup de la base de datos** (solo Administrador, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos), lógica en [BACKEND.md](./BACKEND.md#copias-de-seguridad-y-restauración-de-la-bd)): pantalla que lista los backups automáticos disponibles con fecha, y al elegir uno pide el mismo doble candado que las demás acciones destructivas (confirmación + palabra literal, pendiente definir cuál). Un Líder o Desarrollador que quiera pedir esto no ve este botón — en su lugar tienen un botón **"Reportar problema con la base de datos"** que envía la notificación a los Administradores con un campo de motivo (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 9).
 
+## Apartado del proyecto (documentos)
+
+**Nuevo (2026-11-07)**: primera entrada del menú, con el nombre del proyecto (ej. "VirusTF") y un círculo vacío de borde delgado como ícono. Estilo perfil de GitHub:
+
+- **Izquierda**: círculo grande con el ícono del proyecto y, debajo, el nombre y cuántos documentos y personas tiene.
+  - **Imagen del proyecto (se implementa con el backend)**: el círculo muestra un **+** en el centro; al hacer clic se elige una imagen del equipo y queda como ícono del proyecto (en el círculo grande, en el menú lateral y en el grupo general del chat). Mientras no haya imagen se ve el círculo vacío. En el mockup el **+** solo muestra un aviso. Ver `subir_imagen_proyecto` en [BACKEND.md](./BACKEND.md#imagen-del-proyecto).
+- **Derecha**: documentos del proyecto en cuadros medianos (4 por fila), cuadros pequeños o lista; el primer cuadro es "Cargar documentos". Clic en cualquier parte del documento lo abre (todos los roles); eliminar y dar el visto bueno solo Líder/Administrador. Lo que sube alguien que no es Líder/Administrador queda **pendiente** (también en [Pendientes](#alcance)).
+- Punto blanco en el menú cuando hay un documento nuevo sin ver.
+
 ## Usuarios
 
 **Actualizado (2026-11-07)**: pantalla propia en el menú (👥, debajo de Branches). Antes la gestión de usuarios vivía dentro de Ajustes.

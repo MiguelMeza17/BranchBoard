@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal } from './Modal';
+import { Icono } from './Icono';
 
 // "Iniciar sesión con Unity VC". BranchBoard no tiene login propio: la identidad es la sesión de
 // Unity Version Control (`cm whoami`). Esta ventana solo inicia esa sesión, igual que el cliente de
@@ -63,14 +64,14 @@ export function LoginUnityVCModal({
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-text px-4 py-2.5 font-medium text-surface transition hover:opacity-90"
               onClick={() => esperar(correoDemo)}
             >
-              <span aria-hidden>🔑</span> Con tu cuenta de Unity
+              <Icono nombre="llave" className="h-4 w-4" /> Con tu cuenta de Unity
             </button>
             <button
               type="button"
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 px-4 py-2.5 font-medium text-text transition hover:border-border-strong"
               onClick={() => setPaso('correo')}
             >
-              <span aria-hidden>✉️</span> Con correo electrónico
+              <Icono nombre="sobre" className="h-4 w-4" /> Con correo electrónico
             </button>
           </div>
         )}

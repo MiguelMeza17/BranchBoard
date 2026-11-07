@@ -7,12 +7,16 @@ import type {
   Notificacion,
   EdicionPendiente,
   Backup,
+  Documento,
+  Mensaje,
+  GrupoChat,
   Commit,
   EstadoTarea,
   Rol,
   TipoTarea,
   WorkspaceUnityVC,
 } from '../types';
+import { CHAT_GRUPO } from '../types';
 import * as fx from '../data/fixtures';
 import { esTareaEnEspera } from '../lib/ui';
 import { esLiderOAdmin } from '../lib/permisos';
@@ -138,7 +142,7 @@ export function entrantesDe(tareas: Tarea[], recibidos: string[], id: string): T
 export function estadoEntrante(t: Tarea): string {
   return t.estado === 'terminada'
     ? `Terminada${t.fecha_completada ? ` el ${t.fecha_completada}` : ''}`
-    : '⚠ En revisión, sin aprobar';
+    : 'En revisión, sin aprobar';
 }
 
 // Subtareas (de cualquier nivel) que impiden que una tarea avance. Para mandarla a revisión no
@@ -219,11 +223,32 @@ interface State {
   notificaciones: Notificacion[];
   edicionesPendientes: EdicionPendiente[];
   backups: Backup[];
+  /** Chat entre usuarios. */
+  mensajes: Mensaje[];
+  /** Grupos de chat creados por el equipo (el general no está aquí: siempre existe). */
+  gruposChat: GrupoChat[];
+  crearGrupoChat: (nombre: string, miembros: string[]) => string;
+  /** Conversaciones que eliminaste: id → desde cuándo. Solo para ti; si llega un mensaje nuevo, vuelve a aparecer. */
+  chatsEliminados: Record<string, string>;
+  eliminarChat: (conversacion: string) => void;
+  enviarChat: (para: string, texto: string) => void;
+  /** Marca como leída la conversación: con esa persona, o el grupo (CHAT_GRUPO). */
+  marcarChatLeido: (conversacion: string) => void;
+  /** Documentos del proyecto (apartado con el nombre del proyecto). */
+  documentos: Documento[];
+  subirDocumentos: (archivos: File[]) => void;
+  eliminarDocumento: (id: string) => void;
+  /** Visto bueno de un Líder/Administrador a un documento pendiente. */
+  aprobarDocumento: (id: string) => void;
+  abrirDocumento: (id: string) => void;
   /** Tamaño de la base de datos actual (la que va arriba como "Actual" en Copias de seguridad). */
   tamanoActual: string;
-  /** Hay un usuario nuevo o un cambio de rol que no has visto: punto azul en "Usuarios" del menú. */
-  hayNovedadUsuarios: boolean;
-  marcarUsuariosVistos: () => void;
+  /**
+   * Puntos de aviso del menú: huella de los datos de cada panel la última vez que lo abriste. Si la
+   * huella actual es distinta, hay algo nuevo y se enciende el punto; al entrar al panel se apaga.
+   */
+  vistos: Record<string, string>;
+  marcarVisto: (ruta: string, huella: string) => void;
   commits: Commit[];
   /** Registro de "Traer cambios": se muestra en los detalles de la tarea que los recibió. */
   cambiosTraidos: CambioTraido[];
@@ -390,9 +415,90 @@ export const useStore = create<State>((set, get) => {
     .filter((t) => t.estado === 'terminada' && !fx.entrantesSinRecibir.includes(t.id))
     .map((t) => t.id),
   backups: [...fx.backups],
+  mensajes: [...fx.mensajes],
+  gruposChat: [...fx.gruposChat],
+  chatsEliminados: {},
+  eliminarChat: (conversacion) => {
+    get().marcarChatLeido(conversacion);
+    set((s) => ({ chatsEliminados: { ...s.chatsEliminados, [conversacion]: new Date().toISOString() } }));
+    get().showToast('Chat eliminado');
+  },
+  crearGrupoChat: (nombre, miembros) => {
+    const s = get();
+    const g: GrupoChat = {
+      id: `GR-${Date.now()}`,
+      nombre: nombre.trim(),
+      miembros: Array.from(new Set([s.currentEmail, ...miembros])),
+      creado_por: s.currentEmail,
+      fecha: today(),
+    };
+    set({ gruposChat: [...s.gruposChat, g] });
+    s.showToast(`Grupo "${g.nombre}" creado`);
+    return g.id;
+  },
+  enviarChat: (para, texto) => {
+    const s = get();
+    const m: Mensaje = {
+      id: `M-${Date.now()}`,
+      de: s.currentEmail,
+      para,
+      texto: texto.trim(),
+      fecha: new Date().toISOString(),
+      leidoPor: [s.currentEmail],
+    };
+    set({ mensajes: [...s.mensajes, m] });
+  },
+  marcarChatLeido: (conversacion) => {
+    const s = get();
+    const yo = s.currentEmail;
+    const esGrupo = conversacion === CHAT_GRUPO || s.gruposChat.some((g) => g.id === conversacion);
+    const esDeLaConversacion = (m: Mensaje) =>
+      esGrupo ? m.para === conversacion : m.de === conversacion && m.para === yo;
+    if (!s.mensajes.some((m) => esDeLaConversacion(m) && !m.leidoPor.includes(yo))) return;
+    set({
+      mensajes: s.mensajes.map((m) =>
+        esDeLaConversacion(m) && !m.leidoPor.includes(yo) ? { ...m, leidoPor: [...m.leidoPor, yo] } : m
+      ),
+    });
+  },
+  documentos: [...fx.documentos],
+  subirDocumentos: (archivos) => {
+    const s = get();
+    const nuevos: Documento[] = archivos.map((f, i) => ({
+      id: `D-${Date.now()}-${i}`,
+      nombre: f.name,
+      tamano: f.size,
+      subido_por: s.currentEmail,
+      fecha: today(),
+      // Líder/Administrador lo publican directo; los demás esperan su visto bueno en Pendientes.
+      pendiente: !esLiderOAdmin(s.currentUser().rol),
+      url: URL.createObjectURL(f),
+    }));
+    set({ documentos: [...nuevos, ...s.documentos] });
+    const que = nuevos.length === 1 ? nuevos[0].nombre : `${nuevos.length} documentos`;
+    s.showToast(nuevos[0].pendiente ? `${que}: pendiente del visto bueno de un Líder o Administrador` : `${que} subido`);
+  },
+  eliminarDocumento: (id) => {
+    const d = get().documentos.find((x) => x.id === id);
+    if (d?.url) URL.revokeObjectURL(d.url);
+    set((s) => ({ documentos: s.documentos.filter((x) => x.id !== id) }));
+    get().showToast('Documento eliminado', 'danger');
+  },
+  aprobarDocumento: (id) => {
+    set((s) => ({ documentos: s.documentos.map((d) => (d.id === id ? { ...d, pendiente: false } : d)) }));
+    get().showToast('Documento aprobado');
+  },
+  abrirDocumento: (id) => {
+    const d = get().documentos.find((x) => x.id === id);
+    if (!d) return;
+    // Los subidos en esta sesión tienen su archivo; los de ejemplo no (en la app real se abren desde la carpeta del proyecto).
+    if (d.url) window.open(d.url, '_blank', 'noopener');
+    else get().showToast(`Abriendo ${d.nombre}…`, 'info');
+  },
   tamanoActual: '2.4 MB',
-  hayNovedadUsuarios: true,
-  marcarUsuariosVistos: () => set({ hayNovedadUsuarios: false }),
+  vistos: {},
+  marcarVisto: (ruta, huella) =>
+    set((s) => (s.vistos[ruta] === huella ? s : { vistos: { ...s.vistos, [ruta]: huella } })),
 
   toast: null,
   ramaWorkspace: null,
@@ -566,6 +672,10 @@ export const useStore = create<State>((set, get) => {
       cambiosSinCheckin: {},
       entrantesRecibidos: [],
       backups: [],
+      documentos: [],
+      mensajes: [],
+      gruposChat: [],
+      chatsEliminados: {},
       ramaWorkspace: null,
       proyectoActual: proyecto,
       accesoCompletado: true,
@@ -1126,7 +1236,7 @@ export const useStore = create<State>((set, get) => {
       firma: `firma-${firmante.email}`,
       firmado_en: today(),
     };
-    set({ usuarios: [...s.usuarios, nuevo], hayNovedadUsuarios: true });
+    set({ usuarios: [...s.usuarios, nuevo] });
     s.showToast(`Usuario ${c} creado como ${rol}`);
     return true;
   },
@@ -1202,7 +1312,6 @@ export const useStore = create<State>((set, get) => {
           ? { ...u, rol, firma: `firma-${firmante.email}`, firmado_en: today() }
           : u
       ),
-      hayNovedadUsuarios: true,
     });
     s.showToast(`Rol cambiado a ${rol}`);
   },

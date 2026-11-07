@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { Modal } from './Modal';
 import { avatarColor, estadoMeta, iniciales } from '../lib/ui';
 import type { Commit, Tarea, Usuario } from '../types';
+import { Icono } from './Icono';
 
 // Vista "Historial" de Branches: cada rama es una caja que contiene a sus hijas (main guarda a
 // todo: dentro dev, dentro de dev las tareas y dentro de cada tarea sus subtareas). Cada una
@@ -402,7 +403,7 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
   onCopiar: (hash: string) => void;
   onAnterior?: () => void;
   onSiguiente?: () => void;
-  /** Si se pasa, sale "🎮 Abrir en Unity" (en ese changeset) entre Anterior y Siguiente. */
+  /** Si se pasa, sale "Abrir en Unity" (en ese changeset) entre Anterior y Siguiente. */
   onAbrirUnity?: () => void;
 }) {
   const tarea = useStore((s) => s.tareas.find((t) => t.id === commit.tarea_id));
@@ -422,7 +423,7 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
           </button>
           {onAbrirUnity && (
             <button type="button" className="btn-outline btn-sm" onClick={onAbrirUnity}>
-              🎮 Abrir en Unity
+              <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
             </button>
           )}
           <button type="button" className="btn-ghost btn-sm" onClick={onSiguiente} disabled={!onSiguiente}>

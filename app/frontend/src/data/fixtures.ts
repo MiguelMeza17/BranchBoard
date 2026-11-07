@@ -5,8 +5,12 @@ import type {
   Notificacion,
   EdicionPendiente,
   Backup,
+  Documento,
+  Mensaje,
+  GrupoChat,
   Commit,
   WorkspaceUnityVC, CambioTraido } from '../types';
+import { CHAT_GRUPO } from '../types';
 
 export const PROYECTO_NOMBRE = 'VirusTF';
 
@@ -91,8 +95,8 @@ export const usuarios: Usuario[] = [
     apellido: 'Rivas',
     rol: 'Desarrollador',
     fecha_alta: '2026-09-20',
-    firma: null, // fila sin firma (p. ej. escrita a mano en el archivo): no entra hasta que el Administrador la confirme
-    firmado_en: null,
+    firma: 'sig_dev2_ok',
+    firmado_en: '2026-09-20T10:00:00',
   },
   {
     email: 'colab.arte@freelance.dev',
@@ -600,6 +604,38 @@ export const edicionesPendientes: EdicionPendiente[] = [
     creado_por: ADMIN,
     fecha: '2026-09-27',
   },
+];
+
+// Chat: fechas relativas a ahora para que la demo siempre se vea reciente.
+const haceMin = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+export const gruposChat: GrupoChat[] = [
+  { id: 'GR-arte', nombre: 'Arte y sonido', miembros: [ADMIN, DEV, 'colab.arte@freelance.dev'], creado_por: ADMIN, fecha: '2026-10-20' },
+];
+
+export const mensajes: Mensaje[] = [
+  // Grupo del proyecto
+  { id: 'G-1', de: ADMIN, para: CHAT_GRUPO, texto: '¡Buenas, equipo! Esta semana cerramos el nivel 2 🎮', fecha: haceMin(60 * 27), leidoPor: [ADMIN, LIDER, DEV, TESTER] },
+  { id: 'G-2', de: LIDER, para: CHAT_GRUPO, texto: 'Yo reviso las ramas de UI hoy en la tarde.', fecha: haceMin(60 * 26), leidoPor: [ADMIN, LIDER, DEV] },
+  { id: 'G-3', de: TESTER, para: CHAT_GRUPO, texto: 'Encontré un bug con las colisiones de la puerta, ya lo reporté en Testing.', fecha: haceMin(95), leidoPor: [TESTER, LIDER] },
+  { id: 'G-4', de: DEV, para: CHAT_GRUPO, texto: 'Lo miro yo, creo que es el collider del prefab.', fecha: haceMin(90), leidoPor: [DEV] },
+  { id: 'G-5', de: 'colab.arte@freelance.dev', para: CHAT_GRUPO, texto: 'Subí el icono de la poción, queda en revisión 🧪', fecha: haceMin(20), leidoPor: ['colab.arte@freelance.dev'] },
+  // Grupo "Arte y sonido"
+  { id: 'A-1', de: 'colab.arte@freelance.dev', para: 'GR-arte', texto: '¿Los sprites van en 64x64 o 128x128?', fecha: haceMin(60 * 5), leidoPor: ['colab.arte@freelance.dev', ADMIN, DEV] },
+  { id: 'A-2', de: DEV, para: 'GR-arte', texto: '64x64 para el inventario, 128 para el HUD.', fecha: haceMin(60 * 5 - 10), leidoPor: [DEV, 'colab.arte@freelance.dev'] },
+  // Privados
+  { id: 'M-1', de: LIDER, para: ADMIN, texto: '¿Revisaste la rama del menú de pausa?', fecha: haceMin(60 * 26), leidoPor: [LIDER, ADMIN] },
+  { id: 'M-2', de: ADMIN, para: LIDER, texto: 'Sí, le dejé dos comentarios. Mañana la mergeo.', fecha: haceMin(60 * 25), leidoPor: [ADMIN, LIDER] },
+  { id: 'M-3', de: LIDER, para: ADMIN, texto: 'Perfecto 👌', fecha: haceMin(60 * 25 - 3), leidoPor: [LIDER, ADMIN] },
+  { id: 'M-4', de: DEV, para: ADMIN, texto: 'Subí las referencias de sonido, quedaron pendientes.', fecha: haceMin(42), leidoPor: [DEV] },
+  { id: 'M-5', de: DEV, para: ADMIN, texto: '¿Les das el visto bueno cuando puedas?', fecha: haceMin(41), leidoPor: [DEV] },
+  { id: 'M-6', de: ADMIN, para: TESTER, texto: 'Laura, ¿puedes probar el nivel 2 hoy?', fecha: haceMin(180), leidoPor: [ADMIN] },
+];
+
+export const documentos: Documento[] = [
+  { id: 'D-1', nombre: 'GDD VirusTF.pdf', tamano: 2_480_000, subido_por: ADMIN, fecha: '2026-09-02', pendiente: false },
+  { id: 'D-2', nombre: 'Guía de estilo de arte.pdf', tamano: 5_120_000, subido_por: LIDER, fecha: '2026-09-10', pendiente: false },
+  { id: 'D-3', nombre: 'Cronograma.xlsx', tamano: 86_000, subido_por: ADMIN, fecha: '2026-09-15', pendiente: false },
+  { id: 'D-4', nombre: 'Referencias de sonido.zip', tamano: 14_300_000, subido_por: DEV, fecha: '2026-10-28', pendiente: true },
 ];
 
 export const backups: Backup[] = [

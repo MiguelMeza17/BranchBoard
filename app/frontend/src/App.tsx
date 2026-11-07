@@ -20,6 +20,8 @@ import { Reportes } from './pages/Reportes';
 import { Ajustes } from './pages/Ajustes';
 import { PerfilUsuario } from './pages/PerfilUsuario';
 import { Usuarios } from './pages/Usuarios';
+import { DocumentosProyecto } from './pages/DocumentosProyecto';
+import { Chat } from './pages/Chat';
 
 export function App() {
   const [showSplash, setShowSplash] = useState(true);
@@ -56,6 +58,9 @@ export function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Navigate to="/scrum" replace />} />
+            <Route path="/proyecto" element={<DocumentosProyecto />} />
+            <Route path="/chat" element={<Chat />} />
+            <Route path="/chat/:email" element={<Chat />} />
             <Route path="/scrum" element={<ScrumBoard />} />
             <Route path="/resumen" element={<Resumen />} />
             <Route path="/lista" element={<ListaTareas />} />

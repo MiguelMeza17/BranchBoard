@@ -2,22 +2,23 @@ import { useLayoutEffect, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
+import { Icono, IconoEnLinea } from './Icono';
 
 const tipoIcono: Record<string, string> = {
-  aprobacion_tarea: '✅',
-  tarea_rechazada: '⛔',
-  tarea_asignada: '📥',
-  edicion_pendiente: '✏️',
-  tarea_a_revision: '🔀',
-  tarea_reabierta: '↩️',
-  revision_asignada: '👤',
-  inactividad: '⏰',
-  accion_bd: '🗄️',
-  mover_cambios: '📦',
-  editada_aprobada: '✅',
-  advertencia: '⚠️',
-  tarea_eliminada: '🗑️',
-  mensaje: '💬',
+  aprobacion_tarea: 'check',
+  tarea_rechazada: 'prohibido',
+  tarea_asignada: 'recibir',
+  edicion_pendiente: 'lapiz',
+  tarea_a_revision: 'revision',
+  tarea_reabierta: 'intercambio',
+  revision_asignada: 'usuario',
+  inactividad: 'reloj',
+  accion_bd: 'basedatos',
+  mover_cambios: 'caja',
+  editada_aprobada: 'check',
+  advertencia: 'alerta',
+  tarea_eliminada: 'papelera',
+  mensaje: 'chat',
 };
 
 export function NotificationsPanel({
@@ -122,7 +123,7 @@ export function NotificationsPanel({
                 n.leida ? 'opacity-60' : ''
               }`}
             >
-              <span className="mt-0.5 text-base leading-none">{tipoIcono[n.tipo] ?? '🔔'}</span>
+              <Icono nombre={tipoIcono[n.tipo] ?? 'campana'} className="mt-0.5 h-4 w-4" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-text">{n.titulo}</p>
@@ -134,7 +135,7 @@ export function NotificationsPanel({
                     <span className="text-[11px] text-faint">{n.fecha}</span>
                     {n.accionable && n.tarea_id && estaAprobada(n) && (
                       <span className="chip border border-done/40 bg-green-500/10 text-green-300">
-                        ✓ Aprobada
+                        <IconoEnLinea nombre="check" sinColor />Aprobada
                       </span>
                     )}
                     {!estaAprobada(n) && (

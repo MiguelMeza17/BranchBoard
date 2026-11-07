@@ -23,6 +23,7 @@ import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
 import { DetalleTareaModal } from '../components/DetalleTareaModal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
+import { Icono } from '../components/Icono';
 
 // Tablero Scrum de una categoría: distinto del tablero principal — no agrupa por
 // jerarquía (generales/individuales), solo muestra, todas al mismo nivel, las tareas
@@ -85,7 +86,7 @@ function Column({ col, children, count }: { col: (typeof COLUMNAS)[number]; chil
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 space-y-3 rounded-2xl border p-3 transition-colors ${col.bg} ${
+        className={`acotado flex-1 space-y-3 rounded-2xl border p-3 transition-colors ${col.bg} ${
           col.dashed ? 'border-dashed' : ''
         } ${isOver ? 'border-primary ring-2 ring-primary/30' : col.border}`}
         style={{ minHeight: 200 }}
@@ -340,7 +341,7 @@ export function CategoriaScrum() {
                               className="btn-outline btn-sm"
                               onClick={() => { setTomarId(t.id); setMostrarTomarModal(true); }}
                             >
-                              🙋 Tomar tarea
+                              <Icono nombre="mano" className="h-3.5 w-3.5" sinColor /> Tomar tarea
                             </button>
                           )}
                           {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && (
@@ -348,7 +349,7 @@ export function CategoriaScrum() {
                               className="btn-primary btn-sm"
                               onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}
                             >
-                              ✓ Autorizar (merge a dev)
+                              <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Autorizar (merge a dev)
                             </button>
                           )}
                         </div>

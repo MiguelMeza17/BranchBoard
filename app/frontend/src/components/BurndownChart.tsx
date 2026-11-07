@@ -1,6 +1,7 @@
 import { Line } from 'react-chartjs-2';
 import '../lib/charts';
 import type { Sprint, Tarea } from '../types';
+import { IconoEnLinea } from './Icono';
 
 const MAX_PROYECCION_DIAS = 90;
 
@@ -267,7 +268,7 @@ export function BurndownChart({
                 : 'border-red-500/40 bg-red-500/10 text-red-300'
           }`}
         >
-          {veredicto.nivel === 'bien' ? '✓ ' : veredicto.nivel === 'mejora' ? '↑ ' : '⚠ '}
+          <IconoEnLinea nombre={veredicto.nivel === 'bien' ? 'check' : veredicto.nivel === 'mejora' ? 'avance' : 'alerta'} sinColor />
           {veredicto.texto}
         </div>
       )}

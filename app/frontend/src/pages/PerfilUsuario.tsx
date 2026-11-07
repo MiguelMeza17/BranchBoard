@@ -4,9 +4,8 @@ import { useStore } from '../store/useStore';
 import { ESTADOS, type EstadoTarea } from '../types';
 import { estadoMeta } from '../lib/ui';
 import { PageHeader, Card, EmptyState, EstadoBadge, TipoBadge } from '../components/primitives';
-import { Modal } from '../components/Modal';
+import { Icono, IconoEnLinea } from '../components/Icono';
 
-const MAX_MENSAJE = 500;
 
 // --- Actividad simulada (no viene de datos reales de checkins de Unity VC) ---
 // Nivel 0-4 determinista por persona+día, solo para dar una vista visual tipo
@@ -100,13 +99,6 @@ export function PerfilUsuario() {
   const tareas = useStore((s) => s.tareas);
   const [mesExpandido, setMesExpandido] = useState(false);
   const currentEmail = useStore((s) => s.currentEmail);
-  const enviarMensaje = useStore((s) => s.enviarMensaje);
-  const [escribiendo, setEscribiendo] = useState(false);
-  const [mensaje, setMensaje] = useState('');
-  const cerrarMensaje = () => {
-    setEscribiendo(false);
-    setMensaje('');
-  };
 
   const u = usuarios.find((x) => x.email === email);
   const asignadas = useMemo(
@@ -119,7 +111,7 @@ export function PerfilUsuario() {
   if (!u) {
     return (
       <EmptyState
-        icon="🕵️"
+        icon="buscar"
         title="Usuario no encontrado"
         desc={`No hay ningún miembro del equipo con el correo ${email}.`}
         action={
@@ -161,48 +153,17 @@ export function PerfilUsuario() {
           <span className="chip border border-primary/40 bg-primary-soft text-indigo-200">{u.rol}</span>
           {u.firma === null && (
             <span className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300">
-              ⏳ Pendiente de confirmar
+              <IconoEnLinea nombre="reloj" sinColor />Pendiente de confirmar
             </span>
           )}
           <span className="chip border border-border bg-surface-2 text-muted">Desde {u.fecha_alta}</span>
           {u.email !== currentEmail && (
-            <button className="btn-primary btn-sm" onClick={() => setEscribiendo(true)}>
-              💬 Enviar mensaje
+            <button className="btn-primary btn-sm" onClick={() => navigate(`/chat/${encodeURIComponent(u.email)}`)}>
+              <Icono nombre="chat" className="h-3.5 w-3.5" sinColor /> Enviar mensaje
             </button>
           )}
         </Card>
 
-        <Modal
-          open={escribiendo}
-          onClose={cerrarMensaje}
-          title={`Mensaje para ${u.nombre}`}
-          size="sm"
-          footer={
-            <div className="flex w-full justify-end gap-2">
-              <button className="btn-ghost btn-sm" onClick={cerrarMensaje}>Cancelar</button>
-              <button
-                className="btn-primary btn-sm"
-                disabled={!mensaje.trim()}
-                onClick={() => {
-                  enviarMensaje(u.email, mensaje);
-                  cerrarMensaje();
-                }}
-              >
-                Enviar
-              </button>
-            </div>
-          }
-        >
-          <textarea
-            className="input min-h-[120px] resize-y"
-            autoFocus
-            maxLength={MAX_MENSAJE}
-            placeholder="Escribe tu mensaje…"
-            value={mensaje}
-            onChange={(e) => setMensaje(e.target.value)}
-          />
-          <div className="mt-1 text-right text-[11px] text-faint">{mensaje.length}/{MAX_MENSAJE}</div>
-        </Modal>
 
         <Card>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">

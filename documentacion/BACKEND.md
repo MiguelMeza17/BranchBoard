@@ -461,6 +461,10 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 - `renombrar_proyecto(nombre)` — exclusivo Administrador; cambia el nombre en BranchBoard (clave `nombre_proyecto` en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto)), no el repositorio de Unity VC.
 - `enviar_mensaje(para, texto)` — todos los roles; crea una notificación de tipo `mensaje` para `para` (máx. 500 caracteres).
 
+## Imagen del proyecto
+
+**Nuevo (2026-11-07, pendiente de implementar)**: `subir_imagen_proyecto(ruta_archivo)` — Administrador (por definir si también el Líder). Copia la imagen elegida a la carpeta compartida del proyecto (ej. `proyecto/icono.png`, redimensionada a un tamaño fijo, p. ej. 256×256) y guarda la ruta en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto) con la clave `icono_proyecto`. Migra a eventos para que todas las máquinas la vean. Validar tipo (png/jpg/webp) y tamaño máximo, con la misma [validación de rutas](#validación-de-rutas-de-archivoadjuntos-resuelto-previene-path-traversal) que los adjuntos. Ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos).
+
 ## Copias de seguridad y restauración de la BD
 
 **Backup automático**: cada vez que se abre BranchBoard, antes de tocar el `.db`, se copia a una carpeta local de backups (ej. `%LocalAppData%\BranchBoard\backups\branchboard_2026-09-25.db`). Se conservan solo las **últimas 10 copias** — al llegar a la 11, se borra la más vieja. No requiere acción de nadie, corre solo.

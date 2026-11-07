@@ -5,6 +5,7 @@ import { PageHeader, EmptyState } from '../components/primitives';
 import { CrearSprintModal } from '../components/CrearSprintModal';
 import { AsignarTareasSprintModal } from '../components/AsignarTareasSprintModal';
 import type { Sprint } from '../types';
+import { Icono } from '../components/Icono';
 
 // Planificación: sprints (con fecha: empiezan y terminan, generan su reporte) y backlogs (sin fecha:
 // agrupan tareas sin plazo). Los dos son "sprints" en el modelo de datos (`con_fecha` true/false).
@@ -101,25 +102,25 @@ export function Planificacion() {
       <div className="card p-5">
         <section className="mb-8">
           <div className="mb-3 flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-text">🏃 Sprints</h2>
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-text"><Icono nombre="sprint" className="h-4 w-4" /> Sprints</h2>
             <span className="chip border border-border bg-surface-2 text-muted">{conFecha.length}</span>
           </div>
           {conFecha.length === 0 ? (
-            <EmptyState icon="🏃" title="Todavía no hay sprints" desc="Un sprint tiene fecha de inicio y de fin, y al terminar genera su reporte." />
+            <EmptyState icon="sprint" title="Todavía no hay sprints" desc="Un sprint tiene fecha de inicio y de fin, y al terminar genera su reporte." />
           ) : (
-            <div className="space-y-2">{conFecha.map(fila)}</div>
+            <div className="acotado space-y-2 pr-1">{conFecha.map(fila)}</div>
           )}
         </section>
 
         <section>
           <div className="mb-3 flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-text">📦 Backlogs</h2>
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-text"><Icono nombre="caja" className="h-4 w-4" /> Backlogs</h2>
             <span className="chip border border-border bg-surface-2 text-muted">{sinFecha.length}</span>
           </div>
           {sinFecha.length === 0 ? (
-            <EmptyState icon="📦" title="Todavía no hay backlogs" desc="Un backlog agrupa tareas sin fecha límite, para planificarlas más adelante." />
+            <EmptyState icon="caja" title="Todavía no hay backlogs" desc="Un backlog agrupa tareas sin fecha límite, para planificarlas más adelante." />
           ) : (
-            <div className="space-y-2">{sinFecha.map(fila)}</div>
+            <div className="acotado space-y-2 pr-1">{sinFecha.map(fila)}</div>
           )}
         </section>
       </div>

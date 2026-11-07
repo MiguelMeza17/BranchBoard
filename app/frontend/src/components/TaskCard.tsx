@@ -3,6 +3,7 @@ import type { EstadoTarea, Tarea, TipoTarea } from '../types';
 import { TipoBadge, Avatar } from './primitives';
 import { tipoMeta, estadoMeta } from '../lib/ui';
 import { LIMITE_REAPERTURAS, useStore } from '../store/useStore';
+import { Icono } from './Icono';
 
 /** "Sin asignar" es el recorte visual de 'por hacer' sin dueño, igual que la columna del tablero. */
 export type EstadoVisual = 'sin asignar' | EstadoTarea;
@@ -99,12 +100,12 @@ export function TaskCard({
                   title="Pendiente de aprobación — ir a Pendientes"
                   onClick={() => navigate('/pendientes', { state: { focusTareaId: tarea.id } })}
                 >
-                  ⏳
+                  <Icono nombre="reloj" className="h-3.5 w-3.5" sinColor />
                 </button>
               )}
               {tarea.edicion_pendiente && (
                 <span className="chip border border-warn/40 bg-yellow-500/15 text-yellow-300">
-                  ✏️ Edición pendiente
+                  <Icono nombre="lapiz" className="h-3.5 w-3.5" sinColor /> Edición pendiente
                 </span>
               )}
               {pendientes > 0 && tarea.estado !== 'terminada' && (
@@ -180,7 +181,7 @@ export function TaskCard({
                   style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}18` }}
                   title={`Ir a la subtarea de ${tipo}`}
                 >
-                  <span>{m.emoji}</span>
+                  <Icono nombre={m.icono} className="h-3.5 w-3.5" sinColor />
                   <span className="font-semibold">{count}</span>
                 </button>
               );

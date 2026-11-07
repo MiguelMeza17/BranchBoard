@@ -40,20 +40,20 @@ export const estadoMeta: Record<
 };
 
 // 9 task-type categorical palette (distinct hues, dark-friendly).
-export const tipoMeta: Record<TipoTarea, { color: string; emoji: string }> = {
-  Scripting: { color: '#60a5fa', emoji: '💻' },
-  'Modelado 3D': { color: '#f472b6', emoji: '🧊' },
-  'Modelado 2D': { color: '#c084fc', emoji: '🖼️' },
-  Animación: { color: '#fb923c', emoji: '🎭' },
-  Imagen: { color: '#34d399', emoji: '🎨' },
-  'UI/Interfaz': { color: '#22d3ee', emoji: '🧩' },
-  Audio: { color: '#facc15', emoji: '🔊' },
-  Música: { color: '#a3e635', emoji: '🎵' },
-  Video: { color: '#f87171', emoji: '🎬' },
-  Testing: { color: '#fb7185', emoji: '🐞' },
-  Corrección: { color: '#f59e0b', emoji: '🔧' },
-  Ajustes: { color: '#cbd5e1', emoji: '⚙️' },
-  'Sin definir': { color: '#6b7385', emoji: '❔' },
+export const tipoMeta: Record<TipoTarea, { color: string; icono: string }> = {
+  Scripting: { color: '#60a5fa', icono: 'codigo' },
+  'Modelado 3D': { color: '#f472b6', icono: 'cubo' },
+  'Modelado 2D': { color: '#c084fc', icono: 'capas' },
+  Animación: { color: '#fb923c', icono: 'animacion' },
+  Imagen: { color: '#34d399', icono: 'pincel' },
+  'UI/Interfaz': { color: '#22d3ee', icono: 'pieza' },
+  Audio: { color: '#facc15', icono: 'altavoz' },
+  Música: { color: '#a3e635', icono: 'musica' },
+  Video: { color: '#f87171', icono: 'video' },
+  Testing: { color: '#fb7185', icono: 'bicho' },
+  Corrección: { color: '#f59e0b', icono: 'herramienta' },
+  Ajustes: { color: '#cbd5e1', icono: 'ajustes' },
+  'Sin definir': { color: '#6b7385', icono: 'pregunta' },
 };
 
 export function iniciales(nombre: string, apellido?: string): string {

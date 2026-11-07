@@ -5,6 +5,7 @@ import { estadoMeta, tipoMeta } from '../lib/ui';
 import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { PageHeader, Card } from '../components/primitives';
 import { EstadoDoughnutChart } from '../components/EstadoDoughnutChart';
+import { Icono } from '../components/Icono';
 
 export function Resumen() {
   const user = useStore((s) => s.currentUser());
@@ -51,8 +52,8 @@ export function Resumen() {
                 const pct = total ? Math.round((n / total) * 100) : 0;
                 return (
                   <div key={tp} className="flex items-center gap-3">
-                    <span className="w-28 shrink-0 text-xs text-muted">
-                      {tipoMeta[tp].emoji} {tp}
+                    <span className="flex w-28 shrink-0 items-center gap-1.5 text-xs text-muted">
+                      <Icono nombre={tipoMeta[tp].icono} className="h-3.5 w-3.5" color={tipoMeta[tp].color} /> {tp}
                     </span>
                     <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-3">
                       <div
