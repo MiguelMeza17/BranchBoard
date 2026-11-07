@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { ESTADOS, type EstadoTarea, type Tarea, type TipoTarea } from '../types';
-import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { PageHeader, EstadoBadge, TipoBadge, Avatar, EmptyState } from '../components/primitives';
 import { CrearTareaModal } from '../components/CrearTareaModal';
 import { DetalleTareaModal } from '../components/DetalleTareaModal';
@@ -386,7 +386,8 @@ export function ListaTareas() {
               <option value="" disabled>
                 Elige a quién…
               </option>
-              {usuarios.map((u) => (
+              {/* El Colaborador externo solo recibe tareas individuales (no subtareas). */}
+              {usuarios.filter((u) => !asignando || puedeTomarTarea(u.rol, asignando, tareasAll)).map((u) => (
                 <option key={u.email} value={u.email}>
                   {u.nombre} {u.apellido} · {u.rol}
                 </option>

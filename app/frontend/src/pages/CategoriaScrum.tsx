@@ -14,7 +14,7 @@ import {
 import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea, type TipoTarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
-import { esLiderOAdmin, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { esLiderOAdmin, puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard } from '../components/TaskCard';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
@@ -181,6 +181,12 @@ export function CategoriaScrum() {
       return;
     }
 
+    // Colaborador externo: solo tareas individuales (ni grandes ni subtareas).
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a && !puedeTomarTarea(user.rol, tarea, tareasAll)) {
+      showToast('Solo puedes tomar tareas individuales', 'danger');
+      return;
+    }
+
     if (toCol === 'por hacer' && tarea.estado === 'por hacer' && !tarea.asignado_a) {
       // Solo una tarjeta "en vuelo" a la vez (ver ScrumBoard).
       if (tomarId) return;
@@ -336,7 +342,7 @@ export function CategoriaScrum() {
                           <button className="btn-ghost btn-sm" onClick={() => setDetalle(t)}>
                             Ver detalle
                           </button>
-                          {!t.asignado_a && t.estado === 'por hacer' && (
+                          {!t.asignado_a && t.estado === 'por hacer' && puedeTomarTarea(user.rol, t, tareasAll) && (
                             <button
                               className="btn-outline btn-sm"
                               onClick={() => { setTomarId(t.id); setMostrarTomarModal(true); }}

@@ -50,6 +50,19 @@ Explicaciones que el agente debería poder dar:
 - **Creé el usuario pero no puede abrir el proyecto.** Crear el usuario no le da acceso a la carpeta de Drive/OneDrive ni al repositorio de Unity VC: eso se comparte aparte.
 - **¿Qué es el punto azul en Usuarios?** Hay un usuario nuevo o un cambio de rol que no has visto; se apaga al entrar.
 
+### Avance
+
+Textos que se quitaron de la pantalla:
+
+- **Título "Burndown del sprint"**: ahora la gráfica lleva solo el nombre del sprint o del backlog.
+
+Explicaciones que el agente debería poder dar:
+
+- **¿Qué muestra la gráfica?** Cuántas tareas faltan día a día (lo que se conoce como *burndown*: la línea "se quema" hacia 0 a medida que se terminan tareas). En un backlog sube un escalón cuando entra una tarea nueva y baja cuando se cierra una.
+- **¿Qué es la línea "Ideal"?** (solo sprints) El ritmo parejo que terminaría todas las tareas justo el último día del sprint. Si la línea real va por encima, vas atrasado.
+- **¿Qué es la "Proyección" y el "Cierre estimado"?** Siguen el ritmo de los días que ya pasaron hasta llegar a 0. En un sprint se calcula con una recta que mejor se ajusta a lo ya hecho; en un backlog, con las tareas terminadas en las últimas 4 semanas, y supone que no entran tareas nuevas.
+- **¿Qué es "General"?** El avance de todo el proyecto: suma las tareas de todos los sprints y backlogs. No es un backlog donde se guarden tareas; por eso tiene su botón aparte y es lo primero que se ve al entrar a Avance. Solo llega a 0 cuando ya no queda ninguna tarea abierta en ningún sprint ni backlog.
+
 ### Ajustes → Proyecto
 
 - **Nombre del proyecto**: "Solo cambia el nombre en BranchBoard; el repositorio de Unity VC conserva el suyo."

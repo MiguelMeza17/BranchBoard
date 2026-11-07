@@ -13,7 +13,6 @@ export function Topbar() {
   const navigate = useNavigate();
   const vpnOn = useStore((s) => s.vpnOn);
   const toggleVpn = useStore((s) => s.toggleVpn);
-  const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
   const setRolActual = useStore((s) => s.setRolActual);
   const notifs = useStore((s) => s.notificaciones);
   const email = useStore((s) => s.currentEmail);
@@ -78,14 +77,7 @@ export function Topbar() {
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
-        {/* Solo para el mockup (se quitan en la app real): volver a las pantallas de acceso y "Ver como". */}
-        <button
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted transition hover:border-border-strong hover:text-text"
-          title="Demo: volver a la Pantalla inicial (acceso al proyecto). Se elimina en la app real."
-          onClick={() => setAccesoCompletado(false)}
-        >
-          <Icono nombre="puerta" className="h-3.5 w-3.5" /> Pantallas de acceso
-        </button>
+        {/* Solo para el mockup (se quita en la app real): "Ver como". */}
         {/* Role selector (simula autenticación) */}
         <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
           <span className="text-faint">Ver como</span>

@@ -21,6 +21,77 @@
   html {
     color-scheme: dark;
   }
+  /* Listas desplegables (select): la lista de opciones con el mismo estilo oscuro que los menús de la app.
+     Respaldo: colores en las opciones (navegadores sin select personalizable). */
+  option {
+    background-color: #1d212c;
+    color: #e6e9ef;
+  }
+  @supports (appearance: base-select) {
+    select,
+    ::picker(select) {
+      appearance: base-select;
+    }
+    select {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+    }
+    select::picker-icon {
+      content: '';
+      width: 14px;
+      height: 14px;
+      margin-left: auto;
+      background: #9aa2b1;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 8l4.5 4.5L14.5 8'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+      transition: rotate 0.15s;
+    }
+    select:open::picker-icon {
+      rotate: 180deg;
+    }
+    ::picker(select) {
+      margin-top: 4px;
+      padding: 4px;
+      border: 1px solid #2b313f;
+      border-radius: 0.75rem;
+      background: #1d212c;
+      box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+    }
+    option {
+      padding: 0.45rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      background: transparent;
+      cursor: pointer;
+    }
+    option::checkmark {
+      display: none;
+    }
+    option:hover,
+    option:focus-visible {
+      background: #262b38;
+      outline: none;
+    }
+    option:checked {
+      background: rgba(99, 102, 241, 0.18);
+      color: #fff;
+    }
+    optgroup {
+      padding-top: 0.25rem;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #6b7385;
+    }
+    optgroup option {
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 400;
+    }
+  }
   /* scrollbars: en Chrome/Edge, si se usan scrollbar-width/scrollbar-color se ignora
      ::-webkit-scrollbar y salen las flechas nativas; por eso esas dos propiedades solo
      se aplican en navegadores sin ::-webkit-scrollbar (Firefox). */
