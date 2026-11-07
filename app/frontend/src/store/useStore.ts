@@ -19,7 +19,7 @@ import type {
 import { CHAT_GRUPO } from '../types';
 import * as fx from '../data/fixtures';
 import { esTareaEnEspera } from '../lib/ui';
-import { esLiderOAdmin } from '../lib/permisos';
+import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
 let idSeq = 1000;
 const nextId = () => `T-${++idSeq}`;
@@ -808,6 +808,10 @@ export const useStore = create<State>((set, get) => {
 
   // Tomar una tarea crea su rama (toda tarea se trabaja en su propia rama).
   tomarTarea: (id, email) => {
+    // Lo mismo que validará el backend: el Colaborador externo solo toma tareas individuales.
+    const tomada = get().tareas.find((x) => x.id === id);
+    const quien = get().usuarios.find((u) => u.email === email);
+    if (tomada && quien && !puedeTomarTarea(quien.rol, tomada, get().tareas)) return;
     set((s) => ({
       tareas: s.tareas.map((t) => {
         if (t.id !== id) return t;
@@ -826,6 +830,8 @@ export const useStore = create<State>((set, get) => {
   asignarTarea: (id, email) => {
     const t = get().tareas.find((x) => x.id === id);
     if (!t || t.asignado_a === email) return;
+    const destino = get().usuarios.find((u) => u.email === email);
+    if (destino && !puedeTomarTarea(destino.rol, t, get().tareas)) return;
     set((s) => ({
       tareas: s.tareas.map((x) =>
         x.id === id

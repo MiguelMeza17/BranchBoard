@@ -64,7 +64,7 @@
 
 **Nuevo (2026-11-07)**: reemplaza la lista aparte `colaboradores_externos`. Es alguien que sube archivos puntuales (imagen, audio, video, animación, `.fbx`) en subtareas simples, con workspace parcial (Gluon); no descarga el proyecto completo ni necesita Unity Editor.
 - **Ve lo mismo que un Desarrollador** (decidido 2026-11-07) y tiene sus mismas restricciones (sus tareas quedan pendientes de aprobación, no termina tareas directo).
-- **Solo puede desarrollar tareas individuales**: no toma tareas grandes (las que tienen subtareas) ni subtareas (hijas de otra tarea). **Pendiente de aplicar en el mockup**: hoy no se bloquea.
+- **Solo puede desarrollar tareas individuales**: no toma tareas grandes (las que tienen subtareas) ni subtareas (hijas de otra tarea). **Aplicado en el mockup (2026-11-07)**: no ve "Tomar tarea" en esas tarjetas (Scrum y Categorías), arrastrarlas desde "Sin asignar" se bloquea con un aviso, y en "Asignar" de la Lista de tareas no aparece como opción para una subtarea (`puedeTomarTarea` en `lib/permisos.ts`). El backend lo valida igual en `tomar_tarea` y `asignar_tarea`.
 - Lo crea o le cambia el rol un Líder o el Administrador desde [Usuarios](./FRONTEND.md#usuarios); también puede pasar a otro rol si el Líder/Administrador lo decide.
 
 ### Matriz resumen

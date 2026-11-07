@@ -29,27 +29,24 @@
 
 ## Navegación general
 
-Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + etiqueta corta por pantalla:
+Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + etiqueta corta por pantalla. **Actualizado (2026-11-07)**: agrupado en secciones (título pequeño en mayúsculas), en este orden:
 
 ```
-🗂  Tareas (Scrum)
-📊  Resumen
-📋  Lista de tareas
-🗓  Planificación
-📈  Avance
-🌳  Branches
-👥  Usuarios
-🔀  Revisión
-📌  Pendientes
-🗑  Papelera
-🗃  Categorías
-📄  Reportes
-⚙️  Ajustes
+(sin título)   [nombre del proyecto]   ·  Chat
+TRABAJO        Tareas (Scrum) · Lista de tareas · Planificación · Categorías · Revisión
+SEGUIMIENTO    Resumen · Avance · Pendientes · Reportes · Branches
+EQUIPO         Usuarios
+(abajo, aparte, separado por una línea)   Papelera · Ajustes
 ```
+
+- **Cabecera**: el logo y "BranchBoard" con el nombre del proyecto debajo, dentro de un recuadro, y una flecha ⌄ a la derecha. Click abre el menú del proyecto (tus proyectos, Cargar proyecto, Nuevo proyecto, Cerrar sesión, Salir de la app).
+- **Íconos de línea** (`components/Icono.tsx`): toda la app usa íconos SVG de línea con el mismo trazo (1.8), cada uno con un color suave por defecto (apagado, para no recargar). **Ya no se usan emojis** en la interfaz. El proyecto todavía no tiene ícono: se muestra un círculo vacío de borde blanco delgado (en el menú, en su apartado y en el grupo general del chat).
+- **Números**: Pendientes (ámbar), Revisión (fucsia), Papelera (rojo) siempre muestran su número (gris si es 0); Chat (verde) solo cuando hay conversaciones con algo sin leer (cuenta conversaciones, no mensajes).
+- **Puntos de aviso**: un punto pequeño con un halo suave al final de la fila cuando hay algo nuevo en esa pantalla desde la última vez que entraste. Cada pantalla tiene una **huella** de sus datos (ej. Usuarios: correo y rol de cada uno; Scrum/Lista/Categorías/Resumen/Avance: id, estado, responsable, título y aprobación de cada tarea; Planificación y Reportes: sprints y si están cerrados; Branches: tareas con rama y su estado; Apartado del proyecto: documentos y si están pendientes). El punto se enciende si la huella cambió y **se apaga al entrar** (y no se enciende mientras estás ahí). Colores: proyecto y Planificación blanco, Scrum amarillo, Branches verde oscuro, Reportes rojo, el resto azul. En la app real la huella vista se guarda por usuario en local.
 
 **Planificación** (2026-11-02, debajo de Lista de tareas): lista los **sprints** (con fecha de inicio y fin; "En curso"/"Cerrado"; generan su reporte) y los **backlogs** (sin fecha, agrupan tareas sin plazo), con cuántas tareas tiene cada uno. Líder y Administrador ven **"+ Nuevo sprint"** (nombre, descripción, duración en días) y **"+ Nuevo backlog"** (nombre, descripción); **"Cerrar sprint" / "Cerrar backlog" solo lo ve el Administrador**; los demás roles solo los ven. Cada sprint (no cerrado) y cada backlog tiene **"Asignar tareas"**: ventana con todas las tareas del proyecto, buscador y filtro "solo las que no están en otro sprint"; marcar una la mete ahí, desmarcarla la deja sin sprint, y si estaba en otro se avisa ("en Sprint X") y al marcarla se mueve. En el modelo de datos los dos son filas de `sprints` (`con_fecha` true/false, ver [BACKEND.md](./BACKEND.md#modelo-de-datos-tabla-sprints)). Una tarea se asigna a un sprint o backlog al crearla o con "Asignar tareas". **Click en un sprint o backlog** abre el **Tablero Scrum** con ese sprint elegido en su selector (`/scrum?sprint=<id>`). En el Tablero Scrum, junto a "Todas las tareas / Mis tareas", hay un selector **"Todos los sprints y backlogs"** (agrupado en Sprints y Backlogs): al elegir uno quedan solo sus tareas (las del sprint y sus subtareas; una subtarea que está en el sprint sin su padre sale en la raíz). Lo que se crea con "+ Nueva tarea" mientras hay uno elegido ya viene con ese sprint.
 
-**Menú lateral desplegable**: un botón de tres rayas (☰), ubicado siempre debajo de la cabecera "BranchBoard" y en la misma posición en ambos estados, contrae el menú a una franja angosta (64px) o lo vuelve a expandir (240px). Contraído, la franja muestra el logo, el botón ☰ y **los íconos de cada pantalla, que siguen funcionando como botones** (llevan a su pantalla, marcan la activa y muestran su nombre al pasar el mouse); los números de Pendientes/Revisión/Papelera y los puntos de aviso quedan como una marca pequeña en la esquina del ícono (actualizado 2026-11-02). El contenido principal aprovecha el espacio liberado (su ancho máximo pasa de 1400px a 1640px). La preferencia se recuerda localmente entre sesiones.
+**Menú lateral desplegable** (**actualizado 2026-11-07**: ya no hay botón ☰ debajo de la cabecera): un **botoncito con una flecha ‹, pegado al borde derecho del menú y a media altura** (medio afuera, medio adentro), contrae el menú a una franja angosta (64px) o lo vuelve a expandir (240px); contraído, la flecha apunta al otro lado. Contraído, la franja muestra solo el logo y **los íconos de cada pantalla, que siguen funcionando como botones** (llevan a su pantalla, marcan la activa y muestran su nombre al pasar el mouse); los títulos de sección se cambian por una línea separadora, y los números y los puntos de aviso quedan como una marca pequeña en la esquina del ícono. El contenido principal aprovecha el espacio liberado (su ancho máximo pasa de 1400px a 1640px). La preferencia se recuerda localmente entre sesiones.
 
 Barra superior persistente: switch de VPN, campana de notificaciones, botón "Abrir en Unity", identidad (correo + rol).
 
@@ -71,7 +68,7 @@ Barra superior persistente: switch de VPN, campana de notificaciones, botón "Ab
 - Acción "tomar tarea": botón/interacción que dispara la creación de rama en el backend y refleja el estado (creando / lista / error)
 - Vista de sprints, soportando sprints con fecha y sprints sin fecha
 - Tareas con fecha y tareas sin fecha (distinción visual en tarjetas/listas)
-- Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva.
+- Tablero "Avance": gráfica de **curva en el tiempo** (tipo burndown/burnup) mostrando cantidad de tareas vs. tiempo/sprints. Misma librería de gráficos sugerida para "Resumen" (ej. Chart.js, ApexCharts) sirve para esta curva. **Diseño (2026-11-07, también en Reportes)**: arriba, en grande, las tareas restantes ("9 de 13") y a la derecha el día del sprint, el % completado y el cierre estimado (rojo si cae después del límite). La línea real (verde, con degradado suave debajo) llega solo hasta **hoy**, marcado con una línea vertical punteada "Hoy" y un punto; desde ahí sigue la **proyección** (regresión lineal de los días transcurridos) en verde punteado hasta donde cruza 0. La ideal va en gris discontinuo. Eje X con fechas cortas ("7 nov"; "Día n" al comparar con otro sprint), sin bordes de ejes y rejilla tenue. Leyenda propia abajo a la izquierda y el veredicto en una línea a la derecha (ícono + texto en verde/naranja/rojo). Al pasar el mouse, recuadro con la fecha y las tareas restantes de ese día. El cierre estimado es el primer día en que la proyección ya llegó a 0. **Backlogs en Avance (2026-11-07)**: un backlog es un grupo de tareas con su nombre, sin fecha de fin, que puede crecer. El backlog **"General"** tiene su propio botón **a la izquierda del selector** (resaltado en azul cuando está elegido; con él activo, el selector muestra "Sprint o backlog"); el selector agrupa los Sprints y los demás Backlogs. Un backlog muestra **una sola gráfica**, titulada con su nombre: arriba, en grande, cuántas tareas **faltan** ("8 tareas restantes · 8 de 16 terminadas") y a la derecha cuántas entran y salen por semana y el cierre estimado (fecha y días). La gráfica es un burndown en escalones: arranca con las tareas con que nació el backlog, **baja cada vez que se cierra una** y sube un escalón cuando entra una nueva; desde hoy sigue la **proyección** punteada hasta 0 al ritmo actual. Abajo, la leyenda y una línea que dice si el backlog crece o baja. El ritmo se mide con las últimas 4 semanas; sin tareas terminadas en ese tiempo, el cierre dice "Sin avance todavía".
 - "Branches": gráfica de ascendencia/linaje de ramas (árbol, no kanban). Ver definición completa en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Librería: `react-flow`, alimentada con datos de `cm` (lista de ramas + historial de merge) combinados con el estado de cada tarea en SQLite. **Diseño visual definido (2026-10-31, validado en el mockup)**:
   - **`main` y `dev` son líneas de tiempo, no recuadros sueltos.** Una rama es siempre la misma rama: cada merge la hace avanzar a un estado nuevo. Por eso cada una se dibuja como una fila horizontal de izquierda (pasado) a derecha (presente), unida por una **línea recta sin flecha** (es una sola rama, los tramos solo se unen).
     - Fila de `main`: los estados pasados (ej. `main` antes de un merge de `dev`) en gris y al final su **cabeza**. **La cabeza de una línea de tiempo es lo último que se fusionó en ella** (no un recuadro aparte con el nombre de la rama): en `main`, el último `dev` fusionado, `main/dev`, en azul. De ella sale la flecha hacia `dev`. Con el historial de `main` cerrado, solo queda `main/dev`.
@@ -181,9 +178,18 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 - **Derecha**: documentos del proyecto en cuadros medianos (4 por fila), cuadros pequeños o lista; el primer cuadro es "Cargar documentos". Clic en cualquier parte del documento lo abre (todos los roles); eliminar y dar el visto bueno solo Líder/Administrador. Lo que sube alguien que no es Líder/Administrador queda **pendiente** (también en [Pendientes](#alcance)).
 - Punto blanco en el menú cuando hay un documento nuevo sin ver.
 
+## Chat
+
+**Nuevo (2026-11-07)**: segunda entrada del menú, debajo del apartado del proyecto. Dos columnas, estilo mensajería:
+
+- **Izquierda, conversaciones**: buscador; arriba siempre el **grupo general** (todo el equipo, con el nombre del proyecto y el círculo del proyecto); debajo los **grupos** que cree el equipo ("+ Nuevo grupo": nombre e integrantes) y los **privados** ("nuevo chat" con un compañero), ordenados por el último mensaje. Cada fila muestra el último mensaje y cuántos sin leer.
+- **Derecha, conversación abierta**: cabecera con el círculo y el nombre (en un grupo, click muestra sus integrantes; en un privado, lleva al perfil). En los grupos, los mensajes de otros llevan su círculo de iniciales y su nombre (solo en el primero de una racha). Enter envía; Shift+Enter hace salto de línea. Al abrir una conversación sus mensajes quedan leídos.
+- **Menú de tres puntos** de la cabecera: **"Eliminar chat"** (con confirmación). Solo lo borra **para ti**: dejas de ver los mensajes anteriores a ese momento; si llegan nuevos, la conversación vuelve a aparecer solo con esos.
+- Sin servidor: en la app real cada mensaje viaja como un evento por la carpeta compartida (llega cuando sincroniza Drive/OneDrive, con la app abierta).
+
 ## Usuarios
 
-**Actualizado (2026-11-07)**: pantalla propia en el menú (👥, debajo de Branches). Antes la gestión de usuarios vivía dentro de Ajustes.
+**Actualizado (2026-11-07)**: pantalla propia en el menú (sección Equipo). Antes la gestión de usuarios vivía dentro de Ajustes.
 
 - **Todos los roles** ven la lista de usuarios del proyecto con **nombre y rol**, sin correo ni botones. Click en el nombre → [perfil](#perfil-de-usuario) de esa persona. Tu propia fila lleva "(tú)".
 - **Líder y Administrador** además ven:
@@ -261,6 +267,8 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Foco ac
 ## Roles y permisos (UI)
 
 Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen: 5 roles (Administrador, Líder, Desarrollador, Tester y **Colaborador externo**, nuevo 2026-11-07 — reemplaza la lista aparte de colaboradores con permiso de subtareas simples). La UI debe mostrar/ocultar acciones y pantallas según el rol del usuario logueado (ej. "eliminar proyecto" solo visible para Administrador; "crear usuario" visible para Líder y Administrador). **Corregido**: el Desarrollador ya no "recibe autorización" para modificar — es al revés, él edita directamente y el Líder/Admin recibe la notificación para confirmar o revertir (ver [Notificaciones en BACKEND.md](./BACKEND.md#notificaciones), punto 4); el Desarrollador solo recibe la notificación del resultado final (aprobado o rechazado).
+
+**Colaborador externo — solo tareas individuales** (2026-11-07, ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo)): en las tarjetas de tareas grandes (con subtareas) y de subtareas no ve **"Tomar tarea"**; si arrastra una desde "Sin asignar", se bloquea con el aviso "Solo puedes tomar tareas individuales". En **"Asignar"** de la Lista de tareas, los Colaboradores externos no aparecen como opción para una subtarea.
 
 Cuando un Desarrollador, Tester o Colaborador externo crea una tarea, la interfaz debe dejar claro que está **pendiente de aprobación** (ej. una etiqueta o color distinto en la tarjeta, sin ocultarla ni impedir tomarla) hasta que un Líder/Administrador la apruebe desde [Pendientes](#alcance) — ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos).
 

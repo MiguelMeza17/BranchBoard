@@ -14,7 +14,7 @@ import {
 import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
-import { esLiderOAdmin, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { esLiderOAdmin, puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
@@ -332,6 +332,12 @@ export function ScrumBoard() {
       return;
     }
 
+    // Colaborador externo: solo tareas individuales (ni grandes ni subtareas).
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a && !puedeTomarTarea(user.rol, tarea, tareasAll)) {
+      showToast('Solo puedes tomar tareas individuales', 'danger');
+      return;
+    }
+
     // "Por hacer" también es el mismo estado real que "Sin asignar" — soltar aquí desde
     // "Sin asignar" mueve la tarjeta a "Por hacer" de inmediato (se anima el acomodo) y
     // bloquea la interfaz; recién al terminar la animación aparece el modal de
@@ -431,7 +437,7 @@ export function ScrumBoard() {
           Ver detalle
         </button>
         {/* Tomar tarea (crea rama) */}
-        {!t.asignado_a && t.estado === 'por hacer' && (
+        {!t.asignado_a && t.estado === 'por hacer' && puedeTomarTarea(user.rol, t, tareasAll) && (
           <button
             className="btn-outline btn-sm"
             onClick={() => { setTomarId(t.id); setMostrarTomarModal(true); }}

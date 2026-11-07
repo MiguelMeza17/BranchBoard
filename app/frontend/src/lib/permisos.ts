@@ -26,6 +26,13 @@ export const puedeCrearTareaDirecta = (rol: Rol) => esLiderOAdmin(rol);
 export const puedeMergearDirecto = (rol: Rol) => esLiderOAdmin(rol);
 export const puedeCrearUsuarios = (rol: Rol) => esLiderOAdmin(rol);
 
+// Colaborador externo: solo desarrolla tareas individuales — ni tareas grandes (con subtareas) ni
+// subtareas (hijas de otra tarea). Los demás roles pueden tomar cualquiera.
+export const esTareaIndividual = (t: Tarea, tareas: Tarea[]) =>
+  !t.tarea_padre_id && !tareas.some((x) => x.tarea_padre_id === t.id && !x.eliminada);
+export const puedeTomarTarea = (rol: Rol, t: Tarea, tareas: Tarea[]) =>
+  rol !== 'Colaborador externo' || esTareaIndividual(t, tareas);
+
 // Ver todas las tareas en tableros principales (Scrum/Lista/Resumen/Avance).
 // Desarrollador solo ve las suyas; Admin/Líder/Tester ven todo.
 export const veTodasLasTareas = (rol: Rol) => rol !== 'Desarrollador';
