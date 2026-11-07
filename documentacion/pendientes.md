@@ -56,7 +56,8 @@ Todo lo de esta sección queda **resuelto en diseño, falta implementarlo en có
 
 **Cambios del 2026-11-07 (PR #59) — para la auditoría de backend:**
 
-- [ ] **Contraseña en "Crear usuario"**: el frontend pide correo, contraseña y rol, pero la identidad es `cm whoami` (no hay login propio). Definir para qué se usa la contraseña (¿solo proyectos sin Unity VC?) y cómo se guarda (hash). Ver [BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes).
-- [ ] **Qué ve el Colaborador externo**: hoy ve lo mismo que un Desarrollador. Ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo).
+- [x] **Contraseña en "Crear usuario"**: se quitó; la identidad sigue siendo `cm whoami`.
+- [x] **Qué ve el Colaborador externo**: lo mismo que un Desarrollador, pero solo desarrolla tareas individuales (ni grandes ni subtareas). Falta bloquearlo en el mockup. Ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo).
+- [ ] **Eliminar usuarios**: se deja como está por ahora (el Líder elimina Desarrolladores y Colaboradores externos, no Testers). Revisar más adelante.
 - [ ] **`cambiar_rol` por un Líder**: deja la fila con `firma = NULL`; revisar que eso no bloquee a alguien que ya estaba trabajando (hoy, sin firma no puede entrar).
 - [x] **Solicitar ingreso** quitado del MVP → versión 2 (issue #57). Invitar por correo con código → issue #58.

@@ -178,14 +178,14 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 
 - **Todos los roles** ven la lista de usuarios del proyecto con **nombre y rol**, sin correo ni botones. Click en el nombre → [perfil](#perfil-de-usuario) de esa persona. Tu propia fila lleva "(tú)".
 - **Líder y Administrador** además ven:
-  - Panel plegable **"Crear usuario"**: correo, contraseña (mínimo 8 caracteres) y rol. El usuario queda creado al momento (ver [Crear usuario en BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes)). El nombre se toma del correo (`ana.lopez@…` → "Ana Lopez") hasta que la persona lo cambie.
+  - Panel plegable **"Crear usuario"**: correo (el de Unity VC) y rol, sin contraseña — la identidad es `cm whoami`. El usuario queda creado al momento (ver [Crear usuario en BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes)). El nombre se toma del correo (`ana.lopez@…` → "Ana Lopez") hasta que la persona lo cambie.
   - Columna **Correo** y la columna **Rol** como selector para cambiar el rol.
   - Botones **"Confirmar"** (solo Administrador, filas con `firma = NULL`, etiqueta "Pendiente de confirmar") y **"Eliminar"** (con el candado de escribir "eliminar").
 - **Qué puede asignar cada uno** (selector de rol y "Crear usuario"):
   - Administrador: Líder, Desarrollador, Tester o Colaborador externo, sobre cualquiera menos otro Administrador. No nombra Administradores.
   - Líder: solo entre Desarrollador, Tester y Colaborador externo, y solo sobre personas con esos roles. No crea ni asciende Líderes.
   - Si el cambio o el alta lo hace un Líder, la fila queda **"Pendiente de confirmar"** hasta que el Administrador la firme. Si lo hace el Administrador, queda firmada de una vez.
-- **Eliminar**: Administrador a cualquiera; Líder solo a Desarrolladores y Colaboradores externos.
+- **Eliminar**: Administrador a cualquiera; Líder solo a Desarrolladores y Colaboradores externos. **Se deja así por ahora** (el Líder no puede eliminar Testers); revisar más adelante.
 - **Punto azul en el menú**: se enciende cuando hay un usuario nuevo o un cambio de rol que no has visto, y se apaga al entrar a Usuarios. Lo ven todos los roles.
 - Ya **no hay "solicitar ingreso"**: quien no tiene cuenta le pide a un Líder o Administrador que lo cree. Solicitar ingreso queda para la versión 2 (ver issue #57; invitar por correo con código: #58).
 

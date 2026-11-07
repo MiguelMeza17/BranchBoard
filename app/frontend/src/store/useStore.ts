@@ -332,8 +332,8 @@ interface State {
   marcarTodasLeidas: (email: string) => void;
 
   // usuarios / ajustes
-  /** Crea el usuario con su correo, contraseña y rol. Devuelve false si ya existe. */
-  crearUsuario: (correo: string, clave: string, rol: Rol) => boolean;
+  /** Crea el usuario con su correo y rol (la identidad es `cm whoami`, sin contraseña). Devuelve false si ya existe. */
+  crearUsuario: (correo: string, rol: Rol) => boolean;
   confirmarUsuario: (email: string) => void;
   /** Antes de restaurar, el estado actual se guarda como una copia más, tal cual estaba. */
   restaurarBackup: (id: string) => void;
@@ -1102,15 +1102,13 @@ export const useStore = create<State>((set, get) => {
       notificaciones: s.notificaciones.map((n) => (n.para === email ? { ...n, leida: true } : n)),
     })),
 
-  crearUsuario: (correo, clave, rol) => {
+  crearUsuario: (correo, rol) => {
     const s = get();
     const c = correo.trim().toLowerCase();
     if (s.usuarios.some((u) => u.email.toLowerCase() === c)) {
       s.showToast('Ya existe un usuario con ese correo', 'danger');
       return false;
     }
-    // La contraseña no se guarda en el mockup; en el backend se guarda solo su hash.
-    void clave;
     // El nombre sale del correo (ana.lopez@… → Ana Lopez) hasta que la persona lo cambie.
     const [nombre = '', apellido = ''] = c
       .split('@')[0]

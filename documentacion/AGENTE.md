@@ -42,7 +42,7 @@ Explicaciones que el agente debería poder dar (salen de lo conversado al diseñ
 
 Textos que estaban en pantalla y se quitaron:
 
-- **Crear usuario**: "Pásale a la persona su correo y contraseña. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive y el repositorio en Unity VC." y, para el Líder, "Como Líder, el usuario queda pendiente hasta que el Administrador lo confirme."
+- **Crear usuario**: "Pásale a la persona su correo. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive y el repositorio en Unity VC." y, para el Líder, "Como Líder, el usuario queda pendiente hasta que el Administrador lo confirme."
 
 Explicaciones que el agente debería poder dar:
 

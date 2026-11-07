@@ -63,9 +63,9 @@
 ### Colaborador externo
 
 **Nuevo (2026-11-07)**: reemplaza la lista aparte `colaboradores_externos`. Es alguien que sube archivos puntuales (imagen, audio, video, animación, `.fbx`) en subtareas simples, con workspace parcial (Gluon); no descarga el proyecto completo ni necesita Unity Editor.
-- Tiene las mismas restricciones que Desarrollador/Tester en lo que comparten (sus tareas quedan pendientes de aprobación, no termina tareas directo).
+- **Ve lo mismo que un Desarrollador** (decidido 2026-11-07) y tiene sus mismas restricciones (sus tareas quedan pendientes de aprobación, no termina tareas directo).
+- **Solo puede desarrollar tareas individuales**: no toma tareas grandes (las que tienen subtareas) ni subtareas (hijas de otra tarea). **Pendiente de aplicar en el mockup**: hoy no se bloquea.
 - Lo crea o le cambia el rol un Líder o el Administrador desde [Usuarios](./FRONTEND.md#usuarios); también puede pasar a otro rol si el Líder/Administrador lo decide.
-- **Pendiente** (lo revisa la auditoría de backend): qué pantallas ve exactamente; hoy en el mockup ve lo mismo que un Desarrollador.
 
 ### Matriz resumen
 
