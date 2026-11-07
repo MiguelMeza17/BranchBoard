@@ -91,7 +91,7 @@ export const usuarios: Usuario[] = [
     apellido: 'Rivas',
     rol: 'Desarrollador',
     fecha_alta: '2026-09-20',
-    firma: null, // pendiente de confirmar por Administrador
+    firma: null, // fila sin firma (p. ej. escrita a mano en el archivo): no entra hasta que el Administrador la confirme
     firmado_en: null,
   },
   {

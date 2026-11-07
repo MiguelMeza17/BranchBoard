@@ -37,7 +37,7 @@
 - Si toma y trabaja una tarea general él mismo, puede **mergearla directo a `dev`** al terminar, sin pasar por "en revisión" — ya tiene permiso de autorizar, ver [Flujo de revisión y merge a dev en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)
 
 ### Líder (por debajo del Administrador)
-- Puede crear usuarios y cambiar roles entre Desarrollador, Tester y Colaborador externo (no crea ni asciende Líderes ni Administradores). Lo que hace queda "Pendiente de confirmar" hasta que el Administrador lo firme
+- Puede crear usuarios y cambiar roles entre Desarrollador, Tester y Colaborador externo (no crea ni asciende Líderes ni Administradores). Lo firma él mismo con su llave (certificada por el Administrador), así que la persona entra de una vez — ver [Firma de los Líderes en BACKEND.md](./BACKEND.md#firma-de-los-líderes-nuevo-2026-11-07)
 - Puede **eliminar usuarios** (ej. cuando alguien deja el equipo), pero **solo Desarrolladores y Colaboradores externos** — **definido**: no puede eliminar a otro Líder, esa acción es exclusiva del Administrador
 - Puede crear tareas, poner permisos en tareas, eliminar tareas de otros usuarios
 - Puede ver todas las tareas del proyecto
@@ -79,7 +79,7 @@
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |
 | Crear usuarios | ✅ | ✅ (no Líderes ni Administradores) | ❌ | ❌ |
 | Eliminar usuarios | ✅ (cualquiera) | ✅ (Desarrolladores y Colaboradores externos) | ❌ | ❌ |
-| Cambiar rol (entre Desarrollador, Tester y Colaborador externo) | ✅ | ✅ (queda pendiente de confirmar) | ❌ | ❌ |
+| Cambiar rol (entre Desarrollador, Tester y Colaborador externo) | ✅ | ✅ (lo firma él mismo) | ❌ | ❌ |
 | Ver la lista de usuarios (nombre y rol) | ✅ | ✅ | ✅ | ✅ |
 | Crear tareas (producción) | ✅ (directo) | ✅ (directo) | ⚠️ (queda pendiente de aprobación, ver [Pendientes en PLANNING.md](./PLANNING.md#pendientes)) | ⚠️ (mismo caso que Desarrollador) |
 | Aprobar tarea pendiente (creada por Desarrollador o Tester) | ✅ | ✅ | ❌ | ❌ |

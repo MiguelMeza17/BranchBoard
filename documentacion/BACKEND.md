@@ -454,10 +454,10 @@ Pendiente definir: si además de la campana in-app, estas notificaciones tambié
 Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md → Ajustes](./FRONTEND.md#ajustes). **Actualizado (2026-11-07)**: se quitan `listar_solicitudes_pendientes`, `aceptar_solicitud`, `rechazar_solicitud` y `crear_solicitud_manual` (solicitar ingreso pasa a la versión 2, issue #57).
 
 - `listar_usuarios()` — **todos los roles**; a quien no es Líder/Administrador solo se le devuelven nombre y rol (sin correo).
-- `crear_usuario(email, rol)` — Líder/Administrador. **Sin contraseña** (decidido 2026-11-07): la identidad es `cm whoami`, igual que siempre. Valida el rol según quién invoca (`rolesAsignablesA` en el frontend): el Líder solo Desarrollador/Tester/Colaborador externo. Si lo invoca el Administrador, la fila nace firmada; si lo invoca un Líder, nace con `firma = NULL` (ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto)).
-- `cambiar_rol(email, rol_nuevo)` — **actualizado**: reemplaza a `ascender_a_lider`. Administrador: cualquier rol menos Administrador, sobre cualquiera menos otro Administrador. Líder: solo entre Desarrollador/Tester/Colaborador externo; como no puede firmar, la fila queda con `firma = NULL` hasta `confirmar_usuario`.
+- `crear_usuario(email, rol)` — Líder/Administrador. **Sin contraseña** (decidido 2026-11-07): la identidad es `cm whoami`, igual que siempre. Valida el rol según quién invoca (`rolesAsignablesA` en el frontend): el Líder solo Desarrollador/Tester/Colaborador externo. La fila nace **firmada por quien la crea** (Administrador o Líder, ver [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07)).
+- `cambiar_rol(email, rol_nuevo)` — **actualizado**: reemplaza a `ascender_a_lider`. Administrador: cualquier rol menos Administrador, sobre cualquiera menos otro Administrador. Líder: solo entre Desarrollador/Tester/Colaborador externo, y lo firma él mismo con su llave — la persona sigue entrando y trabajando sin interrupción.
 - `eliminar_usuario(email)` — Administrador: cualquiera; Líder: Desarrolladores y Colaboradores externos.
-- `confirmar_usuario(email)` — exclusivo Administrador, ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto).
+- `confirmar_usuario(email)` — exclusivo Administrador; ahora solo hace falta para filas **sin firma** (escritas a mano o anteriores a este cambio), ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto).
 - `renombrar_proyecto(nombre)` — exclusivo Administrador; cambia el nombre en BranchBoard (clave `nombre_proyecto` en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto)), no el repositorio de Unity VC.
 - `enviar_mensaje(para, texto)` — todos los roles; crea una notificación de tipo `mensaje` para `para` (máx. 500 caracteres).
 
@@ -501,11 +501,23 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
   - **Firma presente y coincide** → rol de confianza, se aplica tal cual.
   - **Firma presente pero NO coincide** (fila editada a mano fuera de la app, o campos `rol`/`firmado_en` alterados) → **no confiable**: el usuario se degrada al rol mínimo (Desarrollador) y la UI muestra un aviso de "rol no verificado — posible modificación manual del archivo".
   - **`firma` es `NULL`** (fila recién creada o con rol cambiado por un Líder vía `crear_usuario`/`cambiar_rol`, ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto), no por una manipulación) → **bloqueado, no degradado**: la persona no puede entrar a la app todavía, ni siquiera como Desarrollador, hasta que el Administrador la confirme. Es un estado legítimo de "esperando firma", distinto del caso de arriba (que sí es sospechoso).
-- Solo el Administrador puede ejecutar comandos que firman (`asignar_rol`, `cambiar_rol`, `confirmar_usuario`) — validado igual que cualquier otro comando sensible.
+- **Actualizado (2026-11-07)**: firman el Administrador **y los Líderes** (ver abajo). Cada firma solo es válida dentro de lo que ese rol puede asignar.
+
+### Firma de los Líderes (nuevo, 2026-11-07)
+
+**Decisión del usuario**: quien es creado o cambiado de rol por un Líder entra y trabaja como siempre, sin esperar al Administrador. Para eso **los Líderes también firman**:
+- Cada Líder tiene su **propio par de llaves**. La privada vive solo en su máquina, igual que la del Administrador (fuera de Drive/OneDrive).
+- Al nombrar a alguien Líder (`cambiar_rol(email, 'Líder')`, exclusivo Administrador), el Administrador **firma la llave pública del Líder** (un "certificado": `email_lider|llave_publica|fecha`). Ese certificado se guarda junto al usuario y viaja por `ops/` como cualquier evento.
+- Al verificar una fila de `usuarios`, el backend acepta la firma si es del Administrador (llave embebida en el build) **o** de un Líder con certificado válido del Administrador, **y** el rol firmado está dentro de lo que un Líder puede asignar (Desarrollador, Tester, Colaborador externo). Una firma de Líder sobre `rol = Líder` o `Administrador` se rechaza.
+- **Quitarle el rol de Líder a alguien** (o eliminarlo) revoca su certificado: sus firmas futuras dejan de valer. Las filas que ya firmó siguen siendo válidas (fueron legítimas cuando las hizo); si se quiere, el Administrador puede volver a firmarlas.
+- Esto sigue cerrando el hueco de C1: escribir a mano una fila con un rol cualquiera no sirve, porque no tendrá una firma válida del Administrador ni de un Líder certificado.
+- **Pendiente para la auditoría de backend**: dónde guarda cada Líder su llave privada y cómo la respalda (mismo esquema que `exportar_llave_firma`), y qué pasa si un Líder la pierde.
 
 ### Confirmación de usuarios nuevos (resuelto)
 
 **Problema**: `crear_usuario`/`cambiar_rol` (antes `aceptar_solicitud`) los puede invocar un **Líder**, pero solo el **Administrador** tiene la llave privada para firmar — un Líder no puede firmar el rol de la persona que acaba de dar de alta. La versión anterior de este documento listaba `crear_usuario` como uno de los comandos que firman sin notar esta incompatibilidad.
+
+**Reemplazado (2026-11-07)** por la [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07): lo que crea o cambia un Líder ya queda firmado y la persona entra de una vez. Lo de abajo solo aplica ahora a filas **sin firma** (escritas a mano o anteriores al cambio). Texto anterior:
 
 **Resuelto** (decisión del usuario: mantener la capacidad de alta del Líder tal como está, sin restringirla al Administrador):
 - `crear_usuario` (o `cambiar_rol` hecho por un Líder) escribe la fila en `usuarios` **de inmediato**, con el rol elegido pero `firma = NULL`, `firmado_en = NULL` — sin pedirle nada extra a quien crea el usuario.

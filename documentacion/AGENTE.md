@@ -42,11 +42,11 @@ Explicaciones que el agente debería poder dar (salen de lo conversado al diseñ
 
 Textos que estaban en pantalla y se quitaron:
 
-- **Crear usuario**: "Pásale a la persona su correo. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive y el repositorio en Unity VC." y, para el Líder, "Como Líder, el usuario queda pendiente hasta que el Administrador lo confirme."
+- **Crear usuario**: "Pásale a la persona su correo. También tienes que compartirle la carpeta del proyecto en Drive/OneDrive y el repositorio en Unity VC."
 
 Explicaciones que el agente debería poder dar:
 
-- **¿Por qué el usuario que creé dice "Pendiente de confirmar"?** Si lo creó o le cambió el rol un Líder, falta la firma del Administrador (solo él tiene la llave). Hasta que confirme, esa persona no puede entrar.
+- **¿Por qué un usuario dice "Pendiente de confirmar"?** Su fila no tiene firma (por ejemplo, alguien la escribió a mano en el archivo). Lo que crean o cambian el Administrador o un Líder ya queda firmado; una fila sin firma no entra hasta que el Administrador la confirme.
 - **Creé el usuario pero no puede abrir el proyecto.** Crear el usuario no le da acceso a la carpeta de Drive/OneDrive ni al repositorio de Unity VC: eso se comparte aparte.
 - **¿Qué es el punto azul en Usuarios?** Hay un usuario nuevo o un cambio de rol que no has visto; se apaga al entrar.
 

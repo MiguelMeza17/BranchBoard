@@ -59,5 +59,6 @@ Todo lo de esta sección queda **resuelto en diseño, falta implementarlo en có
 - [x] **Contraseña en "Crear usuario"**: se quitó; la identidad sigue siendo `cm whoami`.
 - [x] **Qué ve el Colaborador externo**: lo mismo que un Desarrollador, pero solo desarrolla tareas individuales (ni grandes ni subtareas). Falta bloquearlo en el mockup. Ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo).
 - [ ] **Eliminar usuarios**: se deja como está por ahora (el Líder elimina Desarrolladores y Colaboradores externos, no Testers). Revisar más adelante.
-- [ ] **`cambiar_rol` por un Líder**: deja la fila con `firma = NULL`; revisar que eso no bloquee a alguien que ya estaba trabajando (hoy, sin firma no puede entrar).
+- [x] **`cambiar_rol` por un Líder dejaba la fila sin firma** (y sin firma no se entra). Resuelto: los Líderes también firman, con su propia llave certificada por el Administrador. Ver [BACKEND.md](./BACKEND.md#firma-de-los-líderes-nuevo-2026-11-07).
+- [ ] **Llave de cada Líder**: dónde la guarda, cómo la respalda y qué pasa si la pierde (para la auditoría de backend).
 - [x] **Solicitar ingreso** quitado del MVP → versión 2 (issue #57). Invitar por correo con código → issue #58.
