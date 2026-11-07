@@ -7,34 +7,30 @@
 
 - **Nombre**: BranchBoard
 - **Qué es**: herramienta de gestión de tareas y producción para un equipo pequeño de desarrollo de un videojuego en Unity.
-- **Principio central**: todo el trabajo del equipo se organiza y visualiza a través de **tareas**. Cada tarea puede ser de tipo (9 valores, uno por cada visor de [Pre-revisión en PLANNING.md](./PLANNING.md#pre-revisión)):
-  - **Scripting** → asociada a una rama (una tarea = una rama)
-  - **Modelado 3D**
-  - **Modelado 2D**
-  - **Animación**
-  - **Imagen** (arte 2D)
-  - **UI/Interfaz**
-  - **Audio**
-  - **Música**
-  - **Video**
+- **Principio central**: todo el trabajo del equipo se organiza y visualiza a través de **tareas**. **Toda tarea se trabaja en su propia rama** (se crea al tomarla), sin importar su tipo. **Actualizado (2026-11-07, según el frontend)**: hay 12 tipos que se eligen al crear una tarea (son también las carpetas de [Categorías](./FRONTEND.md#alcance)):
+  - **Scripting**, **Modelado 3D**, **Modelado 2D**, **Animación**, **Imagen** (arte 2D), **UI/Interfaz**, **Audio**, **Música**, **Video** (uno por cada visor de [Pre-revisión](./PLANNING.md#pre-revisión))
+  - **Testing**, **Corrección**, **Ajustes**
+  - Más un valor interno **"Sin definir"**, solo para la subtarea comodín "En espera" (ver [Check-ins de la rama](#check-ins-de-la-rama-subtarea-en-espera-y-cambios-entrantes)); no se elige ni sale en Categorías.
 - **Control de versiones: Unity Version Control** (antes Plastic SCM), no Git genérico. Se usa su CLI (`cm`). La integración desde el backend se hace en **Rust directo** (sin Python), invocando `cm` como subproceso.
 - **Flujo de vida de una tarea**: se crea visual/sin rama → al "tomarla" alguien, el backend (Rust) crea la rama en Unity VC invocando `cm` → el sprint es el tiempo que esa rama vive antes de mergear a `dev` (ver [Flujo de revisión y merge a dev](#flujo-de-revisión-y-merge-a-dev)). El merge de `dev` hacia `main` (release) queda **fuera del alcance de BranchBoard** — es una acción manual que hace alguien técnico directamente en Unity VC, no algo que la app gestione.
 - **Stack elegido**: Tauri (Rust) + React/TypeScript. Fase 1 = app de escritorio (full desktop); backend en Rust, SQLite, sin Python. Fase 2 (futuro) = versión web, reutilizando solo el frontend (React) — necesita un backend servidor nuevo y aparte (no Tauri) que exponga por HTTP lo que hoy hacen los comandos de Tauri.
 - **Usuarios**: un equipo pequeño trabajando sobre un proyecto Unity compartido.
 - **Pantallas/tableros del MVP**: ver lista completa y autoritativa en [Pantallas / tableros del MVP en PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp) — no se duplica aquí para evitar que este documento quede desactualizado cuando se agreguen pantallas nuevas.
-- **Flujo de trabajo actual**: dos sesiones de Claude trabajando en paralelo, una en este documento (backend) y otra en [FRONTEND.md](./FRONTEND.md), para luego unir todo en un plan consolidado. Evitar editar [PLANNING.md](./PLANNING.md) al mismo tiempo que la otra sesión.
+- **Referencia: el frontend manda** (actualizado 2026-11-07). El mockup de `app/frontend/` (React, datos en memoria) y [FRONTEND.md](./FRONTEND.md) son la referencia de lo que el producto hace: este documento describe lo que el backend real tiene que hacer para que ese frontend funcione. Cuando el frontend y este documento no coinciden, se corrige este documento. Los modelos de datos del frontend (`src/types.ts`) y sus acciones (`src/store/useStore.ts`) son el contrato: cada acción del store corresponde a un comando Tauri descrito aquí (ver [Contrato con el frontend](#contrato-con-el-frontend-acciones-y-comandos)). Lo que está diseñado aquí pero el frontend todavía no tiene se marca como **"sin pantalla en el mockup"**.
 
 ## Alcance
 
 - Modelo de datos de una tarea (scripting, 3D, animación, imagen, música, video)
 - Persistencia: **SQLite local por máquina** (sin servidor). Cada máquina tiene su propio `.db`, que **no se sincroniza directamente** — lo que se comparte por la nube (ej. Drive/OneDrive) es un log de eventos (carpeta `ops/`), y cada máquina reconstruye/actualiza su `.db` reproduciendo esos eventos (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)). Fase futura (versión web) = migrar a una base de datos con servidor (ej. Postgres) para manejar escrituras concurrentes de verdad, y este mecanismo de eventos deja de ser necesario.
 - Integración con Unity Version Control desde Rust invocando el CLI `cm` como subproceso: crear rama al tomar una tarea, detectar cambios nuevos (ver sección de detección de cambios)
-- Comandos Tauri expuestos al frontend (ej. `tomar_tarea`, `revisar_actualizaciones`) — `tomar_tarea` recibe además la descripción escrita en el modal de confirmación del frontend (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)), que se usa como comentario del changeset inicial de la rama
+- Comandos Tauri expuestos al frontend (ej. `tomar_tarea`, `revisar_actualizaciones`). **Actualizado (2026-11-07)**: tomar una tarea se confirma escribiendo la palabra **"asignar"** (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)); ya no se escribe una descripción, así que el comentario del changeset inicial de la rama lo arma el backend (ej. `Rama de T-123: <título>`). Tomar una tarea pone `asignado_a`, `modo_trabajo = 'rama'` y `rama_asociada` (formato `task/<id>-<nombre>`)
 - **Condición de carrera al tomar/asignar una tarea (resuelto, ver arquitectura de eventos)**: un `UPDATE ... WHERE estado = 'por hacer'` solo evita colisiones dentro de una única BD compartida en vivo — no sirve aquí porque cada máquina tiene su propio `.db` con retraso de sincronización. La resolución real vive en [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos): `tomar_tarea`/`asignar_tarea` generan un evento, y el desempate entre dos tomas simultáneas ocurre de forma determinista al reproducir los eventos en cada máquina, no con un `UPDATE` condicionado local.
 - **Toda rama de tarea general nace desde la cabeza actual de `dev`, nunca desde un punto viejo**: al crear la rama (`cm branch create` o equivalente) no se fija un changeset específico guardado de antes — se apunta siempre a la última versión de `dev` en el momento exacto de "tomar" la tarea. Esto importa especialmente para tareas que se crean y se toman en momentos distintos (ej. una tarea de corrección de Testing que nadie toma hasta días después, y mientras tanto `dev` siguió recibiendo otros merges) — la rama nueva debe partir de lo último, no de cómo estaba `dev` cuando se creó la tarea.
 - **Auto-switch al tomar una tarea (importante, medida de seguridad)**: justo después de `cm branch create`, `tomar_tarea` ejecuta **`cm switch <rama-nueva>`** sobre el workspace local de quien la tomó — su Unity Editor queda apuntando automáticamente a esa rama. Sin esto, la persona podría seguir escribiendo código/cambios sobre la rama en la que estaba antes (una tarea anterior, o `dev`) sin darse cuenta, mezclando trabajo de dos tareas distintas en la misma rama. Ver también [Guardia de rama incorrecta al sincronizar o crear subtarea](#guardia-de-rama-incorrecta-al-sincronizar-o-crear-subtarea) y [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app) para los casos en que igual pase.
 - **Colaborador externo solo en tareas individuales** (2026-11-07, ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo)): `tomar_tarea` y `asignar_tarea` rechazan la acción si quien queda a cargo es Colaborador externo y la tarea tiene subtareas (no eliminadas) o es subtarea de otra (`tarea_padre_id` no nulo). Al reproducir el evento se valida igual y se descarta si no cumple.
-- **`asignar_tarea` NO hace auto-switch (corregido)**: el diseño original hacía que `asignar_tarea` ejecutara `cm switch` igual que `tomar_tarea`, pero eso corre en el proceso de Tauri de **quien invoca el comando** (el Líder/Administrador que asigna) — un `cm switch` ahí cambiaría la rama del workspace de quien asigna, no la del Desarrollador destino, que ni siquiera tiene la app abierta en ese momento. `asignar_tarea` solo crea la rama (`cm branch create`) y genera la notificación #3; el cambio de rama en la máquina del Desarrollador asignado ocurre después, como acción explícita de **su propio lado**: al abrir la tarea asignada (desde la notificación o el tablero), ve un botón **"Cambiar mi workspace a esta rama"** que ejecuta `cm switch <rama-nueva>` localmente, invocado por y en la máquina de esa persona — nunca automático/silencioso, para no interrumpirle sin avisar un cambio de rama mientras podría estar trabajando en otra cosa.
+- **`asignar_tarea` NO hace auto-switch (corregido)**: el diseño original hacía que `asignar_tarea` ejecutara `cm switch` igual que `tomar_tarea`, pero eso corre en el proceso de Tauri de **quien invoca el comando** (el Líder/Administrador que asigna) — un `cm switch` ahí cambiaría la rama del workspace de quien asigna, no la del Desarrollador destino, que ni siquiera tiene la app abierta en ese momento. `asignar_tarea` solo crea la rama (`cm branch create`) y genera la notificación #3; el cambio de rama en la máquina del Desarrollador asignado ocurre después, como acción explícita de **su propio lado**. **Actualizado (2026-11-07, según el frontend)**: no hay un botón aparte de "Cambiar mi workspace a esta rama"; se hace desde el panel **"Abrir en Unity"**, que lista sus tareas abiertas y, al elegir una, cambia su workspace a esa rama (`cm switch`) y abre Unity ahí (ver [Comando "Abrir en Unity"](#comando-abrir-en-unity)). Nunca automático ni silencioso, para no interrumpirle sin avisar un cambio de rama mientras podría estar trabajando en otra cosa.
+- **Quién asigna** (según el frontend): Líder o Administrador, desde la Lista de tareas, solo en tareas **sin subtareas** que no estén terminadas; si la tarea ya tiene rama, solo cambia el responsable. Se confirma escribiendo **"asignar"**.
+- **Soltar una tarea** (`desasignar_tarea`, arrastrarla a "Sin asignar"): quita el responsable y la deja en "por hacer" junto con sus subtareas. Se rechaza si la tarea o alguna subtarea ya tiene commits (hay progreso, ver [Estados, progreso y reaperturas](#estados-progreso-y-reaperturas)).
 
 ## Sincronización entre máquinas (arquitectura de eventos)
 
@@ -42,7 +38,7 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
 
 **Diseño**: lo que se sincroniza deja de ser el `.db`. Cada máquina tiene su propio `.db` **local, no sincronizado, desechable y reconstruible**. Lo que sí viaja por la carpeta de nube es una carpeta `ops/` de **eventos inmutables**, uno por archivo:
 
-- Cada comando Tauri que muta estado compartido (`tomar_tarea`, `asignar_tarea`, `cambiar_estado`, `aprobar_tarea`, `rechazar_tarea`, `mandar_a_revision`, crear/editar/eliminar tarea, etc.) — en vez de hacer un `UPDATE`/`INSERT` directo que luego se sincroniza como parte del `.db` — escribe un archivo nuevo en `ops/`, nombrado `ops/<timestamp_iso>_<usuario>_<uuid>.json`, con `{ tipo, tarea_id, usuario, timestamp, payload }`. Nunca se edita ni se borra un archivo de `ops/` ya creado — solo se crean nuevos. Esto es lo que evita el problema de sincronización de archivo completo: como nadie más edita ese archivo, Drive/OneDrive nunca tiene que decidir "qué versión gana".
+- Cada comando Tauri que muta estado compartido (`tomar_tarea`, `asignar_tarea`, `cambiar_estado`, `aprobar_tarea`, `rechazar_revision`, crear/editar/eliminar tarea, etc.; lista completa más abajo) — en vez de hacer un `UPDATE`/`INSERT` directo que luego se sincroniza como parte del `.db` — escribe un archivo nuevo en `ops/`, nombrado `ops/<timestamp_iso>_<usuario>_<uuid>.json`, con `{ tipo, tarea_id, usuario, timestamp, payload }`. Nunca se edita ni se borra un archivo de `ops/` ya creado — solo se crean nuevos. Esto es lo que evita el problema de sincronización de archivo completo: como nadie más edita ese archivo, Drive/OneDrive nunca tiene que decidir "qué versión gana".
 - Cada máquina mantiene en su `.db` local una tabla `eventos_aplicados` (id de archivo ya procesado) para no reaplicar el mismo evento dos veces.
 - Al abrir la app, y luego en el mismo intervalo que [el polling de Unity VC](#detección-de-cambios-en-unity-version-control-polling), el backend escanea `ops/`, toma los archivos que no estén en `eventos_aplicados`, los ordena por `timestamp` ascendente (desempate determinista: alfabético por `usuario`) y los aplica uno por uno a su `.db` local, con la **misma regla en todas las máquinas** — así todas convergen al mismo estado sin coordinarse en vivo.
 
@@ -61,12 +57,12 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
 - **Mitigación barata añadida (no requiere red ni credenciales)**: al aplicar un evento de `ops/`, cada máquina compara el `timestamp` del evento contra **su propio reloj local** (el de quien está leyendo, no el de quien lo escribió). Si el evento viene marcado más de **5 minutos en el futuro** respecto al reloj de la máquina que lo procesa, se trata como sospechoso: se aplica igual (para no bloquear el flujo), pero se reordena usando **la hora de llegada a `ops/` en vez del timestamp declarado**, y se registra un aviso interno (no notificación al equipo, solo log). Esto no elimina el riesgo — todas las máquinas confían en su propio reloj, que también podría estar mal por error genuino — pero acota cuánta ventaja puede sacar alguien adelantando su reloj: ya no es ilimitada, queda topada a la tolerancia de 5 minutos frente al reloj de las demás máquinas del equipo.
 
 **Integridad de los eventos — qué está firmado y qué no (resuelto)**: un evento de `ops/` es un JSON plano con `usuario` **autodeclarado** — nada impide, en principio, que alguien con acceso de escritura a la carpeta (todo el equipo, por diseño) suelte un evento suplantando a otro miembro. Distinguir dos niveles de gravedad en vez de tratar esto como un solo problema:
-- **Eventos que solo un Administrador puede emitir legítimamente** (`asignar_rol`, `cambiar_rol`, `confirmar_usuario`, `compactar_eventos`, ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)): **se extiende la misma firma Ed25519** que ya protege el campo `rol` de `usuarios` a estos eventos completos — el evento incluye un campo `firma_admin` (firma del JSON del evento con la llave privada del Administrador), y cada máquina la verifica contra la llave pública embebida antes de aplicarlo; si no coincide o falta, el evento se descarta sin aplicar (no se degrada, se ignora — a diferencia de una fila de `usuarios` inconsistente, aquí no hay "rol mínimo" al que degradar un evento). Esto cierra el caso más grave: nadie puede forjar una elevación de rol ni una acción administrativa aunque tenga acceso de escritura a `ops/`.
+- **Eventos que solo un Administrador (o un Líder certificado, dentro de lo que puede asignar) puede emitir legítimamente** (`crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `compactar_eventos`, ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac); **actualizado 2026-11-07**: `asignar_rol` ya no existe, lo reemplaza `cambiar_rol`, y los Líderes también firman, ver [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07)): **se extiende la misma firma Ed25519** que ya protege el campo `rol` de `usuarios` a estos eventos completos — el evento incluye un campo `firma_admin` (firma del JSON del evento con la llave privada del Administrador), y cada máquina la verifica contra la llave pública embebida antes de aplicarlo; si no coincide o falta, el evento se descarta sin aplicar (no se degrada, se ignora — a diferencia de una fila de `usuarios` inconsistente, aquí no hay "rol mínimo" al que degradar un evento). Esto cierra el caso más grave: nadie puede forjar una elevación de rol ni una acción administrativa aunque tenga acceso de escritura a `ops/`.
 - **Eventos del día a día de un miembro regular** (`tomar_tarea`, `cambiar_estado`, `eliminar_tarea` sobre su propio trabajo, etc.): **quedan sin firmar, riesgo aceptado**. Firmar esto requeriría un par de llaves por cada persona del equipo (no solo el Administrador) — una PKI completa, desproporcionada para 3 personas de confianza. Además, quien tiene acceso de escritura a la carpeta compartida por diseño ya puede, siendo honesto, borrar o alterar tareas de cualquiera desde la propia app sin necesitar forjar nada — la firma no cambia esa exposición de fondo, que ya depende por completo de la confianza del equipo (mismo criterio que ya aceptan otros riesgos residuales de esta arquitectura, ver el de rollback de `.db` más abajo).
 
 **Intervalo de escaneo de `ops/` (resuelto)**: tres disparadores, no uno solo —
 1. **Al abrir la app**: escaneo inmediato antes de mostrar cualquier tablero, para arrancar con el estado más reciente posible.
-2. **Mismo botón "Refrescar" que ya dispara el [polling de Unity VC](#detección-de-cambios-en-unity-version-control-polling)**: reusa la acción manual que el usuario ya conoce, un solo botón para "traer todo lo nuevo" (ramas y eventos).
+2. **Al volver la app a primer plano** (el mismo momento en que se repite la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling)). **Actualizado (2026-11-07)**: el frontend no tiene un botón "Refrescar"; todo llega solo.
 3. **Temporizador de fondo cada 2 minutos** mientras la app está abierta: más frecuente que el polling de Unity VC (que sí cuesta red/proceso por invocar `cm`), porque escanear `ops/` es solo leer archivos de una carpeta ya sincronizada localmente por Drive/OneDrive — barato, no justifica esperar al intervalo largo de `cm`.
 
 **Compactación/purga de `ops/` (resuelto)**: la carpeta crecería sin límite si nunca se limpia. Diseño: comando Tauri `compactar_eventos()`, **exclusivo Administrador**, disponible desde [Ajustes](./FRONTEND.md#ajustes) —
@@ -76,9 +72,21 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
 - **Riesgo aceptado**: una máquina que estuvo offline por más de 30 días y no alcanzó a aplicar eventos ya purgados los pierde (su estado diverge del snapshot en esa franja). Mitigación: la UI de `compactar_eventos()` exige confirmar que todo el equipo sincronizó recientemente antes de habilitar el botón (mismo patrón de doble candado que otras acciones destructivas del Administrador), y no corre automáticamente.
 
 **Qué comandos Tauri pasan por `ops/` y cuáles quedan fuera (resuelto)**:
-- **Sí migran a eventos** (mutan estado compartido entre el equipo): `crear_tarea`, `editar_tarea`, `editar_tarea_con_autorizacion`, `tomar_tarea`, `asignar_tarea`, `mandar_a_revision`, `tarea_cerrada_por_deteccion`, `aprobar_tarea`, `editar_y_aprobar_tarea`, `advertir_tarea_pendiente`, `rechazar_tarea`, `eliminar_tarea`, `eliminar_definitivamente`, `aprobar_modificacion`, `rechazar_modificacion`, `autorizar_merge` / `autorizar_merge_subtarea`, `asignar_revision`, `crear_reporte_testing`, `mover_cambios_entre_ramas`, `solicitar_accion_bd`, `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `asignar_rol`, `renombrar_proyecto`, `enviar_mensaje`, `restaurar_backup`, `actualizar_configuracion_proyecto`, `crear_sprint`, `cerrar_sprint` — cualquier comando que escriba en `tareas`, `usuarios`, `ediciones_pendientes`, `reportes_testing`, `notificaciones` (la fila de notificación misma), `sprints`, `colaboradores_externos` o `configuracion_proyecto`.
+- **Sí migran a eventos** (mutan estado compartido entre el equipo). **Actualizado (2026-11-07)** con todas las acciones del frontend:
+  - Tareas: `crear_tarea` (y `crear_tarea_con_subtareas`), `editar_tarea`, `proponer_edicion`, `tomar_tarea`, `asignar_tarea`, `desasignar_tarea`, `cambiar_estado` (incluye mandar a revisión), `borrar_progreso`, `tarea_cerrada_por_deteccion`, `eliminar_tarea`, `eliminar_definitivamente`.
+  - Pendientes: `aprobar_tarea` / `aprobar_tareas`, `editar_y_aprobar_tarea`, `advertir_tarea_pendiente`, `aprobar_modificacion` / `aprobar_modificaciones`, `rechazar_modificacion`.
+  - Revisión: `autorizar_merge`, `rechazar_revision`, `reabrir_tarea`, `asignar_revision`.
+  - Ramas: `hacer_checkin`, `crear_rama_desde_espera`, `traer_cambios`, `devolver_cambios_prestados`, `eliminar_cambios_ajenos`, `mover_cambios_entre_ramas` (sin pantalla en el mockup).
+  - Planificación: `crear_sprint`, `cerrar_sprint`, `asignar_tarea_a_sprint`, `asignar_tarea_a_backlog`, `asignar_backlog_a_sprint`.
+  - Equipo y proyecto: `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `renombrar_proyecto`, `actualizar_configuracion_proyecto`, `subir_imagen_proyecto`, `solicitar_accion_bd`, `enviar_mensaje`.
+  - Documentos y chat: `subir_documentos`, `aprobar_documento`, `eliminar_documento`, `enviar_chat`, `crear_grupo_chat`.
+  - Sin pantalla en el mockup: `crear_reporte_testing`.
+  - En general: cualquier comando que escriba en `tareas`, `usuarios`, `ediciones_pendientes`, `reportes_testing`, `notificaciones` (la fila de notificación misma), `sprints`, `reportes_sprint`, `cambios_prestados`, `documentos`, `mensajes_chat`, `grupos_chat` o `configuracion_proyecto`.
 - **Quedan fuera, son locales por máquina/usuario** (no tienen por qué ser iguales entre todo el equipo):
-  - `marcar_leida(notificacion_id)` — el estado de "leída" es personal de quien la lee en su propia máquina; si la misma persona usa dos máquinas, no es grave que difiera.
+  - `marcar_leida(notificacion_id)`, `desmarcar_leida(notificacion_id)` y `marcar_todas_leidas()` — el estado de "leída" es personal de quien la lee en su propia máquina; si la misma persona usa dos máquinas, no es grave que difiera.
+  - `marcar_chat_leido(conversacion)` y `eliminar_chat(conversacion)` — "leído" y "eliminar chat" son de cada persona (eliminar un chat solo lo oculta para ti, ver [Chat](#chat)).
+  - `marcar_visto(panel, huella)` — los puntos de aviso del menú (ver [Puntos de aviso del menú](#puntos-de-aviso-del-menú)).
+  - `abrir_en_unity`, `unir_cambios_entrantes`, `abrir_documento` — actúan solo sobre el workspace o la máquina de quien los usa.
   - `restaurar_backup(nombre_archivo)` y `listar_backups()` — actúan sobre backups locales de esa máquina (ver [Copias de seguridad](#copias-de-seguridad-y-restauración-de-la-bd)); restaurar un backup ya vuelve a dejar esa máquina desincronizada del resto a propósito (caso de emergencia), no algo que deba replicarse como evento normal.
   - `compactar_eventos()` — escribe directamente el snapshot en `ops/`, no es en sí mismo un evento que otras máquinas deban "aplicar" (ya leen el snapshot como parte del escaneo normal).
   - Comandos de solo lectura (`listar_*`, `obtener_notificaciones`, `revisar_actualizaciones`, `cm whoami`, etc.) — no mutan nada.
@@ -138,7 +146,7 @@ Problema a resolver: un compañero sube un asset (ej. un modelo 3D) desde Unity 
 
 **Actualizado (2026-10-31) — la app escucha siempre, no solo con "Refrescar"**: lo normal es que los check-ins se hagan **desde Unity** (plugin de Unity Version Control); hacerlos desde BranchBoard es una forma extra, sin tener que abrir la interfaz de UVCS. Por eso BranchBoard **tiene que estar escuchando Unity VC todo el tiempo** mientras está abierta, y no depender de que alguien le dé a "Refrescar" (que se mantiene como acción manual inmediata). Esto reemplaza el "no hace falta un proceso en segundo plano para el MVP" del paso 2:
 
-- **Proceso de fondo** mientras la app está abierta: repite el chequeo de los pasos 3–5 cada pocos segundos para las ramas activas (las de tareas abiertas y sus padres) y además al volver la app a primer plano. El intervalo exacto se ajusta al implementar (equilibrio entre inmediatez y el costo de invocar `cm`); los triggers del servidor (paso 6) siguen siendo la mejora futura para tiempo real.
+- **Proceso de fondo** mientras la app está abierta: repite el chequeo de los pasos 3–5 cada pocos segundos para las ramas activas (las de tareas abiertas y sus padres) y además al volver la app a primer plano. El intervalo exacto se ajusta al implementar (equilibrio entre inmediatez y el costo de invocar `cm`); los triggers del servidor (paso 6) siguen siendo la mejora futura para tiempo real. **Según el frontend**: no hay botón "Refrescar" en la interfaz, así que este proceso de fondo es el único camino (reemplaza al paso 2).
 - **Check-ins hechos desde Unity**: un changeset nuevo en la rama de una tarea aparece solo en BranchBoard (commits de la tarea, Historial, Revisión) sin que nadie haga nada. Si son **cambios sin check-in en la rama de una tarea con subtareas**, aparecen como su subtarea **"En espera"** (ver [Check-ins de la rama](#check-ins-de-la-rama-subtarea-en-espera-y-cambios-entrantes)).
 - **Workspace**: también se escucha en qué rama está parado el workspace local (por si alguien cambió de rama desde Unity o desde el cliente de UVCS) y BranchBoard actualiza su "rama actual del workspace" (la que muestra el panel "Abrir en Unity"); si queda en `dev` o en una rama que no es de sus tareas, aplica el aviso de [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app).
 - Lo detectado que es solo indicador local (`modificada`, `ultimo_changeset_visto`, rama del workspace) no pasa por `ops/`; lo que muta estado compartido sigue emitiendo su evento (ver abajo).
@@ -164,15 +172,7 @@ El caso real que sí puede pasar es cuando alguien **sale de BranchBoard y usa e
 
 ## Comando "Guardar cambios y sincronizar"
 
-Mismo patrón que "tomar tarea", reusando la arquitectura de comandos Tauri ya establecida:
-
-1. El usuario le da clic al botón en la interfaz (React)
-2. Se llama un comando Tauri, ej. `sincronizar_tarea(tarea_id)`
-3. El backend en Rust corre el `cm` correspondiente (checkin/update) sobre la rama de esa tarea
-4. El frontend muestra estado de carga mientras corre, y éxito/error al terminar
-5. Al terminar con éxito, dispara de una vez la revisión del punto anterior (changesets nuevos + estado de cierre) para que la tarea quede actualizada sin pasos extra
-
-No es una pieza nueva de arquitectura — es el mismo cable React → comando Tauri → Rust → `cm`, ya usado en "tomar tarea" y "revisar_actualizaciones".
+**Actualizado (2026-11-07, según el frontend)**: el frontend no tiene un botón "Guardar cambios y sincronizar". Lo que existe es **hacer check-in desde BranchBoard** en los detalles de una tarea sin subtareas (sección "Pending changes" → **"Hacer check-in"**, con título, descripción y tipo) y **"Crear rama"** en una tarea con subtareas — ver [Check-ins de la rama](#check-ins-de-la-rama-subtarea-en-espera-y-cambios-entrantes). Los comandos son `hacer_checkin(rama, titulo, descripcion, tipo)` y `crear_rama_desde_espera(espera_id, titulo, detalles, tipo)`; usan el mismo cable React → comando Tauri → Rust → `cm` que "tomar tarea". Al terminar, la escucha de Unity VC refleja el changeset nuevo sin pasos extra.
 
 ## Bloquear el cierre de la app durante una operación
 
@@ -191,20 +191,19 @@ Igual que hace Unity Editor mientras guarda/compila: mientras hay una operación
 
 El resto de esta sección (pasos 1-5) describe el camino del Desarrollador:
 
-1. El Desarrollador arrastra su tarea a **"En revisión"** en el Tablero Scrum (con la confirmación de doble candado descrita en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)). La descripción escrita se guarda junto a la tarea.
+1. El Desarrollador arrastra su tarea a **"En revisión"** en el Tablero Scrum, confirmando con la palabra **"mandar a revisar"** (ver [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)); **actualizado (2026-11-07)**: ya no se escribe una descripción. Se rechaza si la tarea sigue `pendiente_aprobacion` o tiene subtareas en "por hacer"/"en producción" (incluida una "En espera"). Si lleva [cambios prestados](#cambios-prestados-traer-cambios) sin devolver, se deja pasar con un aviso. Genera la notificación #5.
 2. La tarea aparece automáticamente en la carpeta **"Tareas grandes"** del apartado **[Revisión](./PLANNING.md#revisión)** (página de estado de PR) — visible para **todos los roles**, pero Desarrollador y Tester la ven en **solo lectura** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)).
-   - El Administrador puede **asignarle la revisión de esa tarea a un Líder específico** — comando Tauri `asignar_revision(tarea_id, email_lider)`, exclusivo de Administrador. Genera notificación al Líder asignado ("se te asignó revisar [tarea]").
-   - **Nuevo**: un Líder también puede **auto-asignarse** una tarea de "Tareas grandes" — comando Tauri `autoasignar_revision(tarea_id)`, invocable por cualquier Líder, mismo efecto que `asignar_revision` pero con `email_lider` = el propio correo de quien lo invoca (validado vía `cm whoami`). En la UI es la opción "Asignármela" del menú de tres puntos en la fila (ver [FRONTEND.md](./FRONTEND.md#alcance)).
-   - **Sin asignación explícita** (ni por Admin ni auto-asignada), cualquier Líder/Administrador puede actuar sobre cualquier tarea en "Tareas grandes".
-   - **Corregido — con asignación explícita, sí restringe**: una vez que `lider_revision_asignado` tiene un valor (por `asignar_revision` o `autoasignar_revision`), **solo ese Líder** puede autorizar/rechazar esa tarea — otros Líderes la ven en "Tareas grandes" pero sin los botones de acción habilitados, solo lectura, hasta que se reasigne o se libere. El **Administrador conserva override** sobre cualquier tarea sin importar a quién esté asignada (consistente con que es quien puede reasignarla). Sin esto, tener un campo de "asignado" no tenía ningún efecto real — cualquiera podía actuar igual.
+   - **Actualizado (2026-11-07, según el frontend) — elegir revisor**: comando `asignar_revision(tarea_id, email_lider)`, con la palabra **"asignar"**. Mientras la tarea **no tiene revisor**, lo pueden elegir un **Líder o el Administrador** (puede ser cualquier Líder o Administrador, también uno mismo). Una vez asignado, **solo el Administrador** puede cambiarlo. Genera la notificación #6 al revisor elegido.
+   - `autoasignar_revision` y la opción "Asignármela" **ya no existen**: un Líder se asigna a sí mismo eligiéndose en el mismo selector.
+   - **Quién autoriza o rechaza**: en el frontend, cualquier Líder o Administrador, haya o no revisor asignado. El revisor asignado se muestra en la fila como responsable. (La regla anterior, "con revisor asignado solo él puede actuar, salvo el Administrador", no está en el frontend; queda **pendiente de decidir** si se implementa.)
 3. Cuando el Líder/Admin marca la tarea como **"autorizado"**, el backend valida primero el **orden de merge de abajo hacia arriba** (ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)): consulta `SELECT COUNT(*) FROM tareas WHERE tarea_padre_id = ? AND estado != 'terminada' AND eliminada = false`. Si el resultado es mayor a 0, **rechaza la acción antes de tocar `cm`** y muestra un error listando qué subtareas siguen sin terminar — no se puede mergear una rama padre mientras tenga hijas abiertas. Si pasa la validación, ejecuta el **merge real de la rama hacia `dev`** invocando `cm` como subproceso (comando exacto pendiente de verificar al implementar, ej. `cm merge` + `cm checkin`) — no es solo un cambio de estado en SQLite, sí toca Unity VC.
 4. **Si el merge falla** (conflicto de contenido entre archivos): **decisión tomada** — BranchBoard no implementa resolución de conflictos propia, Unity Version Control ya tiene su propia herramienta para eso. El backend detecta que `cm merge` devolvió error y la tarea **no se marca como terminada** (se queda en "en revisión"). Como quien dispara el "autorizado" es el propio Líder/Admin (acción síncrona, no en segundo plano), la reacción es una **alerta/pantalla inmediata** en ese momento (no una notificación de campana) mostrando que el merge falló, con dos opciones para el Líder/Admin:
    - **Resolverlo él mismo**: cierra la alerta, va al cliente de Unity VC a resolver el conflicto manualmente, y luego reintenta el "autorizado" desde BranchBoard. No se notifica a nadie más.
-   - **Enviarla al Desarrollador para que la corrija**: reutiliza el mismo mecanismo de **`rechazar_tarea(tarea_id, motivo)`** ya definido arriba — el motivo queda como "falló el merge por conflicto", la tarea vuelve al Desarrollador (con notificación normal de tarea rechazada), y él la reimplementa y la vuelve a mandar a revisión como cualquier rechazo.
-5. Si se **rechaza**, la tarea vuelve al Desarrollador para reimplementar (mismos changesets sobre la misma rama, sin perder historial) — igual que el flujo ya descrito para subtareas rechazadas.
-6. Tras un merge exitoso, se dispara la misma revisión de "Detección de cambios" (rama cerrada → tarea "terminada").
+   - **Enviarla al Desarrollador para que la corrija**: reutiliza el mismo mecanismo de **`rechazar_revision(tarea_id, motivo)`** (antes `rechazar_tarea`) — el motivo queda como "falló el merge por conflicto", la tarea vuelve al Desarrollador (con notificación normal de tarea rechazada), y él la reimplementa y la vuelve a mandar a revisión como cualquier rechazo.
+5. Si se **rechaza** (`rechazar_revision(tarea_id, motivo)`, motivo obligatorio y palabra **"rechazar"**), la tarea vuelve a **"en producción"** (también sus subtareas), se guarda `motivo_rechazo` y se notifica al responsable (`asignado_a`, notificación #2). Sigue en la misma rama, sin perder historial.
+6. Tras un merge exitoso, la tarea pasa a "terminada" con `fecha_completada` y se dispara la misma revisión de "Detección de cambios" (rama cerrada → tarea "terminada").
 
-Pendiente confirmar: si la acción de "autorizado" también requiere el doble candado (descripción + palabra literal) del punto 1, dado que mergear a `dev` es igual o más delicado que mandar a revisión.
+**Resuelto (2026-11-07, según el frontend)**: autorizar sí lleva confirmación escribiendo **"autorizar"** (sin descripción), tanto en Revisión como al arrastrar la tarjeta de "En revisión" a "Terminada" o con el botón "Autorizar (merge a dev)" del Líder/Administrador sobre su propia tarea. Antes de mergear se exige: todas las subtareas terminadas y **ningún cambio prestado sin devolver** (si quedan, se bloquea y se pide devolverlos).
 
 **Nota**: este flujo completo es específico de la carpeta **"Tareas grandes"** de [Revisión](./PLANNING.md#revisión) (tarea general → `dev`). Para el flujo de **"Tareas pequeñas"** (subtarea → su tarea padre), ver la sección siguiente — es más simple y con otro dueño de la decisión.
 
@@ -212,24 +211,45 @@ Pendiente confirmar: si la acción de "autorizado" también requiere el doble ca
 
 A diferencia del flujo anterior, este **no** pasa por Líder/Administrador exclusivamente — quien autoriza es **quien esté a cargo de la tarea padre** (puede ser Desarrollador, Líder o Administrador, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)).
 
-1. La subtarea simple aparece en la carpeta **"Tareas pequeñas"** de [Revisión](./PLANNING.md#revisión) en cuanto el colaborador hace su checkin (no hay un paso explícito de "mandar a revisar" — el checkin mismo la deja lista para revisión, ya que es un solo archivo, no un flujo de trabajo largo).
+**Actualizado (2026-11-07, según el frontend)**: "Tareas pequeñas" son **todas las subtareas** (tareas con `tarea_padre_id`) que están en "en revisión"; "Tareas grandes" son las que no tienen padre. Una subtarea llega a revisión igual que cualquier tarea (arrastrándola, con la palabra "mandar a revisar"). Ya no depende de un colaborador externo: el Colaborador externo **no trabaja subtareas** (ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo)). Autorizar y rechazar usan las mismas confirmaciones ("autorizar"; "rechazar" con motivo), y el merge va a la rama del padre, no a `dev`.
+
+1. La subtarea aparece en la carpeta **"Tareas pequeñas"** de [Revisión](./PLANNING.md#revisión) cuando pasa a "en revisión".
 2. Quien esté a cargo de la tarea padre abre la fila y ve el visor de [Pre-revisión](./PLANNING.md#pre-revisión) correspondiente al tipo (malla 3D, imagen, audio, video, etc.) — **sin cambiar de rama en su propio workspace** (ver [Guardia de rama incorrecta al sincronizar o crear subtarea](#guardia-de-rama-incorrecta-al-sincronizar-o-crear-subtarea), este flujo es precisamente el que motivó no depender de cambios de rama para revisar algo tan pequeño).
-3. Comando Tauri `autorizar_merge_subtarea(subtarea_id)`: ejecuta `cm merge` de la rama de la subtarea hacia la rama de su tarea padre (no hacia `dev`) — mismo patrón de invocar `cm` como subproceso.
-4. **Si falla por conflicto**: mismo patrón que el flujo de "Tareas grandes" — alerta síncrona inmediata para quien intentó autorizar, con las mismas dos opciones (resolverlo él mismo, o rechazar con `rechazar_tarea` para que el colaborador vuelva a subir el archivo).
-5. Si se **rechaza**: la subtarea vuelve al colaborador — no se borra, simplemente se le pide subir una nueva versión sobre la misma rama hija (ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)).
+3. Comando Tauri `autorizar_merge(tarea_id)` (el mismo de "Tareas grandes"; **según el frontend** ya no hay un `autorizar_merge_subtarea` aparte): si la tarea tiene padre, ejecuta `cm merge` de su rama hacia la rama de su tarea padre (no hacia `dev`) — mismo patrón de invocar `cm` como subproceso. Valida que quien autoriza sea quien está a cargo de la tarea padre.
+4. **Si falla por conflicto**: mismo patrón que el flujo de "Tareas grandes" — alerta síncrona inmediata para quien intentó autorizar, con las mismas dos opciones (resolverlo él mismo, o rechazar con `rechazar_revision`).
+5. Si se **rechaza**: la subtarea vuelve a "en producción" con su responsable, sobre la misma rama hija (ver [Subtareas en PLANNING.md](./PLANNING.md#subtareas-tareas-anidadas)).
 6. Tras un merge exitoso, la subtarea pasa a "terminada" — no dispara el flujo completo de "Detección de cambios" del punto anterior (no aplica el chequeo de changesets por polling para algo tan simple), solo el cambio de estado.
 
-Pendiente por definir: si este merge también requiere el doble candado de confirmación, o basta con un solo clic dado que el impacto es mucho menor que mergear a `dev`.
+**Resuelto (según el frontend)**: lleva la misma confirmación que mergear a `dev` (escribir "autorizar").
+
+## Estados, progreso y reaperturas
+
+**Nuevo (2026-11-07, según el frontend)**. Reglas que el frontend ya aplica y que el backend tiene que validar igual (al ejecutar el comando y al reproducir el evento):
+
+- **Estados**: por hacer / en producción / en revisión / terminada. "Sin asignar" no es un estado: es "por hacer" sin `asignado_a`.
+- **El estado de una tarea con subtareas se calcula a partir de ellas** (se recalcula de abajo hacia arriba por toda la cadena de padres):
+  - todas sus subtareas en "por hacer" → "por hacer", **salvo que la tarea padre ya tenga commits** (entonces "en producción");
+  - alguna en "por hacer" o "en producción" → "en producción";
+  - ninguna en "por hacer"/"en producción" → "en revisión".
+  - "Terminada" es final: una tarea padre ya mergeada no se vuelve a calcular.
+  - Si una tarea padre avanza por sus subtareas y no tiene responsable, hereda el de alguna de ellas (ninguna tarea fuera de "por hacer" queda sin responsable).
+- **Progreso = commits**: una tarea (o cualquiera de sus subtareas) con commits no puede volver a "por hacer" ni soltarse; se avisa y se rechaza.
+- **Mover hacia atrás** (`cambiar_estado` a "por hacer" o "en producción") mueve también todo su subárbol; hacia "en revisión" o "terminada" solo la tarea (sus subtareas ya tuvieron que llegar).
+- **Borrar progreso** (`borrar_progreso(tarea_id)`, todos los roles, palabra **"eliminar"**): pasar de "en producción" a "por hacer" una tarea con progreso. Borra los commits de la tarea y sus subtareas, sus cambios prestados y sus cambios sin check-in, y la deja en "por hacer" (sigue tomada y con su rama). En Unity VC: revertir la rama a su changeset inicial (comando exacto pendiente de verificar).
+- **Reabrir** (`reabrir_tarea(tarea_id, motivo)`, palabra **"reabrir"** y motivo obligatorio): una tarea "terminada" vuelve a "en revisión" (sus subtareas se quedan terminadas). Cada tarea guarda `reaperturas`; se puede reabrir **hasta 3 veces** y desde ahí **solo el Administrador** puede seguir reabriéndola. Notifica a todo Líder/Administrador (notificación `tarea_reabierta`, con el motivo).
+- **De "En revisión" a "Terminada" arrastrando la tarjeta**: solo Líder/Administrador; es lo mismo que autorizar el merge (palabra "autorizar").
+- **Saltar estados desde "Sin asignar"** (arrastrar directo a otra columna): primero se toma la tarea (se crea la rama) y luego sigue el flujo normal de la columna destino. Un Desarrollador o Tester no puede mandarla directo a "Terminada".
+- **Colaborador externo**: solo toma o recibe tareas **individuales** (sin subtareas y que no sean subtarea de otra), ver [Alcance](#alcance).
 
 ## Eliminar una tarea
 
-Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend para que solo Administrador o Líder puedan invocarlo (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). Requiere el doble candado descrito en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop) (justificación + escribir "eliminar").
+Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend para que solo Administrador o Líder puedan invocarlo (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)). Requiere el doble candado descrito en [FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop) (justificación + escribir "eliminar"). Al eliminarla también se limpian `pendiente_aprobacion` y la edición pendiente que tuviera.
 
 - La `justificacion` se guarda en SQLite como parte del registro de auditoría (no se borra junto con la tarea, queda como historial de por qué se eliminó).
 - **Confirmado**: si la tarea ya tenía una rama asociada en Unity VC, `eliminar_tarea` también **cierra esa rama** en Unity VC (invocando `cm` — comando exacto pendiente de verificar al implementar), en vez de dejarla huérfana. La `justificacion` queda como el motivo tanto del borrado en BranchBoard como del cierre de la rama.
 - **Definido**: esto **no borra la tarea de inmediato** — la manda a la [Papelera](#papelera), desde donde se elimina definitivamente en un segundo paso. Rechazar una tarea de [Pendientes](./PLANNING.md#pendientes) usa este mismo comando (el Líder/Admin decide que no debe existir, así que la "elimina" igual que cualquier otra tarea).
 - **Señalado por el usuario**: `eliminar_tarea` también genera una notificación al **creador** de la tarea (ver [Notificaciones](#notificaciones), punto 13) — la `justificacion` escrita es lo que arma el mensaje.
-- **Definido — borrado en cascada de subtareas**: si la tarea tiene subtareas colgando (`tarea_padre_id` apuntando a ella, sin importar cuántos niveles de anidación), `eliminar_tarea` **arrastra en cascada solo las subtareas que siguen activas** (`estado` distinto de `terminada` y `eliminada = false`) — se mandan a Papelera junto con la tarea padre, en la misma operación, con la misma `justificacion`, y sus ramas también se cierran en Unity VC. Razón: una vez se cierra la rama padre, dejar una subtarea activa colgando de ella la deja huérfana (su flujo de merge apunta justo a esa rama, ver [Flujo de merge de subtareas pequeñas](#flujo-de-merge-de-subtareas-pequeñas-hacia-su-tarea-padre)).
+- **Definido — borrado en cascada de subtareas** (el mockup todavía no lo hace: hoy solo manda a la Papelera la tarea elegida; el backend sí lo debe hacer): si la tarea tiene subtareas colgando (`tarea_padre_id` apuntando a ella, sin importar cuántos niveles de anidación), `eliminar_tarea` **arrastra en cascada solo las subtareas que siguen activas** (`estado` distinto de `terminada` y `eliminada = false`) — se mandan a Papelera junto con la tarea padre, en la misma operación, con la misma `justificacion`, y sus ramas también se cierran en Unity VC. Razón: una vez se cierra la rama padre, dejar una subtarea activa colgando de ella la deja huérfana (su flujo de merge apunta justo a esa rama, ver [Flujo de merge de subtareas pequeñas](#flujo-de-merge-de-subtareas-pequeñas-hacia-su-tarea-padre)).
   - **Las subtareas ya `terminada` (mergeadas) no se tocan** — su trabajo ya está integrado en el historial de la rama padre antes de cerrarla; borrar la tarea padre no debe deshacer trabajo ya completado y mergeado.
   - Cada creador de una subtarea arrastrada recibe la misma notificación #13 que el creador de la tarea padre, con una `justificacion` que aclara que fue un borrado en cascada (ej. "eliminada junto con su tarea padre: <motivo>").
 
@@ -241,10 +261,13 @@ Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend par
 - A diferencia de `eliminar_tarea` (que ya cerró la rama pero conserva la fila como soft-delete para historial), esto **borra la fila por completo** de la tabla `tareas` y purga la rama en Unity VC en vez de solo cerrarla (comando `cm` exacto pendiente de verificar al implementar — depende de si Unity VC permite borrar una rama cerrada o solo cerrarla para siempre).
 - **Definido — misma cascada que `eliminar_tarea`**: como el borrado en cascada ya ocurrió al mandar la tarea a Papelera (ver [Eliminar una tarea](#eliminar-una-tarea)), toda subtarea activa que llegó junto a su padre ya está en Papelera también — `eliminar_definitivamente(tarea_id)` sobre la tarea padre purga en la misma operación esas subtareas que llegaron con ella. No aplica a subtareas `terminada` (nunca llegaron a Papelera, siguen existiendo normalmente).
 - No hay acción de "restaurar" definida — una vez en Papelera, el único destino es la eliminación definitiva.
+- **Según el frontend**: la lista va de la eliminación más reciente a la más antigua (a igual fecha, por id) y muestra cuántas hay. Abrir una tarea muestra primero **"Por qué se eliminó"** (`justificacion_eliminacion` y `fecha_eliminacion`) y después sus datos.
 
 ## Mover cambios entre ramas
 
-**Nuevo**. Resuelve en la práctica el caso que [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app) antes dejaba como "corrígelo manualmente" — ahora BranchBoard ofrece una acción real para mover el trabajo a la rama correcta.
+**Sin pantalla en el mockup (2026-11-07)**: el frontend no tiene la opción "Mover cambios" (solo existe el tipo de notificación `mover_cambios`). Lo que sí tiene es [Traer cambios](#cambios-prestados-traer-cambios) (préstamos) y "Crear rama" desde una "En espera". Queda **pendiente de decidir** si se agrega al frontend o se descarta; mientras tanto, el diseño de abajo se conserva como referencia.
+
+Resuelve en la práctica el caso que [Detección de ediciones en rama ajena](#detección-de-ediciones-en-rama-ajena-fuera-de-la-app) antes dejaba como "corrígelo manualmente" — BranchBoard ofrecería una acción real para mover el trabajo a la rama correcta.
 
 - **UI**: menú de tres puntos sobre la fila de cualquier tarea/rama, opción **"Mover cambios"** — disponible en **cualquier rama que exista**, incluidas las que están "en revisión" y las que están en [Papelera](#papelera) (antes de que se eliminen definitivamente).
 - Al elegir la opción, se selecciona la **rama destino** (cualquier otra tarea existente) y el **alcance** de lo que se mueve:
@@ -257,7 +280,7 @@ Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend par
 
 ## Cambios prestados ("Traer cambios")
 
-**Nuevo (2026-11-01)**. "Traer cambios" (en los detalles de una tarea) sirve para usar trabajo de otra tarea que **todavía no está terminada**: se trae a la rama de esta tarea para poder trabajar con él, pero **no le pertenece**. Por eso se trata como un **préstamo**: se usa sin modificarlo y se devuelve antes del merge. No es lo mismo que [Mover cambios entre ramas](#mover-cambios-entre-ramas), que traslada trabajo de forma definitiva.
+**Nuevo (2026-11-01)**. "Traer cambios" (en los detalles de una tarea) sirve para usar trabajo de otra tarea: se trae a la rama de esta tarea para poder trabajar con él, pero **no le pertenece**. **Según el frontend (2026-11-07)**, se puede traer de tareas **terminadas**, **en revisión** (con el aviso "sin aprobar") o **en producción con commits** (con el aviso "en curso"); de una tarea completa (`traer_cambios(destino_id, origen_id)`) o de un solo commit (`hash`). Se confirma escribiendo **"traer"**. Por eso se trata como un **préstamo**: se usa sin modificarlo y se devuelve antes del merge. No es lo mismo que [Mover cambios entre ramas](#mover-cambios-entre-ramas), que traslada trabajo de forma definitiva.
 
 **Cuándo se puede traer** (todos los roles, salvo lo indicado):
 
@@ -271,9 +294,9 @@ Comando Tauri `eliminar_tarea(tarea_id, justificacion)`, validado en backend par
 - tarea destino, tarea origen, commit puntual o "todos sus cambios", quién y cuándo;
 - el **changeset del merge** y la **lista de archivos que llegaron** (`cm diff` entre el changeset anterior al merge y el del merge).
 
-Se muestra en los detalles de la tarea, en la sección **"🤝 Cambios prestados"**.
+Se muestra en los detalles de la tarea, en la sección **"Cambios prestados"**.
 
-**Devolver**: botón **"↩ Devolver"** en cada préstamo. En Unity VC es un **merge sustractivo** del changeset que se trajo (`cm merge --subtractive`; comando exacto pendiente de verificar al implementar). El registro no se borra: queda como historial ("Devuelto el … por …").
+**Devolver** (`devolver_cambios_prestados(prestamo_id)`): botón **"Devolver"** en cada préstamo. En Unity VC es un **merge sustractivo** del changeset que se trajo (`cm merge --subtractive`; comando exacto pendiente de verificar al implementar). El registro no se borra: queda como historial ("Devuelto el … por …").
 
 - **A revisión** se puede mandar con préstamos sin devolver (a veces hacen falta para revisarla): solo se avisa.
 - **A terminada (merge)** no: se bloquea hasta devolverlos todos. Si no los devolvió quien trabajó la tarea, los devuelve el revisor antes de autorizar.
@@ -289,12 +312,12 @@ Se muestra en los detalles de la tarea, en la sección **"🤝 Cambios prestados
 - **Check-in** que modifica un archivo prestado: se detecta en cuanto aparece el changeset (`cm diff` del changeset contra su anterior, intersectado con la lista del préstamo).
 - Los archivos detectados se guardan en el préstamo (`archivos_tocados`).
 
-**Alerta**: al abrir la tarea (detalles en el Tablero Scrum, en el tablero de categoría o en Revisión) sale sola una ventana **"⛔ Se tocaron cambios ajenos en esta tarea"** con la lista de archivos y de qué tarea vienen. Tiene **dos botones**:
+**Alerta**: al abrir la tarea (detalles en el Tablero Scrum, en el tablero de categoría o en Revisión) sale sola una ventana **"Se tocaron cambios ajenos en esta tarea"** con la lista de archivos y de qué tarea vienen. Tiene **dos botones**:
 
 - **"Aceptar y eliminar"**: elimina esas modificaciones (ver abajo).
 - **"Continuar sin eliminar"**: solo cierra el aviso, no borra nada. La **X** hace lo mismo. En los detalles queda un recuadro rojo con los archivos y un botón **"Eliminar"** para hacerlo después. Mientras no se eliminen, la tarea **no puede pasar a terminada**, y el aviso vuelve a salir cada vez que se abre la tarea.
 
-**Con "Aceptar y eliminar" (o con "Eliminar") se eliminan**: cada archivo tocado **vuelve a como llegó en el préstamo** (se restaura su revisión del changeset del merge). El préstamo sigue activo hasta que se devuelva, como cualquier otro.
+**Con "Aceptar y eliminar" (o con "Eliminar") se eliminan** (`eliminar_cambios_ajenos(prestamo_id)`): cada archivo tocado **vuelve a como llegó en el préstamo** (se restaura su revisión del changeset del merge). El préstamo sigue activo hasta que se devuelva, como cualquier otro.
 
 - En archivos de texto (scripts `.cs`) se restaura el archivo completo a la revisión prestada. Si en el mismo archivo hubo cambios propios legítimos, también se pierden: el archivo era ajeno.
 - En escenas, prefabs y binarios (texturas, modelos, audio) no se puede separar por dentro: se restaura el archivo entero.
@@ -304,10 +327,13 @@ Se muestra en los detalles de la tarea, en la sección **"🤝 Cambios prestados
 
 ## Datos para la gráfica de Avance
 
-Ver definición de la gráfica en [PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp). Dos fuentes de datos distintas:
+**Actualizado (2026-11-07, según el frontend)**. Ver el diseño en [FRONTEND.md → Alcance](./FRONTEND.md#alcance) ("Tablero Avance", "Backlogs en Avance" y "Reportes"). Todo se calcula en SQLite con dos fechas por tarea, sin `cm`:
 
-1. **Tareas resueltas por día** (línea principal): cada tarea guarda un campo `fecha_completada`, escrito cuando pasa a "terminada" (ya sea manual o automático al detectar la rama cerrada, ver "Detección de cambios"). Para armar la curva, se agrupan las tareas por ese campo y se cuenta cuántas hay por día — es una consulta normal a SQLite, no requiere `cm`.
-2. **Changesets hechos por día** (línea secundaria, todo el equipo): a diferencia del polling por tarea (que revisa una rama a la vez), esto necesita el historial de **todo el repositorio**, filtrado por fecha — comando `cm` exacto pendiente de verificar al implementar.
+- `fecha_creacion` (AAAA-MM-DD, fecha **local** del equipo, se pone sola al crear la tarea) y `fecha_completada` (al pasar a "terminada"; se borra si se reabre).
+- **Sprint** (`con_fecha = true`): tareas restantes por día entre `fecha_inicio` y `fecha_fin` = total − terminadas hasta ese día; línea ideal recta de total a 0; proyección por **regresión lineal** de los días ya transcurridos (el cierre estimado es el primer día en que la recta llega a 0). Un sprint por empezar solo muestra la línea ideal. Un sprint cerrado se grafica con la **copia de sus tareas al cierre** (ver `reportes_sprint` en [Modelo de datos: tabla `sprints`](#modelo-de-datos-tabla-sprints)).
+- **Backlog** (`con_fecha = false`): restantes por día desde su primera tarea hasta hoy = creadas − terminadas (sube cuando entran tareas, baja cuando se cierran). Ritmo = tareas terminadas en las **últimas 4 semanas**; también se muestran las que entran por semana. Cierre estimado = restantes ÷ ritmo (sin ritmo: "Sin avance todavía"; sin restantes: "Terminado" con la fecha del último cierre).
+- **General**: no es un backlog guardado; es el avance de todo el proyecto = todas las tareas que están en algún sprint o backlog (cada una una vez), calculado como un backlog.
+- **Descartado**: la línea secundaria de "changesets hechos por día" de todo el repositorio no está en el frontend.
 
 ## Identidad de usuario
 
@@ -315,22 +341,34 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 
 - Al arrancar, el backend corre `cm whoami` (subproceso) y obtiene el email de la cuenta logueada (confirmado en pruebas reales: devuelve algo como `nombre@dominio.com`).
 - Ese email es el identificador del usuario dentro de BranchBoard — no hay contraseña, sesión propia, ni token que gestionar.
-- La tabla de usuarios en SQLite mapea **email (de `cm whoami`) → rol** (ver Roles y permisos). El admin asigna el rol a cada email conocido del equipo la primera vez; después de eso, cada persona que abre la app en su máquina queda identificada automáticamente.
+- La tabla de usuarios en SQLite mapea **email (de `cm whoami`) → rol** (ver Roles y permisos). Un Líder o el Administrador da de alta cada email del equipo con su rol desde [Usuarios](./FRONTEND.md#usuarios) (`crear_usuario`); después de eso, cada persona que abre la app en su máquina queda identificada automáticamente.
 - Requisito implícito: cada miembro del equipo ya debe tener el cliente de Unity Version Control instalado y con sesión iniciada (login por SSO/navegador, una sola vez) en su propia máquina — eso ya lo resuelve `cm`, BranchBoard no reimplementa nada de eso.
 - **Confirmado**: aunque todo el equipo comparte el mismo workspace de Unity Version Control, cada persona inicia sesión con su propia cuenta/correo — `cm whoami` sí distingue a cada usuario individualmente, no hay una cuenta compartida.
 - **Eliminar a alguien del equipo** (rol: Administrador o Líder, ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)) es tan simple como borrar su fila en la tabla de usuarios: como la identidad se valida contra esa tabla cada vez que se abre la app (no hay sesión persistente que revocar), la persona pierde el acceso **dentro de BranchBoard** de inmediato la próxima vez que intente entrar — su correo ya no aparecería registrado.
   - **Corregido — esto NO revoca su acceso a la carpeta de Drive/OneDrive del proyecto**, que es donde vive todo el dato real (`ops/` con el historial completo de eventos, y todos los `.db` locales de cada quien parten de ahí) — ese acceso lo administra Drive/OneDrive directamente, fuera del control de BranchBoard, y la app no tiene (ni debería tener, ver [Sin servicios en la nube propios](./ARQUITECTURA.md#decisiones-de-arquitectura-ya-tomadas)) forma de tocarlo por API. Alguien eliminado sigue pudiendo leer todo el historial y, en el peor caso, seguir escribiendo eventos si conserva el acceso. `eliminar_usuario` por sí solo **no es suficiente** para sacar a alguien del proyecto.
   - Mitigación: la confirmación de `eliminar_usuario` en la UI incluye un recordatorio explícito, no evitable — "recuerda quitarle a [persona] el acceso a la carpeta de Drive/OneDrive del proyecto; BranchBoard no puede hacerlo por ti" — para que quede como paso manual explícito en vez de una falsa sensación de que ya quedó resuelto.
 - **Actualizado (2026-11-02) — configuración automática, Administrador = dueño del repositorio**: BranchBoard detecta solo un proyecto de Unity VC sin `.db` y lo configura la primera vez que lo abre **el dueño del repositorio** (BranchBoard lo lee de Unity VC; comando `cm` exacto pendiente de verificar), que queda como **Administrador** y genera ahí las llaves de firma. Si lo abre otra persona antes, no se configura: se le avisa que espere a que lo abra su dueño. Así el Administrador nunca depende de quién llegó primero. Lo que sigue describe el diseño anterior, en que el dueño lo inicializaba a mano.
-- **Bootstrapping (primer usuario de un proyecto nuevo) — corregido**: quien inicializa un `.db` de BranchBoard por primera vez para un workspace de Unity VC (ver flujo en [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)) queda registrado con rol **Administrador**, no Líder. Es un cambio respecto al diseño anterior ("Líder, y el Admin se asigna después a mano"): con la [firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac), **solo un Administrador puede ejecutar los comandos que asignan/firman roles** (`asignar_rol`, `ascender_a_lider`) — si el primer usuario quedara como Líder, nunca existiría nadie que pudiera convertirlo (o a cualquier otro) en Administrador, y el proyecto quedaría sin ancla de confianza de forma permanente. En el mismo momento de la inicialización, el backend genera el par de llaves Ed25519 y firma esa primera fila como Administrador. Consistente con que en Unity Cloud el "Propietario" ya es la persona identificada aparte, ver [Usuarios semilla en SEGURIDAD.md](./SEGURIDAD.md#usuarios-semilla-equipo-virustf) — normalmente coincide con quien inicializa el proyecto.
-- **Quién necesita Unity Version Control instalado** — **corregido de nuevo, versión final**: en la práctica, **todos** los roles (incluido el colaborador de subtareas simples) necesitan tener `cm` instalado en su máquina. La diferencia real no es "instalado sí/no", sino **cuánto del proyecto se descarga**:
+- **Bootstrapping (primer usuario de un proyecto nuevo) — corregido**: quien inicializa un `.db` de BranchBoard por primera vez para un workspace de Unity VC (ver flujo en [FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)) queda registrado con rol **Administrador**, no Líder. Es un cambio respecto al diseño anterior ("Líder, y el Admin se asigna después a mano"): con la [firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac), **solo un Administrador puede ejecutar los comandos que asignan/firman roles** (hoy `cambiar_rol` y `crear_usuario`; los Líderes firman solo dentro de lo que pueden asignar) — si el primer usuario quedara como Líder, nunca existiría nadie que pudiera convertirlo (o a cualquier otro) en Administrador, y el proyecto quedaría sin ancla de confianza de forma permanente. En el mismo momento de la inicialización, el backend genera el par de llaves Ed25519 y firma esa primera fila como Administrador. Consistente con que en Unity Cloud el "Propietario" ya es la persona identificada aparte, ver [Usuarios semilla en SEGURIDAD.md](./SEGURIDAD.md#usuarios-semilla-equipo-virustf) — normalmente coincide con quien inicializa el proyecto.
+- **Quién necesita Unity Version Control instalado** — **corregido de nuevo, versión final**: en la práctica, **todos** los roles (incluido el Colaborador externo) necesitan tener `cm` instalado en su máquina. La diferencia real no es "instalado sí/no", sino **cuánto del proyecto se descarga**:
   - **Administrador, Líder, Desarrollador y Tester**: workspace **completo** — lo necesitan porque trabajan en Unity Editor (programar, modelar, etc.) o, en el caso del Tester, porque necesita **jugar/ejecutar el juego real** para encontrar errores, algo que ninguna interfaz de BranchBoard reemplaza.
-  - **Colaborador de subtareas simples** (alguien que solo sube un archivo puntual — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego): workspace **parcial**, ver [Workspace parcial (Gluon) para subtareas simples](#workspace-parcial-gluon-para-subtareas-simples) — nunca descarga el proyecto completo, solo la carpeta donde va su archivo.
-  - Para **todos** los roles sin excepción: identidad vía `cm whoami`, workspace vía `cm workspace list` (ver arriba, sin pedir carpeta a mano). Si `cm` no está instalado, ver [Instalación de Unity Version Control](#instalación-de-unity-version-control) más abajo — el botón de instalar ahora aplica a todos los roles, incluido el colaborador de subtareas simples.
+  - **Colaborador externo** (rol desde 2026-11-07; alguien que sube archivos puntuales — imagen, audio, video, animación, `.fbx` — y nunca necesita jugar ni programar el juego): workspace **parcial**, ver [Workspace parcial (Gluon) para subtareas simples](#workspace-parcial-gluon-para-subtareas-simples) — nunca descarga el proyecto completo, solo la carpeta donde va su archivo. Solo trabaja **tareas individuales** (ni grandes ni subtareas).
+  - Para **todos** los roles sin excepción: identidad vía `cm whoami`, workspace vía `cm workspace list` (ver arriba, sin pedir carpeta a mano). Si `cm` no está instalado, ver [Instalación de Unity Version Control](#instalación-de-unity-version-control) más abajo — el botón de instalar aplica a todos los roles.
+
+### Sesión de Unity VC desde la app, proyectos y salir (según el frontend)
+
+**Nuevo (2026-11-07)**. Lo que el frontend ya muestra en la [Pantalla inicial](./FRONTEND.md#autenticación--acceso-al-proyecto) y en el menú del proyecto (clic en el logo):
+
+- **"Iniciar sesión con Unity VC"**: si no hay sesión (`cm whoami` falla), la app abre el inicio de sesión **oficial de Unity en el navegador** (SSO); BranchBoard nunca ve ni guarda la contraseña. Al volver, se vuelve a correr `cm whoami`. Comando `iniciar_sesion_unity_vc()` (invoca el login de `cm`; comando exacto pendiente de verificar).
+- **"Cerrar sesión"** (menú del proyecto): cierra la sesión de Unity VC en esa máquina (`cerrar_sesion_unity_vc()`); la app queda en "No se detectó una sesión de Unity VC" y al volver a entrar pasa otra vez por el acceso al proyecto.
+- **"Tus proyectos"**: los workspaces locales que ya usan BranchBoard (`cm workspace list` + si tienen datos de BranchBoard); elegir uno entra a ese proyecto (`entrar_a_proyecto`).
+- **"Cargar proyecto"**: lista los repositorios del servidor de Unity VC a los que la persona tiene acceso y que todavía no están en ese equipo (`listar_proyectos_servidor()`, vía `cm repo list`), con la etiqueta "Con tareas" si ya usan BranchBoard. Elegir uno lleva a [Clonar proyecto](#clonar-proyecto-in-app).
+- **"Nuevo proyecto"**: (a) **traer** un proyecto de Unity VC que ya está en el equipo pero nunca se configuró con BranchBoard (se configura como dice [Identidad](#identidad-de-usuario)), o (b) **crear** uno nuevo: se crea su repositorio y su workspace en Unity VC (`crear_proyecto(nombre, carpeta)`, comandos `cm repo create` + `cm workspace create`) y quien lo crea queda como Administrador.
+- **"Salir de la app"**: cierra la ventana (respetando [Bloquear el cierre durante una operación](#bloquear-el-cierre-de-la-app-durante-una-operación)).
+- **Proyectos sin Unity VC ("Continuar sin Unity VC")**: el frontend permite **crear un proyecto local** (nombre del proyecto, tu nombre, tu correo y una contraseña de mínimo 8 caracteres; quedas como Administrador y único usuario, sin repositorio) o **abrir la carpeta de un proyecto local** existente. En el mockup la contraseña no se guarda. **Pendiente de definir para el backend** (choca con "sin login propio"): cómo se guarda y verifica esa contraseña (solo un hash, nunca el texto), cómo se trabajan las tareas sin ramas de Unity VC, si se puede sumar más gente a un proyecto local y si se puede conectar a Unity VC después.
 
 ## Instalación de Unity Version Control
 
-Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado (sin importar el rol — **corregido**, ya no se excluye al colaborador de subtareas simples, ver arriba), aparece un botón **"Instalar Unity Version Control"**.
+Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado (sin importar el rol — **corregido**, tampoco se excluye al Colaborador externo, ver arriba), aparece un botón **"Instalar Unity Version Control"**.
 
 - **Confirmado disponible en winget**: `winget install --id Codice.PlasticSCM.CloudEdition -e --accept-package-agreements --accept-source-agreements` — instala el cliente completo, que trae `cm` incluido (y con él, el modo Gluon para workspace parcial).
 - Mismo fallback que WARP: si `winget` falla o no está disponible, el botón abre la página oficial de descarga de Unity Version Control en el navegador.
@@ -340,7 +378,7 @@ Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-clo
 
 **Decisión final** (reemplaza el intento anterior de API REST + Service Account, descartado — ver nota abajo): Unity Version Control tiene un modo llamado **Gluon**, diseñado oficialmente para artistas que necesitan trabajar con archivos grandes sin descargar ni gestionar el proyecto completo. Trae su propio soporte de CLI: **`cm partial`** (`cm partial add`, `cm partial checkin`, etc.), así que el backend lo puede manejar por subproceso exactamente igual que el resto de comandos `cm` — el colaborador nunca necesita abrir una interfaz aparte.
 
-- El colaborador de subtareas simples instala Unity Version Control (mismo botón de winget que todos, ver arriba) — es liviano, no implica tener Unity Editor.
+- El Colaborador externo instala Unity Version Control (mismo botón de winget que todos, ver arriba) — es liviano, no implica tener Unity Editor. **Según el frontend**, trabaja solo **tareas individuales** (sin subtareas y que no sean subtarea de otra); el nombre de esta sección ("subtareas simples") viene del diseño anterior.
 - **Definido**: la carpeta a descargar no la calcula el backend en automático — **el propio colaborador la elige**, desde un selector con las mismas categorías de [Categorías en PLANNING.md](./PLANNING.md#pantallas--tableros-del-mvp): Audio, Modelado 3D, Modelado 2D, Imagen, Animación, Música, Video, UI/Interfaz (Scripting y Testing no aplican a este perfil, no son subtareas simples de archivo). El backend crea/usa un **workspace parcial** con `cm partial` scopeado solo a esa carpeta elegida — nunca descarga el proyecto completo, y solo trae la categoría en la que la persona va a trabajar, ni siquiera las demás carpetas de assets.
 - **Identidad: vuelve a ser `cm whoami`, igual que todos los demás roles.** No hace falta ninguna Service Account, ni API REST, ni llave cifrada compartida, ni contraseña de equipo — todo ese diseño queda descartado (ver nota abajo).
 - Esto también evita por completo el problema que motivó la idea de la Service Account: como cada colaborador usa su propia cuenta real (no una cuenta de servicio), no choca con ninguna limitación de permisos de Unity Cloud.
@@ -383,13 +421,14 @@ Para roles técnicos sin workspace todavía (ver [Instalación de Unity Version 
 1. El frontend abre el selector de carpetas nativo de Tauri (diálogo del sistema operativo) para elegir dónde clonar
 2. Comando Tauri `clonar_proyecto(ruta_destino)`: corre `cm workspace create` + el checkout correspondiente como subproceso, mostrando progreso
 3. Al terminar, dispara el mismo flujo de `cm workspace list` para que ese workspace nuevo aparezca disponible en la Pantalla inicial
+4. **Según el frontend**: se llega aquí desde la Pantalla inicial (si no hay ningún workspace) o desde "Cargar proyecto". El frontend muestra una barra de progreso y, si el proyecto ya usa BranchBoard, llega con sus tareas.
 
 ## Comando "Abrir en Unity"
 
 Botón visible dentro de la app una vez hay un proyecto cargado (ver [Panel "Abrir en Unity" en FRONTEND.md](./FRONTEND.md#autenticación--acceso-al-proyecto)), solo para roles con workspace local.
 
-- Comando Tauri `abrir_en_unity()`: lanza el Editor de Unity (o Unity Hub) apuntando a la ruta del workspace, vía su propio CLI — mismo patrón de invocar un ejecutable externo ya usado con `cm` y `warp-cli`.
-- **Definido**: al tomar/asignar una tarea, justo después del [auto-switch](#alcance) (`cm switch` a la rama nueva), el modal de confirmación ofrece un botón **"Abrir en Unity"** ahí mismo — la persona no tiene que ir a buscar el ícono de Unity Hub/Editor por su cuenta, ya con el workspace apuntando a la rama correcta. Sigue siendo opcional (algunas tareas simples de un Desarrollador pueden no requerir abrir el Editor de inmediato), pero queda a un clic en el momento justo en que más se necesita.
+- Comando Tauri `abrir_en_unity(tarea_id, rama, changeset?)`: cambia el workspace a esa rama (`cm switch`, o a un changeset concreto si se pide) y lanza el Editor de Unity (o Unity Hub) apuntando a la ruta del workspace, vía su propio CLI — mismo patrón de invocar un ejecutable externo ya usado con `cm` y `warp-cli`. Es local a la máquina, no pasa por `ops/`.
+- **Según el frontend (2026-11-07)**: el botón de la barra superior abre el panel **"¿Qué tarea vas a trabajar en Unity?"** con el nombre y rol de quien lo usa, la rama en la que está el workspace (**nunca `dev`**; si no está en ninguna tarea, "No estás en ninguna tarea") y sus **tareas abiertas** (asignadas a él, no terminadas). También hay "Abrir en Unity" en los detalles de una tarea, en cada check-in (abre ese changeset) y en la pantalla de éxito al tomar una tarea. El backend tiene que exponer la rama actual del workspace (`rama_actual_workspace()`, de `cm status --header`).
 - Pendiente definir: comando exacto del CLI de Unity Hub para abrir un proyecto por ruta (verificar al implementar), y qué pasa si Unity Editor no está instalado (¿mismo patrón de "Instalar" con winget, o simplemente un mensaje de error?).
 
 ## Conexión VPN (Cloudflare WARP)
@@ -416,7 +455,7 @@ Ver matriz completa en [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos). Resumen:
 
 ## Notificaciones
 
-Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea relacionada (opcional), leída/no leída, fecha. Casi todos estos casos disparan mensaje **automático**, sin acción manual de quien los envía más allá de la acción que los origina (aprobar, rechazar, asignar, etc.) — las excepciones son el punto 10 (mover cambios entre ramas de distintas personas) y el punto 12 (advertir sobre una tarea pendiente), que sí piden contenido escrito a mano.
+Tabla `notificaciones` en SQLite, con los campos del frontend: `id`, `tipo`, `para` (email destinatario), `titulo`, `cuerpo`, `leida`, `fecha`, `tarea_id` (opcional) y `accionable` (si ofrece un botón de acción directa, ej. aprobar). Tipos (los del frontend): `aprobacion_tarea` (#1), `tarea_rechazada` (#2), `tarea_asignada` (#3), `edicion_pendiente` (#4), `tarea_a_revision` (#5), `revision_asignada` (#6), `mensaje` (#7), `inactividad` (#8), `accion_bd` (#9), `mover_cambios` (#10), `editada_aprobada` (#11), `advertencia` (#12), `tarea_eliminada` (#13) y `tarea_reabierta` (#15). Casi todos estos casos disparan mensaje **automático**, sin acción manual de quien los envía más allá de la acción que los origina (aprobar, rechazar, asignar, etc.) — las excepciones son el punto 10 (mover cambios entre ramas de distintas personas) y el punto 12 (advertir sobre una tarea pendiente), que sí piden contenido escrito a mano.
 
 **Aclarado**: todas las notificaciones de esta lista son **100% internas a la app** (campana + tabla SQLite) — no se manda ningún correo real por revisión, tareas o permisos. **Actualizado (2026-11-07)**: ya no hay ningún caso que use correo (solicitar ingreso por `mailto:` pasó a la versión 2, issue #57).
 
@@ -425,16 +464,18 @@ Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea rel
    - `editar_y_aprobar_tarea(tarea_id, campos_editados)` — modifica los campos de la tarea y pone `pendiente_aprobacion = false` en la misma operación (un solo comando, no dos). Genera la notificación #11.
    - `advertir_tarea_pendiente(tarea_id, mensaje)` — no toca ningún campo de la tarea (`pendiente_aprobacion` sigue en `true`), solo genera la notificación #12 con el mensaje escrito a mano por quien la envía.
    - `eliminar_tarea(tarea_id, justificacion)` — mismo comando ya descrito en [Eliminar una tarea](#eliminar-una-tarea), manda la tarea a Papelera.
-   - **Definido**: mientras `pendiente_aprobacion = true`, el creador (Desarrollador/Tester) puede editar su propia tarea libremente con un `editar_tarea(tarea_id, campos_editados)` normal (sin aprobación de por medio, ya que la aprobación la da otra persona) — la excepción a la regla del punto 4 de esta lista ("necesita autorización explícita para modificar"), que solo aplica una vez la tarea ya fue aprobada.
-2. **Tarea rechazada** — destinatario: el Desarrollador que la creó/tomó. Comando Tauri nuevo `rechazar_tarea(tarea_id, motivo)` (Líder/Admin), simétrico a `aprobar_tarea`. El motivo queda guardado y se muestra en la notificación.
+   - **Definido**: mientras `pendiente_aprobacion = true`, el creador (Desarrollador/Tester) puede editar su propia tarea libremente desde Pendientes ("Editar" → "Guardar") con un `editar_tarea(tarea_id, campos_editados)` normal (sin aprobación de por medio, ya que la aprobación la da otra persona).
+   - **Según el frontend**: "Aprobar" pide escribir **"aprobar"**; `aprobar_tareas(tarea_ids)` aprueba varias a la vez ("Marcar todo como revisado"). "Rechazar" es `eliminar_tarea` con justificación (palabra "rechazar"). Lo que crea un Colaborador externo también queda pendiente de aprobación, igual que lo de un Desarrollador o Tester.
+2. **Tarea rechazada en revisión** — destinatario: el responsable de la tarea (`asignado_a`). Comando `rechazar_revision(tarea_id, motivo)` (Líder/Admin; en "Tareas pequeñas", quien está a cargo de la tarea padre). La tarea vuelve a "en producción", el motivo queda en `motivo_rechazo` y se muestra en la notificación. (Antes se llamaba `rechazar_tarea`.)
 3. **Tarea asignada directamente por Administrador/Líder a un Desarrollador** — destinatario: ese Desarrollador. Comando Tauri nuevo `asignar_tarea(tarea_id, email_destinatario)` (solo Administrador/Líder) — a diferencia de "tomar tarea" (autoasignación), aquí alguien más asigna la tarea. Crea la rama igual que "tomar tarea" lo hace hoy.
-4. **Solicitud de autorización para modificar una tarea** — **corregido, flujo invertido**: no es el Líder/Admin quien inicia esto — el **Desarrollador dueño de una tarea ya aprobada** (fuera de Pendientes, en su curso normal) la edita directamente con `editar_tarea_con_autorizacion(tarea_id, campos_nuevos, motivo?)`. Los valores nuevos se aplican **de inmediato** a la tarea (no espera nada para reflejarse), pero queda marcada con una **bandera visual de "edición pendiente"** (sombra amarilla bajo la tarjeta, ver [FRONTEND.md](./FRONTEND.md#alcance)) hasta que un Líder/Administrador la resuelva. También aparece listada en [Pendientes](./PLANNING.md#pendientes), junto a las tareas nuevas esperando aprobación (distinguidas por tipo: "nueva" vs. "edición").
+4. **Edición pendiente de una tarea** — **actualizado (2026-11-07, según el frontend)**: desde los detalles de una tarea, **cualquier usuario** puede editar su **título y detalles**, pero **solo mientras está en "Sin asignar" o "Por hacer"** (desde que alguien la toma ya tiene rama en Unity VC). Comando `proponer_edicion(tarea_id, titulo, detalles)` (reemplaza a `editar_tarea_con_autorizacion`). Los valores nuevos se aplican **de inmediato**, pero la tarea queda marcada con **"edición pendiente"** (sombra amarilla bajo la tarjeta, ver [FRONTEND.md](./FRONTEND.md#alcance)) hasta que un Líder/Administrador la resuelva, y se notifica a todo Líder/Administrador (`edicion_pendiente`, accionable). Aparece en [Pendientes](./PLANNING.md#pendientes) con la etiqueta "Edición", mostrando lo anterior y lo nuevo campo por campo.
    - Antes de aplicar los cambios, el comando guarda una fila en la nueva tabla `ediciones_pendientes` (ver [Modelo de datos](#modelo-de-datos-tabla-ediciones_pendientes)) con los **valores anteriores** de los campos tocados — necesarios para poder revertir si se rechaza.
-   - **`aprobar_modificacion(tarea_id)`** (Líder/Admin): borra la fila de `ediciones_pendientes` — los valores nuevos quedan como definitivos, desaparece la sombra amarilla y sale de Pendientes.
-   - **`rechazar_modificacion(tarea_id, motivo?)`** (Líder/Admin): **restaura los campos de la tarea a los valores guardados en `campos_anteriores`** (el cambio se pierde), borra la fila de `ediciones_pendientes`, y notifica al Desarrollador que su edición fue rechazada.
-   - **Comando faltante, ahora definido**: la matriz de [Roles y permisos en SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos) ya listaba "Modificar tareas de otros ✅ Administrador/Líder", pero no existía un comando Tauri para eso — todo lo anterior en este punto 4 es para el **dueño** editando su propia tarea. Se agrega **`editar_tarea_ajena(tarea_id, campos_editados)`**, exclusivo Administrador/Líder, válido sobre **cualquier tarea sin importar quién sea el dueño**: aplica los cambios de inmediato y **sin pasar por `ediciones_pendientes`** (a diferencia de `editar_tarea_con_autorizacion`) — al ser quien normalmente aprobaría la edición, no tiene sentido que se autoconfirme a sí mismo. Genera la notificación #14 al dueño de la tarea.
+   - **`aprobar_modificacion(tarea_id)`** (Líder/Admin, palabra **"aprobar"**): borra la fila de `ediciones_pendientes` — los valores nuevos quedan como definitivos, desaparece la sombra amarilla y sale de Pendientes. `aprobar_modificaciones(tarea_ids)` hace lo mismo con varias a la vez ("Marcar todo como revisado").
+   - **`rechazar_modificacion(tarea_id)`** (Líder/Admin, palabra **"rechazar"**): **restaura los campos de la tarea a los valores guardados en `campos_anteriores`** (también unos detalles anteriores vacíos), borra la fila de `ediciones_pendientes`. Notificar al autor del rechazo queda pendiente (el frontend hoy no lo hace).
+   - **Una sola edición pendiente por tarea**: si se vuelve a editar una tarea que ya tiene una pendiente, los cambios se **suman a la misma fila**, conservando los valores anteriores **originales** (los que se restauran si se rechaza).
+   - **`editar_tarea_ajena` (sin pantalla en el mockup)**: el frontend no tiene una edición directa sin aprobación para Líder/Administrador; hoy toda edición desde los detalles pasa por edición pendiente, y la notificación #14 no existe en el frontend. Queda **pendiente de decidir** si se agrega.
 5. **Tarea llega a "en revisión"** — destinatarios: todos los usuarios con rol Líder o Administrador (no solo que aparezca en el apartado [Revisión](./PLANNING.md#revisión) — también genera notificación en la campana).
-6. **Revisión asignada a un Líder específico** — destinatario: ese Líder. Generada por `asignar_revision(tarea_id, email_lider)` (solo Administrador). Mensaje tipo "se te asignó revisar [tarea]".
+6. **Revisión asignada a un Líder específico** — destinatario: ese Líder. Generada por `asignar_revision(tarea_id, email_lider)` (Líder o Administrador si la tarea no tenía revisor; solo el Administrador si ya tenía). Mensaje tipo "se te asignó revisar [tarea]".
 7. **Mensaje de un compañero** (nuevo 2026-11-07) — destinatario: la persona elegida en `enviar_mensaje`. Tipo `mensaje`, título "Mensaje de [nombre]", cuerpo = el texto. No es un chat; viaja como cualquier otra notificación.
 8. **Recordatorio de inactividad en Unity Version Control**: si una tarea con rama (Scripting u otra tarea general) no tiene **changesets nuevos** en un tiempo determinado, se le manda al Desarrollador dueño un recordatorio del tipo "llevas X días sin actividad en [tarea], recuerda [qué le toca hacer]". Se apoya en el mismo mecanismo de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) (`cm log br:/<rama> --xml`), pero a diferencia del polling manual por "Refrescar", **este caso sí necesita revisarse solo, sin que nadie le dé clic a nada** — implica correr esta revisión con un temporizador mientras la app está abierta (ej. cada N horas), no solo bajo demanda. Pendiente definir: el umbral de tiempo exacto (¿3 días? ¿configurable por Líder/Admin?), y si esto corre también para subtareas simples.
 9. **Solicitud de acción sobre la base de datos** — un Líder o Desarrollador que detecta un problema (ej. datos raros, algo se ve corrupto) no puede actuar directamente sobre la BD, así que le manda una notificación a **todos los Administradores** pidiendo que revisen/restauren. Comando Tauri `solicitar_accion_bd(motivo)`, disponible para Líder y Desarrollador (no para Tester, que no tiene relación con el ciclo de tareas/BD del equipo). El `motivo` escrito queda en el mensaje de la notificación para que el Admin sepa qué está pasando antes de actuar.
@@ -442,11 +483,12 @@ Tabla `notificaciones` en SQLite: destinatario (email), tipo, mensaje, tarea rel
 11. **Tu tarea pendiente fue editada y aprobada** — destinatario: el Desarrollador/Tester que creó la tarea. Generada por `editar_y_aprobar_tarea(tarea_id, campos_editados)` (ver punto 1). Automática — el mensaje puede armarse solo listando qué campos cambiaron.
 12. **Advertencia sobre tu tarea pendiente** — destinatario: el Desarrollador/Tester que creó la tarea. Generada por `advertir_tarea_pendiente(tarea_id, mensaje)` (ver punto 1). **No es automática**, igual que el punto 10: el Líder/Admin escribe el mensaje a mano explicando qué está mal — la tarea sigue pendiente, sin cambios, para que el creador la corrija él mismo.
 13. **Tu tarea fue eliminada** — destinatario: el **creador** de la tarea (aplica a cualquier `eliminar_tarea`, no solo a un rechazo desde Pendientes — ver [Eliminar una tarea](#eliminar-una-tarea)). Automática: usa la misma `justificacion` que ya se escribe para el doble candado como contenido del mensaje, no pide texto aparte.
-14. **Un Administrador/Líder editó tu tarea directamente** — destinatario: el dueño de la tarea (Desarrollador/Tester). Generada por `editar_tarea_ajena(tarea_id, campos_editados)` (ver punto 4). Automática — a diferencia del punto 11/12, aquí no hay bandera de "edición pendiente" ni acción posterior que tomar: el cambio ya quedó definitivo, el mensaje solo informa qué campos cambiaron y quién lo hizo.
+14. **Un Administrador/Líder editó tu tarea directamente** — **sin pantalla en el mockup**: depende de `editar_tarea_ajena`, que el frontend no tiene (ver punto 4).
+15. **Una tarea terminada se reabrió** (`tarea_reabierta`, nuevo 2026-11-07) — destinatarios: todos los Líderes y Administradores. Generada por `reabrir_tarea(tarea_id, motivo)`; el cuerpo incluye la reapertura (n/3) y el motivo (ver [Estados, progreso y reaperturas](#estados-progreso-y-reaperturas)).
 
-Nota: el **merge fallido por conflicto** no genera un tipo de notificación nuevo — se maneja con una alerta síncrona en pantalla para el Líder/Admin en el momento, y si decide enviarla a corregir, reutiliza el caso 2 (`rechazar_tarea`). Ver detalle completo en [Flujo de revisión y merge a `dev`](#flujo-de-revisión-y-merge-a-dev).
+Nota: el **merge fallido por conflicto** no genera un tipo de notificación nuevo — se maneja con una alerta síncrona en pantalla para el Líder/Admin en el momento, y si decide enviarla a corregir, reutiliza el caso 2 (`rechazar_revision`). Ver detalle completo en [Flujo de revisión y merge a `dev`](#flujo-de-revisión-y-merge-a-dev).
 
-Comando Tauri expuesto al frontend: `obtener_notificaciones()` (para el ícono de campana con contador) y `marcar_leida(notificacion_id)`.
+Comandos Tauri expuestos al frontend: `obtener_notificaciones()` (para el ícono de campana con contador), `marcar_leida(notificacion_id)`, `desmarcar_leida(notificacion_id)` y `marcar_todas_leidas()` (las tres son locales, ver [Sincronización](#sincronización-entre-máquinas-arquitectura-de-eventos)).
 
 Pendiente definir: si además de la campana in-app, estas notificaciones también disparan una notificación nativa de escritorio del sistema operativo (Tauri lo soporta) para que lleguen aunque la app esté minimizada.
 
@@ -460,7 +502,35 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 - `eliminar_usuario(email)` — Administrador: cualquiera; Líder: Desarrolladores y Colaboradores externos.
 - `confirmar_usuario(email)` — exclusivo Administrador; ahora solo hace falta para filas **sin firma** (escritas a mano o anteriores a este cambio), ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto).
 - `renombrar_proyecto(nombre)` — exclusivo Administrador; cambia el nombre en BranchBoard (clave `nombre_proyecto` en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto)), no el repositorio de Unity VC.
-- `enviar_mensaje(para, texto)` — todos los roles; crea una notificación de tipo `mensaje` para `para` (máx. 500 caracteres).
+- `enviar_mensaje(para, texto)` — todos los roles; crea una notificación de tipo `mensaje` para `para` (máx. 500 caracteres). Es un aviso suelto desde el perfil, distinto del [Chat](#chat).
+- `solicitar_accion_bd(motivo)` — Líder y Desarrollador (botón "Reportar problema con la base de datos" en Ajustes); notifica a todos los Administradores (notificación #9).
+- `eliminar_proyecto()` — exclusivo Administrador, palabra = **el nombre exacto del proyecto**; ver [Verificación adicional sobre Unity Version Control](#verificación-adicional-sobre-unity-version-control-para-eliminar-el-proyecto).
+- **Según el frontend**: crear usuario devuelve error si el correo ya existe (sin distinguir mayúsculas); el nombre y apellido salen del correo (`ana.lopez@…` → "Ana" "Lopez"). Eliminar usuario pide escribir **"eliminar"**. `renombrar_proyecto` rechaza un nombre igual al de otro proyecto del mismo equipo.
+
+## Documentos del proyecto
+
+**Nuevo (2026-11-07, según el frontend)** — ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos). Archivos del proyecto (no versionados en Unity VC) que se guardan en la carpeta compartida del proyecto (ej. `proyecto/documentos/`) y viajan por Drive/OneDrive como el resto.
+
+- `subir_documentos(archivos)` — todos los roles. Lo que sube un Líder o Administrador queda publicado; lo que sube cualquier otro rol queda **pendiente** (sale en [Pendientes](./PLANNING.md#pendientes) y con un punto en el menú). Mismas reglas de [validación de rutas](#validación-de-rutas-de-archivoadjuntos-resuelto-previene-path-traversal): el backend genera su propio nombre de archivo y guarda el original solo como dato.
+- `aprobar_documento(id)` — Líder/Administrador (visto bueno a un documento pendiente).
+- `eliminar_documento(id)` — Líder/Administrador.
+- `abrir_documento(id)` — todos los roles; abre el archivo con la aplicación del sistema (local, no pasa por `ops/`).
+- Tabla `documentos`: `id`, `nombre` (el original), `tamano` (bytes), `subido_por` (email), `fecha`, `pendiente` (booleano) y la ruta interna del archivo.
+
+## Chat
+
+**Nuevo (2026-11-07, según el frontend)** — ver [FRONTEND.md → Chat](./FRONTEND.md#chat). Sin servidor: cada mensaje viaja como un evento por `ops/` (llega cuando sincroniza Drive/OneDrive, con la app abierta).
+
+- **Conversaciones**: el **grupo general** (id fijo `grupo`, se llama como el proyecto, están todos; siempre existe), los **grupos** que cree el equipo y los **privados** entre dos personas.
+- `enviar_chat(para, texto)` — `para` es un email (privado), `grupo` (general) o el id de un grupo. Quien lo envía ya lo cuenta como leído.
+- `crear_grupo_chat(nombre, miembros)` — todos los roles; quien lo crea queda dentro.
+- `marcar_chat_leido(conversacion)` — local: marca como leídos los mensajes de esa conversación para quien lo invoca.
+- `eliminar_chat(conversacion)` — local y solo para quien lo invoca: guarda desde cuándo la eliminó y deja de ver los mensajes anteriores; si llega uno nuevo, la conversación vuelve a aparecer solo con ese.
+- Tablas: `mensajes_chat` (`id`, `de`, `para`, `texto`, `fecha`), `grupos_chat` (`id`, `nombre`, `miembros`, `creado_por`, `fecha`); locales por usuario: los leídos de cada mensaje y `chats_eliminados` (conversación → desde cuándo). En el menú, el número del Chat cuenta **conversaciones** con algo sin leer, no mensajes.
+
+## Puntos de aviso del menú
+
+**Nuevo (2026-11-07, según el frontend)** — ver [FRONTEND.md → Navegación general](./FRONTEND.md#navegación-general). Cada pantalla tiene una **huella** de sus datos (ej. Usuarios: correo y rol de cada uno; Scrum/Lista: id, estado, responsable, título y aprobación de cada tarea). Si la huella cambió desde la última vez que la persona entró, se enciende el punto; al entrar se guarda la huella vista (`marcar_visto(panel, huella)`). Es **local por usuario** (no pasa por `ops/`); el backend solo tiene que darle al frontend los datos para calcularla y guardar la huella vista.
 
 ## Imagen del proyecto
 
@@ -472,7 +542,7 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 
 **Restaurar backup** — **exclusivo del Administrador** (ver [SEGURIDAD.md](./SEGURIDAD.md#roles-y-permisos)):
 - Comando Tauri `listar_backups()` (lista las copias disponibles con fecha) y `restaurar_backup(nombre_archivo)`, ambos validados para que solo un Administrador los invoque.
-- Dado lo delicado de la acción (descarta todo lo escrito después del backup elegido), usa el mismo patrón de doble candado que [eliminar una tarea](#eliminar-una-tarea): confirmación + escribir una palabra literal antes de habilitar el botón (palabra exacta pendiente de definir en frontend).
+- Dado lo delicado de la acción (descarta todo lo escrito después del backup elegido), usa el mismo patrón de doble candado que [eliminar una tarea](#eliminar-una-tarea): confirmación + escribir la palabra **"restaurar"** (definida en el frontend) antes de habilitar el botón. Cada copia muestra fecha, tamaño y, si es la que se guardó al restaurar otra, su nota.
 - **Actualizado (2026-11-07) — "Actual" y guardar antes de restaurar**: la lista siempre muestra arriba la base en uso como **"Actual"** (fecha de hoy, no restaurable). `restaurar_backup` primero copia el `.db` actual como un backup más (con nota "Guardada antes de restaurar la copia del …") y luego aplica el elegido, así siempre se puede volver al estado anterior. Esa copia previa no cuenta para el límite de 10 hasta que se restaure otra.
 - Un Líder o Desarrollador que detecte un problema no puede restaurar directamente — le llega a los Administradores vía la notificación **"Solicitud de acción sobre la base de datos"** (ver [Notificaciones](#notificaciones), punto 9).
 
@@ -499,9 +569,9 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
   1. Quien va a ser Administrador corre `generar_llaves_admin()` **una sola vez**, en un modo de configuración/build previo a distribuir la app (la misma persona técnica que arma el build para el equipo — coherente con que ya es quien inicializa el proyecto, ver [Bootstrapping](#identidad-de-usuario)).
   2. La **llave pública** resultante se escribe en un archivo de configuración del proyecto que el proceso de build de Tauri incluye como constante embebida (`include_str!`/`env!` en tiempo de compilación) en el binario que se empaqueta y distribuye a **todo el equipo de ese proyecto específico** — de ahí que "todos los clientes la traen igual": es la misma build, no que cada instalación genere o descubra la llave por su cuenta.
   3. La **llave privada** nunca entra a ese paso de build — se guarda **fuera de la carpeta sincronizada por Drive/OneDrive** (ej. `%LocalAppData%\BranchBoard\admin.key`, solo en la máquina del Administrador) y nunca viaja por la nube.
-     - **Protección en reposo (resuelto)**: por defecto, `admin.key` queda protegida solo por los permisos del sistema operativo (en Windows, el archivo hereda los permisos del perfil de usuario — otros usuarios de esa máquina no pueden leerlo). Es la misma base de confianza que ya usan llaves SSH/GPG típicas en una máquina de desarrollo — comprometer el perfil del Administrador implica comprometer la llave de todas formas. Se ofrece además un **modo opcional recomendado**: cifrar `admin.key` en reposo con la misma passphrase que ya usa `exportar_llave_firma(passphrase)` — al activarlo, cada operación que firma (`asignar_rol`, `cambiar_rol`, etc.) pide la passphrase la primera vez por sesión de la app y la mantiene solo en memoria (nunca en disco) mientras esa sesión sigue abierta. Queda como opción, no obligatorio, para no forzarle a un equipo chico una fricción diaria que quizás no quiere.
+     - **Protección en reposo (resuelto)**: por defecto, `admin.key` queda protegida solo por los permisos del sistema operativo (en Windows, el archivo hereda los permisos del perfil de usuario — otros usuarios de esa máquina no pueden leerlo). Es la misma base de confianza que ya usan llaves SSH/GPG típicas en una máquina de desarrollo — comprometer el perfil del Administrador implica comprometer la llave de todas formas. Se ofrece además un **modo opcional recomendado**: cifrar `admin.key` en reposo con la misma passphrase que ya usa `exportar_llave_firma(passphrase)` — al activarlo, cada operación que firma (`crear_usuario`, `cambiar_rol`, `confirmar_usuario`) pide la passphrase la primera vez por sesión de la app y la mantiene solo en memoria (nunca en disco) mientras esa sesión sigue abierta. Queda como opción, no obligatorio, para no forzarle a un equipo chico una fricción diaria que quizás no quiere.
   - **Consecuencia asumida**: cada proyecto nuevo de BranchBoard tiene su propio par de llaves y, en sentido estricto, su propia build del binario (aunque el código fuente sea el mismo). Regenerar las llaves (ej. llave privada perdida sin respaldo) implica recompilar y redistribuir el instalador al equipo, no solo un cambio de datos.
-- Cada vez que se asigna o cambia un rol — `asignar_rol(email, rol)`, `cambiar_rol(email, rol)`, `confirmar_usuario(email)` (ver abajo) — el backend, corriendo en la máquina del Administrador, firma el mensaje `email|rol|firmado_en` con la llave privada y guarda `rol`, `firma` y `firmado_en` en la fila correspondiente de `usuarios`.
+- Cada vez que se asigna o cambia un rol — `crear_usuario(email, rol)`, `cambiar_rol(email, rol)`, `confirmar_usuario(email)` (ver abajo; `asignar_rol` ya no existe) — el backend, corriendo en la máquina del Administrador, firma el mensaje `email|rol|firmado_en` con la llave privada y guarda `rol`, `firma` y `firmado_en` en la fila correspondiente de `usuarios`.
 - **Al leer la tabla `usuarios`** (arranque de la app, cualquier chequeo de permisos), el backend recalcula la firma esperada con la llave pública embebida y la compara contra `firma`. Hay tres estados posibles, no dos:
   - **Firma presente y coincide** → rol de confianza, se aplica tal cual.
   - **Firma presente pero NO coincide** (fila editada a mano fuera de la app, o campos `rol`/`firmado_en` alterados) → **no confiable**: el usuario se degrada al rol mínimo (Desarrollador) y la UI muestra un aviso de "rol no verificado — posible modificación manual del archivo".
@@ -527,7 +597,7 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
 **Resuelto** (decisión del usuario: mantener la capacidad de alta del Líder tal como está, sin restringirla al Administrador):
 - `crear_usuario` (o `cambiar_rol` hecho por un Líder) escribe la fila en `usuarios` **de inmediato**, con el rol elegido pero `firma = NULL`, `firmado_en = NULL` — sin pedirle nada extra a quien crea el usuario.
 - Esa persona **no puede entrar a BranchBoard todavía**: la [Pantalla inicial](./FRONTEND.md#autenticación--acceso-al-proyecto) reutiliza la misma pantalla de "tu cuenta no está registrada en este proyecto todavía", con el mensaje ajustado a "tu cuenta fue agregada por [quien la dio de alta], está pendiente de que el Administrador la confirme".
-- Nuevo comando `confirmar_usuario(email)`, **exclusivo Administrador**: firma la fila (mismo mecanismo que `asignar_rol`) — a partir de ahí la persona ya puede entrar con el rol que le asignaron.
+- Nuevo comando `confirmar_usuario(email)`, **exclusivo Administrador**: firma la fila (mismo mecanismo que `cambiar_rol`) — a partir de ahí la persona ya puede entrar con el rol que le asignaron.
 - Aparece listado en [Usuarios](./FRONTEND.md#usuarios) con una etiqueta **"Pendiente de confirmar"**, visible para el Administrador con el botón `confirmar_usuario`, y visible (solo lectura) para el Líder que la dio de alta, para que sepa que todavía no tiene efecto real.
 - **Trade-off asumido**: alguien dado de alta por un Líder no puede empezar a trabajar hasta que el Administrador confirme, aunque sea de forma asíncrona (no tiene que ser inmediato/en vivo). Para un equipo de 3 personas donde el Administrador está normalmente disponible, es un costo bajo a cambio de mantener el punto único de firma que es el eje de todo C1.
 
@@ -572,12 +642,14 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `id` | — | identificador único |
 | `titulo` | texto | |
 | `detalles` | texto | **reemplaza a `descripcion`** (2026-10-31): texto opcional, puede ser largo — qué hay que hacer, los pasos, dónde está cada cosa. Vacío si no hay (la interfaz muestra "Sin detalles."). Se escribe al crear la tarea (general o subtarea) y se puede editar |
-| `tipo` | enum | Scripting / Modelado 3D / Modelado 2D / Animación / Imagen / UI-Interfaz / Audio / Música / Video (**corregido**: antes eran 6 valores y no cubrían los 9 tipos reales usados por [Categorías](./PLANNING.md#alcance) y [Pre-revisión](./PLANNING.md#pre-revisión) — Modelado se separó en 2D/3D, y se agregaron UI/Interfaz y Audio como valores propios) |
+| `tipo` | enum | **Actualizado (2026-11-07, según el frontend)**: Scripting / Modelado 3D / Modelado 2D / Animación / Imagen / UI/Interfaz / Audio / Música / Video / Testing / Corrección / Ajustes, más el valor interno **Sin definir** (solo la subtarea "En espera") |
 | `tarea_padre_id` | nullable | si es subtarea (rama hija); `null` si es tarea general |
-| `archivo_ruta` | nullable | solo subtareas simples: ruta del archivo dentro del workspace de Unity VC |
+| `archivo_ruta` | nullable | solo tareas de archivo puntual (Colaborador externo): ruta del archivo dentro del workspace de Unity VC |
 | `estado` | enum | por hacer / en producción / en revisión / terminada (**corregido**: ya no incluye "bloqueada", ver `pendiente_aprobacion`) |
 | `pendiente_aprobacion` | booleano | `true` si la creó un Desarrollador o Tester y todavía no la aprueba un Líder/Admin (ver [Pendientes en PLANNING.md](./PLANNING.md#pendientes)) — `false` de entrada si la crea Líder/Admin. Es independiente de `estado`: mientras es `true`, el único efecto es que `mandar_a_revision` la rechaza; no impide tomarla ni crearle rama. |
-| `rama_asociada` | nullable | `null` hasta que alguien "toma" la tarea |
+| `rama_asociada` | nullable | `null` hasta que alguien "toma" la tarea; formato `task/<id>-<nombre>` |
+| `modo_trabajo` | `'rama'`, nullable | `'rama'` desde que se tomó (ya tiene su rama). Ya no existen tareas de check-in directo |
+| `fecha_creacion` | fecha (AAAA-MM-DD) | **nuevo**: se pone sola al crear la tarea, con la fecha **local** del equipo (no UTC); no se edita. La usan las gráficas de backlog |
 | `ultimo_changeset_visto` | nullable | para el polling de [Detección de cambios](#detección-de-cambios-en-unity-version-control-polling) |
 | `modificada` | booleano | badge de "hay cambios nuevos" (ver polling) |
 | `creado_por` | email | quien creó la tarea |
@@ -590,7 +662,9 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `fecha_completada` | nullable | usada para la [gráfica de Avance](#datos-para-la-gráfica-de-avance) |
 | `eliminada` | booleano | **soft-delete** (ver [Eliminar una tarea](#eliminar-una-tarea)) — mientras es `true` la tarea vive en [Papelera](#papelera); `eliminar_definitivamente` sí borra la fila por completo después |
 | `justificacion_eliminacion` / `fecha_eliminacion` | nullable | solo si `eliminada = true` |
-| `motivo_rechazo` | nullable | último motivo de rechazo, si aplica |
+| `motivo_rechazo` | nullable | último motivo de rechazo en revisión, si aplica |
+| `reaperturas` | entero | **nuevo**: veces que volvió de "terminada" a "en revisión" (tope 3 salvo el Administrador, ver [Estados, progreso y reaperturas](#estados-progreso-y-reaperturas)) |
+| `edicion_pendiente` | — | **no se guarda**: el frontend lo recibe calculado (existe una fila en `ediciones_pendientes` para la tarea) |
 | `reporte_testing_origen_id` | nullable | si esta tarea nació de un reporte de Testing (ver abajo), referencia a ese reporte |
 | `tarea_origen_id` | nullable | tarea ya terminada (mergeada a `dev`) que esta corrige o a la que da seguimiento. **Solo referencia, no jerarquía**: `tarea_padre_id` queda en `null`, la rama sale de `dev` y la tarea lleva su propio número (`T-211`, no `T-101-3`), porque la rama de la original ya está cerrada |
 
@@ -602,7 +676,8 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 |---|---|---|
 | `id` | — | |
 | `nombre` | texto | |
-| `con_fecha` | booleano | igual que en `tareas`: define si este sprint tiene compromiso de tiempo o es tipo backlog |
+| `descripcion` | texto | **nuevo** (según el frontend), puede ir vacía |
+| `con_fecha` | booleano | `true` = **sprint**, `false` = **backlog** (un grupo de tareas con nombre, sin fecha de fin, que puede crecer) |
 | `fecha_inicio` | fecha | se fija al crear el sprint, siempre tiene valor (con o sin `con_fecha`) |
 | `duracion_dias` | entero, nullable | solo si `con_fecha = true` — cuántos días dura, lo pregunta el modal de creación |
 | `fecha_fin` | fecha, nullable | calculada = `fecha_inicio + duracion_dias` al crear el sprint (no se recalcula después); solo si `con_fecha = true`. Es lo que dispara el [Reporte automático de cierre](./PLANNING.md#reportes) al llegar esa fecha |
@@ -610,11 +685,15 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `fecha_cierre_real` | fecha, nullable | cuándo se cerró de verdad: `fecha_fin` si se cerró solo, o la fecha del cierre manual (antes de tiempo, después de `fecha_fin` si se había pasado, o la de un backlog) |
 | `creado_por` | email | |
 
+**Tabla `reportes_sprint`** (nuevo, 2026-11-07, según el frontend): la **copia de las tareas de un sprint** tal como estaban al cerrarse o al llegar su `fecha_fin` (`sprint_id`, `fecha`, y por cada tarea: id, título, tipo, estado, responsable, `fecha_creacion` y `fecha_completada`). La pantalla [Reportes](./FRONTEND.md#alcance) y la gráfica de un sprint cerrado se arman con esta copia, no con las tareas vivas (que cambian después). Reportes solo lista sprints cerrados o con `fecha_fin` pasada.
+
 **Comandos Tauri**:
-- `crear_sprint(nombre, con_fecha, duracion_dias?)` — exclusivo Líder/Administrador, mismo criterio que crear/organizar el resto de la estructura del proyecto. Si `con_fecha = true`, `duracion_dias` es obligatorio y el backend calcula `fecha_fin` de una vez.
+- `crear_sprint(nombre, descripcion, con_fecha, duracion_dias?)` — exclusivo Líder/Administrador, mismo criterio que crear/organizar el resto de la estructura del proyecto. Si `con_fecha = true`, `duracion_dias` es obligatorio y el backend calcula `fecha_fin` de una vez.
 - `cerrar_sprint(sprint_id)` — **actualizado (2026-11-02): exclusivo del Administrador** (antes Líder/Administrador; crear sprints y asignarles tareas sigue siendo de Líder/Administrador). Puede cerrar un sprint con fecha antes de su fin y también un backlog: ver [Cierre de sprints](#cierre-de-sprints). Texto anterior (reemplazado): exclusivo Líder/Administrador, **solo aplica a sprints sin fecha** (`con_fecha = false`): como no tienen un punto de cierre automático, alguien tiene que cerrarlo a mano para que dispare el mismo Reporte que un sprint con fecha genera solo. Un sprint con fecha no se puede cerrar manualmente antes de tiempo con este comando (**pendiente por definir**: si hace falta un `cerrar_sprint_anticipado` aparte para ese caso, o si simplemente no se soporta en el MVP).
 
 - `listar_sprints()` — cualquier rol, para poblar la vista de sprints y el selector al crear/editar una tarea.
+- `asignar_tarea_a_sprint(tarea_id, sprint_id?)` y `asignar_tarea_a_backlog(tarea_id, backlog_id?)` — Líder/Administrador, desde "Asignar tareas" en Planificación (`null` = quitarla). Se rechaza si la tarea ya está en otro sprint (o en otro backlog).
+- **Según el frontend**: un sprint cuya `fecha_inicio` todavía no llega se muestra "Por empezar"; uno abierto, "En curso"; uno cerrado, "Cerrado". Un sprint cerrado cuenta (y grafica) las tareas de su reporte.
 
 Asignar una tarea a un sprint es escribir su `sprint_id`, y a un backlog su `backlog_id` — se hace como parte de `crear_tarea`/`editar_tarea` (o desde "Asignar tareas" en Planificación). **Actualizado (2026-11-07)**:
 - `asignar_backlog_a_sprint(backlog_id, sprint_id)` — Líder/Administrador: el sprint toma de una vez todas las tareas del backlog que están **libres** (`sprint_id` nulo) y no eliminadas, terminadas o no. Con `backlog_id = null` toma las tareas **sin backlog**. Las que ya tiene otro sprint no se tocan.
@@ -634,7 +713,7 @@ Asignar una tarea a un sprint es escribir su `sprint_id`, y a un backlog su `bac
 
 ## Modelo de datos: tabla `ediciones_pendientes`
 
-Una fila = una edición de un Desarrollador sobre su propia tarea (ya aprobada) esperando que un Líder/Admin la confirme o la revierta (ver [Notificaciones](#notificaciones), punto 4).
+Una fila = una edición de título y/o detalles (hecha por cualquier usuario sobre una tarea en "Sin asignar" o "Por hacer") esperando que un Líder/Admin la confirme o la revierta (ver [Notificaciones](#notificaciones), punto 4).
 
 | Campo | Tipo | Notas |
 |---|---|---|
@@ -643,10 +722,10 @@ Una fila = una edición de un Desarrollador sobre su propia tarea (ya aprobada) 
 | `campos_nuevos` | JSON | los valores que ya están aplicados en `tareas` (la edición se ve de inmediato) |
 | `campos_anteriores` | JSON | los valores previos a la edición — se usan para revertir si `rechazar_modificacion` |
 | `motivo` | texto, nullable | por qué se quiere el cambio, escrito por quien edita (opcional) |
-| `creado_por` | email | el Desarrollador que editó |
+| `creado_por` | email | quien editó |
 | `fecha` | fecha | |
 
-Borrar esta fila (al aprobar o rechazar) = la tarea deja de mostrar la sombra amarilla y sale de [Pendientes](./PLANNING.md#pendientes). Solo puede existir **una** fila activa por tarea a la vez — no se acumulan varias ediciones pendientes sobre la misma tarea (pendiente por definir: si se bloquea una segunda edición mientras la primera sigue sin resolver, o si la reemplaza).
+Borrar esta fila (al aprobar o rechazar) = la tarea deja de mostrar la sombra amarilla y sale de [Pendientes](./PLANNING.md#pendientes). Solo puede existir **una** fila activa por tarea a la vez. **Resuelto (según el frontend)**: una segunda edición se **suma** a la fila existente (los campos nuevos se combinan y se conservan los valores anteriores originales).
 
 ## Modelo de datos: tabla `reportes_testing`
 
@@ -660,7 +739,23 @@ Borrar esta fila (al aprobar o rechazar) = la tarea deja de mostrar la sombra am
 | `adjunto` | nullable | archivo opcional |
 | `fecha` | fecha | |
 
-Comando Tauri `crear_reporte_testing(tarea_revisada_id, descripcion, adjunto?)`, exclusivo Tester: inserta el reporte y, en la misma operación, crea la fila en `tareas` de corrección (mismo `tipo` que la tarea revisada, `tarea_padre_id = null` porque es una tarea general nueva, no una subtarea). **Resuelto**: nace con `estado = 'por hacer'` y `pendiente_aprobacion = false` — no pasa por aprobación, ver [Testing en PLANNING.md](./PLANNING.md#testing).
+**Sin pantalla en el mockup (2026-11-07)**: el frontend tiene el tipo de tarea "Testing" y el campo `reporte_testing_origen_id`, pero no la pantalla para crear un reporte. Comando Tauri `crear_reporte_testing(tarea_revisada_id, descripcion, adjunto?)`, exclusivo Tester: inserta el reporte y, en la misma operación, crea la fila en `tareas` de corrección (mismo `tipo` que la tarea revisada, `tarea_padre_id = null` porque es una tarea general nueva, no una subtarea). **Resuelto**: nace con `estado = 'por hacer'` y `pendiente_aprobacion = false` — no pasa por aprobación, ver [Testing en PLANNING.md](./PLANNING.md#testing).
+
+## Modelo de datos: tablas `commits` y `cambios_prestados`
+
+**Nuevo (2026-11-07, según el frontend)**. Los check-ins viven en Unity VC; el backend guarda una **copia de lo que lee con `cm log`** para mostrarlos rápido (se puede reconstruir siempre):
+
+| Campo | Notas |
+|---|---|
+| `id`, `tarea_id`, `hash` | el hash es el changeset de Unity VC |
+| `mensaje` | título del check-in (primera línea del comentario) |
+| `descripcion` | resto del comentario (opcional) |
+| `tipo` | tipo del check-in (Scripting, Modelado 3D…), elegido al hacer check-in desde BranchBoard (opcional) |
+| `autor`, `fecha` | |
+
+`cambios_prestados` (los préstamos de [Traer cambios](#cambios-prestados-traer-cambios)): `id`, `tarea_id` (destino), `origen_id`, `hash` (`null` = todos los cambios), `autor`, `fecha`, `archivos` (los que llegaron), `archivos_tocados` (los prestados que se modificaron después), `quitado_en` y `quitado_por` (cuándo y quién los devolvió; `null` = siguen en la rama).
+
+Locales por máquina (no pasan por `ops/`): los **cambios sin check-in** de cada rama (de `cm status`) y los **cambios entrantes ya unidos** al workspace.
 
 ## Modelo de datos: tabla `configuracion_proyecto`
 
@@ -681,6 +776,7 @@ Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Ad
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
 - Comando `cm` exacto para leer si una rama está cerrada/mergeada
 - ~~Intervalo exacto de escaneo de la carpeta `ops/`~~, ~~estrategia de compactación/purga de `ops/`~~ y ~~qué comandos migran al mecanismo de eventos~~ — **corregido**: los tres quedaron resueltos más arriba en este mismo documento (ver [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)); esta sección no se había actualizado después de resolverlos.
+- **Diferencias con el frontend que quedan por decidir** (2026-11-07): si se agrega o se descarta "Mover cambios" y `editar_tarea_ajena`; si en Revisión solo el revisor asignado puede autorizar; si se notifica el rechazo de una edición; el borrado en cascada de subtareas (diseñado aquí, el mockup no lo hace); cómo funcionan los proyectos sin Unity VC (contraseña, tareas sin ramas).
 - Librería/mecanismo exacto de conversión `.fbx` → glTF para el visor de [Pre-revisión de Modelado 3D](./PLANNING.md#pre-revisión) — la restricción de subir solo `.fbx` ya está decidida, falta elegir qué convierte ese archivo al formato que consume el visor (`model-viewer`/Three.js).
 
 ## Check-ins: aprobación, rechazo y corrección
@@ -693,12 +789,12 @@ Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Ad
 
 | Rama | Cambios sin check-in | Qué se hace |
 |---|---|---|
-| **Sin subtareas** | Se ven en sus detalles, en **"⇡ Pending changes"** | **"⇡ Hacer check-in"** (título, descripción y tipo). Queda en **"📝 Check-ins de la rama"** |
+| **Sin subtareas** | Se ven en sus detalles, en **"Pending changes"** | **"Hacer check-in"** (título, descripción y tipo). Queda en **"Check-ins de la rama"** |
 | **Con subtareas** (rama padre) | Aparece su subtarea **"En espera"** con esos cambios | En la rama padre **no se hace check-in**: se **crea una rama** (nombre, detalles y tipo) y la "En espera" pasa a ser esa subtarea, con los cambios |
 
 ### Ramas sin subtareas: check-ins en los detalles
 
-- Cada check-in queda en **"📝 Check-ins de la rama"** (título, descripción, tipo, changeset, autor y fecha; a futuro también los archivos). La tarea sigue siendo una sola y avanza normal: producción → revisión → terminada.
+- Cada check-in queda en **"Check-ins de la rama"** (título, descripción, tipo, changeset, autor y fecha; a futuro también los archivos). La tarea sigue siendo una sola y avanza normal: producción → revisión → terminada.
 - Los detecta la [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) (`cm log` de la rama): se hagan desde Unity o desde BranchBoard, aparecen solos.
 - Si a esa tarea se le crea una subtarea, pasa a ser una rama con subtareas.
 
@@ -706,8 +802,8 @@ Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Ad
 
 La rama de una tarea con subtareas solo debería recibir los merges de sus subtareas. Si alguien hace cambios directamente en ella:
 
-1. La [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) ve **cambios sin check-in** en esa rama (`cm status` del workspace) y aparece la subtarea comodín **"En espera"**, de tipo **"Sin definir"** (valor especial: no es una categoría ni se puede elegir al crear tareas). Su tarjeta lleva el indicador **"⇡ N sin check-in"** y sus detalles, en "⇡ Pending changes", muestran quién trabaja y cuántos cambios hay.
-2. Esos cambios **no se guardan con check-in en la rama padre**. Desde "⇡ Pending changes" (en la "En espera" o en la tarea padre) se usa **"🌿 Crear rama"**, que pide **nombre, detalles y tipo**:
+1. La [escucha de Unity VC](#detección-de-cambios-en-unity-version-control-polling) ve **cambios sin check-in** en esa rama (`cm status` del workspace) y aparece la subtarea comodín **"En espera"**, de tipo **"Sin definir"** (valor especial: no es una categoría ni se puede elegir al crear tareas). Su tarjeta lleva el indicador **"N sin check-in"** y sus detalles, en "Pending changes", muestran quién trabaja y cuántos cambios hay.
+2. Esos cambios **no se guardan con check-in en la rama padre**. Desde "Pending changes" (en la "En espera" o en la tarea padre) se usa **"Crear rama"**, que pide **nombre, detalles y tipo**:
    - la "En espera" **se convierte en una subtarea normal** con ese título, detalles y tipo, en "en producción", asignada a quien trabajaba;
    - se crea **su rama** (`task/<id>-<nombre>`) y los cambios sin check-in **se mueven a ella** (en Unity VC: crear la rama hija y cambiar el workspace a ella llevando los cambios pendientes; comando exacto pendiente de verificar);
    - desde ahí se trabaja como cualquier rama: check-ins, revisión y merge hacia el padre (que llegará como incoming change).
@@ -716,21 +812,59 @@ La rama de una tarea con subtareas solo debería recibir los merges de sus subta
 
 ### Click en cada elemento: detalle y acciones
 
-Cada fila de las tres secciones abre su detalle al hacer click, con **"🎮 Abrir en Unity"** y su acción propia:
+Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en Unity"** y su acción propia:
 
 | Sección | Detalle | Acción propia |
 |---|---|---|
-| **⇡ Pending changes** | Rama, quién trabaja, cuántos cambios y los archivos (`cm status`), y qué pasará según la rama | Rama sin subtareas: **"⇡ Hacer check-in"** (`cm checkin`), con **título, descripción y tipo** (título y descripción van en el comentario del changeset). Rama con subtareas: **"🌿 Crear rama"** (nombre, detalles y tipo) |
-| **⇣ Incoming changes** | Subtarea, rama de origen, fecha, quién la trabajó y los check-ins que trae | **"⇣ Unir cambios"** (`cm update` con esos changesets). Opcional |
-| **📝 Check-ins de la rama** | Mensaje, autor, fecha, changeset | Solo "Abrir en Unity", en ese changeset |
+| **Pending changes** | Rama, quién trabaja, cuántos cambios y los archivos (`cm status`), y qué pasará según la rama | Rama sin subtareas: **"Hacer check-in"** (`cm checkin`), con **título, descripción y tipo** (título y descripción van en el comentario del changeset). Rama con subtareas: **"Crear rama"** (nombre, detalles y tipo) |
+| **Cambios entrantes** (incoming changes) | Subtarea, rama de origen, fecha, quién la trabajó y los check-ins que trae | **"Unir cambios"** (`unir_cambios_entrantes`, `cm update` con esos changesets). Opcional |
+| **Check-ins de la rama** | Mensaje, autor, fecha, changeset | Solo "Abrir en Unity", en ese changeset |
 
 ### Cambios entrantes (incoming changes)
 
 - Cuando una **subtarea pasa a "terminada"**, su rama se mergea a la rama del padre en el servidor. Quien tiene el workspace en la rama padre todavía no tiene esos cambios: en Unity VC son **incoming changes**.
 - **Solo cuenta lo terminado**: una subtarea en revisión todavía no se ha mergeado, así que no sale. Si alguien necesita su trabajo antes, lo trae como [préstamo](#cambios-prestados-traer-cambios).
-- BranchBoard lo muestra en los detalles del padre, en la sección **"⇣ Incoming changes"** (aparece en **toda rama con subtareas**, en 0 si no hay ninguno; las ramas sin subtareas no la tienen, y una tarea terminada nunca la muestra porque ya se mergeó y su rama está cerrada): qué subtarea, cuándo terminó, cuántos check-ins trae y desde qué rama.
-- **Es solo un aviso y recibirlos no es obligatorio**: no llegan solos al workspace (ni al abrir la rama en Unity). Se reciben desde **"⇣ Traer cambios"**, donde salen **primero y en azul**, en su propio apartado "Incoming changes — llegaron a esta rama", con botón **"Unir cambios"** (misma confirmación escribiendo "traer"), o desde el detalle del incoming change. En Unity VC es actualizar el workspace con esos changesets (`cm update`). **No es un préstamo**: ya son de esta rama, no se registran en `cambios_prestados` ni hay que devolverlos.
+- BranchBoard lo muestra en los detalles del padre, en la sección **"Cambios entrantes"** (aparece en **toda rama con subtareas**, en 0 si no hay ninguno; las ramas sin subtareas no la tienen, y una tarea terminada nunca la muestra porque ya se mergeó y su rama está cerrada): qué subtarea, cuándo terminó, cuántos check-ins trae y desde qué rama.
+- **Es solo un aviso y recibirlos no es obligatorio**: no llegan solos al workspace (ni al abrir la rama en Unity). Se reciben desde **"Traer cambios"**, donde salen **primero y en azul**, en su propio apartado "Incoming changes — llegaron a esta rama", con botón **"Unir cambios"** (misma confirmación escribiendo "traer"), o desde el detalle del incoming change. En Unity VC es actualizar el workspace con esos changesets (`cm update`). **No es un préstamo**: ya son de esta rama, no se registran en `cambios_prestados` ni hay que devolverlos.
 - Se calcula **por máquina**: depende del workspace de cada uno (changeset en el que está el workspace contra el último de la rama). Es un indicador local, no pasa por `ops/`.
 
 **Pendiente de definir al implementar**: comando `cm` exacto para crear la rama hija llevando los cambios pendientes; cómo se atribuye la "En espera" si quien hizo los cambios no es el responsable de la tarea padre; comando `cm` exacto para saber qué changesets de la rama le faltan al workspace (incoming); y excluir de la cuenta los archivos que Unity modifica solo (ej. `.meta`).
 
+## Contrato con el frontend: acciones y comandos
+
+**Nuevo (2026-11-07)**. Cada acción del store del frontend (`app/frontend/src/store/useStore.ts`) y el comando Tauri que la respalda. "Local" = no pasa por `ops/`.
+
+| Acción del frontend | Comando Tauri | Quién |
+|---|---|---|
+| `crearTarea` / `crearTareaConSubtareas` | `crear_tarea` / `crear_tarea_con_subtareas` | todos (Desarrollador, Tester y Colaborador externo: queda pendiente de aprobación) |
+| `editarTarea` | `editar_tarea` | creador sobre su tarea pendiente; Líder/Admin |
+| `proponerEdicion` | `proponer_edicion` | todos, solo en "Sin asignar"/"Por hacer" |
+| `editarYAprobarTarea` | `editar_y_aprobar_tarea` | Líder/Admin |
+| `tomarTarea` / `asignarTarea` / `desasignarTarea` | `tomar_tarea` / `asignar_tarea` / `desasignar_tarea` | todos / Líder/Admin / todos (sin progreso) |
+| `moverTarea` / `puedeAvanzar` | `cambiar_estado` (valida subtareas y préstamos) | según [Estados](#estados-progreso-y-reaperturas) |
+| `borrarProgreso` | `borrar_progreso` | todos |
+| `eliminarTarea` / `eliminarDefinitivo` | `eliminar_tarea` / `eliminar_definitivamente` | Líder/Admin |
+| `aprobarTarea` / `aprobarTareas` / `advertirTarea` | `aprobar_tarea` / `aprobar_tareas` / `advertir_tarea_pendiente` | Líder/Admin |
+| `aprobarEdicion` / `aprobarEdiciones` / `rechazarEdicion` | `aprobar_modificacion` / `aprobar_modificaciones` / `rechazar_modificacion` | Líder/Admin |
+| `autorizarMerge` / `rechazarRevision` | `autorizar_merge` / `rechazar_revision` | Líder/Admin; en subtareas, quien tiene la tarea padre |
+| `reabrirTarea` | `reabrir_tarea` | hasta 3 veces; después solo el Administrador |
+| `asignarRevision` | `asignar_revision` | Líder/Admin sin revisor; solo Admin si ya tiene |
+| `hacerCheckin` / `crearRamaDesdeEspera` | `hacer_checkin` / `crear_rama_desde_espera` | responsable de la rama |
+| `traerCambios` / `quitarCambiosTraidos` / `eliminarCambiosAjenos` | `traer_cambios` / `devolver_cambios_prestados` / `eliminar_cambios_ajenos` | ver [Cambios prestados](#cambios-prestados-traer-cambios) |
+| `recibirEntrante` | `unir_cambios_entrantes` (local) | quien tiene el workspace |
+| `abrirEnUnity` | `abrir_en_unity` (local) | roles con workspace |
+| `crearSprint` / `cerrarSprint` | `crear_sprint` / `cerrar_sprint` | Líder/Admin / solo Administrador |
+| `asignarTareaASprint` / `asignarTareaABacklog` / `asignarBacklogASprint` | `asignar_tarea_a_sprint` / `asignar_tarea_a_backlog` / `asignar_backlog_a_sprint` | Líder/Admin |
+| `crearUsuario` / `cambiarRol` / `eliminarUsuario` / `confirmarUsuario` | `crear_usuario` / `cambiar_rol` / `eliminar_usuario` / `confirmar_usuario` | ver [Comandos de usuarios](#comandos-de-usuarios-y-ajustes) |
+| `renombrarProyecto` / `restaurarBackup` | `renombrar_proyecto` / `restaurar_backup` (local) | Administrador |
+| `enviarMensaje` | `enviar_mensaje` | todos |
+| `subirDocumentos` / `aprobarDocumento` / `eliminarDocumento` / `abrirDocumento` | `subir_documentos` / `aprobar_documento` / `eliminar_documento` / `abrir_documento` (local) | todos / Líder/Admin / Líder/Admin / todos |
+| `enviarChat` / `crearGrupoChat` / `marcarChatLeido` / `eliminarChat` | `enviar_chat` / `crear_grupo_chat` / `marcar_chat_leido` (local) / `eliminar_chat` (local) | todos |
+| `marcarLeida` / `desmarcarLeida` / `marcarTodasLeidas` | igual (local) | todos |
+| `marcarVisto` | `marcar_visto` (local) | todos |
+| `cerrarSesion` / `setSesionUnityVC` | `cerrar_sesion_unity_vc` / `iniciar_sesion_unity_vc` | todos |
+| `entrarAProyecto` / `irAClonar` / `cambiarDeProyecto` | `entrar_a_proyecto` / `clonar_proyecto` / (vuelve al acceso) | todos |
+| `crearProyectoNuevo` | `crear_proyecto_local` (sin Unity VC, pendiente de definir) | quien lo crea queda Administrador |
+| `toggleVpn` | `alternar_warp` | todos |
+
+Las acciones `setRolActual` ("Ver como"), `setEmail` y `toggleCmSesion` son **solo del mockup** (demo) y no tienen comando: en la app real el rol viene de la tabla `usuarios` firmada y la identidad de `cm whoami`.
