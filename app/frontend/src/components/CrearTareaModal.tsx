@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { TIPOS_TAREA, type TipoTarea } from '../types';
+import { TIPOS_TAREA, type Rol, type TipoTarea } from '../types';
 import { tipoMeta } from '../lib/ui';
+import { esLiderOAdmin } from '../lib/permisos';
 import { Modal } from './Modal';
 
 interface SubtareaEntry {
@@ -32,7 +33,7 @@ export function CrearTareaModal({
 }: {
   onClose: () => void;
   onCreate: (data: NuevaTareaData) => void;
-  rolUsuario: string;
+  rolUsuario: Rol;
   sprints: { id: string; nombre: string }[];
   /** Si se da, se salta la elección general/específica y el tipo queda fijo (ej. crear desde una categoría). */
   tipoFijo?: TipoTarea;
@@ -57,7 +58,7 @@ export function CrearTareaModal({
   const [sprintId, setSprintId] = useState<string>(sprintInicial ?? '');
   const [avisoLeido, setAvisoLeido] = useState(false);
 
-  const necesitaAviso = rolUsuario === 'Desarrollador' || rolUsuario === 'Tester';
+  const necesitaAviso = !esLiderOAdmin(rolUsuario);
   const [mostrarAviso, setMostrarAviso] = useState(false);
   const [mostrarErrorMinimas, setMostrarErrorMinimas] = useState(false);
 

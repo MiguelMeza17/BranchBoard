@@ -10,15 +10,14 @@ import { Toast } from './Toast';
 // Pantallas de entrada antes de los tableros — ver documentacion/FRONTEND.md,
 // "Autenticación / acceso al proyecto": Pantalla inicial → workspaces de Unity VC
 // (o "Clonar proyecto") → según el .db de BranchBoard: entrar, pendiente de
-// confirmación, solicitar ingreso o inicializar. Es solo mockup: nunca bloquea,
+// confirmación, sin usuario o inicializar. Es solo mockup: nunca bloquea,
 // "Saltar al tablero" está siempre disponible.
-type Paso = 'inicio' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'solicitud' | 'inicializar';
+type Paso = 'inicio' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'inicializar';
 
 export function AccesoProyecto() {
   const usuarios = useStore((s) => s.usuarios);
   const vpnOn = useStore((s) => s.vpnOn);
   const toggleVpn = useStore((s) => s.toggleVpn);
-  const correoContacto = useStore((s) => s.correoContacto);
   const setEmail = useStore((s) => s.setEmail);
   const setRolActual = useStore((s) => s.setRolActual);
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
@@ -90,19 +89,17 @@ export function AccesoProyecto() {
     setTocados(new Set());
   };
 
-  const entrar = (ws: WorkspaceUnityVC, msg: string) => {
-    if (usuario) setEmail(usuario.email);
-    entrarAProyecto(ws.nombre);
-    showToast(msg);
-  };
-
   const abrirWorkspace = (ws: WorkspaceUnityVC) => {
     setElegido(ws);
     if (!ws.tiene_db_branchboard) return setPaso('inicializar');
-    if (!usuario) return setPaso('no-registrado');
-    if (!usuario.firma) return setPaso('pendiente');
-    entrar(ws, `Conectado a ${ws.nombre} como ${usuario.rol}`);
+    const u = usuarios.find((x) => x.email === correo);
+    if (!u) return setPaso('no-registrado');
+    if (!u.firma) return setPaso('pendiente');
+    setEmail(u.email);
+    entrarAProyecto(ws.nombre);
+    showToast(`Conectado a ${ws.nombre} como ${u.rol}`);
   };
+
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-surface p-4">
@@ -118,7 +115,7 @@ export function AccesoProyecto() {
               onClick={() =>
                 paso === 'inicio'
                   ? setSinUvcs(false)
-                  : setPaso(paso === 'solicitud' ? 'no-registrado' : paso === 'clonar' ? 'workspaces' : 'inicio')
+                  : setPaso(paso === 'clonar' ? 'workspaces' : 'inicio')
               }
             >
               ← Volver
@@ -176,19 +173,12 @@ export function AccesoProyecto() {
               La cuenta detectada por Unity VC (<span className="font-mono text-xs text-text">{correo}</span>) todavía no
               está registrada en <span className="font-semibold text-text">{elegido?.nombre}</span>.
             </Aviso>
-            <button className="btn-primary w-full" onClick={() => setPaso('solicitud')}>
-              ✉️ Solicitar ingreso a una organización
-            </button>
+            <p className="text-center text-sm text-muted">
+              Pídele a un Líder o Administrador del proyecto que te cree un usuario con este correo.
+            </p>
           </>
         )}
 
-        {paso === 'solicitud' && (
-          <PasoSolicitud
-            correoDetectado={correo}
-            correoContacto={correoContacto}
-            onEnviada={() => showToast('Abriendo tu cliente de correo con la solicitud…', 'info')}
-          />
-        )}
 
         {paso === 'inicializar' && (
           <>
@@ -604,65 +594,6 @@ function PasoClonar({ nombre, onListo }: { nombre: string; onListo: (ws: Workspa
           <span className="text-xs text-muted">Descargando archivos… {progreso}%</span>
         </div>
       )}
-    </>
-  );
-}
-
-function PasoSolicitud({
-  correoDetectado,
-  correoContacto,
-  onEnviada,
-}: {
-  correoDetectado: string;
-  correoContacto: string;
-  onEnviada: () => void;
-}) {
-  const [nombre, setNombre] = useState('');
-  const [apellido, setApellido] = useState('');
-  const [correo, setCorreo] = useState(correoDetectado);
-  const [organizacion, setOrganizacion] = useState('');
-
-  const completo = nombre.trim() && apellido.trim() && correo.trim() && organizacion.trim();
-  const mailto =
-    `mailto:${correoContacto}?subject=${encodeURIComponent('Solicitud de ingreso a BranchBoard')}` +
-    `&body=${encodeURIComponent(
-      `Nombre: ${nombre}\nApellido: ${apellido}\nCorreo: ${correo}\nID de la organización: ${organizacion}`
-    )}`;
-
-  return (
-    <>
-      <div>
-        <h2 className="text-base font-semibold text-text">Solicitar ingreso a una organización</h2>
-        <p className="mt-1 text-sm text-muted">
-          Se abrirá tu cliente de correo con la solicitud ya escrita, dirigida a{' '}
-          <span className="font-mono text-xs text-text">{correoContacto}</span>. BranchBoard no guarda nada.
-        </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Nombre</label>
-          <input className="input" value={nombre} onChange={(e) => setNombre(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Apellido</label>
-          <input className="input" value={apellido} onChange={(e) => setApellido(e.target.value)} />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="label">Correo (el mismo de Unity VC)</label>
-          <input className="input" value={correo} onChange={(e) => setCorreo(e.target.value)} />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="label">ID de la organización</label>
-          <input className="input" value={organizacion} onChange={(e) => setOrganizacion(e.target.value)} />
-        </div>
-      </div>
-      <a
-        href={completo ? mailto : undefined}
-        onClick={(e) => (completo ? onEnviada() : e.preventDefault())}
-        className={`btn-primary w-full ${completo ? '' : 'pointer-events-none opacity-50'}`}
-      >
-        Enviar solicitud por correo
-      </a>
     </>
   );
 }

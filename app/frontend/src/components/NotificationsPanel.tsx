@@ -17,6 +17,7 @@ const tipoIcono: Record<string, string> = {
   editada_aprobada: '✅',
   advertencia: '⚠️',
   tarea_eliminada: '🗑️',
+  mensaje: '💬',
 };
 
 export function NotificationsPanel({

@@ -1,9 +1,11 @@
 // Domain model for BranchBoard — shapes derived from documentacion/BACKEND.md.
 // This is a UI mockup: everything lives in memory, no persistence.
 
-export type Rol = 'Administrador' | 'Líder' | 'Desarrollador' | 'Tester';
+// Colaborador externo: sube archivos puntuales (imagen, audio, video, animación, .fbx) en subtareas
+// simples, con workspace parcial (Gluon); no descarga el proyecto completo ni necesita Unity.
+export type Rol = 'Administrador' | 'Líder' | 'Desarrollador' | 'Tester' | 'Colaborador externo';
 
-export const ROLES: Rol[] = ['Administrador', 'Líder', 'Desarrollador', 'Tester'];
+export const ROLES: Rol[] = ['Administrador', 'Líder', 'Desarrollador', 'Tester', 'Colaborador externo'];
 
 export type TipoTarea =
   | 'Scripting'
@@ -180,7 +182,8 @@ export type TipoNotificacion =
   | 'mover_cambios'
   | 'editada_aprobada'
   | 'advertencia'
-  | 'tarea_eliminada';
+  | 'tarea_eliminada'
+  | 'mensaje'; // mensaje libre de un compañero (desde su perfil)
 
 export interface Notificacion {
   id: string;
@@ -194,27 +197,10 @@ export interface Notificacion {
   accionable: boolean; // ofrece botón de acción directa
 }
 
-export interface SolicitudIngreso {
-  id: string;
-  nombre: string;
-  apellido: string;
-  correo: string;
-  id_organizacion: string;
-  estado: 'pendiente' | 'aceptada' | 'rechazada';
-  fecha_solicitud: string;
-  fecha_resolucion: string | null;
-  registrada_por: string;
-}
-
-export interface ColaboradorExterno {
-  email: string;
-  nombre: string;
-  agregado_por: string;
-  fecha_alta: string;
-}
-
 export interface Backup {
   id: string;
   fecha: string;
   tamano: string;
+  /** Si se guardó al restaurar otra copia: de qué copia se cambió. */
+  nota?: string;
 }

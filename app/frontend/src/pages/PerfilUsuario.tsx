@@ -4,6 +4,9 @@ import { useStore } from '../store/useStore';
 import { ESTADOS, type EstadoTarea } from '../types';
 import { estadoMeta } from '../lib/ui';
 import { PageHeader, Card, EmptyState, EstadoBadge, TipoBadge } from '../components/primitives';
+import { Modal } from '../components/Modal';
+
+const MAX_MENSAJE = 500;
 
 // --- Actividad simulada (no viene de datos reales de checkins de Unity VC) ---
 // Nivel 0-4 determinista por persona+día, solo para dar una vista visual tipo
@@ -96,6 +99,14 @@ export function PerfilUsuario() {
   const usuarios = useStore((s) => s.usuarios);
   const tareas = useStore((s) => s.tareas);
   const [mesExpandido, setMesExpandido] = useState(false);
+  const currentEmail = useStore((s) => s.currentEmail);
+  const enviarMensaje = useStore((s) => s.enviarMensaje);
+  const [escribiendo, setEscribiendo] = useState(false);
+  const [mensaje, setMensaje] = useState('');
+  const cerrarMensaje = () => {
+    setEscribiendo(false);
+    setMensaje('');
+  };
 
   const u = usuarios.find((x) => x.email === email);
   const asignadas = useMemo(
@@ -154,7 +165,45 @@ export function PerfilUsuario() {
             </span>
           )}
           <span className="chip border border-border bg-surface-2 text-muted">Desde {u.fecha_alta}</span>
+          {u.email !== currentEmail && (
+            <button className="btn-primary btn-sm" onClick={() => setEscribiendo(true)}>
+              💬 Enviar mensaje
+            </button>
+          )}
         </Card>
+
+        <Modal
+          open={escribiendo}
+          onClose={cerrarMensaje}
+          title={`Mensaje para ${u.nombre}`}
+          subtitle="Le llega como notificación en la campana 🔔"
+          size="sm"
+          footer={
+            <div className="flex w-full justify-end gap-2">
+              <button className="btn-ghost btn-sm" onClick={cerrarMensaje}>Cancelar</button>
+              <button
+                className="btn-primary btn-sm"
+                disabled={!mensaje.trim()}
+                onClick={() => {
+                  enviarMensaje(u.email, mensaje);
+                  cerrarMensaje();
+                }}
+              >
+                Enviar
+              </button>
+            </div>
+          }
+        >
+          <textarea
+            className="input min-h-[120px] resize-y"
+            autoFocus
+            maxLength={MAX_MENSAJE}
+            placeholder="Escribe tu mensaje…"
+            value={mensaje}
+            onChange={(e) => setMensaje(e.target.value)}
+          />
+          <div className="mt-1 text-right text-[11px] text-faint">{mensaje.length}/{MAX_MENSAJE}</div>
+        </Modal>
 
         <Card>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">

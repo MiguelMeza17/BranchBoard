@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { Modal } from './Modal';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
+import * as fx from '../data/fixtures';
 
 interface NavItem {
   to: string;
@@ -21,6 +22,7 @@ const NAV: NavItem[] = [
   { to: '/pendientes', icon: '📌', label: 'Pendientes' },
   { to: '/reportes', icon: '📄', label: 'Reportes' },
   { to: '/branches', icon: '🌳', label: 'Branches' },
+  { to: '/usuarios', icon: '👥', label: 'Usuarios' },
   { to: '/papelera', icon: '🗑️', label: 'Papelera' },
   { to: '/ajustes', icon: '⚙️', label: 'Ajustes' },
 ];
@@ -47,6 +49,7 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
   const hayReporteActivo = sprints.some((s) => s.con_fecha);
   const hayCambioBranches = tareas.some((t) => !t.eliminada && t.rama_asociada);
   const hayTareasActivas = tareas.some((t) => !t.eliminada);
+  const hayNovedadUsuarios = useStore((s) => s.hayNovedadUsuarios);
   const rutasConPuntoAzul = new Set(['/scrum', '/resumen', '/lista', '/avance', '/categorias']);
 
   const badgeByPath: Record<string, number> = {
@@ -64,6 +67,7 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
   const puntoDeRuta = (to: string) => {
     if (to === '/reportes' && hayReporteActivo) return PUNTO_ROJO;
     if (to === '/branches' && hayCambioBranches) return PUNTO_AZUL;
+    if (to === '/usuarios' && hayNovedadUsuarios) return PUNTO_AZUL;
     if (rutasConPuntoAzul.has(to) && hayTareasActivas) return PUNTO_AZUL;
     return null;
   };
@@ -78,6 +82,11 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
   const [confirmarCerrarSesion, setConfirmarCerrarSesion] = useState(false);
   // "Nuevo proyecto": traer uno local de Unity VC que aún no usa BranchBoard, o crear uno nuevo.
   const [nuevoProyecto, setNuevoProyecto] = useState(false);
+  // "Cargar proyecto": proyectos del servidor de Unity VC que aún no tienes en este equipo. Al elegir uno se
+  // clona; si ya usa BranchBoard, llegan también sus tareas.
+  const [cargarProyecto, setCargarProyecto] = useState(false);
+  const irAClonar = useStore((s) => s.irAClonar);
+  const delServidorSinClonar = fx.proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
   const sinBranchBoard = workspaces.filter((w) => !w.tiene_db_branchboard);
   const setWorkspaces = useStore((s) => s.setWorkspaces);
   const setRolActual = useStore((s) => s.setRolActual);
@@ -173,6 +182,16 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
                   </button>
                 );
               })}
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                setCargarProyecto(true);
+              }}
+            >
+              ⬇️ Cargar proyecto
+            </button>
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
@@ -286,6 +305,44 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
           Mockup UI · datos en memoria
         </div>
       )}
+      <Modal
+        open={cargarProyecto}
+        onClose={() => setCargarProyecto(false)}
+        title="Cargar proyecto"
+        subtitle="Proyectos de Unity VC a los que tienes acceso y que aún no están en este equipo"
+        size="md"
+      >
+        {delServidorSinClonar.length === 0 ? (
+          <p className="text-sm text-faint">Ya tienes en este equipo todos tus proyectos de Unity VC.</p>
+        ) : (
+          <div className="space-y-1.5 text-sm">
+            {delServidorSinClonar.map((p) => (
+              <button
+                key={p.repo}
+                type="button"
+                className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary"
+                onClick={() => {
+                  setCargarProyecto(false);
+                  // Va al acceso, paso "Clonar": se elige la carpeta y se descarga el workspace.
+                  irAClonar(p.nombre);
+                }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-text">{p.nombre}</span>
+                  <span className="block truncate font-mono text-[10px] text-faint">{p.repo}</span>
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                    p.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
+                  }`}
+                >
+                  {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
       <Modal
         open={nuevoProyecto}
         onClose={cerrarNuevo}
