@@ -8,3 +8,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
+
+// Comprobación del puente con el backend (solo dentro de Tauri).
+if (import.meta.env.DEV) {
+  void import('./lib/tauri').then(({ ping }) =>
+    ping().then((r) => r && console.info('[BranchBoard] backend:', r))
+  );
+}
