@@ -7,8 +7,8 @@
 ## Estructura del repositorio
 
 - `documentacion/` — toda la documentación de diseño del producto (ver detalle abajo).
-- `app/backend/` — **todavía no tiene código real**, solo un `README.md` placeholder. Toda la lógica de backend vive únicamente en `documentacion/BACKEND.md`. **No empezar a implementar código Rust/Tauri aquí sin que el usuario lo pida explícitamente.**
-- `app/frontend/` — código React/TypeScript/Vite/Tailwind real (mockup funcional). Es la única parte del proyecto con código de aplicación implementado por ahora.
+- `app/backend/` — backend en **Rust + Tauri** (SQLite, `cm`, eventos en `ops/`). **En implementación desde el 2026-11-09**: el diseño está en `documentacion/BACKEND.md` y el orden de trabajo en la hoja de ruta (issue #129, issues con la etiqueta `backend`).
+- `app/frontend/` — código React/TypeScript/Vite/Tailwind real (mockup funcional). Sigue siendo la referencia de lo que el producto hace: el backend implementa lo que el frontend necesita (ver "Contrato con el frontend" en `documentacion/BACKEND.md`).
 
 ## Flujo de trabajo de la documentación
 
@@ -34,7 +34,9 @@ Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene c
 - Una rama se cierra **únicamente mediante un Pull Request**, y ese PR solo se mergea **si ya se resolvieron todos los conflictos antes** — nunca se mergea un PR con conflictos pendientes.
 - **`dev` pasa a `main` con un PR de `dev` → `main`** (definido el 2026-10-19, primera vez en el PR #17): se abre con `gh pr create --base main --head dev`, se revisa que no tenga conflictos (`gh pr view --json mergeable,mergeStateStatus` debe dar `MERGEABLE`) y se mergea con merge commit (`gh pr merge <número> --merge`). **Nunca con `--delete-branch`**: `dev` es permanente y no se borra. El momento lo decide el equipo cuando quiera llevar lo acumulado en `dev` a `main`.
 
-### Por ahora, solo frontend
+### Backend y frontend
 
-- **No tocar nada de `app/backend/` por ahora** — ni siquiera en paralelo a un cambio de frontend. Esto aplica aunque el issue/feature toque un flujo que eventualmente necesitará backend.
+- **El backend ya se implementa** (desde el 2026-11-09), un issue a la vez según la hoja de ruta (#129). Cada rama sale de `dev` con el número del issue (ej. `feat/95-crear-tareas`) y su PR hacia `dev` lleva `Closes #<número>`.
+- Si al implementar algo del backend cambia o se completa el diseño (un comando `cm` exacto, una regla nueva, un pendiente que se resuelve), se actualiza `documentacion/BACKEND.md` en el mismo PR.
+- El mockup del frontend tiene que seguir funcionando en el navegador (`npm run dev`) sin backend: las llamadas a comandos de Tauri pasan por un solo cliente que, fuera de Tauri, usa los datos en memoria.
 - Todo cambio de frontend debe quedar reflejado en la documentación de backend correspondiente (`documentacion/BACKEND.md` y/o `documentacion/ARQUITECTURA.md`) para que, cuando se implemente el backend real, no haya que redescubrir qué asume el frontend — ver también la regla de mantener `documentacion/FRONTEND.md` sincronizada, arriba.

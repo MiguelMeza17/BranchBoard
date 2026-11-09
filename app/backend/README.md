@@ -6,5 +6,6 @@ Antes de escribir código aquí, ver el diseño completo en [`../../documentacio
 - [Sincronización entre máquinas (arquitectura de eventos)](../../documentacion/BACKEND.md#sincronización-entre-máquinas-arquitectura-de-eventos)
 - [Firma criptográfica del rol](../../documentacion/BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)
 - [Modelo de datos](../../documentacion/BACKEND.md#modelo-de-datos-tabla-usuarios) (tablas `usuarios`, `tareas`, `sprints`, etc.)
+- [Contrato con el frontend](../../documentacion/BACKEND.md#contrato-con-el-frontend-acciones-y-comandos) (qué comando respalda cada acción del store)
 
-Todavía no hay código — esta carpeta queda lista para cuando arranque la implementación.
+**Estado**: en implementación desde el 2026-11-09. El orden de trabajo está en la hoja de ruta (issue #129); cada parte tiene su issue con la etiqueta `backend`. El primer paso es crear aquí el proyecto Tauri (issue #70).
