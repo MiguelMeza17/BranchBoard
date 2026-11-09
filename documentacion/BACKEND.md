@@ -548,6 +548,16 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 - **Llave de actualizaciones**: es **otra llave**, distinta de la de firma de roles. La privada está solo en la máquina de quien publica (`~/.tauri/branchboard-actualizaciones.key`) y como secreto `TAURI_SIGNING_PRIVATE_KEY` del repositorio; nunca se sube al repo. Si se pierde, las apps ya instaladas no pueden actualizarse solas: hay que reinstalar una vez con un instalador firmado con la llave nueva.
 - **Un solo instalador para todos los proyectos**: ver el cambio en [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac).
 
+## Base de datos local y migraciones
+
+**Implementado (2026-11-09, issue #74)** en `app/backend/src/db/`.
+
+- **Dónde vive**: un `.db` por proyecto en la carpeta de datos local, `<datos>/proyectos/<id del proyecto>/branchboard.db` (nunca en Drive/OneDrive). El id se limpia para que no pueda salirse de esa carpeta.
+- **Migraciones**: lista ordenada en `db/migraciones.rs`; la versión del esquema se guarda en `PRAGMA user_version`. Al abrir el `.db` se aplican las que falten, cada una en su transacción. Una migración publicada **no se edita**: los cambios van en una nueva al final.
+- Si el `.db` es de una versión más nueva de la app, no se abre y se pide actualizar BranchBoard.
+- Borrar el `.db` y volver a abrir lo crea de cero (después se reconstruye desde `ops/`).
+- Modo WAL y llaves foráneas activas.
+
 ## Copias de seguridad y restauración de la BD
 
 **Backup automático**: cada vez que se abre BranchBoard, antes de tocar el `.db`, se copia a una carpeta local de backups (ej. `%LocalAppData%\BranchBoard\backups\branchboard_2026-09-25.db`). Se conservan solo las **últimas 10 copias** — al llegar a la 11, se borra la más vieja. No requiere acción de nadie, corre solo.
