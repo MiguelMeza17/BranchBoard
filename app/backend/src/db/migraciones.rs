@@ -7,10 +7,10 @@
 use rusqlite::Connection;
 
 use crate::error::{Error, Resultado};
-use crate::modelo::Rol;
+use crate::modelo::{EstadoTarea, Rol, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 2;
+pub const VERSION_ESQUEMA: u32 = 3;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -43,6 +43,54 @@ fn migraciones() -> Vec<String> {
                 fecha_actualizacion TEXT NOT NULL
             ) STRICT;",
             roles = Rol::lista_sql()
+        ),
+        // 3 — tareas y ediciones pendientes.
+        format!(
+            "CREATE TABLE tareas (
+                id                        TEXT PRIMARY KEY,
+                titulo                    TEXT NOT NULL,
+                detalles                  TEXT NOT NULL DEFAULT '',
+                tipo                      TEXT NOT NULL CHECK (tipo IN ({tipos})),
+                tarea_padre_id            TEXT,
+                archivo_ruta              TEXT,
+                estado                    TEXT NOT NULL CHECK (estado IN ({estados})),
+                pendiente_aprobacion      INTEGER NOT NULL DEFAULT 0,
+                rama_asociada             TEXT,
+                modo_trabajo              TEXT CHECK (modo_trabajo IS NULL OR modo_trabajo = 'rama'),
+                modificada                INTEGER NOT NULL DEFAULT 0,
+                ultimo_changeset_visto    INTEGER,
+                creado_por                TEXT NOT NULL,
+                fecha_creacion            TEXT NOT NULL,
+                asignado_a                TEXT,
+                lider_revision_asignado   TEXT,
+                sprint_id                 TEXT,
+                backlog_id                TEXT,
+                con_fecha                 INTEGER NOT NULL DEFAULT 0,
+                fecha_limite              TEXT,
+                fecha_completada          TEXT,
+                eliminada                 INTEGER NOT NULL DEFAULT 0,
+                justificacion_eliminacion TEXT,
+                fecha_eliminacion         TEXT,
+                motivo_rechazo            TEXT,
+                reporte_testing_origen_id TEXT,
+                tarea_origen_id           TEXT,
+                reaperturas               INTEGER NOT NULL DEFAULT 0
+            ) STRICT;
+            CREATE INDEX tareas_por_padre ON tareas (tarea_padre_id);
+            CREATE INDEX tareas_por_responsable ON tareas (asignado_a);
+            CREATE INDEX tareas_por_sprint ON tareas (sprint_id);
+            CREATE INDEX tareas_por_backlog ON tareas (backlog_id);
+            CREATE TABLE ediciones_pendientes (
+                id                TEXT PRIMARY KEY,
+                tarea_id          TEXT NOT NULL UNIQUE REFERENCES tareas (id) ON DELETE CASCADE,
+                campos_nuevos     TEXT NOT NULL,
+                campos_anteriores TEXT NOT NULL,
+                motivo            TEXT,
+                creado_por        TEXT NOT NULL,
+                fecha             TEXT NOT NULL
+            ) STRICT;",
+            tipos = TipoTarea::lista_sql(),
+            estados = EstadoTarea::lista_sql()
         ),
     ]
 }

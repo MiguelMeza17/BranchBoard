@@ -5,7 +5,9 @@
 //! (ver "Sincronización entre máquinas" en BACKEND.md).
 
 pub mod configuracion;
+pub mod ediciones;
 mod migraciones;
+pub mod tareas;
 pub mod usuarios;
 
 use std::path::{Path, PathBuf};
