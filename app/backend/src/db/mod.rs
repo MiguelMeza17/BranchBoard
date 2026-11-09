@@ -4,7 +4,9 @@
 //! nunca en Drive/OneDrive: es desechable y se reconstruye desde `ops/`
 //! (ver "Sincronización entre máquinas" en BACKEND.md).
 
+pub mod configuracion;
 mod migraciones;
+pub mod usuarios;
 
 use std::path::{Path, PathBuf};
 

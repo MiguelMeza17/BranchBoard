@@ -6,6 +6,7 @@
 //! - `cm` — Unity Version Control (subproceso `cm`).
 //! - `eventos` — sincronización por `ops/`.
 //! - `identidad` — quién es el usuario, firmas y permisos.
+//! - `modelo` — tipos del dominio (roles, estados…), iguales a los del frontend.
 //! - `error` — error común `{ codigo, mensaje }`.
 //! - `estado` — estado compartido de la app.
 
@@ -16,6 +17,7 @@ pub mod error;
 pub mod estado;
 pub mod eventos;
 pub mod identidad;
+pub mod modelo;
 
 use comandos::{actualizaciones, sistema};
 
