@@ -54,7 +54,7 @@ export const CORREO_NO_REGISTRADO = 'ana.torres@estudiante.dev';
 // ---- Usuarios (equipo semilla VirusTF + tester + un pendiente de confirmar) ----
 export const usuarios: Usuario[] = [
   {
-    email: 'miguellmezza123@gmail.com',
+    email: 'miguel.meza@virustf.dev',
     nombre: 'Miguel',
     apellido: 'Meza',
     rol: 'Administrador',
@@ -63,7 +63,7 @@ export const usuarios: Usuario[] = [
     firmado_en: '2026-06-01T10:00:00',
   },
   {
-    email: 'arteagacristobal957@gmail.com',
+    email: 'joan@virustf.dev',
     nombre: 'Cristóbal',
     apellido: 'Arteaga',
     rol: 'Líder',
@@ -72,7 +72,7 @@ export const usuarios: Usuario[] = [
     firmado_en: '2026-06-02T09:00:00',
   },
   {
-    email: 'johns.telagt@uqvirtual.edu.co',
+    email: 'sebas@virustf.dev',
     nombre: 'Sebastián',
     apellido: 'Johns',
     rol: 'Desarrollador',
@@ -123,7 +123,7 @@ export const sprints: Sprint[] = [
     fecha_fin: '2026-11-01',
     cerrado: true,
     fecha_cierre_real: '2026-11-01',
-    creado_por: 'miguellmezza123@gmail.com',
+    creado_por: 'miguel.meza@virustf.dev',
   },
   {
     id: 'sp1',
@@ -135,7 +135,7 @@ export const sprints: Sprint[] = [
     fecha_fin: '2026-11-16',
     cerrado: false,
     fecha_cierre_real: null,
-    creado_por: 'miguellmezza123@gmail.com',
+    creado_por: 'miguel.meza@virustf.dev',
   },
   // Backlogs de prueba (sin fecha): "Etapa 1", ya terminado (T-401…T-435), y "Etapa 2", en curso. "General" no es un backlog: en Avance
   // suma las tareas de todos los sprints y backlogs.
@@ -149,7 +149,7 @@ export const sprints: Sprint[] = [
     fecha_fin: '2026-11-30',
     cerrado: false,
     fecha_cierre_real: null,
-    creado_por: 'miguellmezza123@gmail.com',
+    creado_por: 'miguel.meza@virustf.dev',
   },
   {
     id: 'bl2',
@@ -161,7 +161,7 @@ export const sprints: Sprint[] = [
     fecha_fin: null,
     cerrado: false,
     fecha_cierre_real: null,
-    creado_por: 'miguellmezza123@gmail.com',
+    creado_por: 'miguel.meza@virustf.dev',
   },
   {
     id: 'bl3',
@@ -173,13 +173,13 @@ export const sprints: Sprint[] = [
     fecha_fin: null,
     cerrado: false,
     fecha_cierre_real: null,
-    creado_por: 'arteagacristobal957@gmail.com',
+    creado_por: 'joan@virustf.dev',
   },
 ];
 
-const ADMIN = 'miguellmezza123@gmail.com';
-const LIDER = 'arteagacristobal957@gmail.com';
-const DEV = 'johns.telagt@uqvirtual.edu.co';
+const ADMIN = 'miguel.meza@virustf.dev';
+const LIDER = 'joan@virustf.dev';
+const DEV = 'sebas@virustf.dev';
 const TESTER = 'laura.qa@virustf.dev';
 
 function t(p: Partial<Tarea> & Pick<Tarea, 'id' | 'titulo' | 'tipo' | 'estado' | 'creado_por'>): Tarea {

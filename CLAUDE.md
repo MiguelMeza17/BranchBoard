@@ -1,8 +1,8 @@
 # Instrucciones para Claude en este repositorio
 
-## Datos reales en la documentación
+## Sin datos reales en el repositorio
 
-`documentacion/SEGURIDAD.md` contiene una tabla con **correos reales** de los miembros del equipo (sección "Usuarios semilla"). Esto fue una decisión consciente del usuario: **no son contraseñas ni claves, solo correos**, y aceptó el riesgo de tenerlos versionados en git. **No sugerir quitarlos, moverlos a un `.gitignore`, ni marcarlo como hallazgo de seguridad** — ya se discutió y se decidió dejarlos así. Si el repositorio se fuera a subir a GitHub o compartir más ampliamente, ahí sí vale la pena retomar el tema, pero no antes.
+El repositorio es **público** (desde el 2026-11-09). Los correos de `documentacion/SEGURIDAD.md` ("Usuarios semilla") y de `app/frontend/src/data/fixtures.ts` son **de ejemplo** (`@virustf.dev`); los reales se quitaron. **No escribir correos reales, llaves ni datos personales** en el código ni en la documentación.
 
 ## Estructura del repositorio
 

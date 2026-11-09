@@ -111,13 +111,13 @@
 
 ### Usuarios semilla (equipo VirusTF)
 
-Basado en los miembros actuales del proyecto en Unity Cloud (identidad = email de `cm whoami`, ver [BACKEND.md](./BACKEND.md#identidad-de-usuario)):
+Basado en los miembros del proyecto en Unity Cloud, con **correos de ejemplo** (el repositorio es público; identidad = email de `cm whoami`, ver [BACKEND.md](./BACKEND.md#identidad-de-usuario)):
 
 | Nombre | Email | Rol en Unity Cloud | Rol en BranchBoard |
 |---|---|---|---|
-| Miguel Meza | miguellmezza123@gmail.com | Propietario | **Administrador** |
-| jo-an | arteagacristobal957@gmail.com | Usuario | **Líder** |
-| Sebas | johns.telagt@uqvirtual.edu.co | Usuario | **Desarrollador** |
+| Miguel Meza | miguel.meza@virustf.dev | Propietario | **Administrador** |
+| jo-an | joan@virustf.dev | Usuario | **Líder** |
+| Sebas | sebas@virustf.dev | Usuario | **Desarrollador** |
 
 Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarrollador — esa asignación es decisión del equipo, no se deriva automáticamente de Unity Cloud.
 
