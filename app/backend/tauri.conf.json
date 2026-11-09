@@ -57,7 +57,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MzkwMjdFOTlFMjQ0QzcKUldUSFJPS1pmZ0k1eU41NWQ5dkVzS01rNFlhZUNMNERSRCs1T2hYcmN1UHlqWU1HbG1hZ1VHbGEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI5RDA3QjgyQjk0NkM1ODkKUldTSnhVYTVnbnZRdVY0QkoySWdMMWdzVEhNZHdTaFVkL1k1UDYxczVrNG56Q2c4c2o5ckFleTcK",
       "endpoints": [
         "https://github.com/MiguelMeza17/BranchBoard/releases/latest/download/latest.json"
       ],
