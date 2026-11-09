@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permisos de la ventana principal. Solo lo mínimo; ver SEGURIDAD.md (issue #71).",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Permisos de la ventana principal. Solo lo que la interfaz necesita: todo lo demás (archivos, subprocesos, red) lo hace el backend en Rust, nunca la webview. Ver SEGURIDAD.md → Allowlist de capabilities de Tauri.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "dialog:allow-open"
+  ]
 }
