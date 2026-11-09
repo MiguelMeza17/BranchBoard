@@ -24,11 +24,20 @@ Pruebas del backend, desde `app/backend/`: `cargo test`.
 
 `npm run dev` (sin Tauri) sigue abriendo el mockup en el navegador con datos en memoria.
 
+## Publicar una versión nueva
+
+1. Subir el número de versión en `tauri.conf.json` y en `Cargo.toml` (el mismo en los dos).
+2. Fusionar ese cambio y crear la etiqueta: `git tag v0.2.0 && git push origin v0.2.0`.
+3. GitHub Actions compila, firma y publica la Release. Las apps instaladas la encuentran en Ajustes → "Actualizar versión".
+
+La llave privada de actualizaciones no está en el repo: vive en `~/.tauri/branchboard-actualizaciones.key` y en el secreto `TAURI_SIGNING_PRIVATE_KEY` del repositorio. Para compilar un instalador firmado en local hay que definir `TAURI_SIGNING_PRIVATE_KEY` con la ruta de esa llave.
+
 ## Estructura
 
 - `Cargo.toml`, `build.rs`, `src/` — código Rust (`src/lib.rs` registra los comandos).
 - `tauri.conf.json` — configuración de la app (ventana, instalador, de dónde sale el frontend).
 - `capabilities/` — permisos de Tauri (ver [SEGURIDAD.md](../../documentacion/SEGURIDAD.md#allowlist-de-capabilities-de-tauri-resuelto)).
+- `scripts/latest-json.mjs` — arma el `latest.json` de cada versión (lo usa GitHub Actions).
 - `icons/` — íconos de la app, generados desde `app/frontend/public/favicon.png` con `npm run tauri icon`.
 
 **Estado**: en implementación desde el 2026-11-09. El orden de trabajo está en la hoja de ruta (issue #129); cada parte tiene su issue con la etiqueta `backend`.

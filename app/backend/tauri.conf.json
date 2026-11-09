@@ -4,9 +4,15 @@
   "version": "0.1.0",
   "identifier": "com.branchboard.app",
   "build": {
-    "beforeDevCommand": { "script": "npm run dev", "cwd": "../frontend" },
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../frontend"
+    },
     "devUrl": "http://127.0.0.1:4300",
-    "beforeBuildCommand": { "script": "npm run build", "cwd": "../frontend" },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../frontend"
+    },
     "frontendDist": "../frontend/dist"
   },
   "app": {
@@ -20,17 +26,33 @@
         "backgroundColor": "#0e1016"
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MzkwMjdFOTlFMjQ0QzcKUldUSFJPS1pmZ0k1eU41NWQ5dkVzS01rNFlhZUNMNERSRCs1T2hYcmN1UHlqWU1HbG1hZ1VHbGEK",
+      "endpoints": [
+        "https://github.com/MiguelMeza17/BranchBoard/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
