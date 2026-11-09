@@ -66,6 +66,36 @@ enum_texto! {
     }
 }
 
+enum_texto! {
+    /// Tipo de una tarea. Son también las carpetas de Categorías.
+    /// `SinDefinir` es solo para la subtarea comodín "En espera".
+    TipoTarea {
+        Scripting => "Scripting",
+        Modelado3D => "Modelado 3D",
+        Modelado2D => "Modelado 2D",
+        Animacion => "Animación",
+        Imagen => "Imagen",
+        UiInterfaz => "UI/Interfaz",
+        Audio => "Audio",
+        Musica => "Música",
+        Video => "Video",
+        Testing => "Testing",
+        Correccion => "Corrección",
+        Ajustes => "Ajustes",
+        SinDefinir => "Sin definir",
+    }
+}
+
+enum_texto! {
+    /// Estado de una tarea. "Sin asignar" no es un estado: es "por hacer" sin responsable.
+    EstadoTarea {
+        PorHacer => "por hacer",
+        EnProduccion => "en producción",
+        EnRevision => "en revisión",
+        Terminada => "terminada",
+    }
+}
+
 impl Rol {
     pub fn es_lider_o_admin(self) -> bool {
         matches!(self, Rol::Administrador | Rol::Lider)
@@ -100,6 +130,20 @@ mod tests {
         );
         assert_eq!(Rol::desde_texto("Jefe"), None);
         assert_eq!(Rol::TODOS.len(), 5);
+    }
+
+    #[test]
+    fn tipos_y_estados_como_en_el_frontend() {
+        assert_eq!(TipoTarea::TODOS.len(), 13);
+        assert_eq!(TipoTarea::UiInterfaz.como_texto(), "UI/Interfaz");
+        assert_eq!(
+            EstadoTarea::desde_texto("en producción"),
+            Some(EstadoTarea::EnProduccion)
+        );
+        assert_eq!(
+            EstadoTarea::lista_sql(),
+            "'por hacer', 'en producción', 'en revisión', 'terminada'"
+        );
     }
 
     #[test]
