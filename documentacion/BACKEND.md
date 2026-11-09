@@ -580,6 +580,8 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 | `firma` | texto (base64) | **nuevo** — firma Ed25519 de `email\|rol\|firmado_en`, ver [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac) |
 | `firmado_en` | fecha/hora | **nuevo** — timestamp incluido en el mensaje firmado, evita reutilizar una firma vieja para otro campo |
 
+**Implementado (2026-11-09, issue #75)** en `app/backend/src/db/usuarios.rs`. Además de los campos de arriba, la tabla guarda `firmado_por` (quién firmó la fila: el Administrador o un Líder certificado) y, solo para Líderes, `llave_publica` y `certificado` (ver [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07)). Los correos se guardan en minúsculas y un rol que no sea uno de los cinco no entra (lo rechaza la propia tabla).
+
 Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-de-usuario) (revoca acceso de inmediato, sin sesión que cerrar).
 
 ## Firma criptográfica del rol (ancla de confianza para el RBAC)
