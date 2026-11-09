@@ -134,6 +134,12 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 
 Enumerado a partir de todo lo ya documentado en [BACKEND.md](./BACKEND.md) — nada de acceso "abierto" a shell o filesystem, solo lo que cada funcionalidad ya descrita necesita:
 
+**Implementado (2026-11-09, issue #71) — cómo quedó en el código**:
+- **La webview (interfaz) casi no tiene permisos**: `app/backend/capabilities/default.json` solo concede `core:app`, `core:event`, `core:window` y `dialog:allow-open` (selector nativo de archivos/carpetas). **No** tiene permiso de shell, de archivos ni de red.
+- **Subprocesos y archivos los hace solo el backend en Rust** (`std::process::Command` y `std::fs`), nunca la webview. Por eso no se instalan los plugins `shell` ni `fs` de Tauri: la lista de binarios y carpetas de abajo se hace cumplir en el código Rust (un único ejecutor de subprocesos y validación de rutas), no con permisos de la webview.
+- **CSP estricta** en `tauri.conf.json`: la interfaz solo carga recursos propios y solo se conecta al backend (`ipc:`). Cualquier `fetch` a internet queda bloqueado (probado). Las fuentes (Inter, JetBrains Mono) van **dentro de la app**, ya no se piden a Google Fonts.
+- `freezePrototype` queda **desactivado**: rompe la librería de la gráfica de Branches (React Flow).
+
 **Subprocesos (shell)** — solo estos binarios, siempre invocados con argumentos en array separado, nunca con un string armado a mano (ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos)):
 - `cm` (CLI de Unity Version Control) — todo lo de ramas/changesets/merge.
 - `warp-cli` (Cloudflare WARP) — solo los subcomandos fijos de conectar/desconectar/estado, nunca argumentos libres del usuario.

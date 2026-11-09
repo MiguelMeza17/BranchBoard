@@ -23,6 +23,7 @@ use comandos::{actualizaciones, sistema};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(estado::AppState::default())
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
