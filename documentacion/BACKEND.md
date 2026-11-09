@@ -853,6 +853,8 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 
 **Nuevo (2026-11-07)**. Cada acción del store del frontend (`app/frontend/src/store/useStore.ts`) y el comando Tauri que la respalda. "Local" = no pasa por `ops/`.
 
+**Cómo llama el frontend (2026-11-09)**: todo pasa por `app/frontend/src/lib/api.ts`. Cada comando tiene ahí una función tipada que usa `llamar(comando, args, mockup)`: dentro de Tauri hace `invoke`; en el navegador (`npm run dev`) responde con su versión de mockup, así el mockup sigue funcionando sin backend. Los errores llegan siempre como `ErrorBackend` con `{ codigo, mensaje }`. Al implementar un comando nuevo se agrega su función en `api` y la acción del store la usa.
+
 | Acción del frontend | Comando Tauri | Quién |
 |---|---|---|
 | `crearTarea` / `crearTareaConSubtareas` | `crear_tarea` / `crear_tarea_con_subtareas` | todos (Desarrollador, Tester y Colaborador externo: queda pendiente de aprobación) |
@@ -885,6 +887,6 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `entrarAProyecto` / `irAClonar` / `cambiarDeProyecto` | `entrar_a_proyecto` / `clonar_proyecto` / (vuelve al acceso) | todos |
 | `crearProyectoNuevo` | `crear_proyecto_local` (sin Unity VC, pendiente de definir) | quien lo crea queda Administrador |
 | `toggleVpn` | `alternar_warp` | todos |
-| Ajustes → "Actualizar versión" (`lib/actualizaciones.ts`) | `buscar_actualizacion` / `instalar_actualizacion` (locales) | todos |
+| Ajustes → "Actualizar versión" (`lib/api.ts`) | `buscar_actualizacion` / `instalar_actualizacion` (locales) | todos |
 
 Las acciones `setRolActual` ("Ver como"), `setEmail` y `toggleCmSesion` son **solo del mockup** (demo) y no tienen comando: en la app real el rol viene de la tabla `usuarios` firmada y la identidad de `cm whoami`.

@@ -16,9 +16,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>
 );
 
-// Comprobación del puente con el backend (solo dentro de Tauri).
+// Comprobación del puente con el backend al arrancar en desarrollo.
 if (import.meta.env.DEV) {
-  void import('./lib/tauri').then(({ ping }) =>
-    ping().then((r) => r && console.info('[BranchBoard] backend:', r))
+  void import('./lib/api').then(({ api, enTauri }) =>
+    api.ping().then((r) => console.info(`[BranchBoard] backend (${enTauri() ? 'Tauri' : 'mockup'}):`, r))
   );
 }

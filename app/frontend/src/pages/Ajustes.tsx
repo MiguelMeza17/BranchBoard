@@ -9,13 +9,7 @@ import { PageHeader, EmptyState } from '../components/primitives';
 import { Seccion } from '../components/Seccion';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
-import {
-  buscarActualizacion,
-  instalarActualizacion,
-  mensajeDeError,
-  versionActual,
-  type InfoActualizacion,
-} from '../lib/actualizaciones';
+import { api, mensajeDeError, type InfoActualizacion } from '../lib/api';
 
 export function Ajustes() {
   const user = useStore((s) => s.currentUser());
@@ -45,13 +39,13 @@ function SeccionActualizar() {
   const [porcentaje, setPorcentaje] = useState<number | null>(null);
 
   useEffect(() => {
-    void versionActual().then(setVersion);
+    void api.versionActual().then(setVersion);
   }, []);
 
   const buscar = async () => {
     setEstado('buscando');
     try {
-      setInfo(await buscarActualizacion());
+      setInfo(await api.buscarActualizacion());
     } catch (e) {
       showToast(mensajeDeError(e), 'danger');
     }
@@ -62,7 +56,7 @@ function SeccionActualizar() {
     setEstado('instalando');
     setPorcentaje(null);
     try {
-      await instalarActualizacion((p) => setPorcentaje(p.total ? Math.round((p.descargado / p.total) * 100) : null));
+      await api.instalarActualizacion((p) => setPorcentaje(p.total ? Math.round((p.descargado / p.total) * 100) : null));
     } catch (e) {
       showToast(mensajeDeError(e), 'danger');
       setEstado('reposo');
