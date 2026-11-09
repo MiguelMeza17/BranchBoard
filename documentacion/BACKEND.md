@@ -536,6 +536,18 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 
 **Nuevo (2026-11-07, pendiente de implementar)**: `subir_imagen_proyecto(ruta_archivo)` — Administrador (por definir si también el Líder). Copia la imagen elegida a la carpeta compartida del proyecto (ej. `proyecto/icono.png`, redimensionada a un tamaño fijo, p. ej. 256×256) y guarda la ruta en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto) con la clave `icono_proyecto`. Migra a eventos para que todas las máquinas la vean. Validar tipo (png/jpg/webp) y tamaño máximo, con la misma [validación de rutas](#validación-de-rutas-de-archivoadjuntos-resuelto-previene-path-traversal) que los adjuntos. Ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos).
 
+## Actualizaciones de la app
+
+**Nuevo (2026-11-09)**. Quien ya tiene BranchBoard instalado recibe las versiones nuevas **sin desinstalar nada**, desde [Ajustes → "Actualizar versión"](./FRONTEND.md#ajustes). Usa el plugin oficial de actualización de Tauri.
+
+- **Cómo se publica una versión**: se sube el número de versión en `app/backend/tauri.conf.json` y `Cargo.toml`, y se sube una etiqueta `vX.Y.Z`. GitHub Actions (`.github/workflows/publicar-version.yml`) compila el instalador de Windows, lo **firma** con la llave privada de actualizaciones y crea la Release con el instalador, su firma (`.sig`) y `latest.json` (versión, notas, enlace y firma).
+- **Cómo se actualiza la app**: consulta `https://github.com/MiguelMeza17/BranchBoard/releases/latest/download/latest.json`. Si la versión es mayor que la instalada, descarga el instalador, **verifica la firma** con la llave pública que va en `tauri.conf.json` y lo instala encima. Si la firma no coincide, no instala nada.
+- **No se pierden datos**: el `.db`, los backups y las llaves viven en la carpeta de datos local, y `ops/` en Drive/OneDrive; nada de eso está en la carpeta de instalación.
+- **Comandos** (locales, todos los roles): `buscar_actualizacion()` devuelve `{ version_actual, version_nueva, notas }` (`version_nueva` vacío = al día) y no descarga nada; `instalar_actualizacion()` descarga (evento `actualizacion-progreso` con `{ descargado, total }`), instala y reinicia la app. Se rechaza si hay una [operación en curso](#bloquear-el-cierre-de-la-app-durante-una-operación).
+- **Nunca automático**: la app no busca ni instala sola; siempre lo pide la persona.
+- **Llave de actualizaciones**: es **otra llave**, distinta de la de firma de roles. La privada está solo en la máquina de quien publica (`~/.tauri/branchboard-actualizaciones.key`) y como secreto `TAURI_SIGNING_PRIVATE_KEY` del repositorio; nunca se sube al repo. Si se pierde, las apps ya instaladas no pueden actualizarse solas: hay que reinstalar una vez con un instalador firmado con la llave nueva.
+- **Un solo instalador para todos los proyectos**: ver el cambio en [Firma criptográfica del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac).
+
 ## Copias de seguridad y restauración de la BD
 
 **Backup automático**: cada vez que se abre BranchBoard, antes de tocar el `.db`, se copia a una carpeta local de backups (ej. `%LocalAppData%\BranchBoard\backups\branchboard_2026-09-25.db`). Se conservan solo las **últimas 10 copias** — al llegar a la 11, se borra la más vieja. No requiere acción de nadie, corre solo.
@@ -563,6 +575,13 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
 ## Firma criptográfica del rol (ancla de confianza para el RBAC)
 
 **Resuelve**: el `.db` de SQLite se sincroniza por Drive/OneDrive con lectura/escritura para todo el equipo — cualquiera podía abrir el archivo y poner su propio `rol = 'Administrador'` a mano, y el backend no tenía forma de distinguir ese cambio de uno hecho legítimamente desde la app (hallazgo C1 de la auditoría de seguridad).
+
+**Actualizado (2026-11-09) — un solo instalador, la llave pública ya no va dentro del binario**: con las [actualizaciones de la app](#actualizaciones-de-la-app) todos los proyectos usan **el mismo instalador**, así que la llave pública del Administrador no puede ir embebida en la build. Reemplaza los pasos 1 y 2 de abajo y la "consecuencia asumida" de una build por proyecto:
+- El par de llaves se genera **dentro de la app**, cuando el dueño del repositorio configura el proyecto por primera vez (ver [Identidad de usuario](#identidad-de-usuario)). La privada sigue igual: solo en su máquina, fuera de Drive/OneDrive.
+- La **llave pública** viaja en el primer evento del proyecto (`configurar_proyecto`, firmado con esa misma llave).
+- Cada máquina **guarda esa llave pública la primera vez que entra al proyecto**, en su carpeta de datos local (fuera de `ops/` y de Drive/OneDrive), y desde ahí verifica todo contra ella. Si más adelante aparece en `ops/` otra llave para el mismo proyecto, se rechaza y se avisa: nadie puede cambiar el ancla de confianza escribiendo en la carpeta compartida.
+- **Riesgo aceptado**: la confianza se fija en la primera entrada (si alguien alterara `ops/` antes de que una persona nueva entre por primera vez, esa persona fijaría una llave falsa). Mitigación: al configurar solo se acepta la llave si quien firma el evento es el **dueño del repositorio en Unity VC**, dato que no se puede cambiar desde `ops/`.
+- Regenerar las llaves ya no exige recompilar: el Administrador genera un par nuevo y cada persona confirma el cambio de llave en su máquina.
 
 **Mecanismo**:
 - **Corregido — orden real de los pasos** (la versión anterior decía a la vez "se genera al configurar el proyecto" y "queda embebida en el binario que ya se compiló", lo cual es contradictorio: una llave generada en tiempo de ejecución no puede estar ya horneada en un binario compilado antes): la generación de llaves es un **paso de preparación del proyecto, no un botón dentro de la app ya instalada por el equipo**.
@@ -866,5 +885,6 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `entrarAProyecto` / `irAClonar` / `cambiarDeProyecto` | `entrar_a_proyecto` / `clonar_proyecto` / (vuelve al acceso) | todos |
 | `crearProyectoNuevo` | `crear_proyecto_local` (sin Unity VC, pendiente de definir) | quien lo crea queda Administrador |
 | `toggleVpn` | `alternar_warp` | todos |
+| Ajustes → "Actualizar versión" (`lib/actualizaciones.ts`) | `buscar_actualizacion` / `instalar_actualizacion` (locales) | todos |
 
 Las acciones `setRolActual` ("Ver como"), `setEmail` y `toggleCmSesion` son **solo del mockup** (demo) y no tienen comando: en la app real el rol viene de la tabla `usuarios` firmada y la identidad de `cm whoami`.

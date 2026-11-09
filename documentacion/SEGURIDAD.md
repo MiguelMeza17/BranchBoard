@@ -150,9 +150,11 @@ Enumerado a partir de todo lo ya documentado en [BACKEND.md](./BACKEND.md) — n
 
 **Notificaciones nativas del SO**: capability de `notification`, condicionada a que se confirme implementar el aviso de escritorio (ver pendiente en [Notificaciones de BACKEND.md](./BACKEND.md#notificaciones)).
 
-**Sin capability de red/HTTP**: no hace falta — ni la sincronización de datos (es solo lectura/escritura de archivos en una carpeta que Drive/OneDrive sincroniza por su cuenta) ni `cm` pasan por el `fetch`/HTTP del webview; toda la red real la maneja el propio proceso `cm` por fuera del control de Tauri.
+**Actualizaciones de la app (nuevo, 2026-11-09)**: el plugin `updater` está activo, pero solo lo usa el backend en Rust (la webview no recibe ningún permiso de red). Solo consulta la dirección fija de las Releases del repositorio en GitHub y solo instala lo que venga **firmado** con la llave de actualizaciones. Ver [Actualizaciones de la app en BACKEND.md](./BACKEND.md#actualizaciones-de-la-app).
 
-Todo lo demás (clipboard, global-shortcut, updater, etc.) queda **desactivado** hasta que un caso de uso concreto lo necesite.
+**Sin capability de red/HTTP para la webview**: no hace falta — ni la sincronización de datos (es solo lectura/escritura de archivos en una carpeta que Drive/OneDrive sincroniza por su cuenta) ni `cm` pasan por el `fetch`/HTTP del webview; toda la red real la maneja el propio proceso `cm` por fuera del control de Tauri.
+
+Todo lo demás (clipboard, global-shortcut, etc.) queda **desactivado** hasta que un caso de uso concreto lo necesite.
 
 ## Pendiente por definir
 

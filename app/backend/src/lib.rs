@@ -17,15 +17,18 @@ pub mod estado;
 pub mod eventos;
 pub mod identidad;
 
-use comandos::sistema;
+use comandos::{actualizaciones, sistema};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(estado::AppState::default())
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
             sistema::hay_operacion_en_curso,
+            actualizaciones::buscar_actualizacion,
+            actualizaciones::instalar_actualizacion,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

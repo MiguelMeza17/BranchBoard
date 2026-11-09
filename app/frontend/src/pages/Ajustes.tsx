@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import {
   esLiderOAdmin,
@@ -9,6 +9,13 @@ import { PageHeader, EmptyState } from '../components/primitives';
 import { Seccion } from '../components/Seccion';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
+import {
+  buscarActualizacion,
+  instalarActualizacion,
+  mensajeDeError,
+  versionActual,
+  type InfoActualizacion,
+} from '../lib/actualizaciones';
 
 export function Ajustes() {
   const user = useStore((s) => s.currentUser());
@@ -17,6 +24,7 @@ export function Ajustes() {
     <div>
       <PageHeader title="Ajustes" desc="Acciones administrativas del proyecto. Cada sección aparece según tu rol." />
       <div className="space-y-3">
+        <SeccionActualizar />
         <SeccionBackups />
         {puedeEliminarProyecto(user.rol) && <SeccionProyecto />}
         {!esLiderOAdmin(user.rol) && (
@@ -24,6 +32,77 @@ export function Ajustes() {
         )}
       </div>
     </div>
+  );
+}
+
+// Actualizar versión: visible para todos los roles. La app revisa si hay una versión nueva,
+// la descarga y se reinstala encima sin perder datos.
+function SeccionActualizar() {
+  const showToast = useStore((s) => s.showToast);
+  const [version, setVersion] = useState('');
+  const [info, setInfo] = useState<InfoActualizacion | null>(null);
+  const [estado, setEstado] = useState<'reposo' | 'buscando' | 'instalando'>('reposo');
+  const [porcentaje, setPorcentaje] = useState<number | null>(null);
+
+  useEffect(() => {
+    void versionActual().then(setVersion);
+  }, []);
+
+  const buscar = async () => {
+    setEstado('buscando');
+    try {
+      setInfo(await buscarActualizacion());
+    } catch (e) {
+      showToast(mensajeDeError(e), 'danger');
+    }
+    setEstado('reposo');
+  };
+
+  const instalar = async () => {
+    setEstado('instalando');
+    setPorcentaje(null);
+    try {
+      await instalarActualizacion((p) => setPorcentaje(p.total ? Math.round((p.descargado / p.total) * 100) : null));
+    } catch (e) {
+      showToast(mensajeDeError(e), 'danger');
+      setEstado('reposo');
+    }
+  };
+
+  const hayNueva = !!info?.version_nueva;
+
+  return (
+    <Seccion title="Actualizar versión">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm">
+          <span className="text-muted">Versión instalada</span>
+          <span className="ml-2 font-mono text-text">{version}</span>
+          {info && !hayNueva && <span className="chip ml-3 border border-primary/40 bg-primary/15 text-primary">Al día</span>}
+        </div>
+        <button className="btn-outline btn-sm" disabled={estado !== 'reposo'} onClick={buscar}>
+          {estado === 'buscando' ? 'Buscando…' : 'Buscar actualizaciones'}
+        </button>
+      </div>
+
+      {hayNueva && (
+        <div className="mt-4 rounded-lg border border-primary/50 bg-primary-soft p-4">
+          <div className="text-sm font-semibold text-text">
+            Versión nueva <span className="font-mono">{info?.version_nueva}</span>
+          </div>
+          {info?.notas && <p className="mt-1 whitespace-pre-line text-sm text-muted">{info.notas}</p>}
+          {estado === 'instalando' ? (
+            <div className="mt-3" role="status" aria-live="polite">
+              <div className="h-2 overflow-hidden rounded-full bg-surface-3">
+                <div className="h-full bg-primary transition-all" style={{ width: `${porcentaje ?? 5}%` }} />
+              </div>
+              <div className="mt-1 text-xs text-faint">{porcentaje === null ? 'Descargando…' : `Descargando… ${porcentaje}%`}</div>
+            </div>
+          ) : (
+            <button className="btn-primary btn-sm mt-3" onClick={instalar}>Actualizar y reiniciar</button>
+          )}
+        </div>
+      )}
+    </Seccion>
   );
 }
 

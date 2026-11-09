@@ -217,6 +217,7 @@ Pantalla `/perfil/:email`, a la que se llega desde el avatar de cualquier respon
 
 Pantalla que agrupa las acciones administrativas que quedan. **Actualizado (2026-11-07)**: cada sección es un **panel plegable** (cerrado solo muestra el nombre, con una flecha › que gira al abrirlo). Crear y gestionar usuarios se movió a [Usuarios](#usuarios).
 
+0. **Actualizar versión** (nuevo, 2026-11-09; **todos los roles**, primera sección): muestra la **versión instalada** y el botón **"Buscar actualizaciones"**. Si no hay nada nuevo, aparece la etiqueta "Al día". Si hay una versión nueva, se muestra su número, sus notas y el botón **"Actualizar y reiniciar"**; al pulsarlo sale una barra de progreso de la descarga y la app se reinicia sola ya actualizada. No se pierde ningún dato. En el navegador (mockup sin Tauri) siempre responde "Al día". Ver [Actualizaciones de la app en BACKEND.md](./BACKEND.md#actualizaciones-de-la-app).
 1. **Copias de seguridad**:
    - Administrador: arriba siempre la fila **"Actual"** (la base de datos en uso, con la fecha de hoy, resaltada y sin botón). Debajo, los backups con fecha y tamaño, cada uno con "Restaurar" y su doble candado. **Al restaurar**, la base actual se guarda primero como una copia más, tal cual estaba (con la nota "Guardada antes de restaurar la copia del …"), y la elegida pasa a ser la "Actual".
    - Líder/Desarrollador: en vez de la lista, el botón **"Reportar problema con la base de datos"** (campo de motivo → notificación a los Administradores).

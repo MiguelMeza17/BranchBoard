@@ -32,6 +32,9 @@ pub enum Error {
     /// Falló leer o escribir un archivo.
     #[error("Error de archivos: {0}")]
     Archivos(String),
+    /// Falló buscar, descargar o instalar una versión nueva.
+    #[error("No se pudo actualizar: {0}")]
+    Actualizacion(String),
     /// Cualquier otro fallo inesperado.
     #[error("Error interno: {0}")]
     Interno(String),
@@ -49,6 +52,7 @@ impl Error {
             Error::Cm(_) => "cm",
             Error::BaseDatos(_) => "base_datos",
             Error::Archivos(_) => "archivos",
+            Error::Actualizacion(_) => "actualizacion",
             Error::Interno(_) => "interno",
         }
     }
