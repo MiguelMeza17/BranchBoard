@@ -26,20 +26,19 @@
 
 ## Roles y permisos
 
-4 roles confirmados: Administrador, Líder, Desarrollador y **Tester** (el 4to rol, antes pendiente de confirmar).
+5 roles: Administrador, Líder, Desarrollador, **Tester** y **Colaborador externo** (nuevo 2026-11-07).
 
 ### Administrador
 - Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo
-- Es el único que puede asignar el rol de **Líder** a otro usuario, o **degradarlo**/reasignar entre Desarrollador y Tester (`cambiar_rol`, **nuevo**: antes solo existía `ascender_a_lider`, sin comando para el sentido contrario) — ver [BACKEND.md](./BACKEND.md#comandos-de-la-pantalla-ajustes)
+- Es el único que puede asignar el rol de **Líder** a otro usuario, o **degradarlo**/reasignar entre Desarrollador, Tester y Colaborador externo (`cambiar_rol`, que reemplaza a `ascender_a_lider`) — ver [BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes)
 - Acceso total al proyecto
 - Único rol que puede **eliminar el proyecto completo** — **definido**: un escalón más estricto que eliminar una tarea (ver [Confirmación al arrastrar tareas en FRONTEND.md](./FRONTEND.md#confirmación-al-arrastrar-tareas-drag--drop)), dado que borra absolutamente todo, no solo un elemento. En vez de escribir una palabra genérica como "eliminar", el Administrador debe **escribir el nombre exacto del proyecto** para confirmar (mismo patrón que usa GitHub al borrar un repositorio) — así se evita una confirmación "en automático" sin medir la gravedad.
 - Único rol que puede **restaurar un backup de la base de datos** (ver [Copias de seguridad en BACKEND.md](./BACKEND.md#copias-de-seguridad-y-restauración-de-la-bd)) — Líder y Desarrollador solo pueden pedírselo vía notificación, no hacerlo ellos mismos.
 - Si toma y trabaja una tarea general él mismo, puede **mergearla directo a `dev`** al terminar, sin pasar por "en revisión" — ya tiene permiso de autorizar, ver [Flujo de revisión y merge a dev en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)
 
 ### Líder (por debajo del Administrador)
-- Puede crear usuarios (pero no puede crear ni ascender a otros Líderes)
-- Puede **eliminar usuarios** (ej. cuando alguien deja el equipo), pero **solo Desarrolladores** — **definido**: no puede eliminar a otro Líder, esa acción es exclusiva del Administrador
-- Administra las solicitudes de ingreso a la organización (aprobar/rechazar)
+- Puede crear usuarios y cambiar roles entre Desarrollador, Tester y Colaborador externo (no crea ni asciende Líderes ni Administradores). Lo firma él mismo con su llave (certificada por el Administrador), así que la persona entra de una vez — ver [Firma de los Líderes en BACKEND.md](./BACKEND.md#firma-de-los-líderes-nuevo-2026-11-07)
+- Puede **eliminar usuarios** (ej. cuando alguien deja el equipo), pero **solo Desarrolladores y Colaboradores externos** — **definido**: no puede eliminar a otro Líder, esa acción es exclusiva del Administrador
 - Puede crear tareas, poner permisos en tareas, eliminar tareas de otros usuarios
 - Puede ver todas las tareas del proyecto
 - Si toma y trabaja una tarea general él mismo, puede **mergearla directo a `dev`** al terminar, sin pasar por "en revisión" — mismo caso que el Administrador, ver [Flujo de revisión y merge a dev en BACKEND.md](./BACKEND.md#flujo-de-revisión-y-merge-a-dev)
@@ -61,6 +60,13 @@
 - No puede modificar tareas de otros (solo reportar sobre ellas vía Testing)
 - No puede crear usuarios ni gestionar el proyecto
 
+### Colaborador externo
+
+**Nuevo (2026-11-07)**: reemplaza la lista aparte `colaboradores_externos`. Es alguien que sube archivos puntuales (imagen, audio, video, animación, `.fbx`) en subtareas simples, con workspace parcial (Gluon); no descarga el proyecto completo ni necesita Unity Editor.
+- **Ve lo mismo que un Desarrollador** (decidido 2026-11-07) y tiene sus mismas restricciones (sus tareas quedan pendientes de aprobación, no termina tareas directo).
+- **Solo puede desarrollar tareas individuales**: no toma tareas grandes (las que tienen subtareas) ni subtareas (hijas de otra tarea). **Aplicado en el mockup (2026-11-07)**: no ve "Tomar tarea" en esas tarjetas (Scrum y Categorías), arrastrarlas desde "Sin asignar" se bloquea con un aviso, y en "Asignar" de la Lista de tareas no aparece como opción para una subtarea (`puedeTomarTarea` en `lib/permisos.ts`). El backend lo valida igual en `tomar_tarea` y `asignar_tarea`.
+- Lo crea o le cambia el rol un Líder o el Administrador desde [Usuarios](./FRONTEND.md#usuarios); también puede pasar a otro rol si el Líder/Administrador lo decide.
+
 ### Matriz resumen
 
 | Acción | Administrador | Líder | Desarrollador | Tester |
@@ -71,10 +77,10 @@
 | Restaurar backup de la BD | ✅ | ❌ | ❌ | ❌ |
 | Solicitar acción sobre la BD (notificación al Admin) | — | ✅ | ✅ | ❌ |
 | Asignar rol de Líder | ✅ | ❌ | ❌ | ❌ |
-| Crear usuarios | ✅ | ✅ (no Líderes) | ❌ | ❌ |
-| Eliminar usuarios | ✅ (cualquiera) | ✅ (solo Desarrolladores) | ❌ | ❌ |
-| Gestionar solicitudes de ingreso | ✅ | ✅ | ❌ | ❌ |
-| Otorgar/revocar permiso de subtareas simples a colaborador externo | ✅ | ✅ | ❌ | ❌ |
+| Crear usuarios | ✅ | ✅ (no Líderes ni Administradores) | ❌ | ❌ |
+| Eliminar usuarios | ✅ (cualquiera) | ✅ (Desarrolladores y Colaboradores externos) | ❌ | ❌ |
+| Cambiar rol (entre Desarrollador, Tester y Colaborador externo) | ✅ | ✅ (lo firma él mismo) | ❌ | ❌ |
+| Ver la lista de usuarios (nombre y rol) | ✅ | ✅ | ✅ | ✅ |
 | Crear tareas (producción) | ✅ (directo) | ✅ (directo) | ⚠️ (queda pendiente de aprobación, ver [Pendientes en PLANNING.md](./PLANNING.md#pendientes)) | ⚠️ (mismo caso que Desarrollador) |
 | Aprobar tarea pendiente (creada por Desarrollador o Tester) | ✅ | ✅ | ❌ | ❌ |
 | Editar y aprobar una tarea pendiente en un solo paso | ✅ | ✅ | ❌ | ❌ |
@@ -121,7 +127,7 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 - Ejecución de comandos `cm` (Unity VC) desde la app: **resuelto**, ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos) — siempre pasar argumentos por separado a `Command`, nunca construir un string de shell con datos del usuario
 - Alcance del acceso a disco: limitar al workspace de Unity VC configurado, no acceso libre al filesystem
 - Manejo de datos del equipo: **resuelto**, no hay login propio, ni siquiera para el colaborador de subtareas simples — identidad vía `cm whoami` para **todos** los roles (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario) y [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)). El diseño anterior de Service Account/API REST se descartó por una limitación real de la plataforma (las Service Accounts no pueden recibir permisos de Version Control), así que no hay ninguna llave/secreto compartido que proteger.
-- Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, aprobar solicitud) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
+- Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, crear usuario o cambiar rol) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
 - **Resuelto (hallazgo C1 de auditoría)**: el `rol` en la tabla `usuarios` no bastaba como ancla de confianza porque el `.db` se sincroniza por Drive/OneDrive con lectura/escritura para todo el equipo — cualquiera podía editarlo a mano. Ver [Firma criptográfica del rol en BACKEND.md](./BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac): cada fila de rol se firma con Ed25519 (llave privada solo en la máquina del Administrador, nunca sincronizada; llave pública embebida en la app) y se verifica al leer. Adicionalmente, **eliminar el proyecto** exige también permiso real `rmrepository` en Unity Version Control (ver [Verificación adicional sobre Unity Version Control en BACKEND.md](./BACKEND.md#verificación-adicional-sobre-unity-version-control-para-eliminar-el-proyecto)) — doble candado, no solo la firma local.
 
 ## Allowlist de capabilities de Tauri (resuelto)

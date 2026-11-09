@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -11,15 +11,20 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { useStore } from '../store/useStore';
+import { progresoDe, useStore, LIMITE_REAPERTURAS, puedeReabrir } from '../store/useStore';
 import { type EstadoTarea, type Tarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
-import { tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { esLiderOAdmin, puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
+import { perteneceA } from '../lib/planificacion';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
+import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
+import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
+import { DetalleTareaModal } from '../components/DetalleTareaModal';
 import { CrearTareaModal } from '../components/CrearTareaModal';
+import { Icono } from '../components/Icono';
 
 // Columnas del tablero: "Sin asignar" no es un estado real de la tarea — es un
 // recorte puramente visual de "por hacer" (sin dueño vs ya tomada por alguien).
@@ -43,7 +48,13 @@ function DraggableCard({
   estadoResumen,
   footer,
   ocultarResponsable,
+  disabled,
+  resaltada,
+  atenuada,
 }: {
+  resaltada?: boolean;
+  /** En la vista de un backlog: la tarea está ocupada por un sprint (se ve en gris). */
+  atenuada?: boolean;
   tarea: Tarea;
   childCount: number;
   onOpenFolder?: () => void;
@@ -53,10 +64,16 @@ function DraggableCard({
   estadoResumen?: { estado: EstadoVisual; count: number }[];
   footer?: React.ReactNode;
   ocultarResponsable?: boolean;
+  disabled?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: tarea.id, disabled });
   return (
-    <div ref={setNodeRef} className={isDragging ? 'opacity-40' : ''}>
+    <div
+      ref={setNodeRef}
+      id={`scrum-tarea-${tarea.id}`}
+      className={`rounded-xl transition-shadow duration-300 ${isDragging ? 'opacity-40' : atenuada ? 'opacity-50 grayscale' : ''}`}
+      style={resaltada ? { boxShadow: '0 0 0 2px rgb(99 102 241 / 0.8), 0 0 18px 4px rgb(99 102 241 / 0.45)' } : undefined}
+    >
       <TaskCard
         tarea={tarea}
         childCount={childCount}
@@ -96,7 +113,7 @@ function Column({
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 space-y-3 rounded-2xl border p-3 transition-colors ${col.bg} ${
+        className={`acotado flex-1 space-y-3 rounded-2xl border p-3 transition-colors ${col.bg} ${
           col.dashed ? 'border-dashed' : ''
         } ${isOver ? 'border-primary ring-2 ring-primary/30' : col.border}`}
         style={{ minHeight: 200 }}
@@ -109,22 +126,34 @@ function Column({
 
 export function ScrumBoard() {
   const navigate = useNavigate();
+  // Filtro por sprint o backlog (?sprint=<id>, al lado de "Todas / Mis tareas"): solo sus tareas (las
+  // del sprint y sus subtareas). Planificación abre el tablero con uno ya elegido.
+  const [params, setParams] = useSearchParams();
+  const sprintId = params.get('sprint') ?? undefined;
+  const location = useLocation();
   const user = useStore((s) => s.currentUser());
   const tareasAll = useStore((s) => s.tareas);
   const moverTarea = useStore((s) => s.moverTarea);
   const tomarTarea = useStore((s) => s.tomarTarea);
   const desasignarTarea = useStore((s) => s.desasignarTarea);
   const autorizarMerge = useStore((s) => s.autorizarMerge);
+  const reabrirTarea = useStore((s) => s.reabrirTarea);
+  const puedeAvanzar = useStore((s) => s.puedeAvanzar);
   const crearTareaConSubtareas = useStore((s) => s.crearTareaConSubtareas);
   const sprints = useStore((s) => s.sprints);
   const showToast = useStore((s) => s.showToast);
 
   const [focusId, setFocusId] = useState<string | null>(null); // navegación tipo carpeta
+  // Llegada desde otra pantalla (ej. el ID en Lista de tareas): abre la carpeta donde está la tarea,
+  // hace scroll hasta ella y la resalta un momento.
+  const [resaltada, setResaltada] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);
+  const [salto, setSalto] = useState<{ id: string; to: EstadoTarea } | null>(null);
+  const [reabrirId, setReabrirId] = useState<string | null>(null);
+  const [borrarProgresoId, setBorrarProgresoId] = useState<string | null>(null);
   const [tomarId, setTomarId] = useState<string | null>(null);
   const [mostrarTomarModal, setMostrarTomarModal] = useState(false);
-  const [modoTomar, setModoTomar] = useState<'rama' | 'checkin'>('rama');
   const [showCrear, setShowCrear] = useState(false);
   const [modoForzadoCrear, setModoForzadoCrear] = useState<'general' | 'especifica'>('especifica');
   const [detalle, setDetalle] = useState<Tarea | null>(null);
@@ -132,20 +161,29 @@ export function ScrumBoard() {
   const [soloMias, setSoloMias] = useState(false);
   const [bloqueado, setBloqueado] = useState(false); // bloquea la UI mientras la tarjeta termina de acomodarse
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // El arrastre empieza al mover 12px con el botón presionado (antes 6): un click con un pequeño
+  // movimiento sin querer ya no se toma como arrastre y sí abre los detalles.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 12 } }));
 
-  // Reinicia la elección rama/check-in cada vez que se abre el modal de "Tomar tarea".
-  useEffect(() => {
-    if (mostrarTomarModal) setModoTomar('rama');
-  }, [mostrarTomarModal]);
 
-  const tareaTomar = tomarId ? tareasAll.find((t) => t.id === tomarId) : null;
-  const esSubtareaTomar = !!tareaTomar?.tarea_padre_id;
-
-  const visibles = useMemo(
-    () => tareasAll.filter((t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user)),
-    [tareasAll, user]
-  );
+  const sprintActual = useStore((s) => (sprintId ? s.sprints.find((sp) => sp.id === sprintId) : undefined));
+  const visibles = useMemo(() => {
+    const base = tareasAll.filter((t) => !t.eliminada && tareaVisibleEnTableroPrincipal(t, user));
+    if (!sprintId || !sprintActual) return base;
+    // De un sprint o backlog: la tarea está en él, o alguno de sus ancestros lo está (sus subtareas van con ella).
+    const porId = new Map(tareasAll.map((t) => [t.id, t]));
+    const enSprint = (t: Tarea): boolean => {
+      for (let cur: Tarea | undefined = t; cur; cur = cur.tarea_padre_id ? porId.get(cur.tarea_padre_id) : undefined) {
+        if (perteneceA(cur, sprintActual)) return true;
+      }
+      return false;
+    };
+    return base.filter(enSprint);
+  }, [tareasAll, user, sprintId, sprintActual]);
+  // Raíz del tablero: sin padre, o con un padre que no está en este tablero (ej. una subtarea que
+  // está en el sprint aunque su padre no).
+  const idsVisibles = useMemo(() => new Set(visibles.map((t) => t.id)), [visibles]);
+  const esRaiz = (t: Tarea) => !t.tarea_padre_id || !idsVisibles.has(t.tarea_padre_id);
 
   const childrenCount = (id: string) => visibles.filter((t) => t.tarea_padre_id === id).length;
 
@@ -200,9 +238,29 @@ export function ScrumBoard() {
   // Navegación tipo explorador de carpetas — solo las subtareas van en las columnas;
   // la tarea padre se muestra aparte (franja de contexto), nunca mezclada como otra tarjeta más.
   const nivelActual = useMemo(() => {
-    if (!focusId) return visibles.filter((t) => t.tarea_padre_id === null);
+    if (!focusId) return visibles.filter(esRaiz);
     return visibles.filter((t) => t.tarea_padre_id === focusId);
   }, [visibles, focusId]);
+
+  useEffect(() => {
+    const focusTareaId = (location.state as { focusTareaId?: string } | null)?.focusTareaId;
+    if (!focusTareaId) return;
+    const t = tareasAll.find((x) => x.id === focusTareaId);
+    if (!t) return;
+    setFocusId(t.tarea_padre_id);
+    setResaltada(focusTareaId);
+    const scroll = setTimeout(
+      () => document.getElementById(`scrum-tarea-${focusTareaId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+      60
+    );
+    const apagar = setTimeout(() => setResaltada(null), 1600);
+    return () => {
+      clearTimeout(scroll);
+      clearTimeout(apagar);
+    };
+    // Solo al llegar con un destino nuevo, no cada vez que cambian las tareas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const tareaEnFoco = useMemo(
     () => (focusId ? tareasAll.find((t) => t.id === focusId) ?? null : null),
@@ -278,12 +336,21 @@ export function ScrumBoard() {
       return;
     }
 
+    // Colaborador externo: solo tareas individuales (ni grandes ni subtareas).
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a && !puedeTomarTarea(user.rol, tarea, tareasAll)) {
+      showToast('Solo puedes tomar tareas individuales', 'danger');
+      return;
+    }
+
     // "Por hacer" también es el mismo estado real que "Sin asignar" — soltar aquí desde
     // "Sin asignar" mueve la tarjeta a "Por hacer" de inmediato (se anima el acomodo) y
     // bloquea la interfaz; recién al terminar la animación aparece el modal de
     // confirmación, el mismo que usa el botón "Tomar tarea". Si se cancela, como el dato
     // real nunca cambió, la tarjeta vuelve sola a "Sin asignar".
     if (toCol === 'por hacer' && tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      // Solo una tarjeta "en vuelo" a la vez: si otra ya espera su confirmación,
+      // sobrescribir tomarId haría que esa primera regresara sola a "Sin asignar".
+      if (tomarId) return;
       setTomarId(id);
       setBloqueado(true);
       setTimeout(() => {
@@ -296,19 +363,66 @@ export function ScrumBoard() {
     const to = toCol;
     if (tarea.estado === to) return;
 
+    // Desde "Sin asignar" lo normal es pasar solo a "Por hacer" (ya tratado arriba). Forzarla a
+    // otra columna pide confirmar el salto; al confirmarlo sigue el flujo normal (avanzarA).
+    if (tarea.estado === 'por hacer' && !tarea.asignado_a) {
+      if (to === 'terminada' && !esLiderOAdmin(user.rol)) {
+        showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
+        return;
+      }
+      setSalto({ id, to });
+      return;
+    }
+
+    avanzarA(id, to);
+  }
+
+  // Flujo al soltar en una columna real. Lee la tarea del store y no del render porque, tras
+  // confirmar un salto desde "Sin asignar", se acaba de tomar en ese mismo click.
+  function avanzarA(id: string, to: EstadoTarea) {
+    const tarea = useStore.getState().tareas.find((t) => t.id === id);
+    if (!tarea) return;
+
+    // En producción -> Por hacer con progreso: se permite, pero borra lo hecho (escribir "eliminar").
+    if (to === 'por hacer' && tarea.estado === 'en producción') {
+      const st = useStore.getState();
+      if (progresoDe(st.tareas, st.commits, id).length > 0) {
+        setBorrarProgresoId(id);
+        return;
+      }
+    }
+    // Reabrir (terminada -> en revisión): candado "reabrir" con motivo, y tope de reaperturas.
+    if (tarea.estado === 'terminada' && to === 'en revisión') {
+      if (!puedeReabrir(tarea, user.rol)) {
+        showToast(
+          `Esta tarea ya se reabrió ${LIMITE_REAPERTURAS} veces — solo el Administrador puede reabrirla otra vez`,
+          'danger'
+        );
+        return;
+      }
+      setReabrirId(id);
+      return;
+    }
+
     // Desarrollador/Tester no pueden mandar a "terminada" directo — solo vía revisión
-    if (to === 'terminada' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+    if (to === 'terminada' && !esLiderOAdmin(user.rol)) {
       showToast('No puedes mergear directo a dev — manda la tarea a revisión', 'danger');
       return;
     }
 
+    // Líder/Administrador: mergear a dev pide el mismo candado "autorizar" que la pantalla Revisión.
+    if (to === 'terminada') {
+      if (puedeAvanzar(id, to)) setPendingMove({ id, to });
+      return;
+    }
+
     // Mandar a revisión: doble candado ("mandar a revisar") para Desarrollador/Tester
-    if (to === 'en revisión' && (user.rol === 'Desarrollador' || user.rol === 'Tester')) {
+    if (to === 'en revisión' && !esLiderOAdmin(user.rol)) {
       if (tarea.pendiente_aprobacion) {
         showToast('Esta tarea está pendiente de aprobación — no se puede mandar a revisión', 'danger');
         return;
       }
-      setPendingMove({ id, to });
+      if (puedeAvanzar(id, to)) setPendingMove({ id, to });
       return;
     }
 
@@ -321,27 +435,33 @@ export function ScrumBoard() {
 
   function renderCard(t: Tarea) {
     const nHijos = childrenCount(t.id);
+    // Viendo un backlog: las tareas que ya trabaja un sprint van en gris, con el sprint donde están.
+    const ocupadaPor =
+      sprintActual && !sprintActual.con_fecha && t.sprint_id ? sprints.find((sp) => sp.id === t.sprint_id)?.nombre : undefined;
     const footer = (
       <div className="flex flex-wrap items-center gap-1.5">
+        {ocupadaPor && (
+          <span className="chip w-full justify-center border border-border bg-surface-3 text-muted">en {ocupadaPor}</span>
+        )}
         <button className="btn-ghost btn-sm" onClick={() => setDetalle(t)}>
           Ver detalle
         </button>
         {/* Tomar tarea (crea rama) */}
-        {!t.asignado_a && t.estado === 'por hacer' && (
+        {!t.asignado_a && t.estado === 'por hacer' && puedeTomarTarea(user.rol, t, tareasAll) && (
           <button
             className="btn-outline btn-sm"
             onClick={() => { setTomarId(t.id); setMostrarTomarModal(true); }}
           >
-            🙋 Tomar tarea
+            <Icono nombre="mano" className="h-3.5 w-3.5" sinColor /> Tomar tarea
           </button>
         )}
         {/* Líder/Admin: autorizar su propia tarea directamente */}
         {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && (
           <button
             className="btn-primary btn-sm"
-            onClick={() => setPendingMove({ id: t.id, to: 'terminada' })}
+            onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}
           >
-            ✓ Autorizar (merge a dev)
+            <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Autorizar (merge a dev)
           </button>
         )}
       </div>
@@ -358,6 +478,9 @@ export function ScrumBoard() {
         estadoResumen={nHijos > 0 ? estadoResumenDe(t.id) : undefined}
         footer={footer}
         ocultarResponsable={t.estado === 'por hacer'}
+        disabled={!!tomarId}
+        resaltada={resaltada === t.id}
+        atenuada={!!ocupadaPor}
       />
     );
   }
@@ -419,7 +542,7 @@ export function ScrumBoard() {
                       style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}18` }}
                       title={`Ir a la subtarea de ${tipo}`}
                     >
-                      <span>{m.emoji}</span>
+                      <Icono nombre={m.icono} className="h-3.5 w-3.5" sinColor />
                       {count > 1 && <span className="font-semibold">{count}</span>}
                     </button>
                   );
@@ -427,7 +550,10 @@ export function ScrumBoard() {
               </div>
               <EstadoBadge estado={tareaEnFoco.estado} />
               {tareaEnFoco.asignado_a && <Avatar email={tareaEnFoco.asignado_a} size={22} />}
-              <button className="btn-outline btn-sm" onClick={() => setFocusId(tareaEnFoco.tarea_padre_id)}>
+              <button
+                className="btn-outline btn-sm"
+                onClick={() => setFocusId(esRaiz(tareaEnFoco) ? null : tareaEnFoco.tarea_padre_id)}
+              >
                 ← Volver
               </button>
             </div>
@@ -436,10 +562,14 @@ export function ScrumBoard() {
       ) : (
         <PageHeader
           title="Tablero Scrum"
-          desc="Arrastra las tarjetas para cambiar su estado."
+          desc={
+            sprintActual
+              ? `Viendo solo las tareas de ${sprintActual.nombre}${sprintActual.con_fecha ? ` (${sprintActual.fecha_inicio} → ${sprintActual.fecha_fin})` : ''}.`
+              : 'Arrastra las tarjetas para cambiar su estado.'
+          }
           actions={
             <span className="chip border border-border bg-surface-2 text-muted">
-              {visibles.filter((t) => t.tarea_padre_id === null).length} tareas raíz
+              {visibles.filter(esRaiz).length} tareas raíz
             </span>
           }
         />
@@ -449,13 +579,14 @@ export function ScrumBoard() {
         {/* Breadcrumb navegación tipo carpeta + interruptores de columnas visibles */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-sm">
+            {/* Siempre con fondo, para que se lea como botón; al pasar el mouse se aclara más. */}
             <button
               onClick={() => setFocusId(null)}
-              className={`rounded-md px-2 py-1 transition hover:bg-surface-3 ${
+              className={`rounded-md border border-border bg-surface-3 px-2 py-1 transition hover:border-border-strong hover:bg-border-strong hover:text-text ${
                 !focusId ? 'font-semibold text-text' : 'text-muted'
               }`}
             >
-              🗂️ Tareas
+              <span className="inline-flex items-center gap-1.5"><Icono nombre="scrum" className="h-3.5 w-3.5" /> Tareas</span>
             </button>
             <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
               <button
@@ -475,6 +606,45 @@ export function ScrumBoard() {
                 Mis tareas
               </button>
             </div>
+            {/* Sprints y backlogs: elegir uno deja en el tablero solo sus tareas. */}
+            <select
+              className={`rounded-lg border bg-surface-2 px-2.5 py-1 text-xs font-medium outline-none transition ${
+                sprintActual ? 'border-primary/50 text-text' : 'border-border text-muted'
+              }`}
+              value={sprintActual ? sprintActual.id : ''}
+              onChange={(e) => {
+                setFocusId(null);
+                if (e.target.value) params.set('sprint', e.target.value);
+                else params.delete('sprint');
+                setParams(params);
+              }}
+              title="Ver solo las tareas de un sprint o backlog"
+            >
+              <option value="">Todos los sprints y backlogs</option>
+              {sprints.some((sp) => sp.con_fecha) && (
+                <optgroup label="Sprints">
+                  {sprints
+                    .filter((sp) => sp.con_fecha)
+                    .map((sp) => (
+                      <option key={sp.id} value={sp.id}>
+                        {sp.nombre}
+                        {sp.cerrado ? ' (cerrado)' : ''}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+              {sprints.some((sp) => !sp.con_fecha) && (
+                <optgroup label="Backlogs">
+                  {sprints
+                    .filter((sp) => !sp.con_fecha)
+                    .map((sp) => (
+                      <option key={sp.id} value={sp.id}>
+                        {sp.nombre}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
             {breadcrumb.map((c) => (
               <span key={c.id} className="flex items-center gap-1.5">
                 <span className="text-faint">/</span>
@@ -529,7 +699,7 @@ export function ScrumBoard() {
             <div className="space-y-6">
               <div className="rounded-2xl border border-border border-l-4 border-l-primary bg-surface-2 p-4">
                 <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-text">
-                  📦 Tareas generales
+                  <Icono nombre="caja" className="h-4 w-4" /> Tareas generales
                   <span className="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-normal text-indigo-200">
                     {generales.length}
                   </span>
@@ -538,7 +708,7 @@ export function ScrumBoard() {
               </div>
               <div className="rounded-2xl border border-border border-l-4 border-l-accent bg-surface-2 p-4">
                 <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-text">
-                  👤 Tareas individuales
+                  <Icono nombre="usuario" className="h-4 w-4" /> Tareas individuales
                   <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-normal text-teal-200">
                     {individuales.length}
                   </span>
@@ -586,18 +756,54 @@ export function ScrumBoard() {
         }
       />
 
-      {/* Tomar tarea (crea rama, o — solo para subtareas — check-in directo sobre la rama padre) */}
+      {/* Salto de estados: se confirma y luego sigue el flujo normal de la columna destino */}
+      <ConfirmarSaltoModal
+        tarea={salto ? tareasAll.find((t) => t.id === salto.id) ?? null : null}
+        to={salto?.to ?? null}
+        onClose={() => setSalto(null)}
+        onConfirm={() => {
+          if (!salto) return;
+          const t = tareasAll.find((x) => x.id === salto.id);
+          if (t && t.estado === 'por hacer' && !t.asignado_a) tomarTarea(salto.id, user.email);
+          setSalto(null);
+          avanzarA(salto.id, salto.to);
+        }}
+      />
+
+      {/* Reabrir una tarea terminada (ya mergeada a dev): candado + motivo obligatorio */}
+      <ConfirmLock
+        open={!!reabrirId}
+        onClose={() => setReabrirId(null)}
+        onConfirm={(motivo) => {
+          if (reabrirId) reabrirTarea(reabrirId, motivo ?? '');
+          setReabrirId(null);
+        }}
+        title="Reabrir tarea terminada"
+        palabra="reabrir"
+        confirmLabel="Reabrir"
+        requiereJustificacion
+        justificacionLabel="Motivo de la reapertura"
+        description={
+          <>
+            La tarea ya se mergeó a dev y volverá a "en revisión". Se avisará a Líderes y Administradores.{' '}
+            <span className="font-semibold text-text">
+              Reaperturas: {tareasAll.find((t) => t.id === reabrirId)?.reaperturas ?? 0}/{LIMITE_REAPERTURAS}
+            </span>
+            {' '}— al llegar al tope, solo el Administrador puede reabrirla.
+          </>
+        }
+      />
+
+      <BorrarProgresoModal tareaId={borrarProgresoId} onClose={() => setBorrarProgresoId(null)} />
+
+      {/* Tomar tarea: crea su rama (toda tarea se trabaja en su propia rama) */}
       <ConfirmLock
         open={mostrarTomarModal}
         onClose={() => { setMostrarTomarModal(false); setTomarId(null); }}
         onConfirm={() => {
           if (tomarId) {
-            tomarTarea(tomarId, user.email, esSubtareaTomar ? modoTomar : 'rama');
-            showToast(
-              esSubtareaTomar && modoTomar === 'checkin'
-                ? 'Check-in habilitado sobre la rama de la tarea padre — ¡listo para trabajar!'
-                : 'Rama creada y workspace cambiado — ¡listo para trabajar!'
-            );
+            tomarTarea(tomarId, user.email);
+            showToast('Rama creada y workspace cambiado — ¡listo para trabajar!');
           }
           setMostrarTomarModal(false);
           setTomarId(null);
@@ -605,38 +811,8 @@ export function ScrumBoard() {
         title="Tomar tarea"
         tone="primary"
         palabra="asignar"
-        confirmLabel={esSubtareaTomar && modoTomar === 'checkin' ? 'Tomar con check-in' : 'Tomar y crear rama'}
-        description={
-          <div className="space-y-3">
-            <p>
-              {esSubtareaTomar && modoTomar === 'checkin'
-                ? 'El check-in se hará directo sobre la rama de la tarea padre — no se crea una rama nueva ni se cambia el workspace.'
-                : 'Al tomar la tarea, el backend crea su rama en Unity Version Control y hace el auto-switch de tu workspace. Podrás abrirla en Unity desde la pantalla de éxito.'}
-            </p>
-            {esSubtareaTomar && (
-              <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setModoTomar('rama')}
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                    modoTomar === 'rama' ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
-                  }`}
-                >
-                  🌿 Rama propia
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModoTomar('checkin')}
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                    modoTomar === 'checkin' ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
-                  }`}
-                >
-                  ✅ Check-in directo
-                </button>
-              </div>
-            )}
-          </div>
-        }
+        confirmLabel="Tomar y crear rama"
+        description={'Al tomar la tarea, el backend crea su rama en Unity Version Control y hace el auto-switch de tu workspace. Podrás abrirla en Unity desde la pantalla de éxito.'}
       />
 
       {/* Nueva tarea — en la raíz crea una tarea raíz; dentro de una carpeta, una subtarea de ella */}
@@ -650,66 +826,12 @@ export function ScrumBoard() {
           rolUsuario={user.rol}
           sprints={sprints}
           modoForzado={modoForzadoCrear}
+          sprintInicial={sprintActual?.id}
         />
       )}
 
       {/* Detalle de tarea */}
-      <Modal
-        open={!!detalle}
-        onClose={() => setDetalle(null)}
-        title={detalle?.titulo ?? ''}
-        subtitle={detalle ? `${detalle.id} · ${detalle.tipo}` : ''}
-        size="md"
-      >
-        {detalle && (
-          <div className="space-y-4 text-sm">
-            <div>
-              <dt className="mb-1 text-xs text-faint">Descripción</dt>
-              <p className="whitespace-pre-wrap leading-relaxed text-text">
-                {detalle.descripcion || 'Sin descripción.'}
-              </p>
-            </div>
-            <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
-              <div>
-                <dt className="text-xs text-faint">Estado</dt>
-                <dd className="text-text">{estadoMeta[detalle.estado].label}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Rama</dt>
-                {detalle.modo_trabajo === 'checkin' ? (
-                  <dd className="text-accent">
-                    ✅ Check-in directo
-                    {(() => {
-                      const padre = tareasAll.find((x) => x.id === detalle.tarea_padre_id);
-                      return padre?.rama_asociada ? (
-                        <span className="text-muted"> — sobre <span className="font-mono">{padre.rama_asociada}</span></span>
-                      ) : null;
-                    })()}
-                  </dd>
-                ) : (
-                  <dd className="font-mono text-accent">{detalle.rama_asociada ?? '— sin rama —'}</dd>
-                )}
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Asignado a</dt>
-                <dd className="text-text">{detalle.asignado_a ?? 'Sin asignar'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Creado por</dt>
-                <dd className="text-text">{detalle.creado_por}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Fecha límite</dt>
-                <dd className="text-text">{detalle.fecha_limite ?? 'Sin fecha'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-faint">Pendiente aprobación</dt>
-                <dd className="text-text">{detalle.pendiente_aprobacion ? 'Sí' : 'No'}</dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </Modal>
+      <DetalleTareaModal tarea={detalle} onClose={() => setDetalle(null)} />
     </div>
   );
 }

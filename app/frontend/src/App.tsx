@@ -4,9 +4,11 @@ import { useStore } from './store/useStore';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
+import { AccesoProyecto } from './components/AccesoProyecto';
 import { ScrumBoard } from './pages/ScrumBoard';
 import { Resumen } from './pages/Resumen';
 import { ListaTareas } from './pages/ListaTareas';
+import { Planificacion } from './pages/Planificacion';
 import { Avance } from './pages/Avance';
 import { Branches } from './pages/Branches';
 import { Revision } from './pages/Revision';
@@ -17,27 +19,55 @@ import { CategoriaScrum } from './pages/CategoriaScrum';
 import { Reportes } from './pages/Reportes';
 import { Ajustes } from './pages/Ajustes';
 import { PerfilUsuario } from './pages/PerfilUsuario';
+import { Usuarios } from './pages/Usuarios';
+import { DocumentosProyecto } from './pages/DocumentosProyecto';
+import { Chat } from './pages/Chat';
 
 export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
+  const accesoCompletado = useStore((s) => s.accesoCompletado);
 
-  if (!showSplash && !cmSesionActiva) {
-    return <SesionUnityVCRequerida />;
+  // Debajo de la pantalla de carga va siempre lo que sigue después de ella: sin sesión o sin haber
+  // entrado a un proyecto, la pantalla de acceso. Así, al desvanecerse la carga, nunca se ve la
+  // interfaz de BranchBoard antes de iniciar sesión.
+  const splash = showSplash && <SplashScreen onDone={() => setShowSplash(false)} />;
+
+  if (!cmSesionActiva) {
+    return (
+      <>
+        {splash}
+        <SesionUnityVCRequerida />
+      </>
+    );
+  }
+
+  if (!accesoCompletado) {
+    return (
+      <>
+        {splash}
+        <AccesoProyecto />
+      </>
+    );
   }
 
   return (
     <>
-      {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
+      {splash}
       <HashRouter>
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Navigate to="/scrum" replace />} />
+            <Route path="/proyecto" element={<DocumentosProyecto />} />
+            <Route path="/chat" element={<Chat />} />
+            <Route path="/chat/:email" element={<Chat />} />
             <Route path="/scrum" element={<ScrumBoard />} />
             <Route path="/resumen" element={<Resumen />} />
             <Route path="/lista" element={<ListaTareas />} />
+            <Route path="/planificacion" element={<Planificacion />} />
             <Route path="/avance" element={<Avance />} />
             <Route path="/branches" element={<Branches />} />
+            <Route path="/usuarios" element={<Usuarios />} />
             <Route path="/revision" element={<Revision />} />
             <Route path="/pendientes" element={<Pendientes />} />
             <Route path="/papelera" element={<Papelera />} />

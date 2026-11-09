@@ -17,10 +17,89 @@
   ::selection {
     background: rgba(99, 102, 241, 0.35);
   }
-  /* scrollbars */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: #2b313f transparent;
+  /* Tema oscuro también para los controles nativos del navegador (flechas, etc.). */
+  html {
+    color-scheme: dark;
+  }
+  /* Listas desplegables (select): la lista de opciones con el mismo estilo oscuro que los menús de la app.
+     Respaldo: colores en las opciones (navegadores sin select personalizable). */
+  option {
+    background-color: #1d212c;
+    color: #e6e9ef;
+  }
+  @supports (appearance: base-select) {
+    select,
+    ::picker(select) {
+      appearance: base-select;
+    }
+    select {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+    }
+    select::picker-icon {
+      content: '';
+      width: 14px;
+      height: 14px;
+      margin-left: auto;
+      background: #9aa2b1;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 8l4.5 4.5L14.5 8'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+      transition: rotate 0.15s;
+    }
+    select:open::picker-icon {
+      rotate: 180deg;
+    }
+    ::picker(select) {
+      margin-top: 4px;
+      padding: 4px;
+      border: 1px solid #2b313f;
+      border-radius: 0.75rem;
+      background: #1d212c;
+      box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+    }
+    option {
+      padding: 0.45rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      background: transparent;
+      cursor: pointer;
+    }
+    option::checkmark {
+      display: none;
+    }
+    option:hover,
+    option:focus-visible {
+      background: #262b38;
+      outline: none;
+    }
+    option:checked {
+      background: rgba(99, 102, 241, 0.18);
+      color: #fff;
+    }
+    optgroup {
+      padding-top: 0.25rem;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #6b7385;
+    }
+    optgroup option {
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 400;
+    }
+  }
+  /* scrollbars: en Chrome/Edge, si se usan scrollbar-width/scrollbar-color se ignora
+     ::-webkit-scrollbar y salen las flechas nativas; por eso esas dos propiedades solo
+     se aplican en navegadores sin ::-webkit-scrollbar (Firefox). */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #2b313f transparent;
+    }
   }
   *::-webkit-scrollbar {
     width: 10px;
@@ -69,10 +148,76 @@
   .chip {
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
+  /* Todo lo que crece hacia abajo (listas, columnas, tablas) se acota a ~1.5 pantallas y hace scroll
+     por dentro, para que una lista larga no estire la página sin fin. */
+  .acotado {
+    @apply max-h-[150vh] overflow-y-auto;
+  }
   .nav-link {
     @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-3 hover:text-text;
   }
   .nav-link-active {
     @apply bg-primary-soft text-text;
   }
+}
+
+/* Branches: el nodo con el mouse encima queda por arriba, para que su recuadro de información no lo tapen otros nodos. */
+.react-flow .react-flow__node:hover {
+  z-index: 1000 !important;
+}
+
+/* Branches: botones de zoom (+, −, ajustar) con el mismo estilo que los botones de la barra superior. */
+.react-flow .react-flow__controls {
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.react-flow .react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #2b313f; /* border */
+  border-radius: 8px;
+  background: #1d212c; /* surface-2 */
+  color: #9aa2b1; /* muted */
+  transition: border-color 150ms, color 150ms, background-color 150ms;
+}
+.react-flow .react-flow__controls-button:hover {
+  background: #252a37; /* surface-3 */
+  border-color: #3a4252; /* border-strong */
+  color: #e7e9ee; /* text */
+}
+.react-flow .react-flow__controls-button svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* Branches: resaltado breve de la rama a la que lleva el buscador. */
+@keyframes resaltar-rama {
+  0%,
+  45% {
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.9), 0 0 22px 6px rgba(255, 255, 255, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+}
+.react-flow .react-flow__node.resaltado {
+  animation: resaltar-rama 1.8s ease-out;
+}
+
+/* Branches: cabeza de dev elegida (viaje en el tiempo) — brilla mientras esté elegida. */
+@keyframes brillo-cabeza {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55), 0 0 10px 2px rgba(255, 255, 255, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.95), 0 0 22px 6px rgba(255, 255, 255, 0.45);
+  }
+}
+.react-flow .react-flow__node.cabeza-dev {
+  animation: brillo-cabeza 1.6s ease-in-out infinite;
 }

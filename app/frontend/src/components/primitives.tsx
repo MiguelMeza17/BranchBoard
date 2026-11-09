@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import type { EstadoTarea, TipoTarea } from '../types';
 import { estadoMeta, tipoMeta, iniciales, avatarColor } from '../lib/ui';
 import { useStore } from '../store/useStore';
+import { Icono, IconoEnLinea } from './Icono';
 
 export function EstadoBadge({ estado }: { estado: EstadoTarea }) {
   const m = estadoMeta[estado];
   return (
-    <span className={`chip ${m.bg} ${m.text} border ${m.border}`}>
+    <span className={`chip whitespace-nowrap ${m.bg} ${m.text} border ${m.border}`}>
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.dot }} />
       {m.label}
     </span>
@@ -18,16 +19,25 @@ export function TipoBadge({ tipo }: { tipo: TipoTarea }) {
   const m = tipoMeta[tipo];
   return (
     <span
-      className="chip border"
+      className="chip whitespace-nowrap border"
       style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}18` }}
     >
-      <span>{m.emoji}</span>
+      <Icono nombre={m.icono} className="h-3.5 w-3.5" sinColor />
       {tipo}
     </span>
   );
 }
 
-export function Avatar({ email, size = 28 }: { email: string; size?: number }) {
+export function Avatar({
+  email,
+  size = 28,
+  sinTooltip = false,
+}: {
+  email: string;
+  size?: number;
+  /** Oculta el tooltip con el nombre (ej. en la barra superior, donde el nombre ya está escrito al lado). */
+  sinTooltip?: boolean;
+}) {
   const usuarios = useStore((s) => s.usuarios);
   const navigate = useNavigate();
   const u = usuarios.find((x) => x.email === email);
@@ -49,9 +59,11 @@ export function Avatar({ email, size = 28 }: { email: string; size?: number }) {
       >
         {label}
       </button>
-      <span className="pointer-events-none absolute -top-1.5 left-1/2 z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 py-1 text-xs font-medium text-text opacity-0 shadow-pop transition-opacity duration-150 group-hover/avatar:opacity-100">
-        {nombre}
-      </span>
+      {!sinTooltip && (
+        <span className="pointer-events-none absolute -top-1.5 left-1/2 z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-surface-3 px-2 py-1 text-xs font-medium text-text opacity-0 shadow-pop transition-opacity duration-150 group-hover/avatar:opacity-100">
+          {nombre}
+        </span>
+      )}
     </span>
   );
 }
@@ -77,7 +89,7 @@ export function PageHeader({
 }
 
 export function EmptyState({
-  icon = '📭',
+  icon = 'bandeja',
   title,
   desc,
   action,
@@ -89,8 +101,8 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-16 text-center">
-      <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-surface-2 text-2xl">
-        {icon}
+      <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-surface-2">
+        <Icono nombre={icon} className="h-7 w-7" />
       </div>
       <h3 className="text-base font-semibold text-text">{title}</h3>
       {desc && <p className="mt-1 max-w-sm text-sm text-muted">{desc}</p>}
@@ -101,7 +113,7 @@ export function EmptyState({
 
 export function ReadOnlyTag() {
   return (
-    <span className="chip border border-border bg-surface-2 text-faint">👁️ Solo lectura</span>
+    <span className="chip border border-border bg-surface-2 text-faint"><IconoEnLinea nombre="ojo" sinColor />Solo lectura</span>
   );
 }
 
@@ -109,13 +121,15 @@ export function Card({
   children,
   className = '',
   id,
+  onClick,
 }: {
   children: ReactNode;
   className?: string;
   id?: string;
+  onClick?: () => void;
 }) {
   return (
-    <div id={id} className={`card p-5 ${className}`}>
+    <div id={id} onClick={onClick} className={`card p-5 ${className}`}>
       {children}
     </div>
   );

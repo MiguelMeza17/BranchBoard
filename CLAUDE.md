@@ -19,6 +19,7 @@ Varias sesiones de Claude trabajan en paralelo en `documentacion/`, cada una sob
 - `documentacion/SEGURIDAD.md` — seguridad y roles/permisos
 - `documentacion/ARQUITECTURA.md` — vista de pájaro de cómo encajan los componentes (monolito de escritorio Fase 1); no duplica detalle, indexa hacia `BACKEND.md`/`FRONTEND.md`
 - `documentacion/pendientes.md` — lista viva de huecos/bugs de diseño encontrados en auditorías, con su resolución
+- `documentacion/AGENTE.md` — **a futuro**: el agente que enseñará y responderá dudas dentro de la app. La interfaz no lleva textos explicativos (solo nombres y datos); todo texto que *explique* algo va ahí, como base de conocimiento del agente, en la sección de su pantalla
 
 Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene cambios sin comitear de otra sesión, evitar editarlo al mismo tiempo. Los demás documentos (`BACKEND.md`, `FRONTEND.md`, `SEGURIDAD.md`) incluyen una sección "Contexto completo del proyecto" que resume las decisiones clave para que cualquier sesión tenga contexto sin necesitar leer los demás archivos — mantenerla sincronizada cuando cambien decisiones importantes (stack, roles, flujo de identidad, etc.).
 
@@ -31,4 +32,9 @@ Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene c
 - **Hay rama `dev`** (creada el 2026-10-15 desde `main`) — es la rama de integración: los PR de features apuntan a `dev`, no a `main`.
 - Cada feature/cambio vive en su propia rama, creada desde `dev`.
 - Una rama se cierra **únicamente mediante un Pull Request**, y ese PR solo se mergea **si ya se resolvieron todos los conflictos antes** — nunca se mergea un PR con conflictos pendientes.
-- **Pendiente por definir**: cuándo y cómo pasa `dev` a `main` (ej. un PR de `dev` → `main` al cerrar cada entrega).
+- **`dev` pasa a `main` con un PR de `dev` → `main`** (definido el 2026-10-19, primera vez en el PR #17): se abre con `gh pr create --base main --head dev`, se revisa que no tenga conflictos (`gh pr view --json mergeable,mergeStateStatus` debe dar `MERGEABLE`) y se mergea con merge commit (`gh pr merge <número> --merge`). **Nunca con `--delete-branch`**: `dev` es permanente y no se borra. El momento lo decide el equipo cuando quiera llevar lo acumulado en `dev` a `main`.
+
+### Por ahora, solo frontend
+
+- **No tocar nada de `app/backend/` por ahora** — ni siquiera en paralelo a un cambio de frontend. Esto aplica aunque el issue/feature toque un flujo que eventualmente necesitará backend.
+- Todo cambio de frontend debe quedar reflejado en la documentación de backend correspondiente (`documentacion/BACKEND.md` y/o `documentacion/ARQUITECTURA.md`) para que, cuando se implemente el backend real, no haya que redescubrir qué asume el frontend — ver también la regla de mantener `documentacion/FRONTEND.md` sincronizada, arriba.

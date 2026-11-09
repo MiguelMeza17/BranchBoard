@@ -53,3 +53,12 @@ Todo lo de esta sección queda **resuelto en diseño, falta implementarlo en có
 - [x] **N15 — Restricción `.fbx` vs. visor glTF sin conversión definida.** Resuelto/acotado: la restricción a `.fbx` ya estaba decidida, se dejó como pendiente concreto solo la elección de librería de conversión. Ver [PLANNING.md](./PLANNING.md#pendiente-por-definir).
 - [x] **N16 — Pendiente de PLANNING.md ya resuelto por el diseño de Ajustes.** Resuelto: el permiso de subtareas simples es por persona, no por tarea, ya estaba decidido en FRONTEND.md — solo faltaba propagarlo. Ver [PLANNING.md](./PLANNING.md#pendiente-por-definir).
 - [x] **N17 — No había tabla de configuración de proyecto para `correo_contacto_solicitudes`.** Resuelto: nueva tabla `configuracion_proyecto` (clave/valor) + comando `actualizar_configuracion_proyecto`. Ver [BACKEND.md](./BACKEND.md#modelo-de-datos-tabla-configuracion_proyecto).
+
+**Cambios del 2026-11-07 (PR #59) — para la auditoría de backend:**
+
+- [x] **Contraseña en "Crear usuario"**: se quitó; la identidad sigue siendo `cm whoami`.
+- [x] **Qué ve el Colaborador externo**: lo mismo que un Desarrollador, pero solo desarrolla tareas individuales (ni grandes ni subtareas). Falta bloquearlo en el mockup. Ver [SEGURIDAD.md](./SEGURIDAD.md#colaborador-externo).
+- [ ] **Eliminar usuarios**: se deja como está por ahora (el Líder elimina Desarrolladores y Colaboradores externos, no Testers). Revisar más adelante.
+- [x] **`cambiar_rol` por un Líder dejaba la fila sin firma** (y sin firma no se entra). Resuelto: los Líderes también firman, con su propia llave certificada por el Administrador. Ver [BACKEND.md](./BACKEND.md#firma-de-los-líderes-nuevo-2026-11-07).
+- [ ] **Llave de cada Líder**: dónde la guarda, cómo la respalda y qué pasa si la pierde (para la auditoría de backend).
+- [x] **Solicitar ingreso** quitado del MVP → versión 2 (issue #57). Invitar por correo con código → issue #58.

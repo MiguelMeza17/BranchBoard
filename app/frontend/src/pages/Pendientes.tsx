@@ -6,6 +6,7 @@ import { PageHeader, Card, EmptyState, TipoBadge, Avatar } from '../components/p
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
 import type { EdicionPendiente, Tarea } from '../types';
+import { Icono } from '../components/Icono';
 
 export function Pendientes() {
   const location = useLocation();
@@ -13,7 +14,13 @@ export function Pendientes() {
   const user = useStore((s) => s.currentUser());
   const tareas = useStore((s) => s.tareas);
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
+  const documentos = useStore((s) => s.documentos);
+  const aprobarDocumento = useStore((s) => s.aprobarDocumento);
+  const eliminarDocumento = useStore((s) => s.eliminarDocumento);
+  const abrirDocumento = useStore((s) => s.abrirDocumento);
   const aprobarTarea = useStore((s) => s.aprobarTarea);
+  const aprobarTareas = useStore((s) => s.aprobarTareas);
+  const aprobarEdiciones = useStore((s) => s.aprobarEdiciones);
   const advertirTarea = useStore((s) => s.advertirTarea);
   const eliminarTarea = useStore((s) => s.eliminarTarea);
   const aprobarEdicion = useStore((s) => s.aprobarEdicion);
@@ -26,6 +33,9 @@ export function Pendientes() {
   const [mensaje, setMensaje] = useState('');
   const [eliminar, setEliminar] = useState<Tarea | null>(null);
   const [aprobarConfirm, setAprobarConfirm] = useState<Tarea | null>(null);
+  // "Marcar todo como revisado" (aprueba todas las de la sección; confirmación sencilla).
+  const [todasTareas, setTodasTareas] = useState(false);
+  const [todasEdiciones, setTodasEdiciones] = useState(false);
   const [editarAprobar, setEditarAprobar] = useState<Tarea | null>(null);
   const [revisandoEdicion, setRevisandoEdicion] = useState<EdicionPendiente | null>(null);
   const [aprobarEdicionConfirm, setAprobarEdicionConfirm] = useState<EdicionPendiente | null>(null);
@@ -56,20 +66,27 @@ export function Pendientes() {
           <span className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300">Nueva</span>
           <h2 className="text-sm font-semibold text-text">Tareas nuevas pendientes</h2>
           <span className="chip border border-border bg-surface-2 text-muted">{nuevas.length}</span>
+          {puedeActuar && nuevas.length > 0 && (
+            <button className="btn-outline btn-sm ml-auto" onClick={() => setTodasTareas(true)}>
+              <Icono nombre="check" className="h-3.5 w-3.5" /> Marcar todo como revisado
+            </button>
+          )}
         </div>
         {nuevas.length === 0 ? (
-          <EmptyState icon="📌" title="No hay tareas pendientes de aprobación" />
+          <EmptyState icon="pendientes" title="No hay tareas pendientes de aprobación" />
         ) : (
-          <div className="space-y-2">
+          <div className="acotado space-y-2 pr-1">
             {nuevas.map((t) => {
               const esCreador = t.creado_por === user.email;
               return (
                 <Card
                   key={t.id}
                   id={`pendiente-${t.id}`}
+                  // Click en cualquier parte: lo mismo que "Revisar".
+                  onClick={puedeActuar ? () => setRevisando(t) : undefined}
                   className={`flex flex-wrap items-center gap-4 transition-shadow ${
                     resaltada === t.id ? 'ring-2 ring-primary' : ''
-                  }`}
+                  } ${puedeActuar ? 'cursor-pointer hover:border-border-strong' : ''}`}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -85,7 +102,7 @@ export function Pendientes() {
                   </div>
                   {puedeActuar ? (
                     <div className="flex flex-wrap items-center gap-2">
-                      <button className="btn-primary btn-sm" onClick={() => setRevisando(t)}>Revisar</button>
+                      <button className="btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); setRevisando(t); }}>Revisar</button>
                     </div>
                   ) : esCreador ? (
                     <button className="btn-outline btn-sm" onClick={() => setEditarAprobar(t)}>Editar</button>
@@ -105,33 +122,83 @@ export function Pendientes() {
           <span className="chip border border-warn/40 bg-yellow-500/15 text-yellow-300">Edición</span>
           <h2 className="text-sm font-semibold text-text">Ediciones pendientes</h2>
           <span className="chip border border-border bg-surface-2 text-muted">{edicionesPendientes.length}</span>
+          {puedeActuar && edicionesPendientes.length > 0 && (
+            <button className="btn-outline btn-sm ml-auto" onClick={() => setTodasEdiciones(true)}>
+              <Icono nombre="check" className="h-3.5 w-3.5" /> Marcar todo como revisado
+            </button>
+          )}
         </div>
         {edicionesPendientes.length === 0 ? (
-          <EmptyState icon="✏️" title="No hay ediciones esperando confirmación" />
+          <EmptyState icon="lapiz" title="No hay ediciones esperando confirmación" />
         ) : (
-          <div className="space-y-2">
+          <div className="acotado space-y-2 pr-1">
             {edicionesPendientes.map((ep) => {
               const t = tareas.find((x) => x.id === ep.tarea_id);
               return (
                 <Card
                   key={ep.id}
                   id={`pendiente-${ep.tarea_id}`}
+                  // Click en cualquier parte: lo mismo que "Revisar".
+                  onClick={puedeActuar ? () => setRevisandoEdicion(ep) : undefined}
                   className={`flex flex-wrap items-center gap-4 transition-shadow ${
                     resaltada === ep.tarea_id ? 'ring-2 ring-primary' : ''
-                  }`}
+                  } ${puedeActuar ? 'cursor-pointer hover:border-border-strong' : ''}`}
                 >
                   <div className="min-w-0 flex-1">
                     <span className="font-medium text-text">{t?.titulo}</span>
                     {ep.motivo && <p className="mt-1 text-xs text-muted">Motivo: {ep.motivo}</p>}
                   </div>
                   {puedeActuar ? (
-                    <button className="btn-primary btn-sm" onClick={() => setRevisandoEdicion(ep)}>Revisar</button>
+                    <button className="btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); setRevisandoEdicion(ep); }}>Revisar</button>
                   ) : (
                     <span className="text-xs text-faint">Esperando Líder/Admin</span>
                   )}
                 </Card>
               );
             })}
+          </div>
+        )}
+      </section>
+
+      {/* Documentos del proyecto subidos por quien no es Líder/Administrador */}
+      <section className="mt-8">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="chip border border-sky-500/40 bg-sky-500/15 text-sky-300">Documento</span>
+          <h2 className="text-sm font-semibold text-text">Documentos pendientes</h2>
+          <span className="chip border border-border bg-surface-2 text-muted">{documentos.filter((d) => d.pendiente).length}</span>
+        </div>
+        {documentos.every((d) => !d.pendiente) ? (
+          <EmptyState icon="documento" title="No hay documentos esperando visto bueno" />
+        ) : (
+          <div className="acotado space-y-2 pr-1">
+            {documentos.filter((d) => d.pendiente).map((d) => (
+              <Card
+                key={d.id}
+                onClick={() => abrirDocumento(d.id)}
+                className="flex cursor-pointer flex-wrap items-center gap-4 hover:border-border-strong"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-text">{d.nombre}</div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted">subido por</span>
+                    <Avatar email={d.subido_por} size={20} />
+                    <span className="text-xs text-faint">{d.fecha}</span>
+                  </div>
+                </div>
+                {puedeActuar ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button className="btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); aprobarDocumento(d.id); }}>
+                      <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Visto bueno
+                    </button>
+                    <button className="btn-ghost btn-sm text-red-300" onClick={(e) => { e.stopPropagation(); eliminarDocumento(d.id); }}>
+                      Eliminar
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-xs text-faint">Esperando Líder/Administrador</span>
+                )}
+              </Card>
+            ))}
           </div>
         )}
       </section>
@@ -196,6 +263,49 @@ export function Pendientes() {
         confirmLabel="Aprobar tarea"
         description={`"${aprobarConfirm?.titulo}" quedará aprobada — ya podrá mandarse a revisión.`}
       />
+
+      {/* Marcar todo como revisado: confirmación sencilla, sin palabra — aprobar en Pendientes solo
+          cambia datos de BranchBoard, no toca Unity VC. */}
+      <Modal
+        open={todasTareas || todasEdiciones}
+        onClose={() => {
+          setTodasTareas(false);
+          setTodasEdiciones(false);
+        }}
+        title="Marcar todo como revisado"
+        subtitle={
+          todasTareas
+            ? `Se aprueban las ${nuevas.length} tareas nuevas pendientes: ${nuevas.map((t) => t.id).join(', ')}.`
+            : `Se aprueban las ${edicionesPendientes.length} ediciones pendientes (${edicionesPendientes.map((e) => e.tarea_id).join(', ')}): sus valores nuevos quedan confirmados.`
+        }
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => {
+                setTodasTareas(false);
+                setTodasEdiciones(false);
+              }}
+            >
+              Cancelar
+            </button>
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => {
+                if (todasTareas) aprobarTareas(nuevas.map((t) => t.id));
+                else aprobarEdiciones(edicionesPendientes.map((e) => e.tarea_id));
+                setTodasTareas(false);
+                setTodasEdiciones(false);
+              }}
+            >
+              Aprobar todo
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted">No toca Unity Version Control: solo confirma los datos en BranchBoard.</p>
+      </Modal>
 
       {/* Revisar (ver detalle y elegir acción) */}
       {revisando && (
@@ -275,7 +385,7 @@ function RevisarEdicionModal({
   onRechazar: () => void;
 }) {
   const campos = Object.keys(edicion.campos_nuevos);
-  const descripcionNueva = edicion.campos_nuevos.descripcion ?? tarea?.descripcion ?? '';
+  const detallesNuevos = edicion.campos_nuevos.detalles ?? tarea?.detalles ?? '';
   return (
     <Modal
       open
@@ -295,7 +405,7 @@ function RevisarEdicionModal({
           <Avatar email={edicion.creado_por} size={20} />
         </div>
         {edicion.motivo && <p className="text-sm text-muted">Motivo: {edicion.motivo}</p>}
-        <p className="text-sm text-text">{descripcionNueva || 'Sin descripción.'}</p>
+        <p className="whitespace-pre-wrap text-sm text-text">{detallesNuevos || <span className="text-faint">Sin detalles.</span>}</p>
         <div className="space-y-1.5 border-t border-border pt-3">
           {campos.map((c) => (
             <div key={c} className="flex items-start gap-2 text-xs">
@@ -342,11 +452,22 @@ function RevisarPendienteModal({
       }
     >
       <div className="space-y-3">
+        {/* Detalles primero; abajo, lo demás. */}
+        <div>
+          <div className="mb-1 text-xs text-faint">Detalles</div>
+          {tarea.detalles ? (
+            <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm leading-relaxed text-text">
+              {tarea.detalles}
+            </p>
+          ) : (
+            <p className="text-sm text-faint">Sin detalles.</p>
+          )}
+        </div>
+        <div className="border-t border-border pt-3" />
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted">Creada por</span>
           <Avatar email={tarea.creado_por} size={20} />
         </div>
-        <p className="text-sm text-text">{tarea.descripcion || 'Sin descripción.'}</p>
       </div>
     </Modal>
   );
@@ -361,10 +482,10 @@ function EditarAprobarModal({
   tarea: Tarea;
   esCreador: boolean;
   onClose: () => void;
-  onSave: (campos: { titulo: string; descripcion: string }, aprobar: boolean) => void;
+  onSave: (campos: { titulo: string; detalles: string }, aprobar: boolean) => void;
 }) {
   const [titulo, setTitulo] = useState(tarea.titulo);
-  const [descripcion, setDescripcion] = useState(tarea.descripcion);
+  const [detalles, setDetalles] = useState(tarea.detalles);
   return (
     <Modal
       open
@@ -374,7 +495,7 @@ function EditarAprobarModal({
       footer={
         <>
           <button className="btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn-primary" onClick={() => onSave({ titulo, descripcion }, !esCreador)}>
+          <button className="btn-primary" onClick={() => onSave({ titulo, detalles }, !esCreador)}>
             {esCreador ? 'Guardar' : 'Editar y aprobar'}
           </button>
         </>
@@ -390,22 +511,22 @@ function EditarAprobarModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && titulo.trim()) {
                 e.preventDefault();
-                onSave({ titulo, descripcion }, !esCreador);
+                onSave({ titulo, detalles }, !esCreador);
               }
             }}
             autoFocus
           />
         </div>
         <div>
-          <label className="label">Descripción</label>
+          <label className="label">Detalles <span className="text-faint">(opcional)</span></label>
           <textarea
             className="input min-h-[90px] resize-y"
-            value={descripcion}
-            onChange={(e) => setDescripcion(e.target.value)}
+            value={detalles}
+            onChange={(e) => setDetalles(e.target.value)}
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && titulo.trim()) {
                 e.preventDefault();
-                onSave({ titulo, descripcion }, !esCreador);
+                onSave({ titulo, detalles }, !esCreador);
               }
             }}
           />

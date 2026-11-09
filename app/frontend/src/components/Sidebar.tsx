@@ -1,5 +1,11 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { Modal } from './Modal';
+import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
+import * as fx from '../data/fixtures';
+import { Icono } from './Icono';
+import logoB from '../assets/logo-b.png';
 
 interface NavItem {
   to: string;
@@ -7,105 +13,582 @@ interface NavItem {
   label: string;
 }
 
-const NAV: NavItem[] = [
-  { to: '/scrum', icon: '🗂️', label: 'Tareas (Scrum)' },
-  { to: '/lista', icon: '📋', label: 'Lista de tareas' },
-  { to: '/categorias', icon: '🗃️', label: 'Categorías' },
-  { to: '/revision', icon: '🔀', label: 'Revisión' },
-  { to: '/resumen', icon: '📊', label: 'Resumen' },
-  { to: '/avance', icon: '📈', label: 'Avance' },
-  { to: '/pendientes', icon: '📌', label: 'Pendientes' },
-  { to: '/reportes', icon: '📄', label: 'Reportes' },
-  { to: '/branches', icon: '🌳', label: 'Branches' },
-  { to: '/papelera', icon: '🗑️', label: 'Papelera' },
-  { to: '/ajustes', icon: '⚙️', label: 'Ajustes' },
+
+// Secciones del menú (el orden es el de siempre). Papelera y Ajustes van abajo, aparte.
+const SECCIONES: { titulo: string | null; items: NavItem[] }[] = [
+  {
+    titulo: 'Trabajo',
+    items: [
+      { to: '/scrum', icon: 'scrum', label: 'Tareas (Scrum)' },
+      { to: '/lista', icon: 'lista', label: 'Lista de tareas' },
+      { to: '/planificacion', icon: 'planificacion', label: 'Planificación' },
+      { to: '/categorias', icon: 'categorias', label: 'Categorías' },
+      { to: '/revision', icon: 'revision', label: 'Revisión' },
+    ],
+  },
+  {
+    titulo: 'Seguimiento',
+    items: [
+      { to: '/resumen', icon: 'resumen', label: 'Resumen' },
+      { to: '/avance', icon: 'avance', label: 'Avance' },
+      { to: '/pendientes', icon: 'pendientes', label: 'Pendientes' },
+      { to: '/reportes', icon: 'reportes', label: 'Reportes' },
+      { to: '/branches', icon: 'branches', label: 'Branches' },
+    ],
+  },
+  { titulo: 'Equipo', items: [{ to: '/usuarios', icon: 'usuarios', label: 'Usuarios' }] },
+];
+const ABAJO: NavItem[] = [
+  { to: '/papelera', icon: 'papelera', label: 'Papelera' },
+  { to: '/ajustes', icon: 'ajustes', label: 'Ajustes' },
 ];
 
-export function Sidebar() {
+// Clases literales (no armadas con template) para que Tailwind las genere.
+const PUNTO_ROJO = { solido: 'bg-red-500', halo: 'bg-red-500/25' };
+const PUNTO_AZUL = { solido: 'bg-primary', halo: 'bg-primary/25' };
+const PUNTO_AMARILLO = { solido: 'bg-yellow-400', halo: 'bg-yellow-400/25' };
+const PUNTO_VERDE_OSCURO = { solido: 'bg-green-700', halo: 'bg-green-700/30' };
+const PUNTO_BLANCO = { solido: 'bg-white', halo: 'bg-white/25' };
+
+interface SidebarProps {
+  colapsado: boolean;
+  onToggle: () => void;
+}
+
+export function Sidebar({ colapsado, onToggle }: SidebarProps) {
   const tareas = useStore((s) => s.tareas);
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
   const sprints = useStore((s) => s.sprints);
 
+  const documentosPendientes = useStore((s) => s.documentos.filter((d) => d.pendiente).length);
   const totalPendientes =
-    tareas.filter((t) => t.pendiente_aprobacion && !t.eliminada).length + edicionesPendientes.length;
+    tareas.filter((t) => t.pendiente_aprobacion && !t.eliminada).length + edicionesPendientes.length + documentosPendientes;
+  // Número del Chat: cuántas conversaciones tienen algo sin leer (no cuántos mensajes).
+  const mensajes = useStore((s) => s.mensajes);
+  const gruposChat = useStore((s) => s.gruposChat);
+  const chatsEliminados = useStore((s) => s.chatsEliminados);
+  const yoEmail = useStore((s) => s.currentEmail);
+  const chatSinLeer = new Set(
+    mensajes
+      .filter((m) => {
+        if (m.de === yoEmail || m.leidoPor.includes(yoEmail)) return false;
+        const conversacion = m.para === yoEmail ? m.de : m.para;
+        const mia =
+          m.para === yoEmail || m.para === 'grupo' || gruposChat.some((g) => g.id === m.para && g.miembros.includes(yoEmail));
+        return mia && m.fecha > (chatsEliminados[conversacion] ?? '');
+      })
+      .map((m) => (m.para === yoEmail ? m.de : m.para))
+  ).size;
   const totalPapelera = tareas.filter((t) => t.eliminada).length;
   const totalRevision = tareas.filter((t) => t.estado === 'en revisión' && !t.eliminada).length;
 
-  const hayReporteActivo = sprints.some((s) => s.con_fecha);
-  const hayCambioBranches = tareas.some((t) => !t.eliminada && t.rama_asociada);
-  const hayTareasActivas = tareas.some((t) => !t.eliminada);
-  const rutasConPuntoAzul = new Set(['/scrum', '/resumen', '/lista', '/avance', '/categorias']);
+  // Puntos de aviso: cada panel tiene una "huella" de sus datos. El punto se enciende si cambió desde la
+  // última vez que entraste a ese panel, y se apaga al entrar (y mientras estás ahí).
+  const usuarios = useStore((s) => s.usuarios);
+  const documentos = useStore((s) => s.documentos);
+  const vistos = useStore((s) => s.vistos);
+  const marcarVisto = useStore((s) => s.marcarVisto);
+  const location = useLocation();
+  const vivas = tareas.filter((t) => !t.eliminada);
+  const huellaTareas = vivas
+    .map((t) => `${t.id}:${t.estado}:${t.asignado_a ?? ''}:${t.titulo}:${t.pendiente_aprobacion ? 1 : 0}`)
+    .join('|');
+  const huellas: Record<string, string> = {
+    '/proyecto': documentos.map((d) => `${d.id}:${d.pendiente ? 1 : 0}`).join('|'),
+    '/scrum': huellaTareas,
+    '/lista': huellaTareas,
+    '/categorias': huellaTareas,
+    '/resumen': huellaTareas,
+    '/avance': huellaTareas,
+    '/planificacion': sprints.map((s) => `${s.id}:${s.cerrado ? 1 : 0}`).join('|'),
+    '/reportes': sprints.filter((s) => s.con_fecha).map((s) => `${s.id}:${s.cerrado ? 1 : 0}`).join('|'),
+    '/branches': vivas.filter((t) => t.rama_asociada).map((t) => `${t.id}:${t.estado}`).join('|'),
+    '/usuarios': usuarios.map((u) => `${u.email}:${u.rol}`).join('|'),
+  };
+  const rutaActual = Object.keys(huellas).find((r) => location.pathname === r || location.pathname.startsWith(`${r}/`));
+  const huellaActual = rutaActual ? huellas[rutaActual] : undefined;
+  useEffect(() => {
+    if (rutaActual && huellaActual !== undefined) marcarVisto(rutaActual, huellaActual);
+  }, [rutaActual, huellaActual, marcarVisto]);
+  const hayNovedad = (ruta: string) => !!huellas[ruta] && huellas[ruta] !== vistos[ruta];
 
   const badgeByPath: Record<string, number> = {
     '/pendientes': totalPendientes,
     '/papelera': totalPapelera,
     '/revision': totalRevision,
+    ...(chatSinLeer > 0 ? { '/chat': chatSinLeer } : {}),
   };
 
   const colorBadgePorRuta: Record<string, string> = {
     '/pendientes': 'bg-amber-500/20 text-amber-300',
     '/papelera': 'bg-red-500/20 text-red-300',
     '/revision': 'bg-fuchsia-500/20 text-fuchsia-300',
+    '/chat': 'bg-green-500/20 text-green-300',
+  };
+
+  // Color del punto de cada panel (solo se muestra si hay algo nuevo, ver huellas arriba).
+  const COLOR_PUNTO: Record<string, { solido: string; halo: string }> = {
+    '/proyecto': PUNTO_BLANCO,
+    '/scrum': PUNTO_AMARILLO,
+    '/lista': PUNTO_AZUL,
+    '/categorias': PUNTO_AZUL,
+    '/resumen': PUNTO_AZUL,
+    '/avance': PUNTO_AZUL,
+    '/planificacion': PUNTO_BLANCO,
+    '/reportes': PUNTO_ROJO,
+    '/branches': PUNTO_VERDE_OSCURO,
+    '/usuarios': PUNTO_AZUL,
+  };
+  const puntoDeRuta = (to: string) => (hayNovedad(to) ? COLOR_PUNTO[to] ?? PUNTO_AZUL : null);
+
+  const etiquetaToggle = colapsado ? 'Expandir menú' : 'Contraer menú';
+  // Botoncito para contraer/expandir: redondo, pegado al borde derecho del menú y a media altura.
+  const botonToggle = (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={etiquetaToggle}
+      aria-label={etiquetaToggle}
+      aria-expanded={!colapsado}
+      className="absolute right-0 top-1/2 z-40 grid h-12 w-5 -translate-y-1/2 translate-x-1/2 place-items-center rounded-md border border-border-strong bg-surface-3 text-text/80 shadow-pop transition hover:bg-[#30364a] hover:text-text"
+    >
+      <svg
+        viewBox="0 0 20 20"
+        className={`h-3.5 w-3.5 transition-transform ${colapsado ? 'rotate-180' : ''}`}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12.5 5l-5 5 5 5" />
+      </svg>
+    </button>
+  );
+
+  // Menú del proyecto (click en BranchBoard): se cierra al hacer click fuera.
+  const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
+  const entrarAProyecto = useStore((s) => s.entrarAProyecto);
+  const cerrarSesion = useStore((s) => s.cerrarSesion);
+  const workspaces = useStore((s) => s.workspaces);
+  const [confirmarCerrarSesion, setConfirmarCerrarSesion] = useState(false);
+  // "Nuevo proyecto": traer uno local de Unity VC que aún no usa BranchBoard, o crear uno nuevo.
+  const [nuevoProyecto, setNuevoProyecto] = useState(false);
+  // "Cargar proyecto": proyectos del servidor de Unity VC que aún no tienes en este equipo. Al elegir uno se
+  // clona; si ya usa BranchBoard, llegan también sus tareas.
+  const [cargarProyecto, setCargarProyecto] = useState(false);
+  const irAClonar = useStore((s) => s.irAClonar);
+  const delServidorSinClonar = fx.proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
+  const sinBranchBoard = workspaces.filter((w) => !w.tiene_db_branchboard);
+  const setWorkspaces = useStore((s) => s.setWorkspaces);
+  const setRolActual = useStore((s) => s.setRolActual);
+  const [nombreNuevo, setNombreNuevo] = useState('');
+  const [carpetaNueva, setCarpetaNueva] = useState('D:\\Unity');
+  const cerrarNuevo = () => {
+    setNuevoProyecto(false);
+    setNombreNuevo('');
+  };
+  const proyectoActual = useStore((s) => s.proyectoActual);
+  const showToast = useStore((s) => s.showToast);
+  const [menuProyecto, setMenuProyecto] = useState(false);
+  const [confirmarSalir, setConfirmarSalir] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuProyecto) return;
+    const fuera = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuProyecto(false);
+    };
+    document.addEventListener('mousedown', fuera);
+    return () => document.removeEventListener('mousedown', fuera);
+  }, [menuProyecto]);
+  const salir = () => {
+    setConfirmarSalir(false);
+    // En la app de escritorio (Tauri) se cierra la ventana. En el navegador, el mockup solo puede
+    // cerrar la pestaña si la abrió un script; si no, avisa.
+    window.close();
+    showToast('En la app de escritorio, aquí se cierra BranchBoard', 'info');
+  };
+
+  const renderItem = (item: NavItem) => {
+    const badge = badgeByPath[item.to];
+    const punto = puntoDeRuta(item.to);
+
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        title={colapsado ? item.label + (badge ? ` (${badge})` : '') : undefined}
+        aria-label={item.label}
+        className={({ isActive }) =>
+          `nav-link ${isActive ? 'nav-link-active' : ''} ${colapsado ? 'relative justify-center px-0' : ''}`
+        }
+      >
+        {/* El proyecto todavía no tiene ícono: círculo blanco. */}
+        {item.to === '/proyecto' ? (
+          <span className="grid h-[18px] w-[18px] shrink-0 place-items-center">
+            <span className="h-3.5 w-3.5 rounded-full border border-white/80" />
+          </span>
+        ) : (
+          <Icono nombre={item.icon} className="h-[18px] w-[18px]" />
+        )}
+        {colapsado ? (
+          <>
+            {badge !== undefined && badge > 0 ? (
+              <span
+                className={`absolute right-1 top-0.5 grid h-4 min-w-4 place-items-center rounded-full px-0.5 text-[9px] font-bold ${
+                  colorBadgePorRuta[item.to] ?? 'bg-primary text-white'
+                }`}
+              >
+                {badge}
+              </span>
+            ) : (
+              punto && <span className={`absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full ${punto.solido}`} />
+            )}
+          </>
+        ) : (
+          <>
+            <span className="truncate">{item.label}</span>
+            {punto && (
+              <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
+                <span className={`absolute h-2.5 w-2.5 rounded-full blur-[2px] ${punto.halo}`} />
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${punto.solido}`} />
+              </span>
+            )}
+            {badge !== undefined && (
+              <span
+                className={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
+                  badge > 0 ? colorBadgePorRuta[item.to] ?? 'bg-primary text-white' : 'bg-surface-3 text-faint'
+                }`}
+              >
+                {badge}
+              </span>
+            )}
+          </>
+        )}
+      </NavLink>
+    );
   };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex items-center gap-2.5 px-5 py-5">
-        <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-lg shadow-sm">
-          {/* placeholder: aquí va el icono/imagen definitiva */}
+    <aside
+      className={`relative flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 ${
+        colapsado ? 'w-16' : 'w-60'
+      }`}
+    >
+      {/* Cabecera: click en el logo/nombre abre el menú del proyecto (cambiar de proyecto o salir). */}
+      <div ref={menuRef} className={`relative pt-5 ${colapsado ? 'px-2' : 'px-3'}`}>
+        <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setMenuProyecto((v) => !v)}
+          title="Tus proyectos o salir"
+          aria-expanded={menuProyecto}
+          className={`flex min-w-0 items-center gap-2.5 rounded-xl py-1.5 text-left transition ${
+            colapsado ? 'w-full justify-center px-0 hover:bg-surface-3' : 'w-full justify-center border border-border/60 bg-surface-2 px-2 hover:bg-surface-3'
+          }`}
+        >
+          {/* Logo: la B de ramas (la misma de la animación de inicio y del ícono de la pestaña). */}
+          <img src={logoB} alt="" aria-hidden="true" className="h-9 w-9 shrink-0 object-contain" />
+          {!colapsado && (
+            <>
+              <div className="min-w-0 leading-tight">
+                <div className="text-lg font-bold text-text">
+                  Branch<span className="text-green-400">Board</span>
+                </div>
+                <div className="truncate font-mono text-xs text-faint">{proyectoActual}</div>
+              </div>
+              {/* La flecha va centrada en altura respecto a toda la cabecera (logo + nombre + proyecto). */}
+              <svg
+                viewBox="0 0 20 20"
+                className={`h-4 w-4 text-muted transition-transform ${menuProyecto ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M5.5 8l4.5 4.5L14.5 8" />
+              </svg>
+            </>
+          )}
+        </button>
         </div>
-        <div className="leading-tight">
-          <div className="text-sm font-bold text-text">BranchBoard</div>
-          <div className="font-mono text-[11px] text-faint">VirusTF</div>
-        </div>
+        {menuProyecto && (
+          <div
+            className={`absolute top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface-2 py-1 shadow-pop ${
+              colapsado ? 'left-2' : 'left-3'
+            }`}
+          >
+            {/* Tus proyectos: solo los que ya usan BranchBoard en este equipo. Los que hay que clonar o
+                configurar por primera vez van en "Nuevo proyecto". */}
+            <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-faint">Tus proyectos</div>
+            {workspaces
+              .filter((ws) => ws.tiene_db_branchboard)
+              .map((ws) => {
+                const actual = ws.nombre === proyectoActual;
+                return (
+                  <button
+                    key={ws.repo}
+                    type="button"
+                    disabled={actual}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition ${
+                      actual ? 'cursor-default bg-primary-soft text-text' : 'text-text hover:bg-surface-3'
+                    }`}
+                    onClick={() => {
+                      setMenuProyecto(false);
+                      entrarAProyecto(ws.nombre);
+                      showToast(`Cambiaste al proyecto ${ws.nombre}`);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{ws.nombre}</span>
+                      <span className="block truncate font-mono text-[10px] text-faint">{ws.ruta}</span>
+                    </span>
+                    {actual && <span className="shrink-0 text-[10px] text-primary">actual</span>}
+                  </button>
+                );
+              })}
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                setCargarProyecto(true);
+              }}
+            >
+              <Icono nombre="descargar" className="h-4 w-4" /> Cargar proyecto
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                setNuevoProyecto(true);
+              }}
+            >
+              <Icono nombre="mas" className="h-4 w-4" /> Nuevo proyecto
+            </button>
+            <div className="my-1 border-t border-border" />
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                setConfirmarCerrarSesion(true);
+              }}
+            >
+              Cerrar sesión
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-300 transition hover:bg-red-500/10"
+              onClick={() => {
+                setMenuProyecto(false);
+                setConfirmarSalir(true);
+              }}
+            >
+              <Icono nombre="apagar" className="h-4 w-4" /> Salir de la app
+            </button>
+          </div>
+        )}
       </div>
 
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
-        {NAV.map((item) => {
-          const badge = badgeByPath[item.to];
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}
-            >
-              <span className="text-base leading-none">{item.icon}</span>
-              <span className="truncate">{item.label}</span>
-              {item.to === '/reportes' && hayReporteActivo && (
-                <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-red-500/25 blur-[2px]" />
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-                </span>
-              )}
-              {item.to === '/branches' && hayCambioBranches && (
-                <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-primary/25 blur-[2px]" />
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                </span>
-              )}
-              {rutasConPuntoAzul.has(item.to) && hayTareasActivas && (
-                <span className="relative ml-auto grid h-5 w-5 shrink-0 place-items-center">
-                  <span className="absolute h-2.5 w-2.5 rounded-full bg-primary/25 blur-[2px]" />
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                </span>
-              )}
-              {badge !== undefined && (
-                <span
-                  className={`ml-auto grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
-                    badge > 0 ? colorBadgePorRuta[item.to] ?? 'bg-primary text-white' : 'bg-surface-3 text-faint'
-                  }`}
-                >
-                  {badge}
-                </span>
-              )}
-            </NavLink>
-          );
-        })}
+      <div className="pb-3" />
+      {botonToggle}
+
+      {/* Contraído: solo los íconos (centrados, con el nombre al pasar el mouse); el número o el punto
+          de aviso van como una marca pequeña en la esquina del ícono. Expandido: secciones con título. */}
+      <nav className={`flex-1 overflow-y-auto pb-3 ${colapsado ? 'px-2' : 'px-3'}`}>
+        <div className="space-y-0.5">
+          {renderItem({ to: '/proyecto', icon: '', label: proyectoActual })}
+          {renderItem({ to: '/chat', icon: 'chat', label: 'Chat' })}
+        </div>
+        {SECCIONES.map((sec) => (
+          <div key={sec.titulo} className="mt-4">
+            {colapsado ? (
+              <div className="mx-2 mb-2 border-t border-border" />
+            ) : (
+              <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-faint">{sec.titulo}</div>
+            )}
+            <div className="space-y-0.5">{sec.items.map(renderItem)}</div>
+          </div>
+        ))}
       </nav>
 
-      <div className="border-t border-border px-4 py-3 text-[11px] text-faint">
-        Mockup UI · datos en memoria
-      </div>
+      {/* Papelera y Ajustes, abajo y separados del resto. */}
+      <div className={`space-y-0.5 border-t border-border py-2 ${colapsado ? 'px-2' : 'px-3'}`}>{ABAJO.map(renderItem)}</div>
+
+      {!colapsado && (
+        <div className="border-t border-border px-4 py-3 text-[11px] text-faint">
+          Mockup UI · datos en memoria
+        </div>
+      )}
+      <Modal
+        open={cargarProyecto}
+        onClose={() => setCargarProyecto(false)}
+        title="Cargar proyecto"
+        subtitle="Proyectos de Unity VC a los que tienes acceso y que aún no están en este equipo"
+        size="md"
+      >
+        {delServidorSinClonar.length === 0 ? (
+          <p className="text-sm text-faint">Ya tienes en este equipo todos tus proyectos de Unity VC.</p>
+        ) : (
+          <div className="space-y-1.5 text-sm">
+            {delServidorSinClonar.map((p) => (
+              <button
+                key={p.repo}
+                type="button"
+                className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary"
+                onClick={() => {
+                  setCargarProyecto(false);
+                  // Va al acceso, paso "Clonar": se elige la carpeta y se descarga el workspace.
+                  irAClonar(p.nombre);
+                }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-text">{p.nombre}</span>
+                  <span className="block truncate font-mono text-[10px] text-faint">{p.repo}</span>
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                    p.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
+                  }`}
+                >
+                  {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
+      <Modal
+        open={nuevoProyecto}
+        onClose={cerrarNuevo}
+        title="Nuevo proyecto"
+        subtitle="Trae un proyecto de Unity VC que ya tienes en este equipo, o crea uno nuevo"
+        size="md"
+      >
+        <div className="space-y-5 text-sm">
+          <div>
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+              Traer un proyecto local de Unity VC
+            </div>
+            {sinBranchBoard.length === 0 ? (
+              <p className="text-[12px] text-faint">No tienes proyectos de Unity VC en este equipo que no estén ya en BranchBoard.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {sinBranchBoard.map((ws) => (
+                  <button
+                    key={ws.repo}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary"
+                    onClick={() => {
+                      cerrarNuevo();
+                      // Va al acceso, donde se configura BranchBoard en ese proyecto.
+                      cambiarDeProyecto();
+                    }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-text">{ws.nombre}</span>
+                      <span className="block truncate font-mono text-[10px] text-faint">{ws.ruta}</span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-primary">Traer</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="border-t border-border pt-4">
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+              Crear un proyecto nuevo
+            </div>
+            <p className="mb-2 text-[12px] text-muted">
+              Para un proyecto que todavía no está en Unity VC: se crea su repositorio y su workspace, y quedas como
+              Administrador.
+            </p>
+            <div className="space-y-2">
+              <input
+                className="input"
+                placeholder="Nombre del proyecto"
+                value={nombreNuevo}
+                onChange={(e) => setNombreNuevo(e.target.value)}
+              />
+              <SelectorCarpeta value={carpetaNueva} onChange={setCarpetaNueva} />
+              <button
+                type="button"
+                className="btn-primary btn-sm w-full"
+                disabled={!nombreNuevo.trim() || !carpetaNueva.trim() || workspaces.some((w) => w.nombre === nombreNuevo.trim())}
+                onClick={() => {
+                  const nombre = nombreNuevo.trim();
+                  setWorkspaces([
+                    ...workspaces,
+                    {
+                      nombre,
+                      repo: `${nombre}@MIGUELMEZA`,
+                      ruta: `${carpetaNueva.trim().replace(/\\$/, '')}\\${nombre}`,
+                      tiene_db_branchboard: true,
+                    },
+                  ]);
+                  setRolActual('Administrador');
+                  entrarAProyecto(nombre);
+                  showToast(`Proyecto ${nombre} creado — eres su Administrador`);
+                  cerrarNuevo();
+                }}
+              >
+                Crear proyecto
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+      <Modal
+        open={confirmarCerrarSesion}
+        onClose={() => setConfirmarCerrarSesion(false)}
+        title="¿Cerrar sesión?"
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmarCerrarSesion(false)}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-danger btn-sm"
+              onClick={() => {
+                setConfirmarCerrarSesion(false);
+                cerrarSesion();
+              }}
+            >
+              Cerrar sesión
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted">
+          BranchBoard usa tu sesión de Unity Version Control para saber quién eres. Al cerrarla, tendrás que volver a
+          iniciar sesión en Unity VC para entrar.
+        </p>
+      </Modal>
+      <Modal
+        open={confirmarSalir}
+        onClose={() => setConfirmarSalir(false)}
+        title="¿Salir de BranchBoard?"
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmarSalir(false)}>
+              Cancelar
+            </button>
+            <button type="button" className="btn-danger btn-sm" onClick={salir}>
+              Salir
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted">Se cierra la app.</p>
+      </Modal>
     </aside>
   );
 }

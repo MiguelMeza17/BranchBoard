@@ -4,6 +4,8 @@ import { useStore } from '../store/useStore';
 import { ESTADOS, type EstadoTarea } from '../types';
 import { estadoMeta } from '../lib/ui';
 import { PageHeader, Card, EmptyState, EstadoBadge, TipoBadge } from '../components/primitives';
+import { Icono, IconoEnLinea } from '../components/Icono';
+
 
 // --- Actividad simulada (no viene de datos reales de checkins de Unity VC) ---
 // Nivel 0-4 determinista por persona+día, solo para dar una vista visual tipo
@@ -96,6 +98,7 @@ export function PerfilUsuario() {
   const usuarios = useStore((s) => s.usuarios);
   const tareas = useStore((s) => s.tareas);
   const [mesExpandido, setMesExpandido] = useState(false);
+  const currentEmail = useStore((s) => s.currentEmail);
 
   const u = usuarios.find((x) => x.email === email);
   const asignadas = useMemo(
@@ -108,7 +111,7 @@ export function PerfilUsuario() {
   if (!u) {
     return (
       <EmptyState
-        icon="🕵️"
+        icon="buscar"
         title="Usuario no encontrado"
         desc={`No hay ningún miembro del equipo con el correo ${email}.`}
         action={
@@ -150,11 +153,17 @@ export function PerfilUsuario() {
           <span className="chip border border-primary/40 bg-primary-soft text-indigo-200">{u.rol}</span>
           {u.firma === null && (
             <span className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300">
-              ⏳ Pendiente de confirmar
+              <IconoEnLinea nombre="reloj" sinColor />Pendiente de confirmar
             </span>
           )}
           <span className="chip border border-border bg-surface-2 text-muted">Desde {u.fecha_alta}</span>
+          {u.email !== currentEmail && (
+            <button className="btn-primary btn-sm" onClick={() => navigate(`/chat/${encodeURIComponent(u.email)}`)}>
+              <Icono nombre="chat" className="h-3.5 w-3.5" sinColor /> Enviar mensaje
+            </button>
+          )}
         </Card>
+
 
         <Card>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">

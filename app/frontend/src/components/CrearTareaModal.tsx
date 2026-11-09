@@ -1,24 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { TIPOS_TAREA, type TipoTarea } from '../types';
+import { TIPOS_TAREA, type Rol, type Sprint, type TipoTarea } from '../types';
 import { tipoMeta } from '../lib/ui';
+import { esLiderOAdmin } from '../lib/permisos';
 import { Modal } from './Modal';
+import { Icono } from './Icono';
 
 interface SubtareaEntry {
   uid: string;
   tipo: TipoTarea;
   titulo: string;
-  descripcion: string;
+  detalles: string;
   guardada: boolean;
 }
 
 export interface NuevaTareaData {
   titulo: string;
-  descripcion: string;
+  detalles: string;
   tipo: TipoTarea;
   sprint_id: string | null;
+  backlog_id: string | null;
   con_fecha: boolean;
   fecha_limite: string | null;
-  subtareas: { tipo: TipoTarea; titulo: string; descripcion: string }[];
+  subtareas: { tipo: TipoTarea; titulo: string; detalles: string }[];
 }
 
 export function CrearTareaModal({
@@ -28,33 +31,43 @@ export function CrearTareaModal({
   sprints,
   tipoFijo,
   modoForzado,
+  sprintInicial,
 }: {
   onClose: () => void;
   onCreate: (data: NuevaTareaData) => void;
-  rolUsuario: string;
-  sprints: { id: string; nombre: string }[];
+  rolUsuario: Rol;
+  /** Sprints y backlogs (se separan por `con_fecha`). */
+  sprints: Sprint[];
   /** Si se da, se salta la elección general/específica y el tipo queda fijo (ej. crear desde una categoría). */
   tipoFijo?: TipoTarea;
   /** Si se da, se salta la elección y el modo queda fijo en ese valor (ej. el botón de la sección
    * "Tareas generales" solo debe crear generales; el de "Tareas individuales" o dentro de una
    * carpeta solo debe crear específicas — una tarea general no puede contener otra general). */
   modoForzado?: 'general' | 'especifica';
+  /** Sprint o backlog elegido de entrada (ej. al crear desde el tablero filtrado por uno). */
+  sprintInicial?: string;
 }) {
   const modoInicial = tipoFijo ? 'especifica' : modoForzado ?? 'elegir';
   const saltaElegir = modoInicial !== 'elegir';
   const [modo, setModo] = useState<'elegir' | 'general' | 'especifica'>(modoInicial);
 
   const [titulo, setTitulo] = useState('');
-  const [descripcion, setDescripcion] = useState('');
+  const [detalles, setDetalles] = useState('');
   const [tipo, setTipo] = useState<TipoTarea>(tipoFijo ?? 'Scripting');
   const [subtareas, setSubtareas] = useState<SubtareaEntry[]>([]);
   const subUidRef = useRef(0);
   const [conFecha, setConFecha] = useState(false);
   const [fecha, setFecha] = useState('');
-  const [sprintId, setSprintId] = useState<string>('');
+  // Una tarea puede ir en un backlog (cómo se organiza), en un sprint (quién la trabaja ahora), en los
+  // dos o en ninguno.
+  const sprintsAbiertos = sprints.filter((sp) => sp.con_fecha && !sp.cerrado);
+  const backlogs = sprints.filter((sp) => !sp.con_fecha && !sp.cerrado);
+  const inicial = sprints.find((sp) => sp.id === sprintInicial);
+  const [sprintId, setSprintId] = useState<string>(inicial?.con_fecha ? inicial.id : '');
+  const [backlogId, setBacklogId] = useState<string>(inicial && !inicial.con_fecha ? inicial.id : '');
   const [avisoLeido, setAvisoLeido] = useState(false);
 
-  const necesitaAviso = rolUsuario === 'Desarrollador' || rolUsuario === 'Tester';
+  const necesitaAviso = !esLiderOAdmin(rolUsuario);
   const [mostrarAviso, setMostrarAviso] = useState(false);
   const [mostrarErrorMinimas, setMostrarErrorMinimas] = useState(false);
 
@@ -63,9 +76,9 @@ export function CrearTareaModal({
   // Como ahora son una lista y no un Set por tipo, una misma categoría puede repetirse.
   const agregarSubtarea = (tp: TipoTarea) => {
     const uid = `s${subUidRef.current++}`;
-    setSubtareas((prev) => [...prev, { uid, tipo: tp, titulo: '', descripcion: '', guardada: false }]);
+    setSubtareas((prev) => [...prev, { uid, tipo: tp, titulo: '', detalles: '', guardada: false }]);
   };
-  const editarSubtarea = (uid: string, campos: Partial<Pick<SubtareaEntry, 'titulo' | 'descripcion'>>) =>
+  const editarSubtarea = (uid: string, campos: Partial<Pick<SubtareaEntry, 'titulo' | 'detalles'>>) =>
     setSubtareas((prev) => prev.map((s) => (s.uid === uid ? { ...s, ...campos } : s)));
   const guardarSubtarea = (uid: string) =>
     setSubtareas((prev) => prev.map((s) => (s.uid === uid && s.titulo.trim() ? { ...s, guardada: true } : s)));
@@ -89,13 +102,14 @@ export function CrearTareaModal({
   function crear() {
     onCreate({
       titulo: titulo.trim(),
-      descripcion: descripcion.trim(),
+      detalles: detalles.trim(),
       tipo,
       sprint_id: sprintId || null,
+      backlog_id: backlogId || null,
       con_fecha: conFecha,
       fecha_limite: conFecha && fecha ? fecha : null,
       subtareas: esGeneral
-        ? subtareas.map((s) => ({ tipo: s.tipo, titulo: s.titulo.trim(), descripcion: s.descripcion.trim() }))
+        ? subtareas.map((s) => ({ tipo: s.tipo, titulo: s.titulo.trim(), detalles: s.detalles.trim() }))
         : [],
     });
   }
@@ -148,7 +162,7 @@ export function CrearTareaModal({
               onClick={() => setModo('general')}
               className="card flex flex-col items-start gap-2 p-4 text-left transition-all hover:border-border-strong hover:shadow-pop"
             >
-              <span className="text-2xl">📦</span>
+              <Icono nombre="caja" className="h-6 w-6" />
               <span className="font-semibold text-text">Tarea general</span>
               <span className="text-xs text-muted">Se reparte en subtareas de distintos tipos.</span>
             </button>
@@ -157,7 +171,7 @@ export function CrearTareaModal({
               onClick={() => setModo('especifica')}
               className="card flex flex-col items-start gap-2 p-4 text-left transition-all hover:border-border-strong hover:shadow-pop"
             >
-              <span className="text-2xl">📄</span>
+              <Icono nombre="documento" className="h-6 w-6" />
               <span className="font-semibold text-text">Tarea específica</span>
               <span className="text-xs text-muted">Una sola tarea, de un solo tipo/disciplina.</span>
             </button>
@@ -171,15 +185,22 @@ export function CrearTareaModal({
               <input className="input" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej. Sistema de inventario" />
             </div>
             <div>
-              <label className="label">Descripción</label>
-              <textarea className="input min-h-[80px] resize-y" value={descripcion} onChange={(e) => setDescripcion(e.target.value)} />
+              <label className="label">
+                Detalles <span className="text-faint">(opcional)</span>
+              </label>
+              <textarea
+                className="input min-h-[140px] resize-y"
+                value={detalles}
+                onChange={(e) => setDetalles(e.target.value)}
+                placeholder="Qué hay que hacer a detalle: los pasos, dónde está cada cosa, lo que haga falta explicar…"
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="label">Tipo</label>
                 {tipoFijo ? (
                   <div className="input flex items-center gap-1.5 bg-surface-3 text-muted">
-                    <span>{tipoMeta[tipoFijo].emoji}</span>
+                    <Icono nombre={tipoMeta[tipoFijo].icono} className="h-4 w-4" color={tipoMeta[tipoFijo].color} />
                     {tipoFijo}
                   </div>
                 ) : (
@@ -191,10 +212,29 @@ export function CrearTareaModal({
                 )}
               </div>
               <div>
+                <label className="label">Backlog</label>
+                <select
+                  className="input disabled:cursor-not-allowed disabled:opacity-60"
+                  value={backlogId}
+                  disabled={backlogs.length === 0}
+                  onChange={(e) => setBacklogId(e.target.value)}
+                >
+                  <option value="">{backlogs.length === 0 ? 'No hay backlogs todavía' : 'Sin backlog'}</option>
+                  {backlogs.map((sp) => (
+                    <option key={sp.id} value={sp.id}>{sp.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="label">Sprint</label>
-                <select className="input" value={sprintId} onChange={(e) => setSprintId(e.target.value)}>
-                  <option value="">Sin sprint (backlog)</option>
-                  {sprints.map((sp) => (
+                <select
+                  className="input disabled:cursor-not-allowed disabled:opacity-60"
+                  value={sprintId}
+                  disabled={sprintsAbiertos.length === 0}
+                  onChange={(e) => setSprintId(e.target.value)}
+                >
+                  <option value="">{sprintsAbiertos.length === 0 ? 'No hay sprints en curso' : 'Sin sprint'}</option>
+                  {sprintsAbiertos.map((sp) => (
                     <option key={sp.id} value={sp.id}>{sp.nombre}</option>
                   ))}
                 </select>
@@ -226,7 +266,7 @@ export function CrearTareaModal({
                         title={`Agregar subtarea de ${tp}`}
                         className="chip border border-border bg-surface-2 text-muted transition hover:border-border-strong hover:text-text"
                       >
-                        <span>{m.emoji}</span>
+                        <Icono nombre={m.icono} className="h-3.5 w-3.5" color={m.color} />
                         {tp}
                       </button>
                     );
@@ -247,7 +287,7 @@ export function CrearTareaModal({
                             className="grid h-10 w-10 shrink-0 place-items-center rounded-full border text-lg transition hover:scale-110"
                             style={{ borderColor: `${m.color}70`, background: `${m.color}18`, color: m.color }}
                           >
-                            {m.emoji}
+                            <Icono nombre={m.icono} className="h-5 w-5" sinColor />
                           </button>
                         );
                       }
@@ -259,7 +299,7 @@ export function CrearTareaModal({
                         >
                           <div className="mb-2 flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-sm font-medium" style={{ color: m.color }}>
-                              <span>{m.emoji}</span>
+                              <Icono nombre={m.icono} className="h-4 w-4" sinColor />
                               {st.tipo}
                             </span>
                             <button
@@ -279,10 +319,10 @@ export function CrearTareaModal({
                               autoFocus
                             />
                             <textarea
-                              className="input min-h-[50px] resize-y"
-                              placeholder="Descripción"
-                              value={st.descripcion}
-                              onChange={(e) => editarSubtarea(st.uid, { descripcion: e.target.value })}
+                              className="input min-h-[70px] resize-y"
+                              placeholder="Detalles (opcional): pasos, dónde está cada cosa…"
+                              value={st.detalles}
+                              onChange={(e) => editarSubtarea(st.uid, { detalles: e.target.value })}
                             />
                             <div className="flex justify-end">
                               <button
@@ -321,7 +361,7 @@ export function CrearTareaModal({
       <Modal
         open={mostrarAviso}
         onClose={() => setMostrarAviso(false)}
-        title="⏳ Aviso antes de guardar"
+        title="Aviso antes de guardar"
         size="sm"
         footer={
           <>
