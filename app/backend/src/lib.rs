@@ -1,25 +1,32 @@
 //! Backend de BranchBoard (Tauri). Diseño completo en `documentacion/BACKEND.md`.
+//!
+//! Organización:
+//! - `comandos/` — lo que el frontend llama con `invoke`, por área.
+//! - `db` — SQLite local.
+//! - `cm` — Unity Version Control (subproceso `cm`).
+//! - `eventos` — sincronización por `ops/`.
+//! - `identidad` — quién es el usuario, firmas y permisos.
+//! - `error` — error común `{ codigo, mensaje }`.
+//! - `estado` — estado compartido de la app.
 
-/// Comando de prueba: confirma que el frontend puede llamar al backend.
-#[tauri::command]
-fn ping() -> String {
-    "pong".to_string()
-}
+pub mod cm;
+pub mod comandos;
+pub mod db;
+pub mod error;
+pub mod estado;
+pub mod eventos;
+pub mod identidad;
+
+use comandos::sistema;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![ping])
+        .manage(estado::AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            sistema::ping,
+            sistema::hay_operacion_en_curso,
+        ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ping_responde_pong() {
-        assert_eq!(ping(), "pong");
-    }
 }
