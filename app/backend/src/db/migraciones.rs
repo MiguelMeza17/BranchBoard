@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 3;
+pub const VERSION_ESQUEMA: u32 = 4;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -92,6 +92,30 @@ fn migraciones() -> Vec<String> {
             tipos = TipoTarea::lista_sql(),
             estados = EstadoTarea::lista_sql()
         ),
+        // 4 — sprints, backlogs y la copia de tareas de cada reporte.
+        "CREATE TABLE sprints (
+            id                TEXT PRIMARY KEY,
+            nombre            TEXT NOT NULL,
+            descripcion       TEXT NOT NULL DEFAULT '',
+            con_fecha         INTEGER NOT NULL,
+            fecha_inicio      TEXT NOT NULL,
+            duracion_dias     INTEGER,
+            fecha_fin         TEXT,
+            cerrado           INTEGER NOT NULL DEFAULT 0,
+            fecha_cierre_real TEXT,
+            creado_por        TEXT NOT NULL,
+            CHECK ((con_fecha = 1 AND duracion_dias > 0 AND fecha_fin IS NOT NULL)
+                OR (con_fecha = 0 AND duracion_dias IS NULL AND fecha_fin IS NULL))
+        ) STRICT;
+        CREATE TABLE reportes_sprint (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            sprint_id TEXT NOT NULL REFERENCES sprints (id) ON DELETE CASCADE,
+            fecha     TEXT NOT NULL,
+            de_cierre INTEGER NOT NULL DEFAULT 0,
+            tareas    TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX reportes_por_sprint ON reportes_sprint (sprint_id);"
+            .to_string(),
     ]
 }
 

@@ -7,6 +7,7 @@
 pub mod configuracion;
 pub mod ediciones;
 mod migraciones;
+pub mod sprints;
 pub mod tareas;
 pub mod usuarios;
 
