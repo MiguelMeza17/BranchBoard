@@ -829,7 +829,13 @@ Tabla clave/valor para ajustes del proyecto entero. **Actualizado (2026-11-07)**
 Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Administrador. **Migra a eventos** (agregarlo a la lista en [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)) — de lo contrario cambiar un ajuste del proyecto en una máquina no se reflejaría en las demás.
 
 ## Pendiente por definir
-- Cómo se valida el permiso de rol en cada comando Tauri (mecanismo exacto de autorización, ej. middleware/decorador vs. chequeo manual al inicio de cada comando)
+- ~~Cómo se valida el permiso de rol en cada comando Tauri (mecanismo exacto de autorización, ej. middleware/decorador vs. chequeo manual al inicio de cada comando)~~ — **resuelto (2026-11-10, issue #87)**, implementado en `app/backend/src/identidad/permisos.rs`:
+  - **Una sola tabla**, `PERMISOS`, dice qué roles pueden usar cada comando (`Libre`, o una lista de roles). Tauri no tiene *middleware* para comandos, así que cada comando que depende del rol empieza con `estado.exigir_permiso("nombre_del_comando")?`.
+  - **Negado por defecto**: un comando que no está en la tabla se niega siempre. Una prueba compara la tabla con los comandos registrados en `lib.rs` y falla si falta alguno o si sobra uno.
+  - **Usuario actual** = el correo de `cm whoami` (lo guarda `AppState::fijar_usuario`; lo conecta el issue #89 al entrar al proyecto) + su rol **verificado por la firma** contra la llave del Administrador que esta máquina fijó (`admin.pub`). Firma que no coincide → se le aplica Desarrollador; sin fila o pendiente de confirmar → `sin_permiso`.
+  - Errores: `sin_permiso` si el rol no alcanza, `sin_sesion_unity_vc` si no hay usuario, `validacion` si no hay proyecto abierto o esta máquina no tiene la llave del Administrador.
+  - Lo que depende del dato concreto (ej. "el creador sobre su tarea pendiente", "quien tiene la tarea padre") lo revisa cada comando después, con el usuario que devuelve `exigir_permiso`. En la tabla, esos comandos llevan los roles que *pueden llegar* a usarlos.
+  - Hoy están en la tabla los comandos que ya existen: `listar_backups`, `restaurar_backup` y `exportar_llave_firma` (solo Administrador); `ping`, `hay_operacion_en_curso`, `buscar_actualizacion` e `instalar_actualizacion` (libres). Cada comando nuevo se agrega con los roles de la tabla "Contrato con el frontend".
 - Estados del flujo de una tarea (ya definidos en la práctica: por hacer / en producción / en revisión / terminada, más la bandera aparte `pendiente_aprobacion` — falta solo confirmarlos como lista cerrada)
 - Comandos `cm` exactos a usar para leer changesets por rama y extraer metadata (autor, comentario, archivos)
 - Comando `cm` exacto para leer si una rama está cerrada/mergeada

@@ -2,3 +2,4 @@
 
 pub mod firmas;
 pub mod llaves;
+pub mod permisos;

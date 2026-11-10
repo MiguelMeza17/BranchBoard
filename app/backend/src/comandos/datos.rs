@@ -1,6 +1,5 @@
 //! Copias de seguridad de la base de datos (apartado "Restaurar backup" de Ajustes).
-//! Ambos comandos son **exclusivos del Administrador**: el chequeo de rol se
-//! conecta aquí cuando exista (issue #87).
+//! Ambos comandos son **exclusivos del Administrador** (ver `identidad::permisos`).
 
 use std::path::PathBuf;
 
@@ -23,6 +22,7 @@ pub(crate) fn carpeta_abierta(estado: &AppState) -> Resultado<PathBuf> {
 /// La base en uso ("Actual") y las copias disponibles.
 #[tauri::command]
 pub fn listar_backups(estado: State<'_, AppState>) -> Resultado<ListaBackups> {
+    estado.exigir_permiso("listar_backups")?;
     backups::lista(&carpeta_abierta(&estado)?)
 }
 
@@ -30,6 +30,7 @@ pub fn listar_backups(estado: State<'_, AppState>) -> Resultado<ListaBackups> {
 /// Cierra la base mientras cambia el archivo y la vuelve a abrir, pase lo que pase.
 #[tauri::command]
 pub fn restaurar_backup(estado: State<'_, AppState>, nombre: String) -> Resultado<Backup> {
+    estado.exigir_permiso("restaurar_backup")?;
     if estado.hay_operacion_en_curso() {
         return Err(Error::Validacion(
             "Hay una operación en curso. Espera a que termine para restaurar.".into(),
