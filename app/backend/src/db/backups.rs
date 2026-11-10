@@ -79,17 +79,28 @@ fn es_copia(nombre: &str) -> bool {
 
 /// Nombre libre para una copia nueva en esta hora; si ya hay una del mismo
 /// segundo, agrega `_02`, `_03`… (dos cifras para que el orden por nombre siga
-/// siendo el cronológico).
+/// siendo el cronológico). El número sigue al más alto que haya de ese segundo:
+/// nunca se reutiliza el nombre de una copia ya borrada, porque la copia nueva
+/// quedaría ordenada como la más vieja y se borraría enseguida.
 fn nombre_libre(carpeta: &Path) -> String {
     let marca = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
     let base = format!("{PREFIJO}{marca}");
-    let mut nombre = format!("{base}{EXTENSION}");
-    let mut n = 1;
-    while carpeta.join(&nombre).exists() {
-        n += 1;
-        nombre = format!("{base}_{n:02}{EXTENSION}");
+    let ultimo = fs::read_dir(carpeta)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter_map(|nombre| {
+            let resto = nombre.strip_prefix(&base)?.strip_suffix(EXTENSION)?;
+            match resto.strip_prefix('_') {
+                Some(numero) => numero.parse::<u32>().ok(),
+                None => resto.is_empty().then_some(1),
+            }
+        })
+        .max();
+    match ultimo {
+        None => format!("{base}{EXTENSION}"),
+        Some(n) => format!("{base}_{:02}{EXTENSION}", n + 1),
     }
-    nombre
 }
 
 /// Valida que `nombre` sea el archivo de una copia existente (sin rutas ni `..`).
