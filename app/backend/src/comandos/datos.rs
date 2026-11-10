@@ -12,7 +12,7 @@ use crate::estado::AppState;
 
 pub use crate::db::backups::{Backup, ListaBackups};
 
-fn carpeta_abierta(estado: &AppState) -> Resultado<PathBuf> {
+pub(crate) fn carpeta_abierta(estado: &AppState) -> Resultado<PathBuf> {
     estado.con_db(|db| {
         db.carpeta().map(|c| c.to_path_buf()).ok_or_else(|| {
             Error::Validacion("El proyecto abierto no tiene carpeta de datos".into())
