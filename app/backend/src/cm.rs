@@ -1,5 +1,6 @@
 //! Integración con Unity Version Control: todo lo que invoca `cm` como subproceso. Issues #80 a #84.
 
 pub mod ejecutor;
+pub mod lectura;
 
 pub use ejecutor::{Comando, Salida};
