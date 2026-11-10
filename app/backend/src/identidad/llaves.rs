@@ -27,6 +27,8 @@ use crate::error::{Error, Resultado};
 
 /// Llave privada del Administrador, dentro de la carpeta local del proyecto.
 pub const ARCHIVO_LLAVE_ADMIN: &str = "admin.key";
+/// Llave privada de un Líder, solo en su máquina (issue #88).
+pub const ARCHIVO_LLAVE_LIDER: &str = "lider.key";
 /// Llave pública del Administrador que esta máquina fijó para el proyecto.
 pub const ARCHIVO_LLAVE_PUBLICA: &str = "admin.pub";
 /// Largo mínimo de la passphrase que cifra la llave.
@@ -51,21 +53,21 @@ struct ArchivoLlave {
     llave: String,
 }
 
-/// Llave privada del Administrador ya cargada en memoria, lista para firmar.
-pub struct LlaveAdmin {
+/// Llave privada (del Administrador o de un Líder) ya cargada en memoria, lista para firmar.
+pub struct LlavePrivada {
     firma: SigningKey,
 }
 
-impl std::fmt::Debug for LlaveAdmin {
+impl std::fmt::Debug for LlavePrivada {
     /// Nunca muestra la llave privada (ni en logs ni en mensajes de error).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LlaveAdmin")
+        f.debug_struct("LlavePrivada")
             .field("publica", &self.publica())
             .finish_non_exhaustive()
     }
 }
 
-impl LlaveAdmin {
+impl LlavePrivada {
     /// Llave pública en base64.
     pub fn publica(&self) -> String {
         B64.encode(self.firma.verifying_key().as_bytes())
@@ -122,7 +124,7 @@ fn cifrador(passphrase: &str, sal: &[u8]) -> Resultado<XChaCha20Poly1305> {
 }
 
 /// Arma el archivo de la llave: en claro si no hay passphrase, cifrado si la hay.
-fn empaquetar(llave: &LlaveAdmin, passphrase: Option<&str>) -> Resultado<ArchivoLlave> {
+fn empaquetar(llave: &LlavePrivada, passphrase: Option<&str>) -> Resultado<ArchivoLlave> {
     let mut semilla = llave.firma.to_bytes();
     let archivo = match passphrase {
         None => ArchivoLlave {
@@ -157,7 +159,7 @@ fn empaquetar(llave: &LlaveAdmin, passphrase: Option<&str>) -> Resultado<Archivo
 }
 
 /// Recupera la llave privada de un archivo. Si está cifrada exige la passphrase.
-fn desempaquetar(texto: &str, passphrase: Option<&str>) -> Resultado<LlaveAdmin> {
+fn desempaquetar(texto: &str, passphrase: Option<&str>) -> Resultado<LlavePrivada> {
     let danado = || Error::Validacion("El archivo de la llave está dañado".into());
     let archivo: ArchivoLlave = serde_json::from_str(texto).map_err(|_| danado())?;
     if archivo.version != VERSION_ARCHIVO {
@@ -187,7 +189,7 @@ fn desempaquetar(texto: &str, passphrase: Option<&str>) -> Resultado<LlaveAdmin>
     };
     let bytes: [u8; 32] = semilla.as_slice().try_into().map_err(|_| danado())?;
     semilla.fill(0);
-    let llave = LlaveAdmin {
+    let llave = LlavePrivada {
         firma: SigningKey::from_bytes(&bytes),
     };
     if llave.publica() != archivo.publica.trim() {
@@ -238,7 +240,7 @@ pub fn generar_llaves_admin(
             "Este proyecto ya tiene un Administrador con otra llave".into(),
         ));
     }
-    let llave = LlaveAdmin {
+    let llave = LlavePrivada {
         firma: SigningKey::generate(&mut OsRng),
     };
     let archivo = empaquetar(&llave, passphrase)?;
@@ -256,11 +258,55 @@ pub fn generar_llaves_admin(
 pub fn cargar_llave_admin(
     carpeta_proyecto: &Path,
     passphrase: Option<&str>,
-) -> Resultado<LlaveAdmin> {
+) -> Resultado<LlavePrivada> {
     let ruta = carpeta_proyecto.join(ARCHIVO_LLAVE_ADMIN);
     if !ruta.is_file() {
         return Err(Error::NoEncontrado(
             "la llave del Administrador en esta máquina".into(),
+        ));
+    }
+    desempaquetar(&std::fs::read_to_string(ruta)?, passphrase)
+}
+
+/// `true` si esta máquina tiene la llave privada de Líder para el proyecto.
+pub fn existe_llave_lider(carpeta_proyecto: &Path) -> bool {
+    carpeta_proyecto.join(ARCHIVO_LLAVE_LIDER).is_file()
+}
+
+/// Genera el par de llaves de un Líder en su máquina, al nombrarlo Líder.
+/// Guarda la privada en `lider.key` (cifrada si se da una passphrase) y
+/// devuelve la pública en base64, que es la que el Administrador certifica.
+/// Si ya hay una llave, no la pisa.
+pub fn generar_llaves_lider(
+    carpeta_proyecto: &Path,
+    passphrase: Option<&str>,
+) -> Resultado<String> {
+    if existe_llave_lider(carpeta_proyecto) {
+        return Err(Error::Validacion(
+            "Este proyecto ya tiene llaves de Líder en esta máquina".into(),
+        ));
+    }
+    let llave = LlavePrivada {
+        firma: SigningKey::generate(&mut OsRng),
+    };
+    let archivo = empaquetar(&llave, passphrase)?;
+    std::fs::create_dir_all(carpeta_proyecto)?;
+    escribir_nuevo(
+        &carpeta_proyecto.join(ARCHIVO_LLAVE_LIDER),
+        &a_json(&archivo)?,
+    )?;
+    Ok(llave.publica())
+}
+
+/// Carga la llave privada del Líder para firmar.
+pub fn cargar_llave_lider(
+    carpeta_proyecto: &Path,
+    passphrase: Option<&str>,
+) -> Resultado<LlavePrivada> {
+    let ruta = carpeta_proyecto.join(ARCHIVO_LLAVE_LIDER);
+    if !ruta.is_file() {
+        return Err(Error::NoEncontrado(
+            "la llave de Líder en esta máquina".into(),
         ));
     }
     desempaquetar(&std::fs::read_to_string(ruta)?, passphrase)
@@ -508,6 +554,25 @@ mod tests {
         assert!(cargar_llave_admin(dir.path(), None).is_err());
         std::fs::write(&ruta, "esto no es json").unwrap();
         assert!(cargar_llave_admin(dir.path(), None).is_err());
+    }
+
+    #[test]
+    fn el_lider_tiene_su_propia_llave() {
+        let dir = carpeta();
+        assert!(!existe_llave_lider(dir.path()));
+        assert!(cargar_llave_lider(dir.path(), None).is_err());
+        let publica = generar_llaves_lider(dir.path(), Some(CLAVE)).unwrap();
+        assert!(existe_llave_lider(dir.path()));
+        assert!(
+            generar_llaves_lider(dir.path(), None).is_err(),
+            "no pisa la llave"
+        );
+        assert!(cargar_llave_lider(dir.path(), None).is_err());
+        let llave = cargar_llave_lider(dir.path(), Some(CLAVE)).unwrap();
+        assert_eq!(llave.publica(), publica);
+        // No toca nada del Administrador.
+        assert!(!existe_llave_admin(dir.path()));
+        assert_eq!(leer_llave_publica_admin(dir.path()).unwrap(), None);
     }
 
     #[test]
