@@ -1,5 +1,5 @@
-//! Comandos de identidad y firmas. **Exclusivos del Administrador**: el chequeo
-//! de rol se conecta aquí cuando exista (issue #87).
+//! Comandos de identidad y firmas. **Exclusivos del Administrador** (ver
+//! `identidad::permisos`).
 
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -21,6 +21,7 @@ pub async fn exportar_llave_firma(
     estado: State<'_, AppState>,
     passphrase: String,
 ) -> Resultado<bool> {
+    estado.exigir_permiso("exportar_llave_firma")?;
     let exportado = llaves::exportar_llave_firma(&carpeta_abierta(&estado)?, &passphrase)?;
     let Some(destino) = app
         .dialog()
