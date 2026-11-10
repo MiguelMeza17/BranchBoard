@@ -602,6 +602,14 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
 - **Riesgo aceptado**: la confianza se fija en la primera entrada (si alguien alterara `ops/` antes de que una persona nueva entre por primera vez, esa persona fijaría una llave falsa). Mitigación: al configurar solo se acepta la llave si quien firma el evento es el **dueño del repositorio en Unity VC**, dato que no se puede cambiar desde `ops/`.
 - Regenerar las llaves ya no exige recompilar: el Administrador genera un par nuevo y cada persona confirma el cambio de llave en su máquina.
 
+**Implementado (2026-11-10, issue #85)** en `app/backend/src/identidad/llaves.rs`:
+- Los dos archivos viven en la carpeta local del proyecto (`<datos>/proyectos/<id>/`, junto al `.db`): `admin.key` (llave privada, solo en la máquina del Administrador) y `admin.pub` (la llave pública que esa máquina fijó para el proyecto).
+- `generar_llaves_admin(carpeta, passphrase opcional)` crea el par, guarda la privada y fija la pública. Nunca pisa una llave que ya existe. Lo llama la configuración del proyecto (issue #89), no la interfaz.
+- `admin.key` es un JSON con la semilla de 32 bytes en base64. Con passphrase (mínimo 8 caracteres) queda cifrada con XChaCha20-Poly1305 y una clave derivada con Argon2id; sin passphrase queda protegida solo por los permisos del sistema.
+- `fijar_llave_publica_admin` guarda la llave pública la primera vez; si después llega otra distinta, la rechaza. `verificar(publica, mensaje, firma)` es la comprobación que usan los issues siguientes.
+- Comando `exportar_llave_firma(passphrase)` (exclusivo Administrador): el respaldo sale **siempre cifrado**. El backend abre "Guardar como" y escribe el archivo (`.bbkey`); la llave nunca pasa por la webview. Devuelve `false` si se cancela. Si `admin.key` ya está cifrada, la passphrase tiene que ser la misma.
+- `importar_llave_firma` trae ese respaldo a otra máquina (llave recuperada o Administrador nuevo). Todavía no tiene comando ni pantalla.
+
 **Mecanismo**:
 - **Corregido — orden real de los pasos** (la versión anterior decía a la vez "se genera al configurar el proyecto" y "queda embebida en el binario que ya se compiló", lo cual es contradictorio: una llave generada en tiempo de ejecución no puede estar ya horneada en un binario compilado antes): la generación de llaves es un **paso de preparación del proyecto, no un botón dentro de la app ya instalada por el equipo**.
   1. Quien va a ser Administrador corre `generar_llaves_admin()` **una sola vez**, en un modo de configuración/build previo a distribuir la app (la misma persona técnica que arma el build para el equipo — coherente con que ya es quien inicializa el proyecto, ver [Bootstrapping](#identidad-de-usuario)).

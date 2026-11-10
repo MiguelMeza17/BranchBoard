@@ -3,4 +3,5 @@
 
 pub mod actualizaciones;
 pub mod datos;
+pub mod identidad;
 pub mod sistema;
