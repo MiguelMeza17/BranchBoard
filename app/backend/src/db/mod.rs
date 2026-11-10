@@ -4,6 +4,7 @@
 //! nunca en Drive/OneDrive: es desechable y se reconstruye desde `ops/`
 //! (ver "Sincronización entre máquinas" en BACKEND.md).
 
+pub mod backups;
 pub mod chat;
 pub mod commits;
 pub mod configuracion;
@@ -59,26 +60,41 @@ pub fn carpeta_proyecto(carpeta_datos: &Path, id_proyecto: &str) -> Resultado<Pa
 #[derive(Debug)]
 pub struct Db {
     conexion: Connection,
+    /// Carpeta del proyecto; `None` en memoria.
+    carpeta: Option<PathBuf>,
 }
 
 impl Db {
     /// Abre (o crea) el `.db` de un proyecto y aplica las migraciones que falten.
     pub fn abrir(carpeta_proyecto: &Path) -> Resultado<Self> {
         std::fs::create_dir_all(carpeta_proyecto)?;
-        Self::preparar(Connection::open(carpeta_proyecto.join(NOMBRE_DB))?)
+        let conexion = Connection::open(carpeta_proyecto.join(NOMBRE_DB))?;
+        Self::preparar(conexion, Some(carpeta_proyecto.to_path_buf()))
+    }
+
+    /// Lo que se usa al entrar a un proyecto: guarda una copia de seguridad del
+    /// `.db` **antes** de tocarlo (migraciones incluidas) y luego lo abre.
+    pub fn abrir_con_respaldo(carpeta_proyecto: &Path) -> Resultado<Self> {
+        backups::respaldar(carpeta_proyecto, None)?;
+        Self::abrir(carpeta_proyecto)
     }
 
     /// Base de datos en memoria, para pruebas.
     pub fn en_memoria() -> Resultado<Self> {
-        Self::preparar(Connection::open_in_memory()?)
+        Self::preparar(Connection::open_in_memory()?, None)
     }
 
-    fn preparar(mut conexion: Connection) -> Resultado<Self> {
+    fn preparar(mut conexion: Connection, carpeta: Option<PathBuf>) -> Resultado<Self> {
         // WAL: lecturas y escrituras no se bloquean entre sí. Llaves foráneas activas.
         conexion.pragma_update(None, "journal_mode", "WAL")?;
         conexion.pragma_update(None, "foreign_keys", "ON")?;
         migraciones::aplicar(&mut conexion)?;
-        Ok(Self { conexion })
+        Ok(Self { conexion, carpeta })
+    }
+
+    /// Carpeta del proyecto cuyo `.db` está abierto; `None` en memoria.
+    pub fn carpeta(&self) -> Option<&Path> {
+        self.carpeta.as_deref()
     }
 
     pub fn conexion(&self) -> &Connection {
@@ -148,6 +164,23 @@ mod tests {
             })
             .unwrap();
         assert_eq!(valor, "1");
+    }
+
+    #[test]
+    fn abrir_con_respaldo_copia_antes_de_migrar() {
+        let dir = tempfile::tempdir().unwrap();
+        let carpeta = carpeta_proyecto(dir.path(), "VirusTF").unwrap();
+        assert!(Db::abrir_con_respaldo(&carpeta)
+            .unwrap()
+            .carpeta()
+            .is_some());
+        assert!(
+            backups::listar(&carpeta).unwrap().is_empty(),
+            "sin .db previo no hay copia"
+        );
+        Db::abrir_con_respaldo(&carpeta).unwrap();
+        assert_eq!(backups::listar(&carpeta).unwrap().len(), 1);
+        assert_eq!(Db::en_memoria().unwrap().carpeta(), None);
     }
 
     #[test]
