@@ -106,6 +106,8 @@ Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` 
   Así, aunque `nombre_rama` traiga caracteres raros, viajan como texto literal hacia `cm` (en el peor caso, `cm` responde con un error de "rama no encontrada"), nunca se interpretan como comandos.
 - No requiere librerías ni validación extra — es la forma normal de invocar subprocesos en Rust, solo hay que ser deliberado y no armar comandos como texto plano en ningún punto.
 
+**Implementado (2026-11-10, issue #80)** en `app/backend/src/cm/ejecutor.rs`: **todo** subproceso pasa por `Comando` (`Comando::cm().arg("log").arg(format!("br:/{rama}")).ejecutar(&estado)`), que recibe los argumentos ya separados — no existe ninguna función que acepte un comando como texto. `ejecutar` devuelve `{ codigo, stdout, stderr }` también cuando el código no es 0; `exigir_exito` pide código 0 y devuelve el `stdout`, o un error `cm` con lo que dijo el proceso. Tiempo máximo por comando (2 min por defecto, ajustable): si se pasa, el proceso se mata y se devuelve error `cm`. Si `cm` no está instalado, error `cm_no_instalado`. En Windows el proceso corre sin abrir una consola. Prueba incluida: un título con `; rm -rf … && echo hola` llega al proceso como texto literal, en una sola línea.
+
 ## Protección de ramas (`main` y `dev`)
 
 Esta regla es **solo una capa de código en BranchBoard** — no la puede hacer cumplir Unity Version Control por sí solo (no existe un permiso nativo de VCS para "límite de niveles de anidación" ni reglas de negocio como estas). Si alguien usa el cliente de Unity VC directamente, sin pasar por la app, estas protecciones no aplican — es un acuerdo de equipo además de una validación técnica.
@@ -181,6 +183,8 @@ Igual que hace Unity Editor mientras guarda/compila: mientras hay una operación
 - El backend mantiene una bandera en memoria `operacion_en_curso: bool` (o un contador, si puede haber más de una en paralelo), que se activa justo antes de invocar `cm` y se desactiva cuando el subproceso termina (éxito o error).
 - Comando Tauri `hay_operacion_en_curso()` para que el frontend lo consulte antes de permitir cerrar la ventana.
 - Tauri permite interceptar el evento de cierre de ventana (`onCloseRequested` o equivalente) para cancelarlo y mostrar un aviso en vez de cerrar de inmediato — esa parte de UI queda para [FRONTEND.md](./FRONTEND.md#navegación-general).
+
+**Implementado (2026-11-10, issue #80)**: el contador vive en `AppState::operaciones_en_curso` y lo sube/baja `Comando::ejecutar` (y cualquier otra operación larga, con `AppState::iniciar_operacion`, que descuenta sola al terminar, también si falla). El bloqueo lo hace **el backend**, no el frontend: en `lib.rs`, al recibir `CloseRequested` con el contador > 0, se cancela el cierre (`prevent_close`) y se emite el evento `cierre-bloqueado`; el frontend solo lo escucha (`api.alCierreBloqueado`) y muestra el aviso. `hay_operacion_en_curso()` sigue disponible para consultar antes de otras acciones (ej. actualizar la app).
 
 ## Flujo de revisión y merge a `dev`
 
