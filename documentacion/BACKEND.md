@@ -623,6 +623,7 @@ Borrar una fila de esta tabla = [eliminar a esa persona del equipo](#identidad-d
   - **Firma presente pero NO coincide** (fila editada a mano fuera de la app, o campos `rol`/`firmado_en` alterados) → **no confiable**: el usuario se degrada al rol mínimo (Desarrollador) y la UI muestra un aviso de "rol no verificado — posible modificación manual del archivo".
   - **`firma` es `NULL`** (fila recién creada o con rol cambiado por un Líder vía `crear_usuario`/`cambiar_rol`, ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto), no por una manipulación) → **bloqueado, no degradado**: la persona no puede entrar a la app todavía, ni siquiera como Desarrollador, hasta que el Administrador la confirme. Es un estado legítimo de "esperando firma", distinto del caso de arriba (que sí es sospechoso).
 - **Actualizado (2026-11-07)**: firman el Administrador **y los Líderes** (ver abajo). Cada firma solo es válida dentro de lo que ese rol puede asignar.
+- **Implementado (2026-11-10, issue #86)** en `app/backend/src/identidad/firmas.rs`: `verificar_usuario` devuelve cada usuario con `verificacion` (`verificado` / `no_verificado` / `pendiente`) y `rol_efectivo` (el firmado, Desarrollador si no coincide, vacío si está pendiente). Por ahora solo se acepta la firma del Administrador; la de los Líderes llega con el issue #88. Un correo o una fecha que traigan `|` no se firman ni se aceptan, para que no se pueda armar el mismo texto firmado con otros datos.
 
 ### Firma de los Líderes (nuevo, 2026-11-07)
 
