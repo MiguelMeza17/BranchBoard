@@ -42,6 +42,12 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("listar_backups", Acceso::Roles(SOLO_ADMIN)),
     ("restaurar_backup", Acceso::Roles(SOLO_ADMIN)),
     ("exportar_llave_firma", Acceso::Roles(SOLO_ADMIN)),
+    // Usuarios (issue #90). El detalle de quién cambia a quién está en `identidad::equipo`.
+    ("listar_usuarios", Acceso::Roles(TODOS)),
+    ("crear_usuario", Acceso::Roles(LIDER_O_ADMIN)),
+    ("cambiar_rol", Acceso::Roles(LIDER_O_ADMIN)),
+    ("eliminar_usuario", Acceso::Roles(LIDER_O_ADMIN)),
+    ("confirmar_usuario", Acceso::Roles(SOLO_ADMIN)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.

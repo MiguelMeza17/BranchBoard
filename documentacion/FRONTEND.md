@@ -214,6 +214,7 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
   - Líder: solo entre Desarrollador, Tester y Colaborador externo, y solo sobre personas con esos roles. No crea ni asciende Líderes.
   - **Actualizado (2026-11-07)**: el alta o el cambio de rol **queda firmado al momento** por quien lo hace (Administrador o Líder: los Líderes también firman, ver [Firma del rol en BACKEND.md](./BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac)). La persona entra y trabaja como siempre, sin esperar al Administrador.
 - **Eliminar**: Administrador a cualquiera; Líder solo a Desarrolladores y Colaboradores externos. **Se deja así por ahora** (el Líder no puede eliminar Testers); revisar más adelante.
+  - **Actualizado (2026-11-10)**: la confirmación recuerda quitarle a la persona el acceso a la carpeta de Drive/OneDrive del proyecto (BranchBoard no puede hacerlo), como pide [BACKEND.md → Identidad de usuario](./BACKEND.md#identidad-de-usuario). Nadie puede eliminar al Administrador ni eliminarse a sí mismo.
 - **Punto azul en el menú**: se enciende cuando hay un usuario nuevo o un cambio de rol que no has visto, y se apaga al entrar a Usuarios. Lo ven todos los roles.
 - Ya **no hay "solicitar ingreso"**: quien no tiene cuenta le pide a un Líder o Administrador que lo cree. Solicitar ingreso queda para la versión 2 (ver issue #57; invitar por correo con código: #58).
 

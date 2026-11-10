@@ -1,13 +1,14 @@
 //! Estado compartido de la app, registrado en Tauri (`State<AppState>`).
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::db::Db;
 use crate::error::{Error, Resultado};
-use crate::identidad::llaves;
+use crate::identidad::llaves::{self, LlavePrivada};
 use crate::identidad::permisos::{self, Acceso, UsuarioActual};
-use crate::modelo::normalizar_email;
+use crate::modelo::{normalizar_email, Rol};
 
 #[derive(Debug, Default)]
 pub struct AppState {
@@ -18,12 +19,57 @@ pub struct AppState {
     db: Mutex<Option<Db>>,
     /// Correo de quien usa la app (`cm whoami`); `None` sin sesión de Unity VC.
     usuario: Mutex<Option<String>>,
+    /// Llave de firma ya abierta en esta sesión (de qué proyecto y con qué rol),
+    /// para no pedir su contraseña en cada firma. Solo en memoria.
+    llave_firma: Mutex<Option<(PathBuf, Rol, LlavePrivada)>>,
+}
+
+/// Llave pública del Administrador que esta máquina fijó para el proyecto de `db`.
+pub fn llave_publica_del_proyecto(db: &Db) -> Resultado<String> {
+    let carpeta = db
+        .carpeta()
+        .ok_or_else(|| Error::Validacion("El proyecto abierto no tiene carpeta de datos".into()))?;
+    llaves::leer_llave_publica_admin(carpeta)?.ok_or_else(|| {
+        Error::Validacion(
+            "Esta máquina todavía no tiene la llave del Administrador del proyecto".into(),
+        )
+    })
 }
 
 impl AppState {
     /// Guarda quién usa la app (el correo de `cm whoami`), o `None` al cerrar sesión.
+    /// Cambiar de persona olvida la llave de firma abierta.
     pub fn fijar_usuario(&self, email: Option<&str>) {
         *self.usuario.lock().unwrap_or_else(|e| e.into_inner()) = email.map(normalizar_email);
+        *self.llave_firma.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// La llave privada con la que firma `yo` en el proyecto de `db`: `admin.key`
+    /// si es Administrador, `lider.key` si es Líder. Si está cifrada, la primera
+    /// vez en la sesión hace falta `passphrase` (si no, error `llave_cifrada`);
+    /// después queda abierta en memoria.
+    pub fn llave_firma(
+        &self,
+        db: &Db,
+        yo: &UsuarioActual,
+        passphrase: Option<&str>,
+    ) -> Resultado<LlavePrivada> {
+        let carpeta = db.carpeta().ok_or_else(|| {
+            Error::Validacion("El proyecto abierto no tiene carpeta de datos".into())
+        })?;
+        let mut guardada = self.llave_firma.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((de, rol, llave)) = guardada.as_ref() {
+            if de == carpeta && *rol == yo.rol {
+                return Ok(llave.clone());
+            }
+        }
+        let llave = match yo.rol {
+            Rol::Administrador => llaves::cargar_llave_admin(carpeta, passphrase)?,
+            Rol::Lider => llaves::cargar_llave_lider(carpeta, passphrase)?,
+            _ => return Err(Error::SinPermiso),
+        };
+        *guardada = Some((carpeta.to_path_buf(), yo.rol, llave.clone()));
+        Ok(llave)
     }
 
     /// Primera línea de todo comando que depende del rol: devuelve quién lo usa
@@ -46,14 +92,7 @@ impl AppState {
             .clone()
             .ok_or(Error::SinSesionUnityVc)?;
         let usuario = self.con_db(|db| {
-            let carpeta = db.carpeta().ok_or_else(|| {
-                Error::Validacion("El proyecto abierto no tiene carpeta de datos".into())
-            })?;
-            let publica = llaves::leer_llave_publica_admin(carpeta)?.ok_or_else(|| {
-                Error::Validacion(
-                    "Esta máquina todavía no tiene la llave del Administrador del proyecto".into(),
-                )
-            })?;
+            let publica = llave_publica_del_proyecto(db)?;
             permisos::usuario_actual(db.conexion(), &publica, &email)
         })?;
         permisos::exigir(comando, &usuario)?;
