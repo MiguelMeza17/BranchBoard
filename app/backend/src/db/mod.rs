@@ -4,12 +4,17 @@
 //! nunca en Drive/OneDrive: es desechable y se reconstruye desde `ops/`
 //! (ver "Sincronización entre máquinas" en BACKEND.md).
 
+pub mod chat;
+pub mod commits;
 pub mod configuracion;
+pub mod documentos;
 pub mod ediciones;
 mod migraciones;
+pub mod notificaciones;
 pub mod sprints;
 pub mod tareas;
 pub mod usuarios;
+pub mod vistos;
 
 use std::path::{Path, PathBuf};
 
