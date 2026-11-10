@@ -23,6 +23,7 @@ export type CodigoError =
   | 'cm'
   | 'base_datos'
   | 'archivos'
+  | 'llave_cifrada'
   | 'actualizacion'
   | 'interno';
 

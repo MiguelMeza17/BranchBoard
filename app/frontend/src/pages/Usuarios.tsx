@@ -166,7 +166,7 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
         tone="danger"
         palabra="eliminar"
         confirmLabel="Eliminar del equipo"
-        description={`Se revocará el acceso de ${target} de inmediato. Esta acción no cierra sesión — borra la fila del usuario.`}
+        description={`Se revocará el acceso de ${target} a BranchBoard de inmediato. Recuerda quitarle también el acceso a la carpeta de Drive/OneDrive del proyecto: BranchBoard no puede hacerlo por ti.`}
       />
     </Card>
   );

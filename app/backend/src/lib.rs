@@ -19,7 +19,7 @@ pub mod eventos;
 pub mod identidad;
 pub mod modelo;
 
-use comandos::{actualizaciones, datos, identidad as comandos_identidad, sistema};
+use comandos::{actualizaciones, datos, identidad as comandos_identidad, sistema, usuarios};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,6 +35,11 @@ pub fn run() {
             datos::listar_backups,
             datos::restaurar_backup,
             comandos_identidad::exportar_llave_firma,
+            usuarios::listar_usuarios,
+            usuarios::crear_usuario,
+            usuarios::cambiar_rol,
+            usuarios::confirmar_usuario,
+            usuarios::eliminar_usuario,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

@@ -32,6 +32,9 @@ pub enum Error {
     /// Falló leer o escribir un archivo.
     #[error("Error de archivos: {0}")]
     Archivos(String),
+    /// La llave de firma está cifrada: hay que pedirle su contraseña a la persona.
+    #[error("La llave de firma está cifrada: escribe su contraseña")]
+    LlaveCifrada,
     /// Falló buscar, descargar o instalar una versión nueva.
     #[error("No se pudo actualizar: {0}")]
     Actualizacion(String),
@@ -52,6 +55,7 @@ impl Error {
             Error::Cm(_) => "cm",
             Error::BaseDatos(_) => "base_datos",
             Error::Archivos(_) => "archivos",
+            Error::LlaveCifrada => "llave_cifrada",
             Error::Actualizacion(_) => "actualizacion",
             Error::Interno(_) => "interno",
         }

@@ -54,6 +54,7 @@ struct ArchivoLlave {
 }
 
 /// Llave privada (del Administrador o de un Líder) ya cargada en memoria, lista para firmar.
+#[derive(Clone)]
 pub struct LlavePrivada {
     firma: SigningKey,
 }
@@ -169,9 +170,7 @@ fn desempaquetar(texto: &str, passphrase: Option<&str>) -> Resultado<LlavePrivad
     }
     let contenido = B64.decode(&archivo.llave).map_err(|_| danado())?;
     let mut semilla: Vec<u8> = if archivo.cifrada {
-        let passphrase = passphrase.ok_or_else(|| {
-            Error::Validacion("La llave está cifrada: hace falta su contraseña".into())
-        })?;
+        let passphrase = passphrase.ok_or(Error::LlaveCifrada)?;
         let sal = B64
             .decode(archivo.sal.as_deref().ok_or_else(danado)?)
             .map_err(|_| danado())?;

@@ -506,6 +506,15 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 - `solicitar_accion_bd(motivo)` — Líder y Desarrollador (botón "Reportar problema con la base de datos" en Ajustes); notifica a todos los Administradores (notificación #9).
 - `eliminar_proyecto()` — exclusivo Administrador, palabra = **el nombre exacto del proyecto**; ver [Verificación adicional sobre Unity Version Control](#verificación-adicional-sobre-unity-version-control-para-eliminar-el-proyecto).
 - **Según el frontend**: crear usuario devuelve error si el correo ya existe (sin distinguir mayúsculas); el nombre y apellido salen del correo (`ana.lopez@…` → "Ana" "Lopez"). Eliminar usuario pide escribir **"eliminar"**. `renombrar_proyecto` rechaza un nombre igual al de otro proyecto del mismo equipo.
+- **Implementado (2026-11-10, issue #90)**: `listar_usuarios`, `crear_usuario`, `cambiar_rol`, `confirmar_usuario` y `eliminar_usuario` en `app/backend/src/comandos/usuarios.rs`; las reglas en `app/backend/src/identidad/equipo.rs`.
+  - Cada fila nueva o cambiada se firma con la llave de quien hace el cambio y, antes de guardar, se comprueba que quede verificada. Si no (por ejemplo, un Líder sin certificado), no se guarda nada.
+  - `listar_usuarios` devuelve `email` (vacío para quien no es Líder ni Administrador), `nombre`, `apellido`, `rol`, `rol_efectivo`, `verificacion` y `fecha_alta`.
+  - Los comandos que firman reciben `passphrase` opcional: si la llave está cifrada y todavía no se abrió en la sesión, responden con el código `llave_cifrada` para que la interfaz pida la contraseña. Después la llave queda abierta en memoria hasta que cambia la persona.
+  - `confirmar_usuario` solo firma filas **sin firma**; una fila cuya firma no coincide (posible rol escrito a mano) no se confirma, se corrige con `cambiar_rol`.
+  - Nadie cambia su propio rol, nadie elimina al Administrador ni se elimina a sí mismo.
+  - Al eliminar a un Líder, el Administrador vuelve a firmar en el mismo paso las filas que ese Líder había firmado (ver [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07)). Al quitarle el rol de Líder no se borran su llave pública ni su certificado.
+  - **Pendiente por definir — cómo recibe su certificado un Líder nuevo**: su llave se genera en su máquina (`generar_llaves_lider`), pero el Administrador la certifica en la suya. Falta decidir cómo llega esa llave pública al Administrador (por ejemplo, la app del Líder la publica en `ops/` la primera vez que entra como Líder y el Administrador la certifica). Mientras no tenga certificado, un Líder ve sus cambios rechazados con "Tu llave de firma no está certificada".
+  - Por ahora escriben directo en el `.db` local; pasan a eventos administrativos firmados con los issues #91 a #93.
 
 ## Documentos del proyecto
 
