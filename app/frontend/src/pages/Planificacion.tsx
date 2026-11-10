@@ -43,7 +43,7 @@ export function Planificacion() {
         onClick={() => navigate(`/scrum?sprint=${sp.id}`)}
         className="card flex cursor-pointer flex-wrap items-center gap-4 p-4 transition hover:border-border-strong"
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-[1_1_14rem]">
           <div className="flex items-center gap-2">
             <span className="font-medium text-text">{sp.nombre}</span>
             {(sp.con_fecha || sp.cerrado) && (
@@ -110,7 +110,7 @@ export function Planificacion() {
         }
       />
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
         <section className="mb-8">
           <div className="mb-3 flex items-center gap-2">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-text"><Icono nombre="sprint" className="h-4 w-4" /> Sprints</h2>

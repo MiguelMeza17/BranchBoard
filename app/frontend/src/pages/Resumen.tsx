@@ -30,7 +30,7 @@ export function Resumen() {
         desc="Vista general del estado de las tareas del proyecto."
       />
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatTile label="Total de tareas" value={total} tone="#6366f1" />
           <StatTile label="En revisión" value={enRevision} tone={estadoMeta['en revisión'].dot} />
@@ -38,7 +38,7 @@ export function Resumen() {
           <StatTile label="Con fecha límite" value={conFecha} tone="#2dd4bf" />
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
           <Card>
             <h3 className="mb-4 text-sm font-semibold text-text">Tareas por estado</h3>
             <EstadoDoughnutChart tareas={tareas} />

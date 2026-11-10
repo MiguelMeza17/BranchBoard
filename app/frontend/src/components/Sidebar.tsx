@@ -53,9 +53,13 @@ const PUNTO_BLANCO = { solido: 'bg-white', halo: 'bg-white/25' };
 interface SidebarProps {
   colapsado: boolean;
   onToggle: () => void;
+  /** Pantalla angosta: el menú es un cajón sobre el contenido, no una columna fija. */
+  cajon?: boolean;
+  /** Solo con `cajon`: si está a la vista. */
+  abierto?: boolean;
 }
 
-export function Sidebar({ colapsado, onToggle }: SidebarProps) {
+export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }: SidebarProps) {
   const tareas = useStore((s) => s.tareas);
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
   const sprints = useStore((s) => s.sprints);
@@ -272,8 +276,13 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
 
   return (
     <aside
-      className={`relative flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 ${
-        colapsado ? 'w-16' : 'w-60'
+      aria-hidden={cajon && !abierto ? true : undefined}
+      className={`flex shrink-0 flex-col border-r border-border bg-surface duration-200 ${
+        cajon
+          ? `fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] shadow-pop transition-[transform,visibility] ${
+              abierto ? 'translate-x-0' : 'invisible -translate-x-full'
+            }`
+          : `relative transition-[width] ${colapsado ? 'w-16' : 'w-60'}`
       }`}
     >
       {/* Cabecera: click en el logo/nombre abre el menú del proyecto (cambiar de proyecto o salir). */}
@@ -396,7 +405,7 @@ export function Sidebar({ colapsado, onToggle }: SidebarProps) {
       </div>
 
       <div className="pb-3" />
-      {botonToggle}
+      {!cajon && botonToggle}
 
       {/* Contraído: solo los íconos (centrados, con el nombre al pasar el mouse); el número o el punto
           de aviso van como una marca pequeña en la esquina del ícono. Expandido: secciones con título. */}

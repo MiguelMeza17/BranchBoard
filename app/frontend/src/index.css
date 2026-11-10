@@ -9,6 +9,10 @@
   #root {
     height: 100%;
   }
+  /* Ancho mínimo: por debajo de 320px la página se desplaza en horizontal en vez de desarmarse. */
+  html {
+    min-width: 320px;
+  }
   body {
     @apply bg-bg text-text font-sans antialiased;
     font-feature-settings: 'cv11', 'ss01';

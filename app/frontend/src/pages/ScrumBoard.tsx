@@ -575,10 +575,10 @@ export function ScrumBoard() {
         />
       )}
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
         {/* Breadcrumb navegación tipo carpeta + interruptores de columnas visibles */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-sm">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm">
             {/* Siempre con fondo, para que se lea como botón; al pasar el mouse se aclara más. */}
             <button
               onClick={() => setFocusId(null)}
@@ -591,7 +591,7 @@ export function ScrumBoard() {
             <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
               <button
                 onClick={() => setSoloMias(false)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition ${
                   !soloMias ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
                 }`}
               >
@@ -599,7 +599,7 @@ export function ScrumBoard() {
               </button>
               <button
                 onClick={() => setSoloMias(true)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition ${
                   soloMias ? 'bg-surface-3 text-text' : 'text-faint hover:text-muted'
                 }`}
               >
@@ -608,7 +608,7 @@ export function ScrumBoard() {
             </div>
             {/* Sprints y backlogs: elegir uno deja en el tablero solo sus tareas. */}
             <select
-              className={`rounded-lg border bg-surface-2 px-2.5 py-1 text-xs font-medium outline-none transition ${
+              className={`max-w-full rounded-lg border bg-surface-2 px-2.5 py-1 text-xs font-medium outline-none transition ${
                 sprintActual ? 'border-primary/50 text-text' : 'border-border text-muted'
               }`}
               value={sprintActual ? sprintActual.id : ''}

@@ -129,7 +129,7 @@ export function Card({
   onClick?: () => void;
 }) {
   return (
-    <div id={id} onClick={onClick} className={`card p-5 ${className}`}>
+    <div id={id} onClick={onClick} className={`card p-4 sm:p-5 ${className}`}>
       {children}
     </div>
   );

@@ -56,7 +56,7 @@ export function Revision() {
     <div>
       <PageHeader title="Revisión" desc="Estado tipo pull-request de las ramas esperando merge." />
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
       {/* Tareas grandes */}
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
@@ -77,7 +77,7 @@ export function Revision() {
                   t.lider_revision_asignado ? 'bg-fuchsia-500/5' : ''
                 } ${puedeActuarGrande ? 'cursor-pointer transition hover:border-border-strong' : ''}`}
               >
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-[1_1_14rem]">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-[11px] text-faint">{t.id}</span>
                     <span className="font-medium text-text">{t.titulo}</span>
@@ -132,7 +132,7 @@ export function Revision() {
                     t.lider_revision_asignado ? 'bg-fuchsia-500/5' : ''
                   } ${puedeActuar ? 'cursor-pointer transition hover:border-border-strong' : ''}`}
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-[1_1_14rem]">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[11px] text-faint">{t.id}</span>
                       <span className="font-medium text-text">{t.titulo}</span>

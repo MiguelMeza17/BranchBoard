@@ -33,7 +33,7 @@ export function Categorias() {
         desc="Carpetas puramente visuales por tipo/disciplina. Abrir una muestra un tablero Scrum solo con esas tareas — nunca son ramas."
       />
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
         {/* Interruptores: no a todos le interesa ver todas las categorías */}
         <div className="mb-4 flex flex-wrap items-center gap-1.5">
           {CARPETAS.map((id) => {

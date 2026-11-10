@@ -62,6 +62,16 @@ Barra superior persistente: switch de VPN, campana de notificaciones, botón "Ab
 - **Cerrar la app**: si hay una acción en curso (ej. sincronizando, creando una rama), ¿se bloquea el cierre con una advertencia, o simplemente se puede cerrar y esa operación queda a medias? Tampoco está definido si hace falta algún tipo de "guardado" al cerrar, dado que las escrituras a SQLite son inmediatas por acción (no hay un estado de app sin guardar en el sentido tradicional).
 - **Confirmación al cerrar sesión/cambiar de proyecto**: como no hay login/logout real (es `cm whoami`), ¿"cambiar de proyecto" desde dentro de la app vuelve a la Pantalla inicial sin más, o pide confirmar si hay algo en curso?
 
+### Pantallas angostas (celular y tablet) — nuevo, 2026-11-10
+
+La versión de escritorio no cambia: todo lo de abajo aplica solo por debajo de **900 px** de ancho (la ventana de la app tiene un mínimo de 960 × 600, así que dentro de Tauri nunca se llega ahí; es para abrir el mockup en un celular o una tablet).
+
+- **Menú lateral**: pasa a ser un cajón que se abre con el botón de menú de la barra superior y se cierra al elegir una página o tocar fuera. No se puede contraer a íconos.
+- **Barra superior**: en celular quedan solo los controles (interruptor de VPN, ícono de "Abrir en Unity", rol, campana e iniciales); los textos vuelven a aparecer cuando hay espacio.
+- **Filas con botones** (Planificación, Revisión, Pendientes, Papelera): si no caben, los botones bajan debajo del texto en vez de apretarlo.
+- **Tablas** (Lista de tareas, Usuarios): conservan un ancho mínimo legible y se desplazan en horizontal dentro de su recuadro. Los tableros siguen desplazándose en horizontal por columnas.
+- **Ancho mínimo**: por debajo de 320 px la página se desplaza en horizontal en vez de desarmarse.
+
 ## Alcance
 
 - Tablero Scrum (kanban)
