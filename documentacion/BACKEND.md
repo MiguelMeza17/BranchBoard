@@ -568,6 +568,13 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 - **Actualizado (2026-11-07) — "Actual" y guardar antes de restaurar**: la lista siempre muestra arriba la base en uso como **"Actual"** (fecha de hoy, no restaurable). `restaurar_backup` primero copia el `.db` actual como un backup más (con nota "Guardada antes de restaurar la copia del …") y luego aplica el elegido, así siempre se puede volver al estado anterior. Esa copia previa no cuenta para el límite de 10 hasta que se restaure otra.
 - Un Líder o Desarrollador que detecte un problema no puede restaurar directamente — le llega a los Administradores vía la notificación **"Solicitud de acción sobre la base de datos"** (ver [Notificaciones](#notificaciones), punto 9).
 
+**Implementado (2026-11-10, issue #79)** en `app/backend/src/db/backups.rs` y `comandos/datos.rs`:
+- Las copias van en `<carpeta del proyecto>/backups/branchboard_<AAAA-MM-DD_HH-MM-SS>.db` (junto al `.db`, una carpeta por proyecto; si hay dos en el mismo segundo, `_02`, `_03`…). Se hacen con `VACUUM INTO`, así la copia queda consistente aunque haya un `-wal` sin volcar.
+- `Db::abrir_con_respaldo(carpeta)` es lo que debe usar "entrar a un proyecto" (#89): copia antes de abrir y migrar. Sin `.db` previo (proyecto nuevo) no hay copia.
+- La nota de una copia vive en un archivo `.nota` al lado (`branchboard_….nota`). Al podar, la copia **con nota más reciente** no cuenta para el límite de 10; en cuanto se guarda otra con nota, la anterior pasa a contar como una copia normal.
+- `listar_backups()` devuelve `{ actual, copias }`: `actual` es la fila "Actual" (`id = "actual"`, fecha de ahora, tamaño del `.db` + `-wal`, no restaurable) y `copias` va de la más reciente a la más antigua, cada una `{ id (nombre del archivo), fecha "AAAA-MM-DD HH:MM", tamano "2.4 MB", nota? }`.
+- `restaurar_backup(nombre)`: valida que `nombre` sea una copia existente (sin rutas ni `..`), guarda la base actual con la nota "Guardada antes de restaurar la copia del …", cierra la base, copia el archivo encima del `.db` (borrando `-wal`/`-shm`) y la vuelve a abrir pase lo que pase. Se rechaza si hay una [operación en curso](#bloquear-el-cierre-de-la-app-durante-una-operación), y cuenta como una mientras dura. El chequeo "solo Administrador" se conecta cuando exista el de rol (#87).
+
 ## Modelo de datos: tabla `usuarios`
 
 | Campo | Tipo | Notas |

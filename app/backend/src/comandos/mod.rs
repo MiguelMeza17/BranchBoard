@@ -2,4 +2,5 @@
 //! Cada comando devuelve `Resultado<T>`; el error llega como `{ codigo, mensaje }`.
 
 pub mod actualizaciones;
+pub mod datos;
 pub mod sistema;
