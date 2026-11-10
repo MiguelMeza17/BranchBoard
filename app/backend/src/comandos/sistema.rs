@@ -5,6 +5,10 @@ use tauri::State;
 use crate::error::Resultado;
 use crate::estado::AppState;
 
+/// Evento que recibe el frontend cuando se intentó cerrar la ventana con una
+/// operación en curso y el cierre se canceló.
+pub const EVENTO_CIERRE_BLOQUEADO: &str = "cierre-bloqueado";
+
 /// Comando de prueba: confirma que el frontend puede llamar al backend.
 #[tauri::command]
 pub fn ping() -> Resultado<String> {

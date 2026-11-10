@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
+import { api } from './lib/api';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
@@ -27,6 +28,18 @@ export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
+  const showToast = useStore((s) => s.showToast);
+
+  // Con una operación de Unity VC en curso, el backend no deja cerrar la ventana; aquí se avisa por qué.
+  useEffect(() => {
+    let dejarDeEscuchar: (() => void) | undefined;
+    void api
+      .alCierreBloqueado(() => showToast('Hay una operación en curso. Espera a que termine para cerrar BranchBoard.', 'info'))
+      .then((dejar) => {
+        dejarDeEscuchar = dejar;
+      });
+    return () => dejarDeEscuchar?.();
+  }, [showToast]);
 
   // Debajo de la pantalla de carga va siempre lo que sigue después de ella: sin sesión o sin haber
   // entrado a un proyecto, la pantalla de acceso. Así, al desvanecerse la carga, nunca se ve la

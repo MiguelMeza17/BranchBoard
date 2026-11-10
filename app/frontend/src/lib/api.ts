@@ -92,6 +92,15 @@ export const api = {
   /** `true` mientras haya una operación larga (`cm`) corriendo. */
   hayOperacionEnCurso: () => llamar<boolean>('hay_operacion_en_curso', undefined, () => false),
 
+  /**
+   * Avisa cada vez que se intentó cerrar la ventana con una operación en curso y el backend
+   * canceló el cierre. Devuelve la función para dejar de escuchar. En el navegador nunca ocurre.
+   */
+  alCierreBloqueado: async (avisar: () => void): Promise<() => void> => {
+    if (!enTauri()) return () => {};
+    return listen('cierre-bloqueado', () => avisar());
+  },
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 
