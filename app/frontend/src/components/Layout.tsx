@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
+import { PANTALLA_ANGOSTA, useMediaQuery } from '../lib/useMediaQuery';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { Toast } from './Toast';
@@ -16,6 +17,12 @@ function leerColapsado(): boolean {
 
 export function Layout() {
   const [colapsado, setColapsado] = useState(leerColapsado);
+  // En pantalla angosta (celular, tablet en vertical) el menú es un cajón que se abre con el botón
+  // de la barra superior y se cierra al elegir una página o tocar fuera.
+  const angosta = useMediaQuery(PANTALLA_ANGOSTA);
+  const [menuAbierto, setMenuAbierto] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => setMenuAbierto(false), [pathname, angosta]);
 
   const toggleSidebar = () => {
     setColapsado((c) => {
@@ -30,12 +37,24 @@ export function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
-      <Sidebar colapsado={colapsado} onToggle={toggleSidebar} />
+      {angosta && menuAbierto && (
+        <div
+          className="fixed inset-0 z-30 bg-black/60 animate-fade-in"
+          onClick={() => setMenuAbierto(false)}
+          aria-hidden="true"
+        />
+      )}
+      <Sidebar
+        colapsado={!angosta && colapsado}
+        onToggle={toggleSidebar}
+        cajon={angosta}
+        abierto={menuAbierto}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar />
+        <Topbar onMenu={angosta ? () => setMenuAbierto((v) => !v) : undefined} />
         <main className="flex-1 overflow-y-auto">
           {/* Con el menú contraído, el contenido gana el ancho que liberó el menú (240px). */}
-          <div className={`mx-auto px-6 py-6 ${colapsado ? 'max-w-[1640px]' : 'max-w-[1400px]'}`}>
+          <div className={`mx-auto px-3 py-4 sm:px-6 sm:py-6 ${colapsado ? 'max-w-[1640px]' : 'max-w-[1400px]'}`}>
             <Outlet />
           </div>
         </main>

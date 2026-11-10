@@ -59,7 +59,7 @@ export function Pendientes() {
     <div>
       <PageHeader title="Pendientes" desc="Tareas nuevas y ediciones esperando aprobación de un Líder o Administrador." />
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
       {/* Tareas nuevas */}
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
@@ -88,7 +88,7 @@ export function Pendientes() {
                     resaltada === t.id ? 'ring-2 ring-primary' : ''
                   } ${puedeActuar ? 'cursor-pointer hover:border-border-strong' : ''}`}
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-[1_1_14rem]">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[11px] text-faint">{t.id}</span>
                       <span className="font-medium text-text">{t.titulo}</span>
@@ -144,7 +144,7 @@ export function Pendientes() {
                     resaltada === ep.tarea_id ? 'ring-2 ring-primary' : ''
                   } ${puedeActuar ? 'cursor-pointer hover:border-border-strong' : ''}`}
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-[1_1_14rem]">
                     <span className="font-medium text-text">{t?.titulo}</span>
                     {ep.motivo && <p className="mt-1 text-xs text-muted">Motivo: {ep.motivo}</p>}
                   </div>
@@ -177,7 +177,7 @@ export function Pendientes() {
                 onClick={() => abrirDocumento(d.id)}
                 className="flex cursor-pointer flex-wrap items-center gap-4 hover:border-border-strong"
               >
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-[1_1_14rem]">
                   <div className="font-medium text-text">{d.nombre}</div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <span className="text-xs text-muted">subido por</span>

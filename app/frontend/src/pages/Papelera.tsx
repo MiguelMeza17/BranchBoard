@@ -39,7 +39,7 @@ export function Papelera() {
         actions={!puedeBorrar ? <ReadOnlyTag /> : undefined}
       />
 
-      <div className="card p-5">
+      <div className="card p-3 sm:p-5">
         {eliminadas.length === 0 ? (
           <EmptyState icon="papelera" title="La papelera está vacía" desc="No hay tareas eliminadas por ahora." />
         ) : (
@@ -54,7 +54,7 @@ export function Papelera() {
                   onClick={() => setDetalle(t)}
                   className="flex cursor-pointer flex-wrap items-center gap-4 transition hover:border-border-strong"
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-[1_1_14rem]">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[11px] text-faint">{t.id}</span>
                       <span className="font-medium text-text line-through decoration-faint">{t.titulo}</span>

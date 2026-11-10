@@ -346,7 +346,7 @@ export function ListaTareas() {
         <EmptyState icon="lista" title="No hay tareas" desc="Crea la primera tarea del proyecto." />
       ) : (
         <div className="card acotado">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="sticky top-0 z-10 bg-surface">
               <tr className="border-b border-border text-left text-xs text-faint">
                 <th className="px-4 py-3 font-medium">ID</th>

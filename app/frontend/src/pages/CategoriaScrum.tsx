@@ -282,7 +282,7 @@ export function CategoriaScrum() {
         }
       />
 
-      <div className="card p-5" style={{ background: `${colorTipo}0d`, border: `1px solid ${colorTipo}55` }}>
+      <div className="card p-3 sm:p-5" style={{ background: `${colorTipo}0d`, border: `1px solid ${colorTipo}55` }}>
         {/* Interruptores de columnas visibles — no a todos le interesan todos los estados */}
         <div className="mb-4 flex flex-wrap items-center gap-1.5">
           {COLUMNAS.map((col) => {
