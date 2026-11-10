@@ -96,6 +96,26 @@ enum_texto! {
     }
 }
 
+enum_texto! {
+    /// Tipo de una notificación de la campana (ver "Notificaciones" en BACKEND.md).
+    TipoNotificacion {
+        AprobacionTarea => "aprobacion_tarea",
+        TareaRechazada => "tarea_rechazada",
+        TareaAsignada => "tarea_asignada",
+        EdicionPendiente => "edicion_pendiente",
+        TareaARevision => "tarea_a_revision",
+        TareaReabierta => "tarea_reabierta",
+        RevisionAsignada => "revision_asignada",
+        Inactividad => "inactividad",
+        AccionBd => "accion_bd",
+        MoverCambios => "mover_cambios",
+        EditadaAprobada => "editada_aprobada",
+        Advertencia => "advertencia",
+        TareaEliminada => "tarea_eliminada",
+        Mensaje => "mensaje",
+    }
+}
+
 impl Rol {
     pub fn es_lider_o_admin(self) -> bool {
         matches!(self, Rol::Administrador | Rol::Lider)

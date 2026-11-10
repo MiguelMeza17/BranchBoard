@@ -7,10 +7,10 @@
 use rusqlite::Connection;
 
 use crate::error::{Error, Resultado};
-use crate::modelo::{EstadoTarea, Rol, TipoTarea};
+use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 4;
+pub const VERSION_ESQUEMA: u32 = 5;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -116,6 +116,91 @@ fn migraciones() -> Vec<String> {
         ) STRICT;
         CREATE INDEX reportes_por_sprint ON reportes_sprint (sprint_id);"
             .to_string(),
+        // 5 — commits y préstamos, notificaciones, documentos, chat y las tablas
+        // locales por usuario (leídos del chat, chats eliminados, huellas vistas).
+        format!(
+            "CREATE TABLE commits (
+                id          TEXT PRIMARY KEY,
+                tarea_id    TEXT NOT NULL REFERENCES tareas (id) ON DELETE CASCADE,
+                hash        TEXT NOT NULL,
+                mensaje     TEXT NOT NULL,
+                descripcion TEXT,
+                tipo        TEXT CHECK (tipo IS NULL OR tipo IN ({tipos})),
+                autor       TEXT NOT NULL,
+                fecha       TEXT NOT NULL,
+                UNIQUE (tarea_id, hash)
+            ) STRICT;
+            CREATE TABLE cambios_prestados (
+                id               TEXT PRIMARY KEY,
+                tarea_id         TEXT NOT NULL REFERENCES tareas (id) ON DELETE CASCADE,
+                origen_id        TEXT NOT NULL,
+                hash             TEXT,
+                autor            TEXT NOT NULL,
+                fecha            TEXT NOT NULL,
+                archivos         TEXT NOT NULL,
+                archivos_tocados TEXT NOT NULL DEFAULT '[]',
+                quitado_en       TEXT,
+                quitado_por      TEXT,
+                CHECK ((quitado_en IS NULL) = (quitado_por IS NULL))
+            ) STRICT;
+            CREATE INDEX prestamos_por_tarea ON cambios_prestados (tarea_id);
+            CREATE TABLE notificaciones (
+                id         TEXT PRIMARY KEY,
+                tipo       TEXT NOT NULL CHECK (tipo IN ({tipos_notificacion})),
+                para       TEXT NOT NULL,
+                titulo     TEXT NOT NULL,
+                cuerpo     TEXT NOT NULL DEFAULT '',
+                leida      INTEGER NOT NULL DEFAULT 0,
+                fecha      TEXT NOT NULL,
+                tarea_id   TEXT,
+                accionable INTEGER NOT NULL DEFAULT 0
+            ) STRICT;
+            CREATE INDEX notificaciones_por_destinatario ON notificaciones (para);
+            CREATE TABLE documentos (
+                id         TEXT PRIMARY KEY,
+                nombre     TEXT NOT NULL,
+                tamano     INTEGER NOT NULL CHECK (tamano >= 0),
+                subido_por TEXT NOT NULL,
+                fecha      TEXT NOT NULL,
+                pendiente  INTEGER NOT NULL DEFAULT 0,
+                ruta       TEXT NOT NULL UNIQUE
+            ) STRICT;
+            CREATE TABLE grupos_chat (
+                id         TEXT PRIMARY KEY,
+                nombre     TEXT NOT NULL,
+                miembros   TEXT NOT NULL,
+                creado_por TEXT NOT NULL,
+                fecha      TEXT NOT NULL
+            ) STRICT;
+            CREATE TABLE mensajes_chat (
+                id    TEXT PRIMARY KEY,
+                de    TEXT NOT NULL,
+                para  TEXT NOT NULL,
+                texto TEXT NOT NULL,
+                fecha TEXT NOT NULL
+            ) STRICT;
+            CREATE INDEX mensajes_por_destino ON mensajes_chat (para);
+            CREATE INDEX mensajes_por_autor ON mensajes_chat (de);
+            CREATE TABLE chat_leidos (
+                mensaje_id TEXT NOT NULL REFERENCES mensajes_chat (id) ON DELETE CASCADE,
+                usuario    TEXT NOT NULL,
+                PRIMARY KEY (mensaje_id, usuario)
+            ) STRICT;
+            CREATE TABLE chats_eliminados (
+                usuario      TEXT NOT NULL,
+                conversacion TEXT NOT NULL,
+                desde        TEXT NOT NULL,
+                PRIMARY KEY (usuario, conversacion)
+            ) STRICT;
+            CREATE TABLE paneles_vistos (
+                usuario TEXT NOT NULL,
+                panel   TEXT NOT NULL,
+                huella  TEXT NOT NULL,
+                PRIMARY KEY (usuario, panel)
+            ) STRICT;",
+            tipos = TipoTarea::lista_sql(),
+            tipos_notificacion = TipoNotificacion::lista_sql()
+        ),
     ]
 }
 
