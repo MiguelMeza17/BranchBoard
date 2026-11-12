@@ -17,7 +17,7 @@
   - **Audio**
   - **Música**
   - **Video**
-- **Control de versiones: Unity Version Control** (no Git genérico), integrado desde el backend en **Rust directo** (sin Python) invocando el CLI `cm` como subproceso.
+- **Control de versiones: Unity Version Control** (no Git genérico), integrado desde el backend en **Rust directo** (sin Python) invocando el CLI `cm` como subproceso. **Actualizado (2026-11-12)**: las operaciones de servidor (crear ramas, merge, diff, leer permisos) van por la API REST del servidor de Unity VC con un PAT personal de cada usuario (ver [API REST del servidor de Unity VC](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12)).
 - **Persistencia**: SQLite local por máquina (no compartido directamente) — lo que se sincroniza a la nube es un log de eventos, ver [Sincronización entre máquinas en BACKEND.md](./BACKEND.md#sincronización-entre-máquinas-arquitectura-de-eventos).
 - **Stack elegido**: Tauri (Rust) + React/TypeScript. Fase 1 = app de escritorio (full desktop); backend en Rust, sin Python. Fase 2 (futuro) = versión web, reutilizando solo el frontend (React) — necesita un backend servidor nuevo y aparte (no Tauri).
 - **Usuarios**: un equipo pequeño trabajando sobre un proyecto Unity compartido.
@@ -126,7 +126,7 @@ Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarro
 - Permisos de Tauri: qué comandos/API del sistema (filesystem, shell/git) se exponen al frontend y con qué restricciones — **resuelto**, ver [Allowlist de capabilities de Tauri](#allowlist-de-capabilities-de-tauri-resuelto)
 - Ejecución de comandos `cm` (Unity VC) desde la app: **resuelto**, ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos) — siempre pasar argumentos por separado a `Command`, nunca construir un string de shell con datos del usuario
 - Alcance del acceso a disco: limitar al workspace de Unity VC configurado, no acceso libre al filesystem
-- Manejo de datos del equipo: **resuelto**, no hay login propio, ni siquiera para el colaborador de subtareas simples — identidad vía `cm whoami` para **todos** los roles (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario) y [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)). El diseño anterior de Service Account/API REST se descartó por una limitación real de la plataforma (las Service Accounts no pueden recibir permisos de Version Control), así que no hay ninguna llave/secreto compartido que proteger.
+- Manejo de datos del equipo: **resuelto**, no hay login propio, ni siquiera para el colaborador de subtareas simples — identidad vía `cm whoami` para **todos** los roles (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario) y [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)). El diseño anterior de Service Account/API REST se descartó por una limitación real de la plataforma (las Service Accounts no pueden recibir permisos de Version Control), así que no hay ninguna llave/secreto compartido que proteger. **Actualizado (2026-11-12)**: la API REST sí se adoptó, pero con un **PAT personal por usuario** (no compartido), guardado en el llavero del sistema de su propia máquina — ver [API REST del servidor de Unity VC](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12).
 - Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, crear usuario o cambiar rol) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
 - **Resuelto (hallazgo C1 de auditoría)**: el `rol` en la tabla `usuarios` no bastaba como ancla de confianza porque el `.db` se sincroniza por Drive/OneDrive con lectura/escritura para todo el equipo — cualquiera podía editarlo a mano. Ver [Firma criptográfica del rol en BACKEND.md](./BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac): cada fila de rol se firma con Ed25519 (llave privada solo en la máquina del Administrador, nunca sincronizada; llave pública embebida en la app) y se verifica al leer. Adicionalmente, **eliminar el proyecto** exige también permiso real `rmrepository` en Unity Version Control (ver [Verificación adicional sobre Unity Version Control en BACKEND.md](./BACKEND.md#verificación-adicional-sobre-unity-version-control-para-eliminar-el-proyecto)) — doble candado, no solo la firma local.
 
@@ -141,7 +141,7 @@ Enumerado a partir de todo lo ya documentado en [BACKEND.md](./BACKEND.md) — n
 - `freezePrototype` queda **desactivado**: rompe la librería de la gráfica de Branches (React Flow).
 
 **Subprocesos (shell)** — solo estos binarios, siempre invocados con argumentos en array separado, nunca con un string armado a mano (ver [Seguridad al invocar cm en BACKEND.md](./BACKEND.md#seguridad-al-invocar-cm-evitar-inyección-de-comandos)):
-- `cm` (CLI de Unity Version Control) — todo lo de ramas/changesets/merge.
+- `cm` (CLI de Unity Version Control) — todo lo del workspace (switch, status, checkin, Gluon) y gestionar el PAT. **Actualizado (2026-11-12)**: crear ramas, merge y diff van por la API REST desde el proceso Rust (no es un comando del shell ni de la webview).
 - `warp-cli` (Cloudflare WARP) — solo los subcomandos fijos de conectar/desconectar/estado, nunca argumentos libres del usuario.
 - El ejecutable del Editor de Unity, solo para [Abrir en Unity](./BACKEND.md#comando-abrir-en-unity) — se lanza apuntando a la carpeta del workspace, ruta descubierta/validada, no un comando arbitrario.
 - Ningún otro binario ni shell genérica (`sh`, `cmd.exe`) expuesta.
@@ -158,13 +158,13 @@ Enumerado a partir de todo lo ya documentado en [BACKEND.md](./BACKEND.md) — n
 
 **Actualizaciones de la app (nuevo, 2026-11-09)**: el plugin `updater` está activo, pero solo lo usa el backend en Rust (la webview no recibe ningún permiso de red). Solo consulta la dirección fija de las Releases del repositorio en GitHub y solo instala lo que venga **firmado** con la llave de actualizaciones. Ver [Actualizaciones de la app en BACKEND.md](./BACKEND.md#actualizaciones-de-la-app).
 
-**Sin capability de red/HTTP para la webview**: no hace falta — ni la sincronización de datos (es solo lectura/escritura de archivos en una carpeta que Drive/OneDrive sincroniza por su cuenta) ni `cm` pasan por el `fetch`/HTTP del webview; toda la red real la maneja el propio proceso `cm` por fuera del control de Tauri.
+**Sin capability de red/HTTP para la webview**: no hace falta — ni la sincronización de datos (es solo lectura/escritura de archivos en una carpeta que Drive/OneDrive sincroniza por su cuenta) ni `cm` pasan por el `fetch`/HTTP del webview; toda la red real la maneja el propio proceso `cm` por fuera del control de Tauri. **Actualizado (2026-11-12)**: las llamadas a la API REST de Unity VC tampoco cambian esto — las hace el proceso Rust (ej. `reqwest`), nunca la webview.
 
 Todo lo demás (clipboard, global-shortcut, etc.) queda **desactivado** hasta que un caso de uso concreto lo necesite.
 
 ## API REST del servidor de Unity VC: manejo de tokens (probado 2026-11-12)
 
-Se probó la [API REST del servidor de Unity VC](https://docs.unity.com/en-us/services-web-apis/unity-version-control-server/overview) contra un repo de prueba (`BranchBoard-Pruebas`): crear ramas, `mergeto/report` y `mergeto` (merge del lado del servidor) funcionan **sin `cm` ni workspace**, autenticando con un **token de acceso personal (PAT)** de cada usuario — no una Service Account, así que no choca con la limitación que hizo descartar el diseño anterior (ver [Alcance](#alcance)). Adoptarla o no queda pendiente (ver [Pendiente por definir](#pendiente-por-definir)); si se adopta, estas reglas son obligatorias:
+Se probó la [API REST del servidor de Unity VC](https://docs.unity.com/en-us/services-web-apis/unity-version-control-server/overview) contra un repo de prueba (`BranchBoard-Pruebas`): crear ramas, `mergeto/report` y `mergeto` (merge del lado del servidor) funcionan **sin `cm` ni workspace**, autenticando con un **token de acceso personal (PAT)** de cada usuario — no una Service Account, así que no choca con la limitación que hizo descartar el diseño anterior (ver [Alcance](#alcance)). **Adoptada (2026-11-12)** para las operaciones de servidor — flujo completo en [Acceso a la API REST del servidor de Unity VC en BACKEND.md](./BACKEND.md#acceso-a-la-api-rest-del-servidor-de-unity-vc-pat-decidido-2026-11-12). Estas reglas son obligatorias:
 
 **Hallazgo — la API filtra el token de sesión**: la respuesta de `POST .../mergeto/report` incluye, dentro de cada revisión (`base`, `revInfo`, en `src`, `dst`, `srcDiff`, `dstDiff`), un objeto `owner` con el campo **`password`**, que trae el **token de sesión de Unity (JWT `unityid`) del autor de esa revisión** (`"password": "TOKENeyJ..."`). Cualquiera que pida el reporte recibe el token de los autores de los archivos en conflicto. Puede que otros endpoints que devuelven revisiones (diff, changesets, revisiones) hagan lo mismo.
 
@@ -182,7 +182,7 @@ Se probó la [API REST del servidor de Unity VC](https://docs.unity.com/en-us/se
 
 ## Pendiente por definir
 
-- Adoptar o no la [API REST del servidor de Unity VC](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12) para operaciones de servidor (crear ramas, diff, merge al autorizar) en lugar de `cm`; se mantendría `cm` para lo del workspace (checkin, switch, abrir Unity)
+- ~~Adoptar o no la API REST del servidor de Unity VC~~ — **resuelto (2026-11-12)**: se adopta para operaciones de servidor con PAT personal; `cm` se mantiene para el workspace. Ver [Acceso a la API REST en BACKEND.md](./BACKEND.md#acceso-a-la-api-rest-del-servidor-de-unity-vc-pat-decidido-2026-11-12) (incluye lo que falta verificar: PAT para miembros sin rol de administrador, duración del PAT)
 
 - Si la autorización de modificación es por tarea puntual o un permiso general (quién la envía ya quedó definido: Líder o Administrador)
 - Consideraciones de seguridad para la futura versión web (autenticación, permisos por usuario/equipo)
