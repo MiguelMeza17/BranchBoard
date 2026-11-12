@@ -162,7 +162,27 @@ Enumerado a partir de todo lo ya documentado en [BACKEND.md](./BACKEND.md) — n
 
 Todo lo demás (clipboard, global-shortcut, etc.) queda **desactivado** hasta que un caso de uso concreto lo necesite.
 
+## API REST del servidor de Unity VC: manejo de tokens (probado 2026-11-12)
+
+Se probó la [API REST del servidor de Unity VC](https://docs.unity.com/en-us/services-web-apis/unity-version-control-server/overview) contra un repo de prueba (`BranchBoard-Pruebas`): crear ramas, `mergeto/report` y `mergeto` (merge del lado del servidor) funcionan **sin `cm` ni workspace**, autenticando con un **token de acceso personal (PAT)** de cada usuario — no una Service Account, así que no choca con la limitación que hizo descartar el diseño anterior (ver [Alcance](#alcance)). Adoptarla o no queda pendiente (ver [Pendiente por definir](#pendiente-por-definir)); si se adopta, estas reglas son obligatorias:
+
+**Hallazgo — la API filtra el token de sesión**: la respuesta de `POST .../mergeto/report` incluye, dentro de cada revisión (`base`, `revInfo`, en `src`, `dst`, `srcDiff`, `dstDiff`), un objeto `owner` con el campo **`password`**, que trae el **token de sesión de Unity (JWT `unityid`) del autor de esa revisión** (`"password": "TOKENeyJ..."`). Cualquiera que pida el reporte recibe el token de los autores de los archivos en conflicto. Puede que otros endpoints que devuelven revisiones (diff, changesets, revisiones) hagan lo mismo.
+
+**Solución (obligatoria en el backend)**:
+- **Sanear toda respuesta de la API antes de usarla**: el cliente HTTP de Rust deserializa solo a structs propios con los campos que BranchBoard necesita (ej. `path`, `changeset`, `status`) — nunca se guarda ni se reenvía el JSON crudo. Como defensa extra, un paso que recorra el JSON y **borre cualquier `owner.password`** (y cualquier clave `password`/`token`) antes de deserializar.
+- **Nunca registrar respuestas crudas** de la API en logs, en `ops/`, en la SQLite ni en mensajes de error mostrados al usuario. Los errores se registran solo con código HTTP y `status`/`message`.
+- **El frontend nunca recibe el JSON de la API**: los comandos Tauri devuelven solo los structs ya saneados (ej. la lista de archivos en conflicto con su ruta).
+
+**Manejo del PAT de cada usuario**:
+- Se crea una vez por usuario con `cm accesstoken create` (usa la sesión SSO de su cliente, sin contraseña) y se lee con `cm accesstoken reveal` dentro del backend, sin mostrarlo en pantalla.
+- Se guarda en el **llavero del sistema operativo** (Windows Credential Manager, vía crate `keyring`), nunca en la SQLite, en `ops/`, en archivos de configuración ni en la carpeta de Drive/OneDrive.
+- Viaja solo en el header `Authorization: Bearer` por HTTPS hacia el servidor de la organización; nunca en la URL.
+- Al cerrar sesión, al [eliminar un usuario](./BACKEND.md#identidad-de-usuario) o si hay sospecha de filtración: `cm accesstoken revoke <id>` y borrarlo del llavero. El `id` del PAT (no el secreto) sí se puede guardar para poder revocarlo.
+- La red la hace el **proceso Rust** (ej. `reqwest`), no el `fetch` de la webview — se mantiene la regla de [sin capability de red/HTTP para la webview](#allowlist-de-capabilities-de-tauri-resuelto).
+
 ## Pendiente por definir
+
+- Adoptar o no la [API REST del servidor de Unity VC](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12) para operaciones de servidor (crear ramas, diff, merge al autorizar) en lugar de `cm`; se mantendría `cm` para lo del workspace (checkin, switch, abrir Unity)
 
 - Si la autorización de modificación es por tarea puntual o un permiso general (quién la envía ya quedó definido: Líder o Administrador)
 - Consideraciones de seguridad para la futura versión web (autenticación, permisos por usuario/equipo)
