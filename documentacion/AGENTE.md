@@ -48,6 +48,7 @@ Explicaciones que el agente debería poder dar:
 
 - **¿Por qué un usuario dice "Pendiente de confirmar"?** Su fila no tiene firma (por ejemplo, alguien la escribió a mano en el archivo). Lo que crean o cambian el Administrador o un Líder ya queda firmado; una fila sin firma no entra hasta que el Administrador la confirme.
 - **Creé el usuario pero no puede abrir el proyecto.** Crear el usuario no le da acceso a la carpeta de Drive/OneDrive ni al repositorio de Unity VC: eso se comparte aparte.
+- **¿Qué rol le doy en Unity Cloud?** Se invita desde el Dashboard de Unity con el correo de su cuenta de Unity. Líder, Desarrollador, Tester y Colaborador externo van con el rol de proyecto que da lectura y escritura (no el de administrador, que también permite borrar el repositorio); en la organización, rol Usuario. Después la persona acepta la invitación, instala Unity Version Control e inicia sesión con su cuenta de Unity. Detalle en [SEGURIDAD.md](./SEGURIDAD.md#rol-en-unity-cloud-según-el-rol-en-branchboard-2026-11-12).
 - **¿Qué es el punto azul en Usuarios?** Hay un usuario nuevo o un cambio de rol que no has visto; se apaga al entrar.
 
 ### Avance
