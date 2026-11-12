@@ -121,6 +121,23 @@ Basado en los miembros del proyecto en Unity Cloud, con **correos de ejemplo** (
 
 Nota: el rol de Unity Cloud (Propietario/Usuario) no distingue Líder de Desarrollador — esa asignación es decisión del equipo, no se deriva automáticamente de Unity Cloud.
 
+### Rol en Unity Cloud según el rol en BranchBoard (2026-11-12)
+
+Para que alguien pueda usar BranchBoard en un proyecto, además de crearlo en [Usuarios](./FRONTEND.md#usuarios) hay que **invitarlo en Unity Cloud** (Dashboard → la organización → miembros/invitar, con el correo de su cuenta de Unity) y darle un rol en el proyecto. Unity Cloud traduce el rol del proyecto a uno de **3 grupos automáticos de Version Control**: `<id-proyecto>-admin` (todos los permisos, incluidos `chgperm` y `rmrepository`), `<id-proyecto>-rw` (leer, crear ramas, `ci`, `mergefrom`; sin `chgperm` ni `rmrepository`) y `<id-proyecto>-ro` (solo lectura). Probado en `BranchBoard-Pruebas` con `cm showacl`.
+
+| Rol en BranchBoard | Grupo de Version Control | Rol en la organización |
+|---|---|---|
+| Administrador (dueño del repo) | `-admin` | Propietario |
+| Líder | `-rw` (o `-admin` si también administra el proyecto en Unity Cloud) | Usuario (o Manager) |
+| Desarrollador, Tester, Colaborador externo | `-rw` | Usuario |
+| — | `-ro` no se usa: nadie de BranchBoard es solo lectura (todos hacen checkin en su rama) | — |
+
+- **Mínimo privilegio**: como la API REST se llama con el [PAT de cada persona](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12), lo que puede hacer en el servidor lo limita su grupo de Unity, no BranchBoard. Por eso nadie fuera del Administrador va en `-admin` salvo decisión explícita: `-admin` permite borrar el repo y cambiar permisos aunque BranchBoard no lo ofrezca.
+- **`-rw` permite mergear a `dev`** (tiene `ci` y `mergefrom`): la regla "solo Líder/Administrador autorizan el merge a `dev`" sigue siendo de la app, no de Unity (ver [Protección de ramas en BACKEND.md](./BACKEND.md#protección-de-ramas-main-y-dev)).
+- **Rol en la organización**: no dar **Propietario** a nadie más; puede tocar la facturación y borrar la organización completa (todos sus proyectos). Para alguien que ayude a administrar, **Manager**.
+- **Administrador de BranchBoard es uno solo**: es el dueño del repositorio ([Identidad](./BACKEND.md#identidad-de-usuario)) y `cambiar_rol` no asigna Administrador. Alguien con todos los permisos en Unity (`-admin`) puede ser, como mucho, **Líder** en BranchBoard.
+- Los nombres exactos de los roles de proyecto en el Dashboard (cuál cae en `-admin`/`-rw`/`-ro`) se confirman al invitar al primer miembro; esta tabla está en términos de los grupos, que es lo que se verificó.
+
 ## Alcance
 
 - Permisos de Tauri: qué comandos/API del sistema (filesystem, shell/git) se exponen al frontend y con qué restricciones — **resuelto**, ver [Allowlist de capabilities de Tauri](#allowlist-de-capabilities-de-tauri-resuelto)
