@@ -34,6 +34,20 @@ pub struct Rama {
     pub head_changeset: i64,
 }
 
+/// Un check-in (changeset), como lo devuelve `GET …/changesets?branchName=`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Changeset {
+    #[serde(rename = "changesetId")]
+    pub changeset_id: i64,
+    /// Quién hizo el check-in (el correo de su cuenta de Unity).
+    #[serde(default)]
+    pub owner: String,
+    /// Fecha en UTC, ej. `2026-11-12T17:20:04Z`.
+    pub date: String,
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
 #[derive(Serialize)]
 struct CrearRama<'a> {
     name: &'a str,
@@ -88,6 +102,20 @@ impl ClienteServidor {
     /// o `None` si no existe.
     pub fn rama(&self, repo: &str, ruta: &str) -> Resultado<Option<Rama>> {
         let url = format!("/repos/{}/branches/{}", codificar(repo), codificar(ruta));
+        match leer_respuesta(self.preparar("GET", &url).call())? {
+            Ok(cuerpo) => sanear::interpretar(&cuerpo).map(Some),
+            Err(f) if rama_no_existe(&f) => Ok(None),
+            Err(f) => Err(error_http(f.codigo, &f.cuerpo)),
+        }
+    }
+
+    /// Check-ins de la rama `ruta`, o `None` si la rama no existe.
+    pub fn changesets_de_rama(&self, repo: &str, ruta: &str) -> Resultado<Option<Vec<Changeset>>> {
+        let url = format!(
+            "/repos/{}/changesets?branchName={}",
+            codificar(repo),
+            codificar(ruta)
+        );
         match leer_respuesta(self.preparar("GET", &url).call())? {
             Ok(cuerpo) => sanear::interpretar(&cuerpo).map(Some),
             Err(f) if rama_no_existe(&f) => Ok(None),
@@ -229,6 +257,26 @@ mod tests {
                 name: "/main/dev".into(),
                 head_changeset: 8
             }
+        );
+    }
+
+    #[test]
+    fn el_changeset_se_lee_de_la_respuesta_real() {
+        // Forma de `GET …/changesets?branchName=%2Fmain%2Fdev%2FT-101` (probado 2026-11-14).
+        let lista: Vec<Changeset> = sanear::interpretar(
+            r#"[{"id":14,"changesetId":1,"parentChangesetId":0,"branch":"/main/dev/T-101","branchId":13,
+                "date":"2026-11-12T17:20:04Z","guid":"x","owner":"ana@virustf.dev",
+                "comment":"T-101: agrega LEEME.txt","changesetType":"changeset","labels":[]}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            lista,
+            [Changeset {
+                changeset_id: 1,
+                owner: "ana@virustf.dev".into(),
+                date: "2026-11-12T17:20:04Z".into(),
+                comment: Some("T-101: agrega LEEME.txt".into()),
+            }]
         );
     }
 
