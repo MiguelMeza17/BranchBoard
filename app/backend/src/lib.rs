@@ -4,6 +4,7 @@
 //! - `comandos/` — lo que el frontend llama con `invoke`, por área.
 //! - `db` — SQLite local.
 //! - `cm` — Unity Version Control (subproceso `cm`).
+//! - `servidor` — API REST del servidor de Unity VC (con PAT).
 //! - `eventos` — sincronización por `ops/`.
 //! - `identidad` — quién es el usuario, firmas y permisos.
 //! - `modelo` — tipos del dominio (roles, estados…), iguales a los del frontend.
@@ -18,6 +19,7 @@ pub mod estado;
 pub mod eventos;
 pub mod identidad;
 pub mod modelo;
+pub mod servidor;
 
 use tauri::{Emitter, Manager, WindowEvent};
 

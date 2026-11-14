@@ -21,6 +21,8 @@ export type CodigoError =
   | 'cm_no_instalado'
   | 'sin_sesion_unity_vc'
   | 'cm'
+  | 'servidor_unity_vc'
+  | 'token_servidor_invalido'
   | 'base_datos'
   | 'archivos'
   | 'llave_cifrada'

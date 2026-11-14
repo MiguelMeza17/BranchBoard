@@ -386,30 +386,30 @@ BranchBoard **no tiene sistema propio de login/usuarios**. La identidad se obtie
 | Listar ramas/changesets, diff (#152) | `cm partial` (Gluon, Colaborador externo) |
 | Leer permisos (ej. `rmrepository` para eliminar el proyecto) | `cm accesstoken create/reveal/revoke` (gestionar el PAT) |
 
-**Datos del servidor** (probados contra el repo de prueba `BranchBoard-Pruebas`): la organización en `cm` se escribe `<org>@unity` (no `@cloud`); la URL base depende de la región de la organización (ej. US East: `https://prd-azure-eastus-01-cloud.plasticscm.com:7178`) — se detecta una vez y se guarda en `configuracion_proyecto`. El repo va en la URL con la `/` codificada (`Proyecto%2FRepo`). Al crear una rama, `name` lleva la ruta completa (`/main/dev/T-101`) y `changeset` es el número de la cabeza del padre (hay que leerla antes con `GET .../branches`).
+**Datos del servidor** (probados contra el repo de prueba `BranchBoard-Pruebas`): la organización en `cm` se escribe `<org>@unity` (no `@cloud`); la URL base depende de la región de la organización (ej. US East: `https://prd-azure-eastus-01-cloud.plasticscm.com:7178`) — **implementado (2026-11-14, #159)**: se lee del `webserver` de la organización en `%LOCALAPPDATA%\plastic4\cloudregions.conf`, que el cliente de Unity VC escribe solo; no se guarda en `configuracion_proyecto`. Las rutas son `<webserver>/api/v1/organizations/<org>/…` (ej. `GET …/repos`). El repo va en la URL con la `/` codificada (`Proyecto%2FRepo`). Al crear una rama, `name` lleva la ruta completa (`/main/dev/T-101`) y `changeset` es el número de la cabeza del padre (hay que leerla antes con `GET .../branches`).
 
 **Por qué no `/login` con usuario y contraseña**: el equipo entra a Unity por SSO (Unity ID/Google); el endpoint `/login` rechaza esas credenciales (`Invalid credentials`) aunque sean correctas. El **PAT** sí funciona directo como `Authorization: Bearer`, y se crea con la sesión SSO que `cm` ya tiene, sin pedir nada a la persona.
 
 **Flujo al abrir la app**:
 1. `cm whoami` → si no hay sesión, pantalla "Inicia sesión en Unity VC" ([arriba](#sesión-de-unity-vc-desde-la-app-proyectos-y-salir-según-el-frontend)) y se reintenta.
 2. Buscar el correo en `usuarios` y verificar la [firma del rol](#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac) → rol.
-3. ¿Hay PAT en el llavero del sistema (Windows Credential Manager, crate `keyring`) para ese correo + organización? Si no: `cm accesstoken create "BranchBoard (<máquina>)" <org>@unity --format={id}` + `cm accesstoken reveal <id>` → se guarda en el llavero; el `id` (no el secreto) en `configuracion_proyecto` para poder revocarlo.
-4. Probar el PAT (ej. `GET .../repos`). **401** → venció o se revocó: se borra del llavero y se repite el paso 3 sin molestar a la persona.
+3. ¿Hay PAT en el llavero del sistema (Windows Credential Manager, crate `keyring`) para ese correo + organización? Si no: `cm accesstoken create "BranchBoard (<máquina>)" <org>@unity --format={id}` + `cm accesstoken reveal <id>` → se guarda en el llavero **junto con su `id`** (para poder revocarlo). **Corregido (2026-11-14)**: el `id` ya no va en `configuracion_proyecto`, porque esa tabla se comparte con todo el equipo por eventos y el PAT es de una persona en una máquina.
+4. Probar el PAT (ej. `GET .../repos`). **401** → venció o se revocó: se borra del llavero, se revoca y se repite el paso 3 sin molestar a la persona, **una sola vez** (si el nuevo también da 401, es error `token_servidor_invalido`). Sin red no se borra ni se crea nada (error `servidor_unity_vc`).
 
-**Cerrar sesión** (`cerrar_sesion_unity_vc`): además de cerrar la sesión de Unity VC, `cm accesstoken revoke <id>` y borrarlo del llavero. **Eliminar un usuario**: su PAT vive en su máquina, así que la revocación real es sacarlo del proyecto en Unity Cloud (ya era necesario) — sin acceso al proyecto, su PAT deja de servir para ese repo.
+**Implementado (2026-11-14, #159)** en `app/backend/src/servidor/`: `region` (URL base), `sanear` (borra `password`/`token`/`accessToken`/`refreshToken`/`secret` a cualquier profundidad antes de convertir a structs propios; los errores llevan solo el código HTTP y el `message`), `cliente` (`ClienteServidor`, HTTP con `ureq` desde Rust; el token no aparece en `Debug` ni en mensajes) y `pat` (`servidor::conectar(estado, llavero, email, org)` devuelve el cliente listo, con el PAT en el llavero bajo el servicio `BranchBoard` y la cuenta `<correo>|<org>`). Si `cm accesstoken create` falla, el mensaje sugiere que el Administrador de la organización puede tener que permitirlo (`cm accesstoken admin allowlist`). Prueba en el entorno real: `BB_PRUEBA_ORG=<org> cargo test entorno_real -- --ignored` (crea, reusa, fuerza un 401, renueva y al final revoca y borra todo). El botón "Reconectar" y cerrar sesión quedan para #124.
+
+**Cerrar sesión** (`cerrar_sesion_unity_vc`): además de cerrar la sesión de Unity VC, `cm accesstoken revoke <id>` y borrarlo del llavero (la revocación **no es inmediata**: el token sigue sirviendo hasta que vence su sesión interna, 1 h por defecto según `cm accesstoken revoke --help`). **Eliminar un usuario**: su PAT vive en su máquina, así que la revocación real es sacarlo del proyecto en Unity Cloud (ya era necesario) — sin acceso al proyecto, su PAT deja de servir para ese repo.
 
 **Reglas de seguridad** (obligatorias): ver [API REST del servidor de Unity VC: manejo de tokens en SEGURIDAD.md](./SEGURIDAD.md#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12) — en especial, `mergeto/report` devuelve el token de sesión de los autores en `owner.password`: toda respuesta se sanea y nunca se registra cruda.
 
-<!-- PENDIENTE DE VERIFICAR (2026-11-12) — se probó solo con la cuenta dueña de la organización:
-  1. ¿Un miembro sin rol de administrador puede crear PATs? Según soporte de Unity puede hacer falta
-     agregarlo a la lista permitida (`cm accesstoken admin allowlist`). Si es así, es un paso más del
-     Administrador al invitar a alguien (documentarlo en Usuarios). Probar con un compañero con rol normal
-     en BranchBoard-Pruebas.
-  2. ¿Cuánto dura un PAT? Lo fija el servidor (no se elige al crearlo). El paso 4 lo renueva solo, pero
-     conviene saber si vence seguido.
-  3. Comprobar que el PAT pertenece a la persona de `cm whoami` (ej. comparar con el dueño que devuelve
-     `cm accesstoken list`) antes de usarlo, para no usar uno de otra cuenta que haya quedado en el llavero.
-  4. Revisar si otros endpoints que devuelven revisiones (diff, changesets) también filtran `owner.password`.
+<!-- ESTADO DE LO QUE FALTABA VERIFICAR (actualizado 2026-11-14, #159):
+  1. Miembro sin rol de administrador creando PATs: decidido que no bloquea. Si le hace falta la
+     lista permitida (`cm accesstoken admin allowlist`), la app muestra un error claro al crear el PAT.
+     Se documenta en Usuarios cuando aparezca el caso.
+  2. Duración del PAT: el servidor lo da con vencimiento 31/12/9999 (#159). El paso 4 lo renueva si da 401.
+  3. Que el PAT sea de la persona de `cm whoami`: resuelto, porque se guarda por `<correo de whoami>|<org>`.
+  4. Si otros endpoints filtran `owner.password`: sigue sin revisarse uno por uno, pero toda respuesta
+     pasa por `servidor::sanear`, así que no hace falta para estar seguros.
 -->
 
 ## Instalación de Unity Version Control
