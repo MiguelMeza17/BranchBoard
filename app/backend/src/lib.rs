@@ -27,7 +27,9 @@ pub mod servidor;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
-use comandos::{actualizaciones, datos, identidad as comandos_identidad, sistema, usuarios};
+use comandos::{
+    acceso, actualizaciones, datos, identidad as comandos_identidad, sistema, usuarios,
+};
 
 /// Con una operación de `cm` corriendo, la ventana no se cierra: se cancela el
 /// cierre y se le avisa al frontend (ver "Bloquear el cierre" en BACKEND.md).
@@ -51,6 +53,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
             sistema::hay_operacion_en_curso,
+            acceso::entrar_a_proyecto,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,
             datos::listar_backups,

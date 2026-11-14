@@ -18,6 +18,9 @@ const TIEMPO_MAXIMO: Duration = Duration::from_secs(30);
 pub struct Repositorio {
     /// `Proyecto/Repo`, ej. `BranchBoard-Pruebas/BranchBoard-Pruebas`.
     pub name: String,
+    /// Correo del dueño del repositorio (probado 2026-11-14: el de la cuenta dueña).
+    #[serde(default)]
+    pub owner: String,
 }
 
 /// Una rama, como la devuelven `GET`/`POST …/branches` (solo lo que se usa).

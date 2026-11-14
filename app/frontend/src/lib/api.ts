@@ -9,6 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
+import type { Rol } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -85,6 +86,24 @@ export interface ProgresoActualizacion {
 /** Versión que muestra el mockup en el navegador. */
 const VERSION_MOCKUP = '0.1.0';
 
+/**
+ * Qué ve la persona al abrir un workspace (`entrar_a_proyecto`, #89):
+ * - `dentro`: entra con su rol; `configurado_ahora` = era el dueño del repo y el proyecto se configuró.
+ * - `pendiente`: registrada, pero el Administrador todavía no confirma su rol.
+ * - `no_registrado`: su correo no está en el proyecto.
+ * - `esperar_dueno`: el proyecto no usa BranchBoard todavía y solo su dueño puede configurarlo.
+ */
+export type EntradaProyecto =
+  | {
+      estado: 'dentro';
+      email: string;
+      rol: Rol;
+      rol_verificado: boolean;
+      proyecto: string;
+      configurado_ahora: boolean;
+    }
+  | { estado: 'pendiente' | 'no_registrado' | 'esperar_dueno'; email: string; proyecto: string };
+
 // ───────── Comandos ─────────
 
 export const api = {
@@ -102,6 +121,14 @@ export const api = {
     if (!enTauri()) return () => {};
     return listen('cierre-bloqueado', () => avisar());
   },
+
+  /**
+   * Entra al proyecto del workspace de `carpeta`: el backend lee `cm whoami`, el repo del workspace y,
+   * si el proyecto no tiene datos, si quien entra es su dueño. En el mockup responde `mockup()`, que
+   * simula lo mismo con los datos de ejemplo.
+   */
+  entrarAProyecto: (carpeta: string, mockup: () => EntradaProyecto) =>
+    llamar<EntradaProyecto>('entrar_a_proyecto', { carpeta }, mockup),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),

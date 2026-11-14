@@ -427,6 +427,13 @@ mod tests {
         let email = crate::cm::lectura::whoami(&estado).expect("sin sesión de cm");
         let llavero = LlaveroSistema;
         let cuenta = cuenta_llavero(&email, &org);
+        // Empezar sin PAT: si ya había uno (ej. de otra prueba), se revoca antes de
+        // quitarlo del llavero, para no dejarlo vivo en el servidor.
+        if let Some(previo) = llavero.leer(&cuenta).unwrap() {
+            if let Ok(previo) = serde_json::from_str::<Pat>(&previo) {
+                revocar_pat(&estado, &org_cm, &previo.id);
+            }
+        }
         llavero.borrar(&cuenta).unwrap();
 
         // 1. Sin nada guardado: crea, guarda y la API responde.

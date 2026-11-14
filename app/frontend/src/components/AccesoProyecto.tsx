@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import type { WorkspaceUnityVC } from '../types';
+import { api, enTauri, mensajeDeError, type EntradaProyecto } from '../lib/api';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { Modal } from './Modal';
@@ -10,10 +11,11 @@ import { Icono, IconoEnLinea } from './Icono';
 
 // Pantallas de entrada antes de los tableros — ver documentacion/FRONTEND.md,
 // "Autenticación / acceso al proyecto": Pantalla inicial → workspaces de Unity VC
-// (o "Clonar proyecto") → según el .db de BranchBoard: entrar, pendiente de
-// confirmación, sin usuario o inicializar. Es solo mockup: nunca bloquea,
-// "Saltar al tablero" está siempre disponible.
-type Paso = 'inicio' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'inicializar';
+// (o "Clonar proyecto") → lo que responde `entrar_a_proyecto` (#89): entrar,
+// pendiente de confirmación, sin usuario o esperar al dueño del repositorio (que
+// lo configura solo la primera vez que lo abre). En el navegador lo simula el
+// mockup y "Saltar al tablero" está siempre disponible.
+type Paso = 'inicio' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'esperar-dueno';
 
 export function AccesoProyecto() {
   const usuarios = useStore((s) => s.usuarios);
@@ -37,7 +39,6 @@ export function AccesoProyecto() {
   // Simula el correo que devuelve `cm whoami` — de ahí sale cuál de los casos aplica.
   const [correo, setCorreo] = useState(useStore.getState().sesionUnityVC ?? usuarios[0].email);
 
-  const usuario = usuarios.find((u) => u.email === correo);
   // Sesión de Unity VC: hasta iniciarla no se puede entrar a un proyecto. Al iniciarla, su correo es
   // lo que devuelve `cm whoami`. Se guarda en el store: no se pide otra vez al cambiar de proyecto.
   const sesion = useStore((s) => s.sesionUnityVC);
@@ -90,15 +91,55 @@ export function AccesoProyecto() {
     setTocados(new Set());
   };
 
-  const abrirWorkspace = (ws: WorkspaceUnityVC) => {
-    setElegido(ws);
-    if (!ws.tiene_db_branchboard) return setPaso('inicializar');
+  // Lo que decidiría el backend, con los datos de ejemplo y el correo elegido en "Demo · cm whoami".
+  // En el mockup, el dueño del repositorio es el Administrador semilla.
+  const entradaMockup = (ws: WorkspaceUnityVC): EntradaProyecto => {
+    const base = { email: correo, proyecto: ws.nombre };
+    if (!ws.tiene_db_branchboard) {
+      const dueno = usuarios.find((u) => u.rol === 'Administrador')?.email;
+      return correo === dueno
+        ? { ...base, estado: 'dentro', rol: 'Administrador', rol_verificado: true, configurado_ahora: true }
+        : { ...base, estado: 'esperar_dueno' };
+    }
     const u = usuarios.find((x) => x.email === correo);
-    if (!u) return setPaso('no-registrado');
-    if (!u.firma) return setPaso('pendiente');
-    setEmail(u.email);
+    if (!u) return { ...base, estado: 'no_registrado' };
+    if (!u.firma) return { ...base, estado: 'pendiente' };
+    return { ...base, estado: 'dentro', rol: u.rol, rol_verificado: true, configurado_ahora: false };
+  };
+
+  const abrirWorkspace = async (ws: WorkspaceUnityVC) => {
+    setElegido(ws);
+    let respuesta: EntradaProyecto;
+    try {
+      respuesta = await api.entrarAProyecto(ws.ruta, () => entradaMockup(ws));
+    } catch (e) {
+      showToast(mensajeDeError(e), 'danger');
+      return;
+    }
+    setCorreo(respuesta.email);
+    if (respuesta.estado !== 'dentro') {
+      const pasos = { pendiente: 'pendiente', no_registrado: 'no-registrado', esperar_dueno: 'esperar-dueno' } as const;
+      return setPaso(pasos[respuesta.estado]);
+    }
+    const entrada = respuesta;
+    // Mientras el resto de pantallas siga con datos de ejemplo, quien entra tiene que estar en la lista.
+    if (!useStore.getState().usuarios.some((u) => u.email === entrada.email)) {
+      const [nombre, apellido = ''] = entrada.email.split('@')[0].split(/[._-]/);
+      useStore.setState((s) => ({
+        usuarios: [
+          ...s.usuarios,
+          { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '', firma: 'backend', firmado_en: null },
+        ],
+      }));
+    }
+    setEmail(entrada.email);
+    setRolActual(entrada.rol);
     entrarAProyecto(ws.nombre);
-    showToast(`Conectado a ${ws.nombre} como ${u.rol}`);
+    showToast(
+      entrada.configurado_ahora
+        ? `${entrada.proyecto} configurado con BranchBoard — eres su Administrador`
+        : `Conectado a ${entrada.proyecto} como ${entrada.rol}`
+    );
   };
 
 
@@ -181,28 +222,12 @@ export function AccesoProyecto() {
         )}
 
 
-        {paso === 'inicializar' && (
-          <>
-            <Aviso icono="pieza" tono="bg-primary-soft" titulo="Este proyecto no usa BranchBoard todavía">
-              <span className="font-semibold text-text">{elegido?.nombre}</span> nunca se ha configurado con BranchBoard.
-              Puedes inicializarlo aquí mismo — quien lo inicializa queda como{' '}
-              <span className="font-semibold text-text">Administrador</span> del proyecto.
-            </Aviso>
-            <button
-              className="btn-primary w-full"
-              onClick={() => {
-                // Sin un usuario registrado que usar, el mockup entra como el Administrador semilla.
-                if (!usuario) setEmail(usuarios[0].email);
-                else setEmail(usuario.email);
-                setRolActual('Administrador');
-                if (elegido) entrarAProyecto(elegido.nombre);
-                else setAccesoCompletado(true);
-                showToast(`${elegido?.nombre} inicializado — eres su Administrador`);
-              }}
-            >
-              Inicializar BranchBoard en {elegido?.nombre}
-            </button>
-          </>
+        {paso === 'esperar-dueno' && (
+          <Aviso icono="pieza" tono="bg-primary-soft" titulo="Este proyecto no usa BranchBoard todavía">
+            <span className="font-semibold text-text">{elegido?.nombre}</span> se configura con BranchBoard la primera vez
+            que lo abre el dueño del repositorio, que queda como Administrador. Pídele que lo abra; después podrá
+            agregarte al equipo.
+          </Aviso>
         )}
       </div>
 
@@ -335,7 +360,9 @@ export function AccesoProyecto() {
         }}
       />
 
-      {/* Controles del mockup: elegir qué devuelve `cm whoami` y saltarse el flujo */}
+      {/* Controles del mockup (solo en el navegador): elegir qué devuelve `cm whoami` y saltarse el flujo.
+          En la app de escritorio el correo sale de `cm whoami` y el acceso lo decide `entrar_a_proyecto`. */}
+      {!enTauri() && (
       <div className="flex w-full max-w-lg flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs">
         <label className="flex items-center gap-2">
           <span className="text-faint">Demo · cm whoami:</span>
@@ -361,6 +388,7 @@ export function AccesoProyecto() {
           Saltar al tablero →
         </button>
       </div>
+      )}
 
       <Toast />
     </div>
