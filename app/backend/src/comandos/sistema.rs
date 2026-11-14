@@ -1,8 +1,9 @@
 //! Comandos generales de la app (no dependen de un proyecto).
 
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
-use crate::error::Resultado;
+use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 
 /// Evento que recibe el frontend cuando se intentó cerrar la ventana con una
@@ -20,6 +21,24 @@ pub fn ping() -> Resultado<String> {
 #[tauri::command]
 pub fn hay_operacion_en_curso(estado: State<'_, AppState>) -> Resultado<bool> {
     Ok(estado.hay_operacion_en_curso())
+}
+
+/// Abre el explorador de carpetas del sistema y devuelve la carpeta elegida,
+/// o `None` si la persona cancela. Lo abre el backend (como al exportar la
+/// llave), así la webview no necesita acceso al disco.
+#[tauri::command]
+pub async fn elegir_carpeta(app: AppHandle, titulo: Option<String>) -> Resultado<Option<String>> {
+    let mut dialogo = app.dialog().file();
+    if let Some(titulo) = titulo.filter(|t| !t.trim().is_empty()) {
+        dialogo = dialogo.set_title(titulo);
+    }
+    let Some(carpeta) = dialogo.blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let ruta = carpeta
+        .into_path()
+        .map_err(|e| Error::Archivos(e.to_string()))?;
+    Ok(Some(ruta.to_string_lossy().to_string()))
 }
 
 #[cfg(test)]

@@ -265,6 +265,12 @@ interface State {
   proyectoAClonar: string | null;
   irAClonar: (nombre: string) => void;
   entrarAProyecto: (nombre: string) => void;
+  /**
+   * Mockup de la carpeta compartida (Drive/OneDrive) de cada proyecto en esta máquina, por nombre del
+   * proyecto. En la app real la guarda el backend (`configurar_carpeta_compartida`).
+   */
+  carpetasCompartidas: Record<string, string>;
+  setCarpetaCompartida: (proyecto: string, ruta: string) => void;
 
   // datos
   usuarios: Usuario[];
@@ -456,6 +462,10 @@ export const useStore = create<State>((set, get) => {
   sesionUnityVC: null,
   workspaces: [...fx.workspaces],
   proyectoAClonar: null,
+  // El proyecto de ejemplo ya tiene carpeta; uno recién configurado la pide al entrar.
+  carpetasCompartidas: { [fx.PROYECTO_NOMBRE]: `C:\\Users\\ana\\OneDrive\\${fx.PROYECTO_NOMBRE}` },
+  setCarpetaCompartida: (proyecto, ruta) =>
+    set((s) => ({ carpetasCompartidas: { ...s.carpetasCompartidas, [proyecto]: ruta } })),
 
   usuarios: [...fx.usuarios],
   tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),

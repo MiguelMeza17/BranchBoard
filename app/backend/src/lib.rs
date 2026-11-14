@@ -54,6 +54,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
             sistema::hay_operacion_en_curso,
+            sistema::elegir_carpeta,
             acceso::entrar_a_proyecto,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,

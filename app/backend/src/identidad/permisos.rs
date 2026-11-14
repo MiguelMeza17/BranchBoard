@@ -37,6 +37,7 @@ pub const SOLO_ADMIN: &[Rol] = &[Rol::Administrador];
 pub const PERMISOS: &[(&str, Acceso)] = &[
     ("ping", Acceso::Libre),
     ("hay_operacion_en_curso", Acceso::Libre),
+    ("elegir_carpeta", Acceso::Libre),
     ("entrar_a_proyecto", Acceso::Libre),
     ("buscar_actualizacion", Acceso::Libre),
     ("instalar_actualizacion", Acceso::Libre),

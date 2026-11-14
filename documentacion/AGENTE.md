@@ -64,6 +64,15 @@ Explicaciones que el agente debería poder dar:
 - **¿Qué es la "Proyección" y el "Cierre estimado"?** Siguen el ritmo de los días que ya pasaron hasta llegar a 0. En un sprint se calcula con una recta que mejor se ajusta a lo ya hecho; en un backlog, con las tareas terminadas en las últimas 4 semanas, y supone que no entran tareas nuevas.
 - **¿Qué es "General"?** El avance de todo el proyecto: suma las tareas de todos los sprints y backlogs. No es un backlog donde se guarden tareas; por eso tiene su botón aparte y es lo primero que se ve al entrar a Avance. Solo llega a 0 cuando ya no queda ninguna tarea abierta en ningún sprint ni backlog.
 
+### Carpeta compartida (acceso y Ajustes)
+
+- **¿Para qué es?** Todos los cambios del equipo (tareas, usuarios, mensajes…) viajan entre las máquinas como archivos en una carpeta de Drive/OneDrive compartida con todo el equipo. Sin ella no se puede guardar ningún cambio, por eso se pide al entrar por primera vez a un proyecto en cada equipo.
+- **Soy el Administrador, ¿qué carpeta elijo?** Crea una carpeta para el proyecto dentro de tu Drive/OneDrive (ej. `OneDrive\MiJuego-BranchBoard`), elígela y después compártela con todo el equipo desde Drive/OneDrive (con permiso de edición). BranchBoard deja dentro el archivo `branchboard-proyecto.json`, que la identifica como la carpeta de ese proyecto.
+- **No soy el Administrador, ¿qué carpeta elijo?** La que te compartió el Administrador, ya agregada a tu Drive/OneDrive y sincronizada en tu equipo (en OneDrive: "Agregar acceso directo a Mis archivos"). Cada persona la tiene en una ruta distinta; lo que importa es que sea la misma carpeta.
+- **Me dice "todavía no es la de ningún proyecto".** Elegiste una carpeta sin `branchboard-proyecto.json`: no es la que compartió el Administrador, o Drive/OneDrive todavía no terminó de bajarla. Espera a que sincronice y vuelve a elegirla.
+- **Me dice "es de otro proyecto".** Esa carpeta es la de otro proyecto de BranchBoard; elige la de este.
+- **Moví mi carpeta de OneDrive.** Cámbiala en Ajustes → Carpeta compartida.
+
 ### Ajustes → Proyecto
 
 - **Nombre del proyecto**: "Solo cambia el nombre en BranchBoard; el repositorio de Unity VC conserva el suyo."

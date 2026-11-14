@@ -131,14 +131,25 @@ export const api = {
     llamar<EntradaProyecto>('entrar_a_proyecto', { carpeta }, mockup),
 
   /**
-   * Carpeta compartida del proyecto (Drive/OneDrive) en esta máquina, donde viven los eventos de
-   * `ops/`; `null` si todavía no se configuró. En el mockup no hay carpeta.
+   * Abre el explorador de carpetas del sistema (lo abre el backend) y responde la carpeta elegida, o
+   * `null` si se cancela. En el navegador no hay acceso al disco: responde `null`.
    */
-  carpetaCompartida: () => llamar<string | null>('carpeta_compartida', undefined, () => null),
+  elegirCarpeta: (titulo?: string) => llamar<string | null>('elegir_carpeta', { titulo }, () => null),
 
-  /** Guarda la carpeta compartida del proyecto en esta máquina; responde la ruta completa guardada. */
-  configurarCarpetaCompartida: (ruta: string) =>
-    llamar<string>('configurar_carpeta_compartida', { ruta }, () => ruta),
+  /**
+   * Carpeta compartida del proyecto abierto (Drive/OneDrive) en esta máquina, donde viven los eventos de
+   * `ops/`; `null` si todavía no se configuró. En el mockup responde `mockup()`.
+   */
+  carpetaCompartida: (mockup: () => string | null) =>
+    llamar<string | null>('carpeta_compartida', undefined, mockup),
+
+  /**
+   * Guarda la carpeta compartida del proyecto abierto en esta máquina y responde la ruta completa guardada.
+   * El backend exige que sea la de este proyecto (archivo `branchboard-proyecto.json`); si la carpeta no
+   * tiene esa marca, solo el Administrador la puede dejar como la del proyecto.
+   */
+  configurarCarpetaCompartida: (ruta: string, mockup: () => string) =>
+    llamar<string>('configurar_carpeta_compartida', { ruta }, mockup),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
