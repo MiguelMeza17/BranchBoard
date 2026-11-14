@@ -42,6 +42,8 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("instalar_actualizacion", Acceso::Libre),
     ("listar_backups", Acceso::Roles(SOLO_ADMIN)),
     ("restaurar_backup", Acceso::Roles(SOLO_ADMIN)),
+    ("carpeta_compartida", Acceso::Roles(TODOS)),
+    ("configurar_carpeta_compartida", Acceso::Roles(TODOS)),
     ("exportar_llave_firma", Acceso::Roles(SOLO_ADMIN)),
     // Usuarios (issue #90). El detalle de quién cambia a quién está en `identidad::equipo`.
     ("listar_usuarios", Acceso::Roles(TODOS)),

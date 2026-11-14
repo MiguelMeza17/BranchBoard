@@ -4,6 +4,7 @@
 pub mod acceso;
 pub mod actualizaciones;
 pub mod datos;
+pub mod eventos;
 pub mod identidad;
 pub mod sistema;
 pub mod usuarios;

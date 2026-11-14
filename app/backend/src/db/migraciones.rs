@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 5;
+pub const VERSION_ESQUEMA: u32 = 6;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -201,6 +201,13 @@ fn migraciones() -> Vec<String> {
             tipos = TipoTarea::lista_sql(),
             tipos_notificacion = TipoNotificacion::lista_sql()
         ),
+        // 6 — eventos de `ops/` ya aplicados a esta base (issue #91). Local: cada
+        // máquina anota los suyos para no aplicar dos veces el mismo.
+        "CREATE TABLE eventos_aplicados (
+            id          TEXT PRIMARY KEY,
+            aplicado_en TEXT NOT NULL
+        ) STRICT;"
+            .to_string(),
     ]
 }
 

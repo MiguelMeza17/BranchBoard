@@ -130,6 +130,16 @@ export const api = {
   entrarAProyecto: (carpeta: string, mockup: () => EntradaProyecto) =>
     llamar<EntradaProyecto>('entrar_a_proyecto', { carpeta }, mockup),
 
+  /**
+   * Carpeta compartida del proyecto (Drive/OneDrive) en esta máquina, donde viven los eventos de
+   * `ops/`; `null` si todavía no se configuró. En el mockup no hay carpeta.
+   */
+  carpetaCompartida: () => llamar<string | null>('carpeta_compartida', undefined, () => null),
+
+  /** Guarda la carpeta compartida del proyecto en esta máquina; responde la ruta completa guardada. */
+  configurarCarpetaCompartida: (ruta: string) =>
+    llamar<string>('configurar_carpeta_compartida', { ruta }, () => ruta),
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 
