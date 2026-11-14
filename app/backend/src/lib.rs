@@ -28,7 +28,8 @@ pub mod servidor;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
-    acceso, actualizaciones, datos, identidad as comandos_identidad, sistema, usuarios,
+    acceso, actualizaciones, datos, eventos as comandos_eventos, identidad as comandos_identidad,
+    sistema, usuarios,
 };
 
 /// Con una operación de `cm` corriendo, la ventana no se cierra: se cancela el
@@ -58,6 +59,8 @@ pub fn run() {
             actualizaciones::instalar_actualizacion,
             datos::listar_backups,
             datos::restaurar_backup,
+            comandos_eventos::carpeta_compartida,
+            comandos_eventos::configurar_carpeta_compartida,
             comandos_identidad::exportar_llave_firma,
             usuarios::listar_usuarios,
             usuarios::crear_usuario,
