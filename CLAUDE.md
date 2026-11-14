@@ -37,6 +37,7 @@ Antes de editar `documentacion/PLANNING.md`, revisar `git status` — si tiene c
 ### Backend y frontend
 
 - **El backend ya se implementa** (desde el 2026-11-09), un issue a la vez según la hoja de ruta (#129). Cada rama sale de `dev` con el número del issue (ej. `feat/95-crear-tareas`) y su PR hacia `dev` lleva `Closes #<número>`.
+- **Antes de empezar a tocar un issue, se asigna** a quien lo va a trabajar: el desarrollador que lo toma, o, si lo trabaja una sesión de Claude, el desarrollador dueño de esa sesión (`gh issue edit <número> --add-assignee <usuario>`). Si el issue ya tiene a otra persona asignada, no se toca sin hablarlo con ella.
 - **Ningún issue de backend se da por resuelto sin probarlo en el entorno real** (ver la sección siguiente). Los tests unitarios no bastan.
 - Si al implementar algo del backend cambia o se completa el diseño (un comando `cm` exacto, una regla nueva, un pendiente que se resuelve), se actualiza `documentacion/BACKEND.md` en el mismo PR.
 - El mockup del frontend tiene que seguir funcionando en el navegador (`npm run dev`) sin backend: las llamadas a comandos de Tauri pasan por un solo cliente que, fuera de Tauri, usa los datos en memoria.
