@@ -12,7 +12,7 @@ pub mod pat;
 pub mod region;
 pub mod sanear;
 
-pub use cliente::{ClienteServidor, Repositorio};
+pub use cliente::{ClienteServidor, Rama, Repositorio};
 pub use pat::{conectar, LlaveroSistema};
 
 /// `MiguelM17@unity`, `MiguelM17@cloud` o `MiguelM17` → `MiguelM17`.

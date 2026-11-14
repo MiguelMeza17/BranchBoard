@@ -20,6 +20,30 @@ pub struct Repositorio {
     pub name: String,
 }
 
+/// Una rama, como la devuelven `GET`/`POST …/branches` (solo lo que se usa).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rama {
+    pub id: i64,
+    /// Ruta completa, ej. `/main/dev/T-101-combate`.
+    pub name: String,
+    /// Changeset de la cabeza de la rama.
+    #[serde(rename = "headChangeset")]
+    pub head_changeset: i64,
+}
+
+#[derive(Serialize)]
+struct CrearRama<'a> {
+    name: &'a str,
+    changeset: i64,
+    comment: &'a str,
+}
+
+/// Lo que no fue 2xx: el código y el cuerpo, para decidir antes de volverlo error.
+struct Fallo {
+    codigo: u16,
+    cuerpo: String,
+}
+
 /// Cliente de la API de una organización, con su PAT.
 pub struct ClienteServidor {
     /// `https://…:7178/api/v1/organizations/<org>`
@@ -57,30 +81,83 @@ impl ClienteServidor {
         self.get("/repos")
     }
 
+    /// La rama `ruta` (ej. `/main/dev`) del repositorio `repo` (`Proyecto/Repo`),
+    /// o `None` si no existe.
+    pub fn rama(&self, repo: &str, ruta: &str) -> Resultado<Option<Rama>> {
+        let url = format!("/repos/{}/branches/{}", codificar(repo), codificar(ruta));
+        match leer_respuesta(self.preparar("GET", &url).call())? {
+            Ok(cuerpo) => sanear::interpretar(&cuerpo).map(Some),
+            Err(f) if rama_no_existe(&f) => Ok(None),
+            Err(f) => Err(error_http(f.codigo, &f.cuerpo)),
+        }
+    }
+
+    /// Crea la rama `ruta` (completa, ej. `/main/dev/T-101-combate`) a partir del
+    /// changeset `changeset` de su rama padre. La padre sale de la ruta.
+    pub fn crear_rama(
+        &self,
+        repo: &str,
+        ruta: &str,
+        changeset: i64,
+        comentario: &str,
+    ) -> Resultado<Rama> {
+        let url = format!("/repos/{}/branches", codificar(repo));
+        let cuerpo = CrearRama {
+            name: ruta,
+            changeset,
+            comment: comentario,
+        };
+        let respuesta = self.preparar("POST", &url).send_json(&cuerpo);
+        let texto = leer_respuesta(respuesta)?.map_err(|f| error_http(f.codigo, &f.cuerpo))?;
+        sanear::interpretar(&texto)
+    }
+
     /// `GET <url_api><ruta>`. `ruta` empieza con `/` y ya va codificada.
     pub fn get<T: DeserializeOwned>(&self, ruta: &str) -> Resultado<T> {
-        let respuesta = self
-            .agente
-            .get(&format!("{}{ruta}", self.url_api))
+        let texto = leer_respuesta(self.preparar("GET", ruta).call())?
+            .map_err(|f| error_http(f.codigo, &f.cuerpo))?;
+        sanear::interpretar(&texto)
+    }
+
+    fn preparar(&self, metodo: &str, ruta: &str) -> ureq::Request {
+        self.agente
+            .request(metodo, &format!("{}{ruta}", self.url_api))
             .set("Authorization", &format!("Bearer {}", self.token))
             .set("Accept", "application/json")
-            .call();
-        let cuerpo = leer_respuesta(respuesta)?;
-        sanear::interpretar(&cuerpo)
     }
 }
 
-/// 2xx → cuerpo; 401 → `token_servidor_invalido`; otro código → error solo con
-/// el código HTTP y el `message` saneado; sin red → mensaje claro.
-fn leer_respuesta(respuesta: Result<ureq::Response, ureq::Error>) -> Resultado<String> {
+/// Codifica un segmento de la URL: `Proyecto/Repo` → `Proyecto%2FRepo`.
+fn codificar(texto: &str) -> String {
+    texto
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// La API responde 404, o 400 con `BR_NOT_FOUND`, si la rama no existe.
+fn rama_no_existe(f: &Fallo) -> bool {
+    f.codigo == 404 || sanear::clave_de_error(&f.cuerpo).as_deref() == Some("BR_NOT_FOUND")
+}
+
+/// 2xx → `Ok(Ok(cuerpo))`; 401 → `token_servidor_invalido`; otro código →
+/// `Ok(Err(Fallo))` para que quien llama decida; sin red → mensaje claro.
+fn leer_respuesta(
+    respuesta: Result<ureq::Response, ureq::Error>,
+) -> Resultado<Result<String, Fallo>> {
     match respuesta {
-        Ok(r) => r.into_string().map_err(|_| {
+        Ok(r) => r.into_string().map(Ok).map_err(|_| {
             Error::ServidorUnityVc("No se pudo leer la respuesta del servidor".into())
         }),
         Err(ureq::Error::Status(401, _)) => Err(Error::TokenServidorInvalido),
         Err(ureq::Error::Status(codigo, r)) => {
             let cuerpo = r.into_string().unwrap_or_default();
-            Err(error_http(codigo, &cuerpo))
+            Ok(Err(Fallo { codigo, cuerpo }))
         }
         Err(ureq::Error::Transport(_)) => Err(Error::ServidorUnityVc(
             "No se pudo conectar con el servidor de Unity VC. Revisa tu conexión".into(),
@@ -106,6 +183,50 @@ mod tests {
         let texto = format!("{c:?}");
         assert!(!texto.contains("eyJsecreto"), "{texto}");
         assert!(texto.contains("<oculto>"));
+    }
+
+    #[test]
+    fn codifica_repos_y_ramas_para_la_url() {
+        assert_eq!(
+            codificar("BranchBoard-Pruebas/BranchBoard-Pruebas"),
+            "BranchBoard-Pruebas%2FBranchBoard-Pruebas"
+        );
+        assert_eq!(
+            codificar("/main/dev/T-101-combate"),
+            "%2Fmain%2Fdev%2FT-101-combate"
+        );
+        assert_eq!(codificar("a b?#ñ"), "a%20b%3F%23%C3%B1");
+    }
+
+    #[test]
+    fn reconoce_rama_inexistente() {
+        let br = Fallo {
+            codigo: 400,
+            cuerpo: r#"{"error":{"message":"x"},"keyMessage":"BR_NOT_FOUND"}"#.into(),
+        };
+        assert!(rama_no_existe(&br));
+        assert!(rama_no_existe(&Fallo {
+            codigo: 404,
+            cuerpo: String::new()
+        }));
+        assert!(!rama_no_existe(&Fallo {
+            codigo: 400,
+            cuerpo: r#"{"keyMessage":"OTRO"}"#.into()
+        }));
+    }
+
+    #[test]
+    fn la_rama_se_lee_de_la_respuesta_real() {
+        // Forma de `GET …/branches/%2Fmain%2Fdev` (probado 2026-11-14, owner quitado).
+        let r: Rama = sanear::interpretar(r#"{"id":12,"name":"/main/dev","repositoryId":"12713155","headChangeset":8,"type":"branch","isMain":false}"#).unwrap();
+        assert_eq!(
+            r,
+            Rama {
+                id: 12,
+                name: "/main/dev".into(),
+                head_changeset: 8
+            }
+        );
     }
 
     #[test]

@@ -39,11 +39,27 @@ pub fn interpretar<T: DeserializeOwned>(cuerpo: &str) -> Resultado<T> {
 pub fn mensaje_de_error(cuerpo: &str) -> Option<String> {
     let mut valor: Value = serde_json::from_str(cuerpo).ok()?;
     borrar_secretos(&mut valor);
-    let texto = ["message", "Message", "status", "error"]
-        .iter()
-        .find_map(|c| valor.get(*c).and_then(Value::as_str))?;
+    // La API los manda como `{"message": …}` o `{"error": {"message": …}, "keyMessage": …}`.
+    let texto = [
+        "/message",
+        "/Message",
+        "/error/message",
+        "/status",
+        "/error",
+    ]
+    .iter()
+    .find_map(|c| valor.pointer(c).and_then(Value::as_str))?;
     let texto: String = texto.trim().chars().take(200).collect();
     (!texto.is_empty()).then_some(texto)
+}
+
+/// Clave estable del error, ej. `BR_NOT_FOUND` (campo `keyMessage`).
+pub fn clave_de_error(cuerpo: &str) -> Option<String> {
+    let valor: Value = serde_json::from_str(cuerpo).ok()?;
+    valor
+        .get("keyMessage")
+        .and_then(Value::as_str)
+        .map(|c| c.chars().take(60).collect())
 }
 
 fn respuesta_rara() -> Error {
@@ -103,6 +119,14 @@ mod tests {
             Some("Branch already exists")
         );
         assert_eq!(mensaje_de_error(r#"{"password":"TOKENeyJ"}"#), None);
+        // Forma real de un error de ramas (probado 2026-11-14).
+        let br = r#"{"error":{"message":"The specified branch /main/dev/task can't be found."},"keyMessage":"BR_NOT_FOUND"}"#;
+        assert_eq!(
+            mensaje_de_error(br).as_deref(),
+            Some("The specified branch /main/dev/task can't be found.")
+        );
+        assert_eq!(clave_de_error(br).as_deref(), Some("BR_NOT_FOUND"));
+        assert_eq!(clave_de_error("no es json"), None);
         assert_eq!(mensaje_de_error("no es json"), None);
         let largo = format!(r#"{{"message":"{}"}}"#, "a".repeat(500));
         assert_eq!(mensaje_de_error(&largo).unwrap().len(), 200);

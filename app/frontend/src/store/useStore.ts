@@ -42,6 +42,31 @@ const hoyLocal = () => {
 //   trabajo nunca vuelve a "por hacer" -> "en producción"
 // - alguna "por hacer" o "en producción" -> "en producción"
 // - ninguna "por hacer"/"en producción" (todas terminaron su parte) -> "en revisión"
+/** Parte del título en el nombre de la rama, igual que el backend (`ramas.rs`). */
+function tituloParaRama(titulo: string): string {
+  const texto = titulo
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  if (texto.length <= 30) return texto;
+  const corto = texto.slice(0, 30);
+  const i = corto.lastIndexOf('-');
+  return i > 0 ? corto.slice(0, i) : corto;
+}
+
+/**
+ * Ruta completa de la rama de una tarea, como la crea el backend (#83): una tarea
+ * general cuelga de `/main/dev`; una subtarea, de la rama de su tarea padre.
+ */
+function rutaRama(tareas: Tarea[], t: Tarea): string {
+  const padre = t.tarea_padre_id ? tareas.find((p) => p.id === t.tarea_padre_id) : undefined;
+  const base = padre ? (padre.rama_asociada ?? rutaRama(tareas, padre)) : '/main/dev';
+  const parte = tituloParaRama(t.titulo);
+  return `${base}/${parte ? `${t.id}-${parte}` : t.id}`;
+}
+
 function estadoDerivadoDeHijas(hijas: Tarea[], padreTieneProgreso = false): EstadoTarea {
   if (hijas.every((h) => h.estado === 'por hacer')) return padreTieneProgreso ? 'en producción' : 'por hacer';
   if (hijas.some((h) => h.estado === 'por hacer' || h.estado === 'en producción')) return 'en producción';
@@ -595,14 +620,8 @@ export const useStore = create<State>((set, get) => {
     const padre = espera && s.tareas.find((t) => t.id === espera.tarea_padre_id);
     if (!espera || !padre?.rama_asociada || !titulo) return;
     const user = s.currentUser();
-    const slug = titulo
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 24);
-    const rama = `task/${esperaId.toLowerCase()}-${slug || 'cambios'}`;
+    const parte = tituloParaRama(titulo);
+    const rama = `${padre.rama_asociada}/${parte ? `${esperaId}-${parte}` : esperaId}`;
     const n = s.cambiosSinCheckin[padre.rama_asociada] ?? 0;
     const sinCheckin = { ...s.cambiosSinCheckin };
     delete sinCheckin[padre.rama_asociada];
@@ -824,7 +843,7 @@ export const useStore = create<State>((set, get) => {
           ...t,
           asignado_a: email,
           modo_trabajo: 'rama',
-          rama_asociada: t.rama_asociada ?? `task/${id.toLowerCase()}-${t.tipo.slice(0, 4).toLowerCase()}`,
+          rama_asociada: t.rama_asociada ?? rutaRama(s.tareas, t),
         };
       }),
     }));
@@ -844,7 +863,7 @@ export const useStore = create<State>((set, get) => {
               ...x,
               asignado_a: email,
               modo_trabajo: 'rama',
-              rama_asociada: x.rama_asociada ?? `task/${id.toLowerCase()}-${x.tipo.slice(0, 4).toLowerCase()}`,
+              rama_asociada: x.rama_asociada ?? rutaRama(s.tareas, x),
             }
           : x
       ),
