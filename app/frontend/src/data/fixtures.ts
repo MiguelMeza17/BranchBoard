@@ -327,6 +327,8 @@ export const tareas: Tarea[] = [
     tipo: 'Scripting',
     estado: 'por hacer',
     creado_por: LIDER,
+    // Sin responsable, pero con rama: se creó al tomar su subtarea T-102-1.
+    rama_asociada: '/main/dev/T-102-ia-de-enemigo-rastreador',
     con_fecha: true,
     fecha_limite: '2026-09-29',
   }),

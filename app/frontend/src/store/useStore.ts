@@ -67,6 +67,30 @@ function rutaRama(tareas: Tarea[], t: Tarea): string {
   return `${base}/${parte ? `${t.id}-${parte}` : t.id}`;
 }
 
+/**
+ * Al tomar o asignar una subtarea, sus ancestros sin rama reciben la suya
+ * (decidido 2026-11-14, igual que `crear_ramas_de_cadena` en el backend): la rama
+ * de una subtarea vive dentro de la de su padre. Solo se les pone la rama, no
+ * un responsable.
+ */
+function conRamasDeAncestros(tareas: Tarea[], id: string): Tarea[] {
+  const cadena: Tarea[] = [];
+  let actual = tareas.find((t) => t.id === id);
+  while (actual?.tarea_padre_id) {
+    const padre = tareas.find((t) => t.id === actual?.tarea_padre_id);
+    if (!padre) break;
+    cadena.unshift(padre);
+    actual = padre;
+  }
+  let lista = tareas;
+  for (const p of cadena) {
+    if (p.rama_asociada) continue;
+    const rama = rutaRama(lista, p);
+    lista = lista.map((t) => (t.id === p.id ? { ...t, rama_asociada: rama } : t));
+  }
+  return lista;
+}
+
 function estadoDerivadoDeHijas(hijas: Tarea[], padreTieneProgreso = false): EstadoTarea {
   if (hijas.every((h) => h.estado === 'por hacer')) return padreTieneProgreso ? 'en producción' : 'por hacer';
   if (hijas.some((h) => h.estado === 'por hacer' || h.estado === 'en producción')) return 'en producción';
@@ -836,17 +860,20 @@ export const useStore = create<State>((set, get) => {
     const tomada = get().tareas.find((x) => x.id === id);
     const quien = get().usuarios.find((u) => u.email === email);
     if (tomada && quien && !puedeTomarTarea(quien.rol, tomada, get().tareas)) return;
-    set((s) => ({
-      tareas: s.tareas.map((t) => {
-        if (t.id !== id) return t;
-        return {
-          ...t,
-          asignado_a: email,
-          modo_trabajo: 'rama',
-          rama_asociada: t.rama_asociada ?? rutaRama(s.tareas, t),
-        };
-      }),
-    }));
+    set((s) => {
+      const conPadres = conRamasDeAncestros(s.tareas, id);
+      return {
+        tareas: conPadres.map((t) => {
+          if (t.id !== id) return t;
+          return {
+            ...t,
+            asignado_a: email,
+            modo_trabajo: 'rama',
+            rama_asociada: t.rama_asociada ?? rutaRama(conPadres, t),
+          };
+        }),
+      };
+    });
   },
 
   // En una tarea general, sus subtareas también vuelven a "por hacer"; si no, al siguiente
@@ -856,18 +883,21 @@ export const useStore = create<State>((set, get) => {
     if (!t || t.asignado_a === email) return;
     const destino = get().usuarios.find((u) => u.email === email);
     if (destino && !puedeTomarTarea(destino.rol, t, get().tareas)) return;
-    set((s) => ({
-      tareas: s.tareas.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              asignado_a: email,
-              modo_trabajo: 'rama',
-              rama_asociada: x.rama_asociada ?? rutaRama(s.tareas, x),
-            }
-          : x
-      ),
-    }));
+    set((s) => {
+      const conPadres = conRamasDeAncestros(s.tareas, id);
+      return {
+        tareas: conPadres.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                asignado_a: email,
+                modo_trabajo: 'rama',
+                rama_asociada: x.rama_asociada ?? rutaRama(conPadres, x),
+              }
+            : x
+        ),
+      };
+    });
     const u = get().usuarios.find((x) => x.email === email);
     get().showToast(`${id} asignada a ${u ? `${u.nombre} ${u.apellido}` : email}`);
   },

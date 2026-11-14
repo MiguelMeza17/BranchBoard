@@ -154,6 +154,84 @@ pub fn crear_rama_tarea(
     cliente.crear_rama(repo, &ruta, padre.head_changeset, &comentario)
 }
 
+/// Una tarea de la cadena que va desde la tarea general hasta la que se toma.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TareaDeCadena {
+    pub id: String,
+    pub titulo: String,
+    /// `rama_asociada` actual; `None` si todavía no tiene rama.
+    pub rama: Option<String>,
+}
+
+/// Una rama que hay que crear: para qué tarea, su ruta y la de su padre.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RamaPorCrear {
+    id: String,
+    titulo: String,
+    ruta: String,
+    ruta_padre: String,
+}
+
+/// Al tomar o asignar una subtarea, **sus ancestros sin rama reciben la suya**
+/// (decidido 2026-11-14): la rama de una subtarea vive dentro de la de su padre,
+/// así que si el padre todavía no tiene, se crea primero, desde la cabeza actual
+/// de dev o de su propio padre.
+///
+/// `cadena` va de la tarea general a la tarea que se toma (inclusive). Crea, de
+/// arriba abajo, las ramas que falten y devuelve `(id, rama)` de cada una creada
+/// para que quien llama guarde `rama_asociada`. Si una ya existe en el servidor
+/// con la ruta esperada (ej. un intento anterior que se cortó a la mitad), se
+/// reusa en vez de fallar. El límite de niveles se revisa para toda la cadena
+/// antes de crear nada.
+pub fn crear_ramas_de_cadena(
+    cliente: &ClienteServidor,
+    repo: &str,
+    cadena: &[TareaDeCadena],
+) -> Resultado<Vec<(String, Rama)>> {
+    let mut creadas = Vec::new();
+    for paso in planear_cadena(cadena)? {
+        let rama = match cliente.rama(repo, &paso.ruta)? {
+            Some(existente) => existente,
+            None => {
+                let padre = cliente.rama(repo, &paso.ruta_padre)?.ok_or_else(|| {
+                    Error::NoEncontrado(format!("la rama {} en Unity VC", paso.ruta_padre))
+                })?;
+                let comentario = format!("Rama de {}: {}", paso.id, paso.titulo.trim());
+                cliente.crear_rama(repo, &paso.ruta, padre.head_changeset, &comentario)?
+            }
+        };
+        creadas.push((paso.id, rama));
+    }
+    Ok(creadas)
+}
+
+/// Qué ramas faltan en la cadena y con qué ruta, sin tocar el servidor.
+fn planear_cadena(cadena: &[TareaDeCadena]) -> Resultado<Vec<RamaPorCrear>> {
+    if cadena.is_empty() {
+        return Err(Error::Validacion("No hay tarea para crear su rama".into()));
+    }
+    let mut padre: Option<String> = None;
+    let mut faltan = Vec::new();
+    for tarea in cadena {
+        let ruta = match &tarea.rama {
+            Some(r) => r.trim().trim_end_matches('/').to_string(),
+            None => {
+                let ruta =
+                    ruta_rama_nueva(padre.as_deref(), &nombre_rama(&tarea.id, &tarea.titulo)?)?;
+                faltan.push(RamaPorCrear {
+                    id: tarea.id.trim().to_string(),
+                    titulo: tarea.titulo.clone(),
+                    ruta: ruta.clone(),
+                    ruta_padre: padre.clone().unwrap_or_else(|| RAMA_DEV.to_string()),
+                });
+                ruta
+            }
+        };
+        padre = Some(ruta);
+    }
+    Ok(faltan)
+}
+
 /// `cm switch` del workspace de `carpeta` a `rama`, y comprueba que quedó ahí.
 /// Con cambios sin check-in **no** se cambia: `cm switch` se queda esperando una
 /// respuesta que la app no puede dar (probado 2026-11-14), así que se revisa antes
@@ -285,6 +363,70 @@ mod tests {
         assert!(error.to_string().contains("5 niveles"), "{error}");
     }
 
+    fn tarea(id: &str, titulo: &str, rama: Option<&str>) -> TareaDeCadena {
+        TareaDeCadena {
+            id: id.into(),
+            titulo: titulo.into(),
+            rama: rama.map(String::from),
+        }
+    }
+
+    #[test]
+    fn la_cadena_crea_primero_la_rama_del_padre_que_falta() {
+        // T-102 nunca se tomó; al tomar T-102-1 se crean las dos, de arriba abajo.
+        let plan = planear_cadena(&[
+            tarea("T-102", "IA de enemigo rastreador", None),
+            tarea("T-102-1", "Animación de caminar", None),
+        ])
+        .unwrap();
+        let rutas: Vec<(&str, &str)> = plan
+            .iter()
+            .map(|p| (p.ruta.as_str(), p.ruta_padre.as_str()))
+            .collect();
+        assert_eq!(
+            rutas,
+            [
+                ("/main/dev/T-102-ia-de-enemigo-rastreador", "/main/dev"),
+                (
+                    "/main/dev/T-102-ia-de-enemigo-rastreador/T-102-1-animacion-de-caminar",
+                    "/main/dev/T-102-ia-de-enemigo-rastreador"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn la_cadena_respeta_las_ramas_que_ya_existen() {
+        let plan = planear_cadena(&[
+            tarea("T-1", "a", Some("/main/dev/T-1-a")),
+            tarea("T-1-1", "b", None),
+            tarea("T-1-1-1", "c", None),
+        ])
+        .unwrap();
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].ruta_padre, "/main/dev/T-1-a");
+        assert_eq!(plan[1].ruta, "/main/dev/T-1-a/T-1-1-b/T-1-1-1-c");
+        // Todo con rama: no hay nada que crear.
+        assert!(
+            planear_cadena(&[tarea("T-1", "a", Some("/main/dev/T-1-a"))])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn la_cadena_revisa_el_limite_antes_de_crear_nada() {
+        let e = planear_cadena(&[
+            tarea("T-1", "a", None),
+            tarea("T-1-1", "b", None),
+            tarea("T-1-1-1", "c", None),
+            tarea("T-1-1-1-1", "d", None),
+        ])
+        .unwrap_err();
+        assert!(e.to_string().contains("5 niveles"), "{e}");
+        assert_eq!(planear_cadena(&[]).unwrap_err().codigo(), "validacion");
+    }
+
     #[test]
     fn la_padre_tiene_que_ser_rama_de_tarea() {
         for padre in ["/main", "/main/dev", "/main/devx/T-1", "/otra/T-1", ""] {
@@ -406,6 +548,56 @@ mod tests {
             // Repetir la misma tarea: ya existe.
             let e = crear_rama_tarea(&cliente, &repo, None, &id, "Prueba #83 combate").unwrap_err();
             assert!(e.to_string().contains("ya existe"), "{e}");
+
+            // Subtarea cuyo padre nunca se tomó: se crean las dos, el padre primero.
+            let padre_id = format!("T-8{sufijo}");
+            let cadena = vec![
+                TareaDeCadena {
+                    id: padre_id.clone(),
+                    titulo: "Padre sin rama".into(),
+                    rama: None,
+                },
+                TareaDeCadena {
+                    id: format!("{padre_id}-1"),
+                    titulo: "Hija".into(),
+                    rama: None,
+                },
+            ];
+            let hechas = crear_ramas_de_cadena(&cliente, &repo, &cadena).unwrap();
+            creadas.extend(hechas.iter().map(|(_, r)| r.name.clone()));
+            let nombres: Vec<&str> = hechas.iter().map(|(_, r)| r.name.as_str()).collect();
+            println!("cadena creada: {nombres:?}");
+            assert_eq!(
+                nombres,
+                [
+                    format!("/main/dev/{padre_id}-padre-sin-rama"),
+                    format!("/main/dev/{padre_id}-padre-sin-rama/{padre_id}-1-hija"),
+                ]
+            );
+            assert_eq!(
+                hechas[0].1.head_changeset, dev.head_changeset,
+                "el padre nace de la cabeza de dev"
+            );
+
+            // Si se cortó a la mitad (el servidor ya las tiene, la BD no): se reusan.
+            let otra_vez = crear_ramas_de_cadena(&cliente, &repo, &cadena).unwrap();
+            assert_eq!(
+                otra_vez.iter().map(|(_, r)| r.id).collect::<Vec<_>>(),
+                hechas.iter().map(|(_, r)| r.id).collect::<Vec<_>>(),
+                "reusó las mismas ramas"
+            );
+            // Con las ramas ya guardadas, no hay nada que crear.
+            let guardadas: Vec<TareaDeCadena> = cadena
+                .iter()
+                .zip(&hechas)
+                .map(|(t, (_, r))| TareaDeCadena {
+                    rama: Some(r.name.clone()),
+                    ..t.clone()
+                })
+                .collect();
+            assert!(crear_ramas_de_cadena(&cliente, &repo, &guardadas)
+                .unwrap()
+                .is_empty());
 
             // cm switch en un workspace temporal.
             let carpeta = tempfile::tempdir().unwrap();
