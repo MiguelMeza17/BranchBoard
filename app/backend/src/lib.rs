@@ -3,6 +3,7 @@
 //! Organización:
 //! - `comandos/` — lo que el frontend llama con `invoke`, por área.
 //! - `db` — SQLite local.
+//! - `checkins` — check-ins de la rama de una tarea, copiados a `commits`.
 //! - `cm` — Unity Version Control (subproceso `cm`).
 //! - `ramas` — ramas de tareas y sus protecciones.
 //! - `servidor` — API REST del servidor de Unity VC (con PAT).
@@ -12,6 +13,7 @@
 //! - `error` — error común `{ codigo, mensaje }`.
 //! - `estado` — estado compartido de la app.
 
+pub mod checkins;
 pub mod cm;
 pub mod comandos;
 pub mod db;
