@@ -23,7 +23,7 @@ pub struct Tarea {
     pub archivo_ruta: Option<String>,
     pub estado: EstadoTarea,
     pub pendiente_aprobacion: bool,
-    /// `None` hasta que alguien toma la tarea; formato `task/<id>-<nombre>`.
+    /// `None` hasta que alguien toma la tarea; ruta completa de la rama, ej. `/main/dev/T-101-combate` (#83).
     pub rama_asociada: Option<String>,
     /// `Some("rama")` desde que se tomó.
     pub modo_trabajo: Option<String>,
@@ -338,7 +338,7 @@ mod tests {
         t.detalles = "Con salto doble".into();
         t.estado = EstadoTarea::EnProduccion;
         t.asignado_a = Some("zoe@virustf.dev".into());
-        t.rama_asociada = Some("task/T-101-movimiento".into());
+        t.rama_asociada = Some("/main/dev/T-101-movimiento".into());
         t.modo_trabajo = Some("rama".into());
         t.ultimo_changeset_visto = Some(42);
         t.sprint_id = Some("S-1".into());

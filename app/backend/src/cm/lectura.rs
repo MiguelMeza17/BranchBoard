@@ -24,7 +24,7 @@ pub struct Workspace {
 /// Dónde está parado un workspace, según `cm status --header`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EstadoWorkspace {
-    /// Rama completa, ej. `/main/task/T-101-menu`.
+    /// Rama completa, ej. `/main/dev/T-101-menu`.
     pub rama: String,
     /// `repositorio@servidor`, ej. `VirusTF@MIGUELMEZA:8087`.
     pub repositorio: String,
@@ -183,9 +183,9 @@ mod tests {
     #[test]
     fn cabecera_con_rama_repo_y_changeset() {
         let estado =
-            interpretar_cabecera("/main/task/T-101-menu@VirusTF@MIGUELMEZA:8087 (cs:142 - head)\n")
+            interpretar_cabecera("/main/dev/T-101-menu@VirusTF@MIGUELMEZA:8087 (cs:142 - head)\n")
                 .unwrap();
-        assert_eq!(estado.rama, "/main/task/T-101-menu");
+        assert_eq!(estado.rama, "/main/dev/T-101-menu");
         assert_eq!(estado.repositorio, "VirusTF@MIGUELMEZA:8087");
         assert_eq!(estado.changeset, Some(142));
 
