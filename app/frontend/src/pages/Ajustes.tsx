@@ -9,6 +9,7 @@ import { PageHeader, EmptyState } from '../components/primitives';
 import { Seccion } from '../components/Seccion';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
+import { SelectorCarpeta } from '../components/SelectorCarpeta';
 import { api, mensajeDeError, type InfoActualizacion } from '../lib/api';
 
 export function Ajustes() {
@@ -19,6 +20,7 @@ export function Ajustes() {
       <PageHeader title="Ajustes" desc="Acciones administrativas del proyecto. Cada sección aparece según tu rol." />
       <div className="space-y-3">
         <SeccionActualizar />
+        <SeccionCarpetaCompartida />
         <SeccionBackups />
         {puedeEliminarProyecto(user.rol) && <SeccionProyecto />}
         {!esLiderOAdmin(user.rol) && (
@@ -96,6 +98,71 @@ function SeccionActualizar() {
           )}
         </div>
       )}
+    </Seccion>
+  );
+}
+
+// Carpeta compartida (Drive/OneDrive) del proyecto en esta máquina: todos los roles. Se elige al entrar
+// por primera vez; aquí se ve y se cambia (ej. si se movió la carpeta de OneDrive).
+function SeccionCarpetaCompartida() {
+  const proyecto = useStore((s) => s.proyectoActual);
+  const carpetasCompartidas = useStore((s) => s.carpetasCompartidas);
+  const setCarpetaCompartida = useStore((s) => s.setCarpetaCompartida);
+  const showToast = useStore((s) => s.showToast);
+  const [actual, setActual] = useState<string | null>(null);
+  const [ruta, setRuta] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    api
+      .carpetaCompartida(() => carpetasCompartidas[proyecto] ?? null)
+      .then((r) => {
+        setActual(r);
+        setRuta(r ?? '');
+      })
+      .catch((e) => setError(mensajeDeError(e)));
+  }, [proyecto, carpetasCompartidas]);
+
+  const guardar = async () => {
+    if (!ruta.trim()) return setError('Elige una carpeta.');
+    setGuardando(true);
+    try {
+      const guardada = await api.configurarCarpetaCompartida(ruta.trim(), () => ruta.trim());
+      setCarpetaCompartida(proyecto, guardada);
+      showToast('Carpeta compartida guardada');
+    } catch (e) {
+      setError(mensajeDeError(e));
+    }
+    setGuardando(false);
+  };
+
+  return (
+    <Seccion title="Carpeta compartida">
+      <div className="space-y-2 text-sm">
+        <div className="text-muted">
+          Actual: <span className="font-mono text-xs text-text">{actual ?? 'sin configurar'}</span>
+        </div>
+        <SelectorCarpeta
+          value={ruta}
+          onChange={(v) => {
+            setRuta(v);
+            setError(null);
+          }}
+          placeholder="Carpeta de Drive/OneDrive"
+          titulo={`Carpeta compartida de ${proyecto}`}
+        />
+        {error && <p className="text-[11px] text-red-300">{error}</p>}
+        <div className="flex justify-end">
+          <button
+            className="btn-outline btn-sm"
+            disabled={guardando || !ruta.trim() || ruta.trim() === actual}
+            onClick={() => void guardar()}
+          >
+            {guardando ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </div>
     </Seccion>
   );
 }

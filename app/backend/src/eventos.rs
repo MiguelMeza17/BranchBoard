@@ -29,6 +29,8 @@ use crate::modelo::normalizar_email;
 pub const CARPETA_OPS: &str = "ops";
 /// Ajustes de esta máquina para el proyecto (dentro de su carpeta local).
 const ARCHIVO_LOCAL: &str = "local.json";
+/// Marca, dentro de la carpeta compartida, de qué proyecto es.
+pub const ARCHIVO_MARCA: &str = "branchboard-proyecto.json";
 
 /// Un evento, tal como queda en el archivo de `ops/`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -210,10 +212,39 @@ pub fn carpeta_compartida(carpeta_proyecto: &Path) -> Resultado<Option<PathBuf>>
     Ok(leer_locales(carpeta_proyecto)?.carpeta_compartida)
 }
 
+/// Marca que dice de qué proyecto es una carpeta compartida.
+#[derive(Debug, Serialize, Deserialize)]
+struct MarcaProyecto {
+    /// El mismo identificador que la carpeta local del proyecto (`<org>-<repo>`).
+    proyecto: String,
+}
+
+/// Lo que hay en la carpeta que se eligió como compartida.
+fn leer_marca(compartida: &Path) -> Resultado<Option<MarcaProyecto>> {
+    match std::fs::read_to_string(compartida.join(ARCHIVO_MARCA)) {
+        Ok(texto) => serde_json::from_str(&texto).map(Some).map_err(|_| {
+            Error::Validacion(format!(
+                "El archivo {ARCHIVO_MARCA} de esa carpeta está dañado"
+            ))
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Guarda la carpeta compartida del proyecto en esta máquina. Tiene que ser una
-/// carpeta que ya existe (la que sincroniza Drive/OneDrive) y no la carpeta local
-/// de datos de la app.
-pub fn configurar_carpeta_compartida(carpeta_proyecto: &Path, ruta: &str) -> Resultado<PathBuf> {
+/// carpeta que ya existe (la que sincroniza Drive/OneDrive), no la carpeta local
+/// de datos de la app, y **la de este proyecto**:
+/// - si tiene la marca `branchboard-proyecto.json`, debe ser de este proyecto;
+/// - si no la tiene, solo quien `puede_inicializar` (el Administrador) la deja
+///   como carpeta del proyecto y le escribe la marca. A los demás se les pide la
+///   carpeta que les compartió el Administrador, así nadie publica sus cambios en
+///   una carpeta que el resto del equipo nunca lee.
+pub fn configurar_carpeta_compartida(
+    carpeta_proyecto: &Path,
+    ruta: &str,
+    puede_inicializar: bool,
+) -> Resultado<PathBuf> {
     let ruta = PathBuf::from(ruta.trim());
     if !ruta.is_absolute() {
         return Err(Error::Validacion(
@@ -238,6 +269,34 @@ pub fn configurar_carpeta_compartida(carpeta_proyecto: &Path, ruta: &str) -> Res
         return Err(Error::Validacion(
             "La carpeta compartida no puede ser la carpeta local de datos de BranchBoard".into(),
         ));
+    }
+    let id = local
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .ok_or_else(|| Error::Interno("La carpeta local del proyecto no tiene nombre".into()))?;
+    match leer_marca(&ruta)? {
+        Some(marca) if marca.proyecto == id => {}
+        Some(marca) => {
+            return Err(Error::Validacion(format!(
+                "Esa carpeta es de otro proyecto ({}). Elige la carpeta compartida de este proyecto",
+                marca.proyecto
+            )))
+        }
+        None if puede_inicializar => {
+            let json = serde_json::to_string_pretty(&MarcaProyecto { proyecto: id })
+                .map_err(|e| Error::Interno(e.to_string()))?;
+            let mut archivo = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(ruta.join(ARCHIVO_MARCA))?;
+            archivo.write_all(json.as_bytes())?;
+            archivo.sync_all()?;
+        }
+        None => {
+            return Err(Error::Validacion(format!(
+                "Esa carpeta todavía no es la de ningún proyecto de BranchBoard. Elige la carpeta que te compartió el Administrador (tiene el archivo {ARCHIVO_MARCA}); si acabas de recibirla, espera a que Drive/OneDrive termine de sincronizarla"
+            )))
+        }
     }
     let mut ajustes = leer_locales(carpeta_proyecto)?;
     ajustes.carpeta_compartida = Some(ruta.clone());
@@ -401,6 +460,48 @@ mod tests {
     }
 
     #[test]
+    fn la_carpeta_tiene_que_ser_la_de_este_proyecto() {
+        let datos = tempfile::tempdir().unwrap();
+        let proyecto = datos.path().join("proyectos").join("MiguelM17-Juego");
+        let nube = tempfile::tempdir().unwrap();
+        let ruta = nube.path().to_string_lossy().to_string();
+
+        // Sin marca, quien no es Administrador no puede dejarla como la del proyecto.
+        let e = configurar_carpeta_compartida(&proyecto, &ruta, false).unwrap_err();
+        assert!(
+            e.to_string().contains("te compartió el Administrador"),
+            "{e}"
+        );
+        assert!(!nube.path().join(ARCHIVO_MARCA).exists());
+        assert_eq!(carpeta_compartida(&proyecto).unwrap(), None);
+
+        // El Administrador sí, y le deja la marca.
+        configurar_carpeta_compartida(&proyecto, &ruta, true).unwrap();
+        let marca: MarcaProyecto = serde_json::from_str(
+            &std::fs::read_to_string(nube.path().join(ARCHIVO_MARCA)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(marca.proyecto, "MiguelM17-Juego");
+
+        // Con la marca, cualquiera del equipo la elige (otra máquina, mismo proyecto).
+        let otra_maquina = tempfile::tempdir().unwrap();
+        let proyecto_otra = otra_maquina
+            .path()
+            .join("proyectos")
+            .join("MiguelM17-Juego");
+        configurar_carpeta_compartida(&proyecto_otra, &ruta, false).unwrap();
+
+        // Pero no desde otro proyecto.
+        let ajeno = otra_maquina.path().join("proyectos").join("MiguelM17-Otro");
+        let e = configurar_carpeta_compartida(&ajeno, &ruta, true).unwrap_err();
+        assert!(
+            e.to_string().contains("otro proyecto (MiguelM17-Juego)"),
+            "{e}"
+        );
+        assert_eq!(carpeta_compartida(&ajeno).unwrap(), None);
+    }
+
+    #[test]
     fn la_ruta_guardada_no_lleva_el_prefijo_extendido() {
         assert_eq!(
             sin_prefijo_extendido(PathBuf::from(r"\\?\C:\Users\ana\OneDrive")),
@@ -416,7 +517,7 @@ mod tests {
         let datos = tempfile::tempdir().unwrap();
         let proyecto = datos.path().join("proyectos").join("p");
         let guardada =
-            configurar_carpeta_compartida(&proyecto, &nube.path().to_string_lossy()).unwrap();
+            configurar_carpeta_compartida(&proyecto, &nube.path().to_string_lossy(), true).unwrap();
         assert!(
             !guardada.to_string_lossy().starts_with(r"\\?\"),
             "{}",
@@ -433,21 +534,21 @@ mod tests {
         assert_eq!(carpeta_ops(&proyecto).unwrap_err().codigo(), "validacion");
 
         let ruta =
-            configurar_carpeta_compartida(&proyecto, &nube.path().to_string_lossy()).unwrap();
+            configurar_carpeta_compartida(&proyecto, &nube.path().to_string_lossy(), true).unwrap();
         assert_eq!(carpeta_compartida(&proyecto).unwrap(), Some(ruta.clone()));
         assert_eq!(carpeta_ops(&proyecto).unwrap(), ruta.join(CARPETA_OPS));
 
         let no_existe = nube.path().join("no-existe");
         for mala in ["relativa/carpeta", "", &no_existe.to_string_lossy()] {
             assert_eq!(
-                configurar_carpeta_compartida(&proyecto, mala)
+                configurar_carpeta_compartida(&proyecto, mala, true)
                     .unwrap_err()
                     .codigo(),
                 "validacion",
                 "{mala}"
             );
         }
-        let local = configurar_carpeta_compartida(&proyecto, &datos.path().to_string_lossy());
+        let local = configurar_carpeta_compartida(&proyecto, &datos.path().to_string_lossy(), true);
         assert_eq!(
             local.unwrap_err().codigo(),
             "validacion",
@@ -485,7 +586,7 @@ mod tests {
         let proyecto = datos.path().join("proyectos").join("prueba-91");
 
         let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            configurar_carpeta_compartida(&proyecto, &compartida.to_string_lossy()).unwrap();
+            configurar_carpeta_compartida(&proyecto, &compartida.to_string_lossy(), true).unwrap();
             let ops = carpeta_ops(&proyecto).unwrap();
             let db = Db::en_memoria().unwrap();
             let c = db.conexion();
@@ -527,6 +628,20 @@ mod tests {
                 assert_eq!(leido.payload["texto"], "ñandú y acentos");
                 assert!(ya_aplicado(c, id).unwrap());
             }
+
+            // La marca del proyecto quedó en la carpeta de OneDrive y la reconoce otra
+            // "máquina" del mismo proyecto aunque no sea Administrador.
+            assert!(compartida.join(ARCHIVO_MARCA).is_file());
+            let otra = tempfile::tempdir().unwrap();
+            let mismo = otra.path().join("proyectos").join("prueba-91");
+            configurar_carpeta_compartida(&mismo, &compartida.to_string_lossy(), false).unwrap();
+            // Una carpeta de OneDrive sin marca no se le acepta a quien no es Administrador.
+            let vacia = compartida.join("otra-carpeta");
+            std::fs::create_dir_all(&vacia).unwrap();
+            let e =
+                configurar_carpeta_compartida(&mismo, &vacia.to_string_lossy(), false).unwrap_err();
+            println!("carpeta sin marca, sin ser Administrador: {e}");
+            assert_eq!(e.codigo(), "validacion");
         }));
         let borrada = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", borrada.is_ok());
