@@ -52,6 +52,21 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
 - Los primeros comandos que publican eventos llegan con #93 (usuarios, firmados) y #95 (tareas).
 - Prueba en el entorno real: `BB_PRUEBA_CARPETA_COMPARTIDA=<carpeta de OneDrive/Drive> cargo test --lib entorno_real_eventos -- --ignored`.
 
+**Implementado — leer y aplicar eventos de otras máquinas (2026-11-14, issue #92)** en `app/backend/src/eventos/lectura.rs`:
+- `eventos::sincronizar(conexion, ops, carpeta_proyecto, ahora, aplicar)` lee de `ops/` solo los `.json` que no están en `eventos_aplicados`; los temporales (`.…tmp`) y lo que no es `.json` se ignoran. Un archivo ilegible (a medio sincronizar) se salta **sin marcarlo** y se reintenta en el siguiente escaneo.
+- **Orden igual en todas las máquinas**: por `timestamp`, luego por `usuario`, y al final por nombre de archivo, para que el orden sea total.
+- **Reloj adelantado**: si un evento declara más de 5 minutos en el futuro respecto al reloj de esta máquina, se ordena por su **hora de llegada** (fecha del archivo en `ops/`) y se anota en `eventos.log` de la carpeta local del proyecto. Es solo un log: no se avisa al equipo.
+- **Cada evento en su propia transacción**, con el aplicador de su tipo (`lectura::aplicar_evento`):
+  - `Aplicado`: se marca.
+  - `Descartado(motivo)`: lo que haya escrito el aplicador se deshace, el evento se marca igual (el resultado es el mismo en todas las máquinas) y se anota en el log. Es el caso de la doble toma de arriba.
+  - `Desconocido`: lo escribió una versión más nueva de la app; no se marca y queda pendiente hasta que esta máquina se actualice.
+  - Un error de la base detiene el escaneo sin marcar el evento.
+  - **Hoy no hay tipos registrados**: cada comando que pase a eventos registra el suyo (#93 usuarios, #95 tareas…).
+- **Comando `sincronizar_eventos()`** (todos los roles): devuelve `{ aplicados, descartados, desconocidos, ilegibles }`. Si ya hay un escaneo en curso (`AppState::iniciar_sincronizacion`) o no hay carpeta compartida, no hace nada.
+- **Cuándo se escanea** (frontend, `lib/useSincronizacionEventos.ts`, montado en `App`): al entrar al proyecto, al volver la ventana a primer plano (`focus` / `visibilitychange`) y cada 2 minutos. Un fallo no se muestra cada vez; se reintenta en la siguiente revisión.
+- **El frontend se refresca solo**: si `aplicados > 0`, sube `versionDatos` en el store. **Toda pantalla que lea datos del backend** (desde #95) lo pone como dependencia de su carga para volver a pedirlos sola.
+- Prueba en el entorno real: `BB_PRUEBA_CARPETA_COMPARTIDA=<carpeta de OneDrive/Drive> cargo test --lib entorno_real_dos_maquinas -- --ignored` (dos máquinas simuladas, cada una con su base y su carpeta local, sobre la misma carpeta de OneDrive).
+
 **Caso concreto — doble toma de la misma tarea**: dos personas le dan clic a "tomar tarea" sobre la misma tarea casi al mismo tiempo, cada una en su propia máquina, sin saber todavía que la otra lo hizo. Al aplicar el evento `tomar_tarea` de cada una, el backend solo lo efectúa si, según el estado ya calculado hasta ese punto, la tarea sigue en `'por hacer'`; si no, el evento se descarta. Así queda un **"ganador"** (a quien se le queda asignada la tarea) y un **"perdedor"** (a quien se le descarta el evento). Si el evento descartado es el que generó esta misma máquina (la persona pensó que la había tomado), se dispara una notificación tipo "X se adelantó — tu toma de la tarea Y fue revertida", y el frontend corrige la UI optimista que había mostrado. El resultado es el mismo que el `UPDATE ... WHERE estado='por hacer'` original, pero aplicado de forma diferida y determinista en vez de en vivo contra una BD compartida que no existe.
 
 **Corregido — revertir el `.db` no deshace lo que ya pasó en Unity VC, y un evento "tardío" no siempre debería ganar solo por tener timestamp más viejo**: el diseño de arriba, aplicado tal cual, tiene dos huecos:

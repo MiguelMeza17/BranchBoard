@@ -1,7 +1,7 @@
 //! Estado compartido de la app, registrado en Tauri (`State<AppState>`).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::db::Db;
@@ -15,6 +15,8 @@ pub struct AppState {
     /// Cuántas operaciones largas (`cm`, etc.) hay corriendo. Mientras sea mayor
     /// que 0 no se debe cerrar la app (ver "Bloquear el cierre" en BACKEND.md).
     operaciones_en_curso: AtomicUsize,
+    /// `true` mientras se escanea `ops/`: dos escaneos a la vez no tienen sentido.
+    sincronizando: AtomicBool,
     /// Base de datos del proyecto abierto; `None` mientras no se entra a ninguno.
     db: Mutex<Option<Db>>,
     /// Correo de quien usa la app (`cm whoami`); `None` sin sesión de Unity VC.
@@ -128,6 +130,26 @@ impl AppState {
         self.operaciones_en_curso.fetch_add(1, Ordering::SeqCst);
         GuardaOperacion { estado: self }
     }
+
+    /// Marca que empezó un escaneo de `ops/`; `None` si ya hay uno corriendo.
+    /// Termina solo cuando se suelta la guarda.
+    pub fn iniciar_sincronizacion(&self) -> Option<GuardaSincronizacion<'_>> {
+        self.sincronizando
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| GuardaSincronizacion { estado: self })
+    }
+}
+
+/// Mientras exista, hay un escaneo de `ops/` en curso.
+pub struct GuardaSincronizacion<'a> {
+    estado: &'a AppState,
+}
+
+impl Drop for GuardaSincronizacion<'_> {
+    fn drop(&mut self) {
+        self.estado.sincronizando.store(false, Ordering::SeqCst);
+    }
 }
 
 pub struct GuardaOperacion<'a> {
@@ -145,6 +167,19 @@ impl Drop for GuardaOperacion<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn un_solo_escaneo_de_ops_a_la_vez() {
+        let estado = AppState::default();
+        let primera = estado.iniciar_sincronizacion();
+        assert!(primera.is_some());
+        assert!(estado.iniciar_sincronizacion().is_none(), "ya hay uno");
+        drop(primera);
+        assert!(
+            estado.iniciar_sincronizacion().is_some(),
+            "al terminar se puede otra vez"
+        );
+    }
 
     #[test]
     fn con_db_exige_un_proyecto_abierto() {

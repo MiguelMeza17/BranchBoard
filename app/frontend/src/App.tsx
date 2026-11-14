@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
 import { api } from './lib/api';
+import { useSincronizacionEventos } from './lib/useSincronizacionEventos';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
@@ -40,6 +41,9 @@ export function App() {
       });
     return () => dejarDeEscuchar?.();
   }, [showToast]);
+
+  // Dentro de un proyecto, los cambios de las demás máquinas llegan solos (ops/, #92).
+  useSincronizacionEventos(cmSesionActiva && accesoCompletado);
 
   // Debajo de la pantalla de carga va siempre lo que sigue después de ella: sin sesión o sin haber
   // entrado a un proyecto, la pantalla de acceso. Así, al desvanecerse la carga, nunca se ve la

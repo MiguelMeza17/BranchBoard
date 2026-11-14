@@ -12,6 +12,12 @@
 //! - La carpeta compartida (Drive/OneDrive) es de cada máquina: se guarda en
 //!   `local.json` de la carpeta local del proyecto, no en la base (que se puede
 //!   reconstruir o restaurar sin perder la ruta).
+//!
+//! Leer y aplicar los de otras máquinas (#92): ver [`lectura`].
+
+pub mod lectura;
+
+pub use lectura::{sincronizar, Aplicacion, ResumenSincronizacion};
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
