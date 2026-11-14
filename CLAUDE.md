@@ -53,3 +53,50 @@ Todo el desarrollo del backend se prueba contra el repositorio de pruebas de Uni
 - **Qué va en el PR**: una sección "Prueba en el entorno real" con lo que se ejecutó y lo que pasó. Las casillas de "Hecho cuando" del issue solo se marcan después de esa prueba. Si algo no se pudo probar (por ejemplo, un caso que necesita una cuenta sin rol de administrador), se dice en el PR y el issue no se cierra como completo (`Refs #N` en vez de `Closes #N`).
 - **Nunca** se prueba en repositorios de proyectos reales (por ejemplo VirusTF).
 - Al copiar salidas a issues o PRs: sin correos ni tokens. Las respuestas del servidor pueden traer tokens (ver `documentacion/SEGURIDAD.md`), así que se sanean antes de pegarlas.
+
+### Cómo se está construyendo el backend
+
+Lo que ya existe (2026-11-14) y las reglas que se siguen al agregar algo nuevo:
+
+- **Dónde va cada cosa** (`app/backend/src/`):
+  - `cm/`: todo subproceso pasa por `cm::Comando` (argumentos separados, nunca un texto de shell; tiempo máximo; bloquea el cierre de la app mientras corre). `cm/lectura.rs`: `whoami`, workspaces y rama actual.
+  - `servidor/`: API REST de Unity VC. `region` (URL de la organización, de `cloudregions.conf`), `sanear` (borra `password`/`token`… de toda respuesta), `cliente` (HTTP con el PAT) y `pat` (`servidor::conectar(estado, llavero, email, org)` crea el PAT, lo guarda en el llavero de Windows y lo renueva si da 401).
+  - `ramas.rs`: nombre `<id>-<título>`, crear ramas (también la del padre que falte), límite de 5 niveles, nunca check-in a `main`/`dev`, `cm switch`.
+  - `checkins.rs`: check-ins de una rama → tabla `commits`.
+  - `identidad/`: llaves, firmas, permisos, equipo y `acceso` (`entrar_a_proyecto`).
+  - `db/`: SQLite. `comandos/`: lo que llama el frontend.
+- **API o `cm`**: lo que pasa en el **servidor** (crear ramas, merge, listar ramas y changesets, dueño del repo) va por la API REST con `servidor::conectar`. Lo que toca el **workspace** de quien trabaja (`cm whoami`, `cm status`, `cm switch`, `cm checkin`) va por `cm`. **Nunca** `cm configure`: pisa la sesión de la persona.
+- **Primero se prueba en vivo, después se programa**: antes de escribir el código, se corre el comando o el endpoint a mano contra BranchBoard-Pruebas para ver la respuesta real (sin imprimir tokens ni correos), y lo comprobado se anota en `documentacion/BACKEND.md`. Así salieron, por ejemplo, que `task/<id>` no se puede crear (la `/` es un nivel) y que `cm switch` se cuelga con cambios pendientes.
+- **Código que se puede probar sin red**: cada llamada a `cm` o a la API pasa su salida a una función pura (`interpretar_*`, `planear_cadena`, `asegurar_pat`, `acceso::entrar` con `es_dueno` como función) que se prueba con la salida real copiada como ejemplo.
+- **Seguridad**: toda respuesta de la API pasa por `servidor::sanear` antes de usarse, nunca se registra cruda, y ni el PAT ni el token aparecen en `Debug` ni en mensajes de error.
+- **Decisiones**: si el texto de un issue choca con una decisión más nueva de `documentacion/BACKEND.md`, gana la más nueva y se explica en el PR (ej. #84 lee por la API y no con `cm log`). Lo que decide el usuario durante un issue se anota en BACKEND.md y en el issue al que le toca (ej. la rama del padre que falte, anotada en #96).
+- **Frontend al día**: si una decisión del backend cambia lo que asume el mockup (nombres de rama, flujo de acceso), se cambian también `app/frontend` y `documentacion/FRONTEND.md` en el mismo PR.
+
+### Cómo se prueba cada cosa
+
+1. **Pruebas unitarias**, en `app/backend`: `cargo test`, `cargo clippy --all-targets` (sin avisos) y `cargo fmt`.
+2. **Frontend**, en `app/frontend`: `npx tsc --noEmit` y `npm run build`.
+3. **Pruebas en el entorno real**: son tests `#[ignore]` llamados `entorno_real_*`. Corren contra BranchBoard-Pruebas con la sesión de `cm` de quien los ejecuta:
+
+   ```
+   cd app/backend
+   BB_PRUEBA_ORG=MiguelM17 BB_PRUEBA_REPO=BranchBoard-Pruebas/BranchBoard-Pruebas \
+     cargo test --lib entorno_real -- --ignored --nocapture --test-threads=1
+   ```
+
+   | Prueba | Qué comprueba |
+   |---|---|
+   | `servidor::pat::…::entorno_real_crear_usar_y_renovar_el_pat` | Crea el PAT, lo guarda en el llavero, la API responde, lo reusa, y con un token dañado (401) lo renueva |
+   | `ramas::…::entorno_real_ramas_de_tareas` | Rama desde la cabeza de `dev`, subtarea y nivel 5, rechazo del nivel 6 y de la repetida, rama del padre que falte, `cm switch` y bloqueo por cambios sin check-in |
+   | `checkins::…::entorno_real_checkins_de_una_rama` | Dos check-ins de verdad (uno con descripción) se leen con título, descripción, autor y hora, sin duplicar |
+   | `comandos::acceso::…::entorno_real_entrar_a_proyecto` | Con la cuenta **dueña**: configura el proyecto y entra como Administrador; la segunda vez entra sin configurar. **Falta** correrla con la cuenta de drax2311 (no dueña), que debe dar `esperar_dueno` |
+
+4. **Reglas de las pruebas reales**:
+   - Cada una deja el repo como estaba: borra sus ramas (con `cm branch delete --delete-changesets` si tienen check-ins), sus workspaces temporales y revoca los PAT que crea.
+   - Los nombres llevan la hora (ej. `T-9132840-…`) para no chocar entre corridas.
+   - Ninguna prueba puede quedarse esperando una respuesta de `cm` (lo que pasa con `cm switch` y cambios pendientes): se revisa antes.
+   - Al terminar se comprueba que no quedó nada: `cm find branch "on repository 'BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity'" --format="{name}" --nototal` (solo las ramas originales), `cm wk list` (ningún `bb-prueba-*`) y `cm accesstoken list MiguelM17@unity` (ningún PAT sobrante).
+   - Todo issue nuevo de backend que use `cm` o la API agrega su propia prueba `entorno_real_*` y la anota en esta tabla.
+5. **Antes de fusionar**:
+   - Si dos PRs tocan los mismos archivos, se trae `dev` a la segunda rama y se vuelven a correr **todas** las pruebas reales antes de fusionarla.
+   - Los issues se cierran a mano después del merge a `dev`, porque `Closes #N` solo actúa al llegar a `main`.
