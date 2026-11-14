@@ -26,6 +26,12 @@ pub enum Error {
     /// `cm` respondió con error.
     #[error("Unity Version Control respondió con un error: {0}")]
     Cm(String),
+    /// La API REST del servidor de Unity VC respondió con error o no se pudo usar.
+    #[error("El servidor de Unity VC respondió con un error: {0}")]
+    ServidorUnityVc(String),
+    /// El token de acceso (PAT) ya no sirve: venció o se revocó (HTTP 401).
+    #[error("El token de acceso de Unity VC ya no es válido")]
+    TokenServidorInvalido,
     /// Falló SQLite.
     #[error("Error de la base de datos: {0}")]
     BaseDatos(String),
@@ -53,6 +59,8 @@ impl Error {
             Error::CmNoInstalado => "cm_no_instalado",
             Error::SinSesionUnityVc => "sin_sesion_unity_vc",
             Error::Cm(_) => "cm",
+            Error::ServidorUnityVc(_) => "servidor_unity_vc",
+            Error::TokenServidorInvalido => "token_servidor_invalido",
             Error::BaseDatos(_) => "base_datos",
             Error::Archivos(_) => "archivos",
             Error::LlaveCifrada => "llave_cifrada",

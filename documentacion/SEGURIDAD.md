@@ -194,7 +194,8 @@ Se probó la [API REST del servidor de Unity VC](https://docs.unity.com/en-us/se
 - Se crea una vez por usuario con `cm accesstoken create` (usa la sesión SSO de su cliente, sin contraseña) y se lee con `cm accesstoken reveal` dentro del backend, sin mostrarlo en pantalla.
 - Se guarda en el **llavero del sistema operativo** (Windows Credential Manager, vía crate `keyring`), nunca en la SQLite, en `ops/`, en archivos de configuración ni en la carpeta de Drive/OneDrive.
 - Viaja solo en el header `Authorization: Bearer` por HTTPS hacia el servidor de la organización; nunca en la URL.
-- Al cerrar sesión, al [eliminar un usuario](./BACKEND.md#identidad-de-usuario) o si hay sospecha de filtración: `cm accesstoken revoke <id>` y borrarlo del llavero. El `id` del PAT (no el secreto) sí se puede guardar para poder revocarlo.
+- Al cerrar sesión, al [eliminar un usuario](./BACKEND.md#identidad-de-usuario) o si hay sospecha de filtración: `cm accesstoken revoke <id>` y borrarlo del llavero. La revocación no es inmediata (el token puede seguir sirviendo hasta ~1 h). El `id` del PAT se guarda en el mismo llavero, junto al secreto, para poder revocarlo.
+- **Implementado (2026-11-14, #159)** en `app/backend/src/servidor/` (ver [BACKEND.md](./BACKEND.md#acceso-a-la-api-rest-del-servidor-de-unity-vc-pat-decidido-2026-11-12)). Las pruebas comprueban que el token no sale en `Debug` ni en errores y que el saneado borra `owner.password` a cualquier profundidad.
 - La red la hace el **proceso Rust** (ej. `reqwest`), no el `fetch` de la webview — se mantiene la regla de [sin capability de red/HTTP para la webview](#allowlist-de-capabilities-de-tauri-resuelto).
 
 ## Pendiente por definir
