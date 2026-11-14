@@ -271,6 +271,12 @@ interface State {
    */
   carpetasCompartidas: Record<string, string>;
   setCarpetaCompartida: (proyecto: string, ruta: string) => void;
+  /**
+   * Sube cada vez que llegan cambios de otras máquinas (`sincronizar_eventos`). Las pantallas que leen
+   * del backend lo ponen como dependencia para volver a pedir sus datos solas.
+   */
+  versionDatos: number;
+  subirVersionDatos: () => void;
 
   // datos
   usuarios: Usuario[];
@@ -466,6 +472,8 @@ export const useStore = create<State>((set, get) => {
   carpetasCompartidas: { [fx.PROYECTO_NOMBRE]: `C:\\Users\\ana\\OneDrive\\${fx.PROYECTO_NOMBRE}` },
   setCarpetaCompartida: (proyecto, ruta) =>
     set((s) => ({ carpetasCompartidas: { ...s.carpetasCompartidas, [proyecto]: ruta } })),
+  versionDatos: 0,
+  subirVersionDatos: () => set((s) => ({ versionDatos: s.versionDatos + 1 })),
 
   usuarios: [...fx.usuarios],
   tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),

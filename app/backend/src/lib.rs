@@ -62,6 +62,7 @@ pub fn run() {
             datos::restaurar_backup,
             comandos_eventos::carpeta_compartida,
             comandos_eventos::configurar_carpeta_compartida,
+            comandos_eventos::sincronizar_eventos,
             comandos_identidad::exportar_llave_firma,
             usuarios::listar_usuarios,
             usuarios::crear_usuario,

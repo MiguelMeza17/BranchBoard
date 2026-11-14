@@ -86,6 +86,16 @@ export interface ProgresoActualizacion {
 /** Versión que muestra el mockup en el navegador. */
 const VERSION_MOCKUP = '0.1.0';
 
+/** Resultado de un escaneo de `ops/` (`sincronizar_eventos`). */
+export interface ResumenSincronizacion {
+  aplicados: number;
+  descartados: number;
+  /** Escritos por una versión más nueva de la app: quedan pendientes hasta actualizar. */
+  desconocidos: number;
+  /** Archivos que todavía no se pueden leer (ej. a medio sincronizar): se reintentan. */
+  ilegibles: number;
+}
+
 /**
  * Qué ve la persona al abrir un workspace (`entrar_a_proyecto`, #89):
  * - `dentro`: entra con su rol; `configurado_ahora` = era el dueño del repo y el proyecto se configuró.
@@ -150,6 +160,18 @@ export const api = {
    */
   configurarCarpetaCompartida: (ruta: string, mockup: () => string) =>
     llamar<string>('configurar_carpeta_compartida', { ruta }, mockup),
+
+  /**
+   * Escanea `ops/` y aplica los cambios de las demás máquinas (#92). En el mockup no hay otras máquinas:
+   * responde que no llegó nada.
+   */
+  sincronizarEventos: () =>
+    llamar<ResumenSincronizacion>('sincronizar_eventos', undefined, () => ({
+      aplicados: 0,
+      descartados: 0,
+      desconocidos: 0,
+      ilegibles: 0,
+    })),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
