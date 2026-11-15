@@ -29,10 +29,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{Error, Resultado};
+use crate::identidad::llaves::{self, LlavePrivada};
 use crate::modelo::normalizar_email;
 
 /// Carpeta de eventos dentro de la carpeta compartida del proyecto.
 pub const CARPETA_OPS: &str = "ops";
+/// Tipos de evento que solo un Administrador (o un Líder certificado) puede
+/// emitir: llevan `firma_admin` y sin una firma válida se descartan (issue #93).
+/// `compactar_eventos` llega con el issue #94 y entra aquí desde ya.
+pub const TIPOS_FIRMADOS: &[&str] = &[
+    "crear_usuario",
+    "cambiar_rol",
+    "confirmar_usuario",
+    "eliminar_usuario",
+    "compactar_eventos",
+];
 /// Ajustes de esta máquina para el proyecto (dentro de su carpeta local).
 const ARCHIVO_LOCAL: &str = "local.json";
 /// Marca, dentro de la carpeta compartida, de qué proyecto es.
@@ -51,6 +62,11 @@ pub struct Evento {
     pub timestamp: String,
     #[serde(default)]
     pub payload: Value,
+    /// Solo en los [`TIPOS_FIRMADOS`]: firma Ed25519 (base64) del resto del
+    /// evento, hecha con la llave privada del Administrador o de un Líder
+    /// certificado (issue #93). Quien lo lee la verifica antes de aplicarlo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firma_admin: Option<String>,
 }
 
 impl Evento {
@@ -71,7 +87,39 @@ impl Evento {
             usuario: normalizar_email(usuario),
             timestamp: momento.to_rfc3339_opts(SecondsFormat::Millis, true),
             payload,
+            firma_admin: None,
         }
+    }
+
+    /// `true` si este tipo de evento tiene que venir firmado.
+    pub fn exige_firma(&self) -> bool {
+        TIPOS_FIRMADOS.contains(&self.tipo.as_str())
+    }
+
+    /// Lo que se firma: el evento completo sin `firma_admin`, como JSON compacto.
+    /// Las dos puntas lo arman desde los mismos campos, así que coincide aunque
+    /// el archivo se haya escrito con otro formato.
+    fn mensaje_firmado(&self) -> String {
+        let sin_firma = Evento {
+            firma_admin: None,
+            ..self.clone()
+        };
+        serde_json::to_string(&sin_firma).unwrap_or_default()
+    }
+
+    /// Firma el evento con `llave` (la del Administrador o la de un Líder).
+    pub fn firmar(mut self, llave: &LlavePrivada) -> Self {
+        self.firma_admin = Some(llave.firmar(&self.mensaje_firmado()));
+        self
+    }
+
+    /// `true` si `firma_admin` es la firma de este evento hecha con la llave
+    /// privada que corresponde a `publica`. Sin firma, o con cualquier campo
+    /// cambiado después de firmar, da `false`.
+    pub fn firma_valida(&self, publica: &str) -> bool {
+        self.firma_admin
+            .as_deref()
+            .is_some_and(|firma| llaves::verificar(publica, &self.mensaje_firmado(), firma))
     }
 }
 
@@ -381,6 +429,57 @@ mod tests {
         );
         assert_eq!(uuid().len(), 32);
         assert_ne!(uuid(), uuid());
+    }
+
+    #[test]
+    fn la_firma_cubre_todo_el_evento_y_se_verifica_tras_leerlo() {
+        let dir = tempfile::tempdir().unwrap();
+        llaves::generar_llaves_admin(dir.path(), None).unwrap();
+        let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
+        let publica = admin.publica();
+
+        let mut evento = evento_de_prueba();
+        evento.tipo = "cambiar_rol".into();
+        assert!(evento.exige_firma());
+        assert!(!evento.firma_valida(&publica), "sin firma no vale");
+        assert!(
+            !serde_json::to_value(&evento)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("firma_admin"),
+            "sin firmar, el campo no se escribe"
+        );
+
+        let firmado = evento.clone().firmar(&admin);
+        assert!(firmado.firma_valida(&publica));
+        // Escrito y leído otra vez (con formato bonito), sigue valiendo.
+        let ops = dir.path().join(CARPETA_OPS);
+        let id = escribir_evento(&ops, &firmado).unwrap();
+        let leido: Evento =
+            serde_json::from_str(&std::fs::read_to_string(ops.join(&id)).unwrap()).unwrap();
+        assert_eq!(leido, firmado);
+        assert!(leido.firma_valida(&publica));
+
+        // Cualquier campo cambiado después de firmar la invalida.
+        let mut payload = firmado.clone();
+        payload.payload = json!({ "titulo": "Menú", "rol": "Administrador" });
+        let mut usuario = firmado.clone();
+        usuario.usuario = "otro@virustf.dev".into();
+        let mut tipo = firmado.clone();
+        tipo.tipo = "eliminar_usuario".into();
+        let mut momento = firmado.clone();
+        momento.timestamp = "2026-11-14T18:30:05.124Z".into();
+        let mut basura = firmado.clone();
+        basura.firma_admin = Some("no es una firma".into());
+        for alterado in [payload, usuario, tipo, momento, basura] {
+            assert!(!alterado.firma_valida(&publica), "{alterado:?}");
+        }
+        // Ni una llave que no es la del proyecto.
+        let otro = tempfile::tempdir().unwrap();
+        let intrusa = llaves::generar_llaves_admin(otro.path(), None).unwrap();
+        assert!(!firmado.firma_valida(&intrusa));
+        assert!(!evento_de_prueba().exige_firma(), "crear_tarea no se firma");
     }
 
     #[test]
