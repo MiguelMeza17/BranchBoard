@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use crate::db::Db;
 use crate::error::{Error, Resultado};
+use crate::identidad::acceso::RepoUnityVc;
 use crate::identidad::llaves::{self, LlavePrivada};
 use crate::identidad::permisos::{self, Acceso, UsuarioActual};
 use crate::modelo::{normalizar_email, Rol};
@@ -19,6 +20,10 @@ pub struct AppState {
     sincronizando: AtomicBool,
     /// Base de datos del proyecto abierto; `None` mientras no se entra a ninguno.
     db: Mutex<Option<Db>>,
+    /// Carpeta del workspace de Unity VC del proyecto abierto; `None` si no hay proyecto.
+    workspace: Mutex<Option<PathBuf>>,
+    /// Repositorio (`Proyecto/Repo` y `org`) de Unity VC Cloud del proyecto abierto.
+    repo: Mutex<Option<RepoUnityVc>>,
     /// Correo de quien usa la app (`cm whoami`); `None` sin sesión de Unity VC.
     usuario: Mutex<Option<String>>,
     /// Llave de firma ya abierta en esta sesión (de qué proyecto y con qué rol),
@@ -106,9 +111,40 @@ impl AppState {
         *self.db.lock().unwrap_or_else(|e| e.into_inner()) = Some(db);
     }
 
+    /// Guarda la carpeta del workspace local y el repositorio de Unity VC Cloud
+    /// del proyecto abierto.
+    pub fn fijar_workspace(&self, workspace: Option<PathBuf>, repo: Option<RepoUnityVc>) {
+        *self.workspace.lock().unwrap_or_else(|e| e.into_inner()) = workspace;
+        *self.repo.lock().unwrap_or_else(|e| e.into_inner()) = repo;
+    }
+
+    /// Carpeta del workspace de Unity VC del proyecto abierto.
+    pub fn workspace_abierto(&self) -> Resultado<PathBuf> {
+        self.workspace
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| Error::Validacion("El proyecto abierto no tiene workspace local".into()))
+    }
+
+    /// Repositorio (`Proyecto/Repo` y `org`) de Unity VC Cloud del proyecto abierto.
+    pub fn repo_abierto(&self) -> Resultado<RepoUnityVc> {
+        self.repo
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| {
+                Error::Validacion(
+                    "El proyecto abierto no tiene repositorio de Unity VC Cloud".into(),
+                )
+            })
+    }
+
     /// Cierra el proyecto abierto (al cambiar de proyecto o cerrar sesión).
     pub fn cerrar_proyecto(&self) {
         *self.db.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.workspace.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.repo.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Corre `f` con la base de datos del proyecto abierto.

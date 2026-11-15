@@ -889,6 +889,20 @@ export const useStore = create<State>((set, get) => {
     const tomada = get().tareas.find((x) => x.id === id);
     const quien = get().usuarios.find((u) => u.email === email);
     if (tomada && quien && !puedeTomarTarea(quien.rol, tomada, get().tareas)) return;
+    if (enTauri()) {
+      void api
+        .tomarTarea(id, () => [])
+        .then((actualizadas) => {
+          const porId = new Map(actualizadas.map((x) => [x.id, x]));
+          const final = actualizadas.find((x) => x.id === id);
+          set((st) => ({
+            tareas: normalizar(st.tareas.map((t) => porId.get(t.id) ?? t)),
+            ramaWorkspace: final?.rama_asociada ?? st.ramaWorkspace,
+          }));
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => {
       const conPadres = conRamasDeAncestros(s.tareas, id);
       return {
