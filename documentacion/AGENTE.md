@@ -72,6 +72,7 @@ Explicaciones que el agente debería poder dar:
 - **Me dice "todavía no es la de ningún proyecto".** Elegiste una carpeta sin `branchboard-proyecto.json`: no es la que compartió el Administrador, o Drive/OneDrive todavía no terminó de bajarla. Espera a que sincronice y vuelve a elegirla.
 - **Me dice "es de otro proyecto".** Esa carpeta es la de otro proyecto de BranchBoard; elige la de este.
 - **Moví mi carpeta de OneDrive.** Cámbiala en Ajustes → Carpeta compartida.
+- **¿Qué hace "Compactar eventos (+30 días)"?** (solo Administrador) Junta en un solo archivo firmado (`ops/snapshot_<fecha>.json`) todos los eventos de más de 30 días y borra los archivos sueltos antiguos para que `ops/` no crezca sin límite. Nunca corre solo: úsalo cuando el equipo haya sincronizado hace poco. Si alguien lleva más de 30 días sin abrir la app o entra en una máquina nueva, su base local se reconstruye partiendo del último snapshot más los eventos recientes.
 
 ### Ajustes → Proyecto
 

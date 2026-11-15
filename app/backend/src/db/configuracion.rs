@@ -1,7 +1,7 @@
 //! Tabla `configuracion_proyecto`: ajustes del proyecto entero, clave/valor.
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Resultado;
 use crate::modelo::normalizar_email;
@@ -11,7 +11,7 @@ pub const CLAVE_NOMBRE_PROYECTO: &str = "nombre_proyecto";
 /// Ruta de la imagen del proyecto dentro de la carpeta compartida.
 pub const CLAVE_ICONO_PROYECTO: &str = "icono_proyecto";
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ajuste {
     pub clave: String,
     pub valor: String,

@@ -46,6 +46,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("carpeta_compartida", Acceso::Roles(TODOS)),
     ("configurar_carpeta_compartida", Acceso::Roles(TODOS)),
     ("sincronizar_eventos", Acceso::Roles(TODOS)),
+    ("compactar_eventos", Acceso::Roles(SOLO_ADMIN)),
     ("exportar_llave_firma", Acceso::Roles(SOLO_ADMIN)),
     // Usuarios (issue #90). El detalle de quién cambia a quién está en `identidad::equipo`.
     ("listar_usuarios", Acceso::Roles(TODOS)),

@@ -1,13 +1,14 @@
 //! Carpeta compartida del proyecto (Drive/OneDrive) en esta máquina, donde vive
-//! `ops/` (issue #91), y escaneo de `ops/` (#92). Todos los roles.
+//! `ops/` (issue #91), escaneo de `ops/` (#92) y compactación con snapshot (#94).
 
 use chrono::Utc;
 use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
-use crate::error::Resultado;
+use crate::error::{Error, Resultado};
 use crate::estado::{llave_publica_del_proyecto, AppState};
-use crate::eventos::{self, ResumenSincronizacion};
+use crate::eventos::{self, ResumenCompactacion, ResumenSincronizacion};
+use crate::identidad::equipo::Firmante;
 use crate::modelo::Rol;
 
 /// Ruta de la carpeta compartida del proyecto abierto, o `None` si no se configuró.
@@ -56,5 +57,33 @@ pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSinc
         eventos::sincronizar(db.conexion(), &ops, &carpeta, Utc::now(), |c, e| {
             eventos::lectura::aplicar_evento(c, &publica, e)
         })
+    })
+}
+
+/// Junta los eventos de más de 30 días en `ops/snapshot_<fecha>.json` (firmado
+/// con la llave del Administrador) y los borra de `ops/` (#94). Solo
+/// Administrador; no corre solo.
+#[tauri::command]
+pub fn compactar_eventos(
+    estado: State<'_, AppState>,
+    passphrase: Option<String>,
+) -> Resultado<ResumenCompactacion> {
+    let yo = estado.exigir_permiso("compactar_eventos")?;
+    let Some(_escaneo) = estado.iniciar_sincronizacion() else {
+        return Err(Error::Validacion(
+            "Hay una sincronización de eventos en curso. Intenta de nuevo en unos segundos.".into(),
+        ));
+    };
+    let carpeta = carpeta_abierta(&estado)?;
+    let ops = eventos::carpeta_ops(&carpeta)?;
+    estado.con_db(|db| {
+        let publica = llave_publica_del_proyecto(db)?;
+        let llave = estado.llave_firma(db, &yo, passphrase.as_deref())?;
+        let firmante = Firmante {
+            email: &yo.email,
+            rol: yo.rol,
+            llave: &llave,
+        };
+        eventos::compactar(db.conexion(), &ops, &publica, &firmante, Utc::now())
     })
 }
