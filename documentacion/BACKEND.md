@@ -855,6 +855,11 @@ Consolidando todo lo definido a lo largo de la conversación en un esquema concr
 | `reporte_testing_origen_id` | nullable | si esta tarea nació de un reporte de Testing (ver abajo), referencia a ese reporte |
 | `tarea_origen_id` | nullable | tarea ya terminada (mergeada a `dev`) que esta corrige o a la que da seguimiento. **Solo referencia, no jerarquía**: `tarea_padre_id` queda en `null`, la rama sale de `dev` y la tarea lleva su propio número (`T-211`, no `T-101-3`), porque la rama de la original ya está cerrada |
 
+**Implementado — crear, editar y listar tareas (2026-11-15, issue #95)** en `app/backend/src/tareas.rs`, `comandos/tareas.rs` y `eventos/lectura.rs`:
+- `listar_tareas()` (todos los roles): devuelve todas las filas de `tareas` con `edicion_pendiente` calculada; `ListaTareas.tsx`, `ScrumBoard.tsx` y `CategoriaScrum.tsx` recargan automáticamente al entrar y cada vez que `useSincronizacionEventos` incrementa `versionDatos`.
+- `crear_tarea(datos)` y `crear_tarea_con_subtareas(datos)` (todos los roles): publican los eventos `crear_tarea` y `crear_tarea_con_subtareas` en `ops/` (y los aplican en la misma transacción). `pendiente_aprobacion = false` si quien crea es Líder o Administrador, y `true` para Desarrollador, Tester y Colaborador externo. Rechazan títulos vacíos, el tipo interno `Sin definir`, un padre en la Papelera o superar el límite de 5 niveles de ramas (máximo 2 ancestros en `tareas`).
+- `editar_tarea(id, campos)`: permitido a cualquier **Líder o Administrador** sobre tareas no eliminadas, y al **creador** sobre su propia tarea mientras siga `pendiente_aprobacion = true`. Rechaza cambiar directamente de un `sprint_id` (o `backlog_id`) a otro sin antes quitarla (`null`). Publica el evento `editar_tarea` en `ops/`.
+
 ## Modelo de datos: tabla `sprints`
 
 **Resuelto** (confirmado por el usuario: se implementan ambas variantes — con tiempo y sin tiempo — mismo patrón que `con_fecha`/`fecha_limite` en `tareas`, ver [Sprints y tareas en FRONTEND.md](./FRONTEND.md#alcance)):

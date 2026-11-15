@@ -55,9 +55,15 @@ function EtiquetaConAyuda({
 export function ListaTareas() {
   const user = useStore((s) => s.currentUser());
   const tareasAll = useStore((s) => s.tareas);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const versionDatos = useStore((s) => s.versionDatos);
   const crearTareaConSubtareas = useStore((s) => s.crearTareaConSubtareas);
   const sprints = useStore((s) => s.sprints);
   const [params, setParams] = useSearchParams();
+
+  useEffect(() => {
+    void cargarTareas();
+  }, [cargarTareas, versionDatos]);
 
   const filtroTipo = params.get('tipo') as TipoTarea | null;
   const [filtroEstado, setFiltroEstado] = useState<EstadoTarea | ''>('');

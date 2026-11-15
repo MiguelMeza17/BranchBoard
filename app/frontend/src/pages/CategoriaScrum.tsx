@@ -105,6 +105,8 @@ export function CategoriaScrum() {
 
   const user = useStore((s) => s.currentUser());
   const tareasAll = useStore((s) => s.tareas);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const versionDatos = useStore((s) => s.versionDatos);
   const moverTarea = useStore((s) => s.moverTarea);
   const tomarTarea = useStore((s) => s.tomarTarea);
   const desasignarTarea = useStore((s) => s.desasignarTarea);
@@ -114,6 +116,10 @@ export function CategoriaScrum() {
   const crearTareaConSubtareas = useStore((s) => s.crearTareaConSubtareas);
   const sprints = useStore((s) => s.sprints);
   const showToast = useStore((s) => s.showToast);
+
+  useEffect(() => {
+    void cargarTareas();
+  }, [cargarTareas, versionDatos]);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingMove, setPendingMove] = useState<{ id: string; to: EstadoTarea } | null>(null);

@@ -18,6 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as fx from '../data/fixtures';
+import { api, enTauri, mensajeDeError } from '../lib/api';
 import { esTareaEnEspera } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
@@ -277,6 +278,8 @@ interface State {
    */
   versionDatos: number;
   subirVersionDatos: () => void;
+  /** Recarga la lista de tareas desde el backend (`listar_tareas`, #95). */
+  cargarTareas: () => Promise<void>;
 
   // datos
   usuarios: Usuario[];
@@ -474,6 +477,14 @@ export const useStore = create<State>((set, get) => {
     set((s) => ({ carpetasCompartidas: { ...s.carpetasCompartidas, [proyecto]: ruta } })),
   versionDatos: 0,
   subirVersionDatos: () => set((s) => ({ versionDatos: s.versionDatos + 1 })),
+  cargarTareas: async () => {
+    try {
+      const lista = await api.listarTareas(() => get().tareas);
+      set({ tareas: normalizar(lista) });
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
+  },
 
   usuarios: [...fx.usuarios],
   tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),
@@ -968,6 +979,18 @@ export const useStore = create<State>((set, get) => {
       tarea_origen_id: null,
       edicion_pendiente: false,
     };
+    if (enTauri()) {
+      void api
+        .crearTarea(data, () => nueva)
+        .then((creada) => {
+          set((st) => ({ tareas: normalizar([creada, ...st.tareas.filter((t) => t.id !== creada.id)]) }));
+          get().showToast(
+            creada.pendiente_aprobacion ? 'Tarea creada — quedó pendiente de aprobación' : 'Tarea creada'
+          );
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return nueva.id;
+    }
     set({ tareas: [nueva, ...s.tareas] });
     s.showToast(pendiente ? 'Tarea creada — quedó pendiente de aprobación' : 'Tarea creada');
     // Notificación #1 (BACKEND.md): tarea nueva esperando aprobación — avisa a todo Líder/Admin.
@@ -985,6 +1008,18 @@ export const useStore = create<State>((set, get) => {
 
   // Crea la tarea raíz y, si trae subtareas (tarea general), las crea encadenadas a ella.
   crearTareaConSubtareas: (data) => {
+    if (enTauri()) {
+      void api
+        .crearTareaConSubtareas(data, () => [])
+        .then((creadas) => {
+          const ids = new Set(creadas.map((t) => t.id));
+          set((st) => ({ tareas: normalizar([...creadas, ...st.tareas.filter((t) => !ids.has(t.id))]) }));
+          const pendiente = creadas[0]?.pendiente_aprobacion ?? false;
+          get().showToast(pendiente ? 'Tarea creada — quedó pendiente de aprobación' : 'Tarea creada');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     const { subtareas, ...raiz } = data;
     const padreId = get().crearTarea(raiz);
     subtareas.forEach((st) => {
@@ -1001,12 +1036,38 @@ export const useStore = create<State>((set, get) => {
     });
   },
 
-  editarTarea: (id, campos, marcarPendiente) =>
-    set((s) => ({
-      tareas: s.tareas.map((t) =>
-        t.id === id ? { ...t, ...campos, edicion_pendiente: marcarPendiente || t.edicion_pendiente } : t
-      ),
-    })),
+  editarTarea: (id, campos, marcarPendiente) => {
+    const actualizarLocal = (actualizada?: Tarea) =>
+      set((s) => ({
+        tareas: s.tareas.map((t) =>
+          t.id === id
+            ? actualizada
+              ? { ...actualizada, edicion_pendiente: marcarPendiente || actualizada.edicion_pendiente }
+              : { ...t, ...campos, edicion_pendiente: marcarPendiente || t.edicion_pendiente }
+            : t
+        ),
+      }));
+    if (enTauri()) {
+      void api
+        .editarTarea(
+          id,
+          {
+            titulo: campos.titulo,
+            detalles: campos.detalles,
+            tipo: campos.tipo,
+            sprint_id: campos.sprint_id,
+            backlog_id: campos.backlog_id,
+            con_fecha: campos.con_fecha,
+            fecha_limite: campos.fecha_limite,
+          },
+          () => get().tareas.find((t) => t.id === id)!
+        )
+        .then((actualizada) => actualizarLocal(actualizada))
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
+    actualizarLocal();
+  },
 
   // "editar_y_aprobar_tarea" (BACKEND.md #1): un solo comando — corrige campos y aprueba a la vez.
   // Notificación #11: avisa al creador que su tarea pendiente fue editada y aprobada.

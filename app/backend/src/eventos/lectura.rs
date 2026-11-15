@@ -30,6 +30,7 @@ use super::{marcar_aplicado, ya_aplicado, Evento};
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
 use crate::modelo::Rol;
+use crate::tareas;
 
 /// Cuánto puede adelantarse el reloj de otra máquina antes de desconfiar.
 const TOLERANCIA_FUTURO_MIN: i64 = 5;
@@ -249,6 +250,13 @@ pub fn aplicar_evento(
                 return Ok(Aplicacion::Descartado(Error::SinPermiso.to_string()));
             }
             match snapshot::aplicar_evento(c, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if tareas::TIPOS.contains(&evento.tipo.as_str()) => {
+            match tareas::aplicar_evento(c, publica_admin, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),
                 Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
                 Err(e) => Err(e),
