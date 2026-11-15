@@ -24,12 +24,13 @@ pub mod identidad;
 pub mod modelo;
 pub mod ramas;
 pub mod servidor;
+pub mod tareas;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
     acceso, actualizaciones, datos, eventos as comandos_eventos, identidad as comandos_identidad,
-    sistema, usuarios,
+    sistema, tareas as comandos_tareas, usuarios,
 };
 
 /// Con una operación de `cm` corriendo, la ventana no se cierra: se cancela el
@@ -70,6 +71,10 @@ pub fn run() {
             usuarios::cambiar_rol,
             usuarios::confirmar_usuario,
             usuarios::eliminar_usuario,
+            comandos_tareas::listar_tareas,
+            comandos_tareas::crear_tarea,
+            comandos_tareas::crear_tarea_con_subtareas,
+            comandos_tareas::editar_tarea,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

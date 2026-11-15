@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { Rol } from '../types';
+import type { Rol, Tarea, TipoTarea } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -103,6 +103,34 @@ export interface ResumenCompactacion {
   archivo: string | null;
 }
 
+/** Datos para `crear_tarea` (#95). */
+export interface DatosNuevaTarea {
+  titulo: string;
+  detalles?: string;
+  tipo: TipoTarea;
+  tarea_padre_id: string | null;
+  sprint_id: string | null;
+  backlog_id: string | null;
+  con_fecha: boolean;
+  fecha_limite: string | null;
+}
+
+/** Datos para `crear_tarea_con_subtareas` (#95). */
+export interface DatosNuevaTareaConSubtareas extends DatosNuevaTarea {
+  subtareas: { tipo: TipoTarea; titulo: string; detalles?: string }[];
+}
+
+/** Campos editables con `editar_tarea` (#95). */
+export interface CambiosEditarTarea {
+  titulo?: string;
+  detalles?: string;
+  tipo?: TipoTarea;
+  sprint_id?: string | null;
+  backlog_id?: string | null;
+  con_fecha?: boolean;
+  fecha_limite?: string | null;
+}
+
 /**
  * Qué ve la persona al abrir un workspace (`entrar_a_proyecto`, #89):
  * - `dentro`: entra con su rol; `configurado_ahora` = era el dueño del repo y el proyecto se configuró.
@@ -189,6 +217,21 @@ export const api = {
       compactados: 0,
       archivo: null,
     })),
+
+  /** Todas las tareas del proyecto abierto (#95). */
+  listarTareas: (mockup: () => Tarea[]) => llamar<Tarea[]>('listar_tareas', undefined, mockup),
+
+  /** Crea una tarea (#95). */
+  crearTarea: (datos: DatosNuevaTarea, mockup: () => Tarea) =>
+    llamar<Tarea>('crear_tarea', { datos }, mockup),
+
+  /** Crea una tarea y sus subtareas iniciales (#95). */
+  crearTareaConSubtareas: (datos: DatosNuevaTareaConSubtareas, mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('crear_tarea_con_subtareas', { datos }, mockup),
+
+  /** Edita los campos de una tarea (creador sobre su pendiente, o Líder/Administrador, #95). */
+  editarTarea: (id: string, campos: CambiosEditarTarea, mockup: () => Tarea) =>
+    llamar<Tarea>('editar_tarea', { id, campos }, mockup),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
