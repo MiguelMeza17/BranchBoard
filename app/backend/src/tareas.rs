@@ -12,12 +12,13 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::db::notificaciones::{self, Notificacion};
 use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::identidad::firmas::{verificar_usuarios, Verificacion};
-use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoTarea};
+use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 use crate::ramas::TareaDeCadena;
 use crate::servidor::Rama;
 
@@ -162,14 +163,30 @@ pub struct RamaAncestro {
 
 /// `payload` del evento `tomar_tarea` (#96).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct PayloadTomarTarea {
-    id: String,
-    asignado_a: String,
-    rama_asociada: String,
+pub struct PayloadTomarTarea {
+    pub id: String,
+    pub asignado_a: String,
+    pub rama_asociada: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ultimo_changeset_visto: Option<i64>,
+    pub ultimo_changeset_visto: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    ramas_ancestros: Vec<RamaAncestro>,
+    pub ramas_ancestros: Vec<RamaAncestro>,
+}
+
+/// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoDobleToma {
+    pub tarea_id: String,
+    pub titulo: String,
+    pub ganador: String,
+    pub rama_ganador: String,
+    pub perdedor: String,
+    pub rama_perdedor: String,
+    pub cs_inicial_perdedor: Option<i64>,
+    pub evento_perdedor_id: String,
+    /// Si `Some`, el evento entrante era anterior al que estaba aplicado en local
+    /// y debe reemplazar al actual cuando la rama del perdedor no tenga changesets.
+    pub revertir_a_entrante: Option<PayloadTomarTarea>,
 }
 
 fn limpiar_opcional(valor: Option<String>) -> Option<String> {
@@ -791,6 +808,235 @@ fn aplicar_tomar_tarea(
         tarea.ultimo_changeset_visto = payload.ultimo_changeset_visto;
     }
     db_tareas::actualizar(c, &tarea)
+}
+
+/// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
+/// contra una toma previa de otra persona sobre la misma tarea (#97).
+/// Determina quién ganó y quién perdió según el orden `(timestamp, usuario, archivo)`.
+pub fn detectar_doble_toma(
+    c: &Connection,
+    ops: &Path,
+    evento_id: &str,
+    evento: &Evento,
+) -> Resultado<Option<InfoDobleToma>> {
+    if evento.tipo != "tomar_tarea" {
+        return Ok(None);
+    }
+    let Ok(entrante) = serde_json::from_value::<PayloadTomarTarea>(evento.payload.clone()) else {
+        return Ok(None);
+    };
+    let Ok(tarea) = db_tareas::obtener(c, &entrante.id) else {
+        return Ok(None);
+    };
+    if tarea.eliminada || tarea.estado != EstadoTarea::PorHacer {
+        return Ok(None);
+    }
+    let Some(ref actual_email) = tarea.asignado_a else {
+        return Ok(None);
+    };
+    let entrante_email = normalizar_email(&evento.usuario);
+    if normalizar_email(&entrante.asignado_a) != entrante_email
+        || normalizar_email(actual_email) == entrante_email
+    {
+        return Ok(None);
+    }
+    let rama_actual = tarea.rama_asociada.clone().unwrap_or_default();
+    let rama_entrante = match validar_ruta_rama_tarea(&entrante.rama_asociada) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    // Buscamos en `ops/` el evento con el que se asignó `actual_email` para comparar
+    // orden determinista `(timestamp, usuario, id)` incluso si la máquina local
+    // aplicó su propio evento antes de recibir el remoto.
+    let actual_en_ops = buscar_evento_toma_en_ops(ops, &tarea.id, actual_email);
+    let entrante_gana = match &actual_en_ops {
+        Some((id_actual, ev_actual)) => {
+            (&evento.timestamp, &entrante_email, evento_id)
+                < (
+                    &ev_actual.timestamp,
+                    &normalizar_email(&ev_actual.usuario),
+                    id_actual.as_str(),
+                )
+        }
+        None => false,
+    };
+
+    if entrante_gana {
+        let (id_actual, ev_actual) = actual_en_ops.unwrap();
+        let payload_actual = serde_json::from_value::<PayloadTomarTarea>(ev_actual.payload).ok();
+        let cs_inicial_perdedor = payload_actual
+            .as_ref()
+            .and_then(|p| p.ultimo_changeset_visto)
+            .or(tarea.ultimo_changeset_visto);
+        Ok(Some(InfoDobleToma {
+            tarea_id: tarea.id,
+            titulo: tarea.titulo,
+            ganador: entrante_email,
+            rama_ganador: rama_entrante,
+            perdedor: normalizar_email(actual_email),
+            rama_perdedor: rama_actual,
+            cs_inicial_perdedor,
+            evento_perdedor_id: id_actual,
+            revertir_a_entrante: Some(entrante),
+        }))
+    } else {
+        Ok(Some(InfoDobleToma {
+            tarea_id: tarea.id,
+            titulo: tarea.titulo,
+            ganador: normalizar_email(actual_email),
+            rama_ganador: rama_actual,
+            perdedor: entrante_email,
+            rama_perdedor: rama_entrante,
+            cs_inicial_perdedor: entrante.ultimo_changeset_visto,
+            evento_perdedor_id: evento_id.to_string(),
+            revertir_a_entrante: None,
+        }))
+    }
+}
+
+fn buscar_evento_toma_en_ops(
+    ops: &Path,
+    tarea_id: &str,
+    usuario: &str,
+) -> Option<(String, Evento)> {
+    let usuario = normalizar_email(usuario);
+    let entradas = std::fs::read_dir(ops).ok()?;
+    let mut mejor: Option<(String, Evento)> = None;
+    for entrada in entradas.flatten() {
+        let nombre = entrada.file_name().to_string_lossy().to_string();
+        if nombre.starts_with('.') || !nombre.ends_with(".json") {
+            continue;
+        }
+        let Ok(texto) = std::fs::read_to_string(entrada.path()) else {
+            continue;
+        };
+        let Ok(ev) = serde_json::from_str::<Evento>(&texto) else {
+            continue;
+        };
+        if ev.tipo == "tomar_tarea"
+            && ev.tarea_id.as_deref() == Some(tarea_id)
+            && normalizar_email(&ev.usuario) == usuario
+        {
+            let reemplazar = match &mejor {
+                None => true,
+                Some((m_id, m_ev)) => (&ev.timestamp, &nombre) < (&m_ev.timestamp, m_id),
+            };
+            if reemplazar {
+                mejor = Some((nombre, ev));
+            }
+        }
+    }
+    mejor
+}
+
+fn insertar_notificacion_si_falta(c: &Connection, n: &Notificacion) -> Resultado<()> {
+    if notificaciones::buscar(c, &n.id)?.is_none() {
+        notificaciones::insertar(c, n)?;
+    }
+    Ok(())
+}
+
+/// Resuelve una colisión de doble toma (#97) una vez comprobado si la rama del
+/// perdedor ya tiene changesets reales:
+/// - Sin changesets: revierte la toma al ganador (si hace falta) y notifica al
+///   perdedor con la acción `"Volver mi workspace a dev"`.
+/// - Con changesets: no revierte ni borra; avisa a ambos y a cada Líder/Admin.
+///
+/// Devuelve `true` si el evento entrante se aplicó como ganador (reemplazando la
+/// toma local previa), o `false` si se conservó al ganador actual.
+pub fn aplicar_resolucion_doble_toma(
+    c: &Connection,
+    publica_admin: &str,
+    info: &InfoDobleToma,
+    tiene_changesets: bool,
+    ahora: &str,
+) -> Resultado<bool> {
+    if tiene_changesets {
+        let mut destinatarios = vec![info.ganador.clone(), info.perdedor.clone()];
+        let usuarios = if publica_admin.is_empty() {
+            usuarios::listar(c)?
+                .into_iter()
+                .filter(|u| u.rol.es_lider_o_admin())
+                .map(|u| u.email)
+                .collect::<Vec<_>>()
+        } else {
+            verificar_usuarios(publica_admin, usuarios::listar(c)?)
+                .into_iter()
+                .filter(|u| {
+                    u.verificacion == Verificacion::Verificado
+                        && u.rol_efectivo.is_some_and(|r| r.es_lider_o_admin())
+                })
+                .map(|u| u.usuario.email)
+                .collect::<Vec<_>>()
+        };
+        for correo in usuarios {
+            if !destinatarios.contains(&correo) {
+                destinatarios.push(correo);
+            }
+        }
+        let titulo = format!("Doble toma con cambios en {}", info.tarea_id);
+        let cuerpo = format!(
+            "{} y {} tomaron {} ({}) casi a la vez y ya hay check-ins en {}. Decidan manualmente cómo resolverlo.",
+            info.ganador, info.perdedor, info.tarea_id, info.titulo, info.rama_perdedor
+        );
+        for para in destinatarios {
+            let n = Notificacion {
+                id: format!("N-doble-cs-{}-{para}", info.evento_perdedor_id),
+                tipo: TipoNotificacion::Advertencia,
+                para: para.clone(),
+                titulo: titulo.clone(),
+                cuerpo: cuerpo.clone(),
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(info.tarea_id.clone()),
+                accionable: false,
+            };
+            insertar_notificacion_si_falta(c, &n)?;
+        }
+        return Ok(false);
+    }
+
+    let mut aplicado_entrante = false;
+    if let Some(ref ganador_payload) = info.revertir_a_entrante {
+        let mut tarea = db_tareas::obtener(c, &info.tarea_id)?;
+        tarea.asignado_a = Some(normalizar_email(&ganador_payload.asignado_a));
+        tarea.modo_trabajo = Some(MODO_RAMA.to_string());
+        tarea.rama_asociada = Some(validar_ruta_rama_tarea(&ganador_payload.rama_asociada)?);
+        tarea.ultimo_changeset_visto = ganador_payload.ultimo_changeset_visto;
+        db_tareas::actualizar(c, &tarea)?;
+
+        for anc in &ganador_payload.ramas_ancestros {
+            if let Ok(mut fila_anc) = db_tareas::obtener(c, &anc.id) {
+                if !fila_anc.eliminada && fila_anc.rama_asociada.is_none() {
+                    fila_anc.rama_asociada = Some(validar_ruta_rama_tarea(&anc.rama_asociada)?);
+                    fila_anc.modo_trabajo = Some(MODO_RAMA.to_string());
+                    if fila_anc.ultimo_changeset_visto.is_none() {
+                        fila_anc.ultimo_changeset_visto = anc.ultimo_changeset_visto;
+                    }
+                    db_tareas::actualizar(c, &fila_anc)?;
+                }
+            }
+        }
+        aplicado_entrante = true;
+    }
+
+    let n = Notificacion {
+        id: format!("N-doble-{}-{}", info.evento_perdedor_id, info.perdedor),
+        tipo: TipoNotificacion::Advertencia,
+        para: info.perdedor.clone(),
+        titulo: format!("Tu toma de {} fue revertida", info.tarea_id),
+        cuerpo: format!(
+            "{} se adelantó al tomar {} ({}). Tu rama fue cerrada; usa \"Volver mi workspace a dev\".",
+            info.ganador, info.tarea_id, info.titulo
+        ),
+        leida: false,
+        fecha: ahora.to_string(),
+        tarea_id: Some(info.tarea_id.clone()),
+        accionable: true,
+    };
+    insertar_notificacion_si_falta(c, &n)?;
+    Ok(aplicado_entrante)
 }
 
 #[cfg(test)]
@@ -1466,6 +1712,213 @@ mod tests {
         );
     }
 
+    #[test]
+    fn doble_toma_sin_changesets_gana_el_primero_y_avisa_al_perdedor() {
+        let e = Escenario::nuevo();
+        let dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let tester = AutorTarea {
+            email: TESTER,
+            rol: Rol::Tester,
+        };
+
+        // A crea T-101 y B la recibe al sincronizar.
+        crear(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            &datos_base("Colisión"),
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(e.sincronizar_b().aplicados, 1);
+
+        // B toma T-101 en su máquina con timestamp posterior (15:00:05), antes de recibir a A.
+        tomar(
+            e.db_b.conexion(),
+            &e.ops,
+            &tester,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 202,
+                        name: "/main/dev/T-101-colision-b".into(),
+                        head_changeset: 50,
+                    },
+                )])
+            },
+            "2026-11-15T15:00:05.000Z",
+        )
+        .unwrap();
+
+        // A toma T-101 con timestamp anterior (15:00:02) → A es el ganador real.
+        tomar(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 201,
+                        name: "/main/dev/T-101-colision-a".into(),
+                        head_changeset: 50,
+                    },
+                )])
+            },
+            "2026-11-15T15:00:02.000Z",
+        )
+        .unwrap();
+
+        // Ahora ambas máquinas sincronizan (sin changesets reales en la rama perdedora).
+        let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:10:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let sync_a = lectura::sincronizar_con_doble_toma(
+            e.db_a.conexion(),
+            &e.ops,
+            &e.local_b,
+            ahora,
+            &e.publica,
+            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            |_| Ok(false),
+        )
+        .unwrap();
+        let sync_b = lectura::sincronizar_con_doble_toma(
+            e.db_b.conexion(),
+            &e.ops,
+            &e.local_b,
+            ahora,
+            &e.publica,
+            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            |_| Ok(false),
+        )
+        .unwrap();
+
+        assert_eq!(sync_a.descartados, 1);
+        assert_eq!(sync_b.aplicados, 1, "B revierte su toma local a A");
+
+        // Ambas máquinas convergen al ganador (DEV) y su rama.
+        for db in [&e.db_a, &e.db_b] {
+            let t = db_tareas::obtener(db.conexion(), "T-101").unwrap();
+            assert_eq!(t.asignado_a.as_deref(), Some(DEV));
+            assert_eq!(
+                t.rama_asociada.as_deref(),
+                Some("/main/dev/T-101-colision-a")
+            );
+            let notifs_b = notificaciones::de_usuario(db.conexion(), TESTER).unwrap();
+            assert_eq!(notifs_b.len(), 1);
+            assert!(notifs_b[0].accionable);
+            assert!(notifs_b[0].cuerpo.contains("Volver mi workspace a dev"));
+            assert!(notificaciones::de_usuario(db.conexion(), DEV)
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn doble_toma_con_changesets_no_revierte_y_avisa_a_ambos_y_lider_admin() {
+        let e = Escenario::nuevo();
+        let dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let tester = AutorTarea {
+            email: TESTER,
+            rol: Rol::Tester,
+        };
+
+        crear(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            &datos_base("Colisión con commits"),
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(e.sincronizar_b().aplicados, 1);
+
+        tomar(
+            e.db_b.conexion(),
+            &e.ops,
+            &tester,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 302,
+                        name: "/main/dev/T-101-con-commits-b".into(),
+                        head_changeset: 50,
+                    },
+                )])
+            },
+            "2026-11-15T15:00:05.000Z",
+        )
+        .unwrap();
+
+        tomar(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 301,
+                        name: "/main/dev/T-101-con-commits-a".into(),
+                        head_changeset: 50,
+                    },
+                )])
+            },
+            "2026-11-15T15:00:02.000Z",
+        )
+        .unwrap();
+
+        let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:10:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let sync_b = lectura::sincronizar_con_doble_toma(
+            e.db_b.conexion(),
+            &e.ops,
+            &e.local_b,
+            ahora,
+            &e.publica,
+            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            |_| Ok(true),
+        )
+        .unwrap();
+        assert_eq!(sync_b.aplicados, 0, "con changesets no revierte en local");
+        assert_eq!(sync_b.descartados, 1);
+
+        // No se revirtió en B.
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-101")
+                .unwrap()
+                .asignado_a
+                .as_deref(),
+            Some(TESTER)
+        );
+        // Se avisó a ambos, al Líder y al Administrador (no al Colaborador externo).
+        for correo in [DEV, TESTER, LIDER, ADMIN] {
+            let notifs = notificaciones::de_usuario(e.db_b.conexion(), correo).unwrap();
+            assert_eq!(notifs.len(), 1, "falta notificación para {correo}");
+            assert!(!notifs[0].accionable);
+            assert!(notifs[0].cuerpo.contains("T-101"));
+        }
+        assert!(notificaciones::de_usuario(e.db_b.conexion(), COLAB)
+            .unwrap()
+            .is_empty());
+    }
+
     /// **Prueba en el entorno real** (CLAUDE.md): entra de verdad al repositorio
     /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` en un workspace
     /// temporal (`cm workspace create` + `entrar_en`), configura una subcarpeta
@@ -1838,6 +2291,319 @@ mod tests {
                 .ejecutar(&estado_a)
                 .unwrap();
             println!("borrada rama de prueba {rama}: {}", salida.exito());
+        }
+        let _ = std::fs::remove_dir_all(&compartida);
+        println!("subcarpeta de prueba borrada: {}", !compartida.exists());
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    /// **Prueba en el entorno real** (CLAUDE.md, issue #97): contra
+    /// `BranchBoard-Pruebas` + `OneDrive`:
+    /// 1. Crea dos ramas reales para la misma tarea (ganador y perdedor sin
+    ///    changesets). Al sincronizar la doble toma via `revisar_y_cerrar_rama_perdedor`,
+    ///    la rama huérfana se borra del servidor, la toma vuelve al ganador y el
+    ///    perdedor recibe la notificación `"Volver mi workspace a dev"`.
+    /// 2. Crea otras dos ramas, hace un `cm checkin` real en la del perdedor y
+    ///    sincroniza: la rama NO se borra, la toma NO se revierte y se avisa a
+    ///    ambos y al Administrador.
+    ///
+    /// Al terminar borra workspace, ramas (con `--delete-changesets`) y carpeta
+    /// de OneDrive.
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_doble_toma_resuelve_sin_y_con_changesets() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::eventos::revisar_y_cerrar_rama_perdedor;
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+        use crate::ramas::{cambiar_a_rama, crear_rama_tarea, RAMA_DEV};
+        use crate::servidor::{conectar, LlaveroSistema};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let repo_cm = format!("{repo}@{org}@unity");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-97-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let mut ramas_creadas: Vec<String> = Vec::new();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-97-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+            let cliente = conectar(&estado_a, &LlaveroSistema, &admin_fila.email, &org).unwrap();
+
+            // Alta de DEV en A y creación de T-101 y T-102.
+            estado_a
+                .con_db(|db_a| {
+                    let firmante_admin = Firmante {
+                        email: &admin_fila.email,
+                        rol: Rol::Administrador,
+                        llave: &llave_admin,
+                    };
+                    equipo::crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &publica,
+                        &firmante_admin,
+                        DEV,
+                        Rol::Desarrollador,
+                        "2026-11-15T15:00:01.000Z",
+                        HOY,
+                    )?;
+                    crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &AutorTarea {
+                            email: DEV,
+                            rol: Rol::Desarrollador,
+                        },
+                        &datos_base("Doble sin commits"),
+                        "2026-11-15T15:00:02.000Z",
+                        HOY,
+                    )?;
+                    crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &AutorTarea {
+                            email: DEV,
+                            rol: Rol::Desarrollador,
+                        },
+                        &datos_base("Doble con commits"),
+                        "2026-11-15T15:00:03.000Z",
+                        HOY,
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+
+            // B sincroniza DEV, T-101 y T-102.
+            let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
+                .unwrap()
+                .with_timezone(&Utc);
+            let sync_init =
+                lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                    lectura::aplicar_evento(c, &publica, e)
+                })
+                .unwrap();
+            assert_eq!(sync_init.aplicados, 3);
+
+            // --- CASO 1: Sin changesets en la rama del perdedor (T-101) ---
+            let rama_g1 =
+                crear_rama_tarea(&cliente, &repo, None, "T-101", &format!("gana-{sufijo}"))
+                    .unwrap();
+            ramas_creadas.push(rama_g1.name.clone());
+            let rama_p1 =
+                crear_rama_tarea(&cliente, &repo, None, "T-101", &format!("pierde-{sufijo}"))
+                    .unwrap();
+            ramas_creadas.push(rama_p1.name.clone());
+
+            // B toma T-101 con timestamp posterior (15:00:10).
+            tomar(
+                db_b.conexion(),
+                &ops_b,
+                &AutorTarea {
+                    email: &admin_fila.email,
+                    rol: Rol::Administrador,
+                },
+                "T-101",
+                |_| Ok(vec![("T-101".into(), rama_p1.clone())]),
+                "2026-11-15T15:00:10.000Z",
+            )
+            .unwrap();
+            // A (DEV) toma T-101 con timestamp anterior (15:00:05).
+            estado_a
+                .con_db(|db_a| {
+                    tomar(
+                        db_a.conexion(),
+                        &ops_a,
+                        &AutorTarea {
+                            email: DEV,
+                            rol: Rol::Desarrollador,
+                        },
+                        "T-101",
+                        |_| Ok(vec![("T-101".into(), rama_g1.clone())]),
+                        "2026-11-15T15:00:05.000Z",
+                    )
+                    .map(|_| ())
+                })
+                .unwrap();
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let sync_b1 = lectura::sincronizar_con_doble_toma(
+                db_b.conexion(),
+                &ops_b,
+                &local_b,
+                ahora,
+                &publica,
+                |c, e| lectura::aplicar_evento(c, &publica, e),
+                |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
+            )
+            .unwrap();
+            println!("Caso 1 (sin changesets) B sync: {sync_b1:?}");
+            assert_eq!(sync_b1.aplicados, 1);
+            assert!(
+                cliente.rama(&repo, &rama_p1.name).unwrap().is_none(),
+                "la rama perdedora sin changesets se cerró en Unity VC"
+            );
+            assert_eq!(
+                db_tareas::obtener(db_b.conexion(), "T-101")
+                    .unwrap()
+                    .asignado_a
+                    .as_deref(),
+                Some(DEV)
+            );
+            assert_eq!(
+                notificaciones::de_usuario(db_b.conexion(), &admin_fila.email)
+                    .unwrap()
+                    .len(),
+                1
+            );
+
+            // --- CASO 2: Con changeset real en la rama del perdedor (T-102) ---
+            let rama_g2 =
+                crear_rama_tarea(&cliente, &repo, None, "T-102", &format!("gana2-{sufijo}"))
+                    .unwrap();
+            ramas_creadas.push(rama_g2.name.clone());
+            let rama_p2 =
+                crear_rama_tarea(&cliente, &repo, None, "T-102", &format!("pierde2-{sufijo}"))
+                    .unwrap();
+            ramas_creadas.push(rama_p2.name.clone());
+
+            // Hacemos un check-in real en rama_p2.
+            cambiar_a_rama(&estado_a, ws_a.path(), &rama_p2.name).unwrap();
+            let archivo = ws_a.path().join(format!("prueba-97-{sufijo}.txt"));
+            std::fs::write(&archivo, "cambio real").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo.to_string_lossy().to_string())
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+            Comando::cm()
+                .args(["checkin", "-c", "Check-in prueba #97"])
+                .arg(archivo.to_string_lossy().to_string())
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+            cambiar_a_rama(&estado_a, ws_a.path(), RAMA_DEV).unwrap();
+
+            tomar(
+                db_b.conexion(),
+                &ops_b,
+                &AutorTarea {
+                    email: &admin_fila.email,
+                    rol: Rol::Administrador,
+                },
+                "T-102",
+                |_| Ok(vec![("T-102".into(), rama_p2.clone())]),
+                "2026-11-15T15:00:20.000Z",
+            )
+            .unwrap();
+            estado_a
+                .con_db(|db_a| {
+                    tomar(
+                        db_a.conexion(),
+                        &ops_a,
+                        &AutorTarea {
+                            email: DEV,
+                            rol: Rol::Desarrollador,
+                        },
+                        "T-102",
+                        |_| Ok(vec![("T-102".into(), rama_g2.clone())]),
+                        "2026-11-15T15:00:15.000Z",
+                    )
+                    .map(|_| ())
+                })
+                .unwrap();
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let sync_b2 = lectura::sincronizar_con_doble_toma(
+                db_b.conexion(),
+                &ops_b,
+                &local_b,
+                ahora,
+                &publica,
+                |c, e| lectura::aplicar_evento(c, &publica, e),
+                |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
+            )
+            .unwrap();
+            println!("Caso 2 (con changeset) B sync: {sync_b2:?}");
+            assert_eq!(sync_b2.descartados, 1);
+            assert!(
+                cliente.rama(&repo, &rama_p2.name).unwrap().is_some(),
+                "con changesets reales la rama NO se borra"
+            );
+            assert_eq!(
+                db_tareas::obtener(db_b.conexion(), "T-102")
+                    .unwrap()
+                    .asignado_a
+                    .as_deref(),
+                Some(admin_fila.email.as_str())
+            );
+            assert_eq!(
+                notificaciones::de_usuario(db_b.conexion(), DEV)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
+        for rama in ramas_creadas.iter().rev() {
+            let salida = Comando::cm()
+                .args(["branch", "delete", "--delete-changesets"])
+                .arg(format!("br:{rama}@{repo_cm}"))
+                .ejecutar(&estado_a)
+                .unwrap();
+            println!("limpieza rama {rama}: {}", salida.exito());
         }
         let _ = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", !compartida.exists());

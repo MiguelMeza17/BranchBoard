@@ -240,6 +240,9 @@ export const api = {
    */
   tomarTarea: (id: string, mockup: () => Tarea[]) => llamar<Tarea[]>('tomar_tarea', { id }, mockup),
 
+  /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
+  volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 
