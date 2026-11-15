@@ -125,3 +125,67 @@ pub async fn volver_a_dev(estado: State<'_, AppState>) -> Resultado<String> {
     let actual = ramas::cambiar_a_rama(&estado, &workspace, ramas::RAMA_DEV)?;
     Ok(actual.rama)
 }
+
+/// `asignar_tarea(id, email)`: Líder/Admin asigna la tarea a otra persona (#98).
+/// Crea en Unity VC las ramas que falten (sin tocar el workspace de quien asigna),
+/// publica el evento `asignar_tarea` en `ops/` y genera notificación `tarea_asignada`.
+#[tauri::command]
+pub async fn asignar_tarea(
+    estado: State<'_, AppState>,
+    id: String,
+    email: String,
+) -> Resultado<Vec<Tarea>> {
+    asignar_en(&estado, &id, &email)
+}
+
+/// Lo mismo que [`asignar_tarea`], sin el envoltorio de Tauri (para pruebas en el
+/// entorno real).
+pub fn asignar_en(estado: &AppState, id: &str, email_destinatario: &str) -> Resultado<Vec<Tarea>> {
+    let yo = estado.exigir_permiso("asignar_tarea")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let repo = estado.repo_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let cadena = estado
+        .con_db(|db| tareas::cadena_para_asignar(db.conexion(), &autor, id, email_destinatario))?;
+
+    let creadas = if cadena.iter().any(|p| p.rama.is_none()) {
+        let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
+        ramas::crear_ramas_de_cadena(&cliente, &repo.repo, &cadena)?
+    } else {
+        Vec::new()
+    };
+
+    estado.con_db(|db| {
+        tareas::registrar_asignacion(
+            db.conexion(),
+            &ops,
+            &autor,
+            &cadena,
+            &creadas,
+            email_destinatario,
+            &ahora_iso(),
+        )
+    })
+}
+
+/// `desasignar_tarea(id)`: suelta una tarea (todos los roles) si ni ella ni sus
+/// subtareas tienen check-ins (#98).
+#[tauri::command]
+pub async fn desasignar_tarea(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    desasignar_en(&estado, &id)
+}
+
+/// Lo mismo que [`desasignar_tarea`], sin el envoltorio de Tauri.
+pub fn desasignar_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    let yo = estado.exigir_permiso("desasignar_tarea")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+    estado.con_db(|db| tareas::desasignar(db.conexion(), &ops, &autor, id, &ahora_iso()))
+}
