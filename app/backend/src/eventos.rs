@@ -14,10 +14,13 @@
 //!   reconstruir o restaurar sin perder la ruta).
 //!
 //! Leer y aplicar los de otras máquinas (#92): ver [`lectura`].
+//! Compactar con un snapshot firmado por el Administrador (#94): ver [`snapshot`].
 
 pub mod lectura;
+pub mod snapshot;
 
 pub use lectura::{sincronizar, Aplicacion, ResumenSincronizacion};
+pub use snapshot::{compactar, ResumenCompactacion};
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

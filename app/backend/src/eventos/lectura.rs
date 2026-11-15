@@ -25,9 +25,11 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 
+use super::snapshot::{self, es_snapshot};
 use super::{marcar_aplicado, ya_aplicado, Evento};
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
+use crate::modelo::Rol;
 
 /// Cuánto puede adelantarse el reloj de otra máquina antes de desconfiar.
 const TOLERANCIA_FUTURO_MIN: i64 = 5;
@@ -88,6 +90,12 @@ pub fn sincronizar(
     let mut avisos = Vec::new();
     let pendientes = leer_pendientes(c, ops, ahora, &mut resumen, &mut avisos)?;
     for p in pendientes {
+        if !es_snapshot(&p.id)
+            && snapshot::ultimo_snapshot_hasta(c)?.is_some_and(|corte| p.orden <= corte)
+        {
+            marcar_aplicado(c, &p.id, &ahora_iso(ahora))?;
+            continue;
+        }
         let tx = c.unchecked_transaction()?;
         match aplicar(&tx, &p.evento)? {
             Aplicacion::Aplicado => {
@@ -165,11 +173,18 @@ fn leer_pendientes(
         };
         pendientes.push(Pendiente { id, evento, orden });
     }
-    pendientes.sort_by(|a, b| {
-        a.orden
+    pendientes.sort_by(|a, b| match (es_snapshot(&a.id), es_snapshot(&b.id)) {
+        // Los snapshots van antes que los eventos sueltos, del más reciente al
+        // más antiguo: al reconstruir el `.db` se parte del último snapshot
+        // válido (#94) y los anteriores quedan ya cubiertos.
+        (true, true) => b.orden.cmp(&a.orden).then_with(|| b.id.cmp(&a.id)),
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        (false, false) => a
+            .orden
             .cmp(&b.orden)
             .then_with(|| a.evento.usuario.cmp(&b.evento.usuario))
-            .then_with(|| a.id.cmp(&b.id))
+            .then_with(|| a.id.cmp(&b.id)),
     });
     Ok(pendientes)
 }
@@ -224,6 +239,16 @@ pub fn aplicar_evento(
     match rol_firmante {
         Some(rol) if equipo::TIPOS.contains(&evento.tipo.as_str()) => {
             match equipo::aplicar_evento(c, publica_admin, rol, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        Some(rol) if evento.tipo == "compactar_eventos" => {
+            if rol != Rol::Administrador {
+                return Ok(Aplicacion::Descartado(Error::SinPermiso.to_string()));
+            }
+            match snapshot::aplicar_evento(c, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),
                 Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
                 Err(e) => Err(e),
@@ -489,19 +514,18 @@ mod tests {
             aplicar_evento(db.conexion(), &publica, &evento(AHORA, "a@x.dev", 1)).unwrap(),
             Aplicacion::Desconocido
         );
-        // `compactar_eventos` (#94) ya exige firma: sin ella se descarta…
+        // `compactar_eventos` (#94) exige firma del Administrador y un snapshot válido.
         let mut compactar = evento(AHORA, "a@x.dev", 1);
         compactar.tipo = "compactar_eventos".into();
         assert!(matches!(
             aplicar_evento(db.conexion(), &publica, &compactar).unwrap(),
             Aplicacion::Descartado(motivo) if motivo.contains("firma_admin")
         ));
-        // …y con la firma del Administrador queda pendiente hasta que exista su aplicador.
         let firmado = compactar.firmar(&admin);
-        assert_eq!(
+        assert!(matches!(
             aplicar_evento(db.conexion(), &publica, &firmado).unwrap(),
-            Aplicacion::Desconocido
-        );
+            Aplicacion::Descartado(_)
+        ));
         // Un evento de usuarios bien firmado pero sin tabla `usuarios` detrás que lo
         // respalde: regla rota, se descarta (no detiene el escaneo).
         let mut usuario = evento(AHORA, "a@x.dev", 1);

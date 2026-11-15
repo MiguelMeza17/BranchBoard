@@ -96,6 +96,13 @@ export interface ResumenSincronizacion {
   ilegibles: number;
 }
 
+/** Resultado de compactar `ops/` (`compactar_eventos`, #94). */
+export interface ResumenCompactacion {
+  compactados: number;
+  /** `snapshot_<fecha>.json` creado en `ops/`, o `null` si no había eventos de más de 30 días. */
+  archivo: string | null;
+}
+
 /**
  * Qué ve la persona al abrir un workspace (`entrar_a_proyecto`, #89):
  * - `dentro`: entra con su rol; `configurado_ahora` = era el dueño del repo y el proyecto se configuró.
@@ -171,6 +178,16 @@ export const api = {
       descartados: 0,
       desconocidos: 0,
       ilegibles: 0,
+    })),
+
+  /**
+   * Compacta en un `snapshot_<fecha>.json` firmado los eventos de `ops/` con más de 30 días y los
+   * borra (#94). Solo Administrador; nunca automático.
+   */
+  compactarEventos: (passphrase?: string) =>
+    llamar<ResumenCompactacion>('compactar_eventos', { passphrase }, () => ({
+      compactados: 0,
+      archivo: null,
     })),
 
   /** Versión instalada de la app. */
