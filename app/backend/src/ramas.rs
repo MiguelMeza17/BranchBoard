@@ -263,6 +263,22 @@ pub fn cambiar_a_rama(estado: &AppState, carpeta: &Path, rama: &str) -> Resultad
     Ok(ahora)
 }
 
+/// Borra (cierra) una rama de tarea huérfana en Unity VC (`cm branch delete`).
+/// Nunca permite borrar `/main` ni `/main/dev`.
+pub fn borrar_rama(estado: &AppState, repo_cm: &str, rama: &str) -> Resultado<()> {
+    let rama = rama.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Err(Error::Validacion(format!(
+            "Solo se pueden borrar ramas de tarea, no {rama}"
+        )));
+    }
+    Comando::cm()
+        .args(["branch", "delete"])
+        .arg(format!("br:{rama}@{repo_cm}"))
+        .exigir_exito(estado)?;
+    Ok(())
+}
+
 /// Archivos con cambios sin check-in en el workspace (agregados, modificados,
 /// borrados, movidos o desprotegidos), sin contar los privados.
 pub fn cambios_pendientes(estado: &AppState, carpeta: &Path) -> Resultado<Vec<String>> {

@@ -54,12 +54,13 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("cambiar_rol", Acceso::Roles(LIDER_O_ADMIN)),
     ("eliminar_usuario", Acceso::Roles(LIDER_O_ADMIN)),
     ("confirmar_usuario", Acceso::Roles(SOLO_ADMIN)),
-    // Tareas (issues #95, #96). El detalle de quién puede editar o tomar qué tarea está en `tareas`.
+    // Tareas (issues #95, #96, #97). El detalle de quién puede editar o tomar qué tarea está en `tareas`.
     ("listar_tareas", Acceso::Roles(TODOS)),
     ("crear_tarea", Acceso::Roles(TODOS)),
     ("crear_tarea_con_subtareas", Acceso::Roles(TODOS)),
     ("editar_tarea", Acceso::Roles(TODOS)),
     ("tomar_tarea", Acceso::Roles(TODOS)),
+    ("volver_a_dev", Acceso::Roles(TODOS)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.

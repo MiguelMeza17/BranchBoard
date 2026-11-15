@@ -115,3 +115,13 @@ pub fn tomar_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
         tareas::registrar_toma(db.conexion(), &ops, &autor, &cadena, &creadas, &ahora_iso())
     })
 }
+
+/// `volver_a_dev()`: cambia el workspace local a `/main/dev` (`cm switch`).
+/// Se usa desde la notificación de doble toma revertida ("Volver mi workspace a dev", #97).
+#[tauri::command]
+pub async fn volver_a_dev(estado: State<'_, AppState>) -> Resultado<String> {
+    let _yo = estado.exigir_permiso("volver_a_dev")?;
+    let workspace = estado.workspace_abierto()?;
+    let actual = ramas::cambiar_a_rama(&estado, &workspace, ramas::RAMA_DEV)?;
+    Ok(actual.rama)
+}

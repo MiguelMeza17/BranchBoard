@@ -30,7 +30,7 @@ use super::{marcar_aplicado, ya_aplicado, Evento};
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
 use crate::modelo::Rol;
-use crate::tareas;
+use crate::tareas::{self, InfoDobleToma};
 
 /// Cuánto puede adelantarse el reloj de otra máquina antes de desconfiar.
 const TOLERANCIA_FUTURO_MIN: i64 = 5;
@@ -87,6 +87,22 @@ pub fn sincronizar(
     ahora: DateTime<Utc>,
     aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
 ) -> Resultado<ResumenSincronizacion> {
+    sincronizar_con_doble_toma(c, ops, carpeta_proyecto, ahora, "", aplicar, |_| Ok(false))
+}
+
+/// Igual que [`sincronizar`], pero al detectar una doble toma (`tomar_tarea`
+/// sobre una tarea ya asignada) consulta `revisar_rama_perdedor` para saber si
+/// la rama del perdedor ya tiene changesets reales (y cerrarla si no tiene)
+/// antes de aplicar la resolución en SQLite (#97).
+pub fn sincronizar_con_doble_toma(
+    c: &Connection,
+    ops: &Path,
+    carpeta_proyecto: &Path,
+    ahora: DateTime<Utc>,
+    publica_admin: &str,
+    aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
+    revisar_rama_perdedor: impl Fn(&InfoDobleToma) -> Resultado<bool>,
+) -> Resultado<ResumenSincronizacion> {
     let mut resumen = ResumenSincronizacion::default();
     let mut avisos = Vec::new();
     let pendientes = leer_pendientes(c, ops, ahora, &mut resumen, &mut avisos)?;
@@ -105,11 +121,36 @@ pub fn sincronizar(
                 resumen.aplicados += 1;
             }
             Aplicacion::Descartado(motivo) => {
+                let doble = if p.evento.tipo == "tomar_tarea" {
+                    tareas::detectar_doble_toma(&tx, ops, &p.id, &p.evento)?
+                } else {
+                    None
+                };
                 // Lo que haya escrito el aplicador antes de descartar no se guarda.
                 drop(tx);
-                marcar_aplicado(c, &p.id, &ahora_iso(ahora))?;
-                avisos.push(format!("descartado {}: {motivo}", p.id));
-                resumen.descartados += 1;
+                if let Some(info) = doble {
+                    let tiene_changesets = revisar_rama_perdedor(&info)?;
+                    let tx2 = c.unchecked_transaction()?;
+                    let aplicado = tareas::aplicar_resolucion_doble_toma(
+                        &tx2,
+                        publica_admin,
+                        &info,
+                        tiene_changesets,
+                        &ahora_iso(ahora),
+                    )?;
+                    marcar_aplicado(&tx2, &p.id, &ahora_iso(ahora))?;
+                    tx2.commit()?;
+                    if aplicado {
+                        resumen.aplicados += 1;
+                    } else {
+                        avisos.push(format!("descartado {} (doble toma): {motivo}", p.id));
+                        resumen.descartados += 1;
+                    }
+                } else {
+                    marcar_aplicado(c, &p.id, &ahora_iso(ahora))?;
+                    avisos.push(format!("descartado {}: {motivo}", p.id));
+                    resumen.descartados += 1;
+                }
             }
             Aplicacion::Desconocido => {
                 drop(tx);
