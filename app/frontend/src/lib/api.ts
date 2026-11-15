@@ -233,6 +233,13 @@ export const api = {
   editarTarea: (id: string, campos: CambiosEditarTarea, mockup: () => Tarea) =>
     llamar<Tarea>('editar_tarea', { id, campos }, mockup),
 
+  /**
+   * Toma la tarea `id` (#96): crea en Unity VC las ramas que falten en la cadena (desde la tarea
+   * general hasta `id`), cambia el workspace local a ella con `cm switch` y publica el evento en
+   * `ops/`. Devuelve las tareas de la cadena actualizadas.
+   */
+  tomarTarea: (id: string, mockup: () => Tarea[]) => llamar<Tarea[]>('tomar_tarea', { id }, mockup),
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 

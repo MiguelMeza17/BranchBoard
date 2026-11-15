@@ -75,6 +75,7 @@ pub fn run() {
             comandos_tareas::crear_tarea,
             comandos_tareas::crear_tarea_con_subtareas,
             comandos_tareas::editar_tarea,
+            comandos_tareas::tomar_tarea,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

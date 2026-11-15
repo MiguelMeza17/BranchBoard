@@ -18,14 +18,24 @@ use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoTarea};
+use crate::ramas::TareaDeCadena;
+use crate::servidor::Rama;
 
 /// Tipos de evento que maneja este módulo.
-pub const TIPOS: &[&str] = &["crear_tarea", "crear_tarea_con_subtareas", "editar_tarea"];
+pub const TIPOS: &[&str] = &[
+    "crear_tarea",
+    "crear_tarea_con_subtareas",
+    "editar_tarea",
+    "tomar_tarea",
+];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
 /// `tarea general (0) -> subtarea (1) -> subtarea de subtarea (2)`, que junto
 /// con `/main/dev` suman los 5 niveles máximos de Unity VC (#83).
 const MAX_ANCESTROS_TAREA: usize = 2;
+
+/// Valor de `modo_trabajo` de una tarea que ya tiene su rama.
+const MODO_RAMA: &str = "rama";
 
 /// Quién ejecuta una acción sobre tareas (con su rol ya verificado).
 #[derive(Debug, Clone)]
@@ -139,6 +149,27 @@ struct PayloadTareaConSubtareas {
 struct PayloadEditarTarea {
     id: String,
     cambios: CambiosTarea,
+}
+
+/// Rama asignada a un ancestro sin rama al tomar o asignar una subtarea (#96, #98).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RamaAncestro {
+    pub id: String,
+    pub rama_asociada: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultimo_changeset_visto: Option<i64>,
+}
+
+/// `payload` del evento `tomar_tarea` (#96).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PayloadTomarTarea {
+    id: String,
+    asignado_a: String,
+    rama_asociada: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ultimo_changeset_visto: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ramas_ancestros: Vec<RamaAncestro>,
 }
 
 fn limpiar_opcional(valor: Option<String>) -> Option<String> {
@@ -365,6 +396,162 @@ pub fn editar(
     db_tareas::obtener(c, id)
 }
 
+/// `true` si `tarea` no es subtarea de otra (`tarea_padre_id == None`) ni tiene
+/// subtareas propias no eliminadas. Es la condición para que un Colaborador
+/// externo pueda tomarla o recibirla asignada.
+pub fn es_tarea_individual(c: &Connection, tarea: &Tarea) -> Resultado<bool> {
+    if tarea.tarea_padre_id.is_some() {
+        return Ok(false);
+    }
+    let hijas = db_tareas::hijas(c, &tarea.id)?;
+    Ok(hijas.iter().all(|h| h.eliminada))
+}
+
+/// Valida que `autor` pueda tomar la tarea `id` y arma la cadena desde la tarea
+/// general hasta `id` (inclusive) para [`crate::ramas::crear_ramas_de_cadena`].
+pub fn cadena_para_tomar(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    id: &str,
+) -> Resultado<Vec<TareaDeCadena>> {
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede tomar",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::PorHacer || tarea.asignado_a.is_some() {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está asignada o no está por hacer",
+            tarea.id
+        )));
+    }
+    if autor.rol == Rol::ColaboradorExterno && !es_tarea_individual(c, &tarea)? {
+        return Err(Error::Validacion(
+            "Solo puedes tomar tareas individuales".into(),
+        ));
+    }
+
+    let mut inversa = vec![TareaDeCadena {
+        id: tarea.id.clone(),
+        titulo: tarea.titulo.clone(),
+        rama: tarea.rama_asociada.clone(),
+    }];
+    let mut padre_id = tarea.tarea_padre_id.clone();
+    let mut ancestros = 0usize;
+    while let Some(pid) = padre_id {
+        let padre = db_tareas::obtener(c, &pid)?;
+        if padre.eliminada {
+            return Err(Error::Validacion(format!(
+                "La tarea padre {} está en la Papelera",
+                padre.id
+            )));
+        }
+        ancestros += 1;
+        if ancestros > MAX_ANCESTROS_TAREA {
+            return Err(Error::Validacion(
+                "No se puede tomar la tarea: superaría el límite de 5 niveles de ramas".into(),
+            ));
+        }
+        inversa.push(TareaDeCadena {
+            id: padre.id.clone(),
+            titulo: padre.titulo.clone(),
+            rama: padre.rama_asociada.clone(),
+        });
+        padre_id = padre.tarea_padre_id;
+    }
+    inversa.reverse();
+    Ok(inversa)
+}
+
+/// Registra en la base local y publica en `ops/` el evento `tomar_tarea` una vez
+/// que se crearon las ramas en Unity VC y se cambió el workspace local.
+/// Devuelve todas las tareas de `cadena` actualizadas (ancestros + la tarea tomada).
+pub fn registrar_toma(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    cadena: &[TareaDeCadena],
+    creadas: &[(String, Rama)],
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let objetivo = cadena
+        .last()
+        .ok_or_else(|| Error::Validacion("No hay tarea para tomar".into()))?;
+    let (rama_asociada, ultimo_changeset_visto) =
+        match creadas.iter().find(|(tid, _)| tid == &objetivo.id) {
+            Some((_, r)) => (r.name.clone(), Some(r.head_changeset)),
+            None => match objetivo.rama {
+                Some(ref r) => (r.clone(), None),
+                None => {
+                    return Err(Error::Validacion(format!(
+                        "Falta la rama creada para la tarea {}",
+                        objetivo.id
+                    )))
+                }
+            },
+        };
+
+    let mut ramas_ancestros = Vec::new();
+    for paso in &cadena[..cadena.len() - 1] {
+        if let Some((_, r)) = creadas.iter().find(|(tid, _)| tid == &paso.id) {
+            ramas_ancestros.push(RamaAncestro {
+                id: paso.id.clone(),
+                rama_asociada: r.name.clone(),
+                ultimo_changeset_visto: Some(r.head_changeset),
+            });
+        } else if paso.rama.is_none() {
+            return Err(Error::Validacion(format!(
+                "Falta la rama creada para la tarea padre {}",
+                paso.id
+            )));
+        }
+    }
+
+    let asignado_a = normalizar_email(autor.email);
+    let payload = PayloadTomarTarea {
+        id: objetivo.id.clone(),
+        asignado_a: asignado_a.clone(),
+        rama_asociada,
+        ultimo_changeset_visto,
+        ramas_ancestros,
+    };
+    let mut ev = Evento::nuevo(
+        "tomar_tarea",
+        Some(&objetivo.id),
+        &asignado_a,
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar tomar_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_tomar_tarea(tx, autor.email, Some(autor.rol), &payload)
+    })?;
+
+    cadena
+        .iter()
+        .map(|paso| db_tareas::obtener(c, &paso.id))
+        .collect()
+}
+
+/// Toma la tarea `id` (`tomar_tarea`, issue #96): valida permisos y cadena de
+/// ancestros, ejecuta `preparar_ramas_y_workspace` (creación de ramas en el
+/// servidor + `cm switch` en el workspace local) y publica el evento en `ops/`.
+pub fn tomar(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    preparar_ramas_y_workspace: impl FnOnce(&[TareaDeCadena]) -> Resultado<Vec<(String, Rama)>>,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let cadena = cadena_para_tomar(c, autor, id)?;
+    let creadas = preparar_ramas_y_workspace(&cadena)?;
+    registrar_toma(c, ops, autor, &cadena, &creadas, ahora)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -521,10 +708,89 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_editar_tarea(c, &evento.usuario, rol, &payload)
         }
+        "tomar_tarea" => {
+            let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("tomar_tarea inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_tomar_tarea(c, &evento.usuario, rol, &payload)
+        }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
         ))),
     }
+}
+
+fn validar_ruta_rama_tarea(rama: &str) -> Resultado<String> {
+    let limpia = rama.trim().trim_end_matches('/');
+    if !limpia.starts_with(&format!("{}/", crate::ramas::RAMA_DEV))
+        || crate::ramas::niveles(limpia) > crate::ramas::MAX_NIVELES
+    {
+        return Err(Error::Validacion(format!(
+            "La rama {limpia} no es una rama de tarea válida"
+        )));
+    }
+    Ok(limpia.to_string())
+}
+
+fn aplicar_tomar_tarea(
+    c: &Connection,
+    autor_email: &str,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadTomarTarea,
+) -> Resultado<()> {
+    let autor = normalizar_email(autor_email);
+    if normalizar_email(&payload.asignado_a) != autor {
+        return Err(Error::Validacion(
+            "El responsable de tomar_tarea no coincide con quien emite el evento".into(),
+        ));
+    }
+    let rama = validar_ruta_rama_tarea(&payload.rama_asociada)?;
+
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede tomar",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::PorHacer || tarea.asignado_a.is_some() {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está asignada o no está por hacer",
+            tarea.id
+        )));
+    }
+    if rol_conocido == Some(Rol::ColaboradorExterno) && !es_tarea_individual(c, &tarea)? {
+        return Err(Error::Validacion(
+            "Solo puedes tomar tareas individuales".into(),
+        ));
+    }
+
+    for anc in &payload.ramas_ancestros {
+        let rama_anc = validar_ruta_rama_tarea(&anc.rama_asociada)?;
+        let mut fila_anc = db_tareas::obtener(c, &anc.id)?;
+        if fila_anc.eliminada {
+            return Err(Error::Validacion(format!(
+                "La tarea padre {} está en la Papelera",
+                fila_anc.id
+            )));
+        }
+        if fila_anc.rama_asociada.is_none() {
+            fila_anc.rama_asociada = Some(rama_anc);
+            fila_anc.modo_trabajo = Some(MODO_RAMA.to_string());
+            if fila_anc.ultimo_changeset_visto.is_none() {
+                fila_anc.ultimo_changeset_visto = anc.ultimo_changeset_visto;
+            }
+            db_tareas::actualizar(c, &fila_anc)?;
+        }
+    }
+
+    tarea.asignado_a = Some(autor);
+    tarea.modo_trabajo = Some(MODO_RAMA.to_string());
+    tarea.rama_asociada = Some(rama);
+    if tarea.ultimo_changeset_visto.is_none() {
+        tarea.ultimo_changeset_visto = payload.ultimo_changeset_visto;
+    }
+    db_tareas::actualizar(c, &tarea)
 }
 
 #[cfg(test)]
@@ -949,6 +1215,257 @@ mod tests {
         assert_eq!(por_lider.titulo, "Ajuste del Líder");
     }
 
+    fn simular_ramas_cadena(cadena: &[TareaDeCadena]) -> Resultado<Vec<(String, Rama)>> {
+        let mut padre: Option<String> = None;
+        let mut creadas = Vec::new();
+        for (i, paso) in cadena.iter().enumerate() {
+            let ruta = match paso.rama {
+                Some(ref r) => r.clone(),
+                None => {
+                    let r = crate::ramas::ruta_rama_nueva(
+                        padre.as_deref(),
+                        &crate::ramas::nombre_rama(&paso.id, &paso.titulo)?,
+                    )?;
+                    creadas.push((
+                        paso.id.clone(),
+                        Rama {
+                            id: 100 + i as i64,
+                            name: r.clone(),
+                            head_changeset: 50 + i as i64,
+                        },
+                    ));
+                    r
+                }
+            };
+            padre = Some(ruta);
+        }
+        Ok(creadas)
+    }
+
+    #[test]
+    fn tomar_subtarea_crea_rama_del_padre_sin_asignarlo_y_viaja_por_ops() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let tester = AutorTarea {
+            email: TESTER,
+            rol: Rol::Tester,
+        };
+
+        // Crea T-101 con dos subtareas T-101-1 y T-101-2 (ninguna tiene rama todavía).
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &dev,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "IA de enemigo".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![
+                    DatosSubtareaNueva {
+                        tipo: TipoTarea::Animacion,
+                        titulo: "Caminar".into(),
+                        detalles: String::new(),
+                    },
+                    DatosSubtareaNueva {
+                        tipo: TipoTarea::Audio,
+                        titulo: "Rugido".into(),
+                        detalles: String::new(),
+                    },
+                ],
+            },
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
+
+        // Dev toma T-101-1: T-101 recibe `rama_asociada` y `modo_trabajo = Rama`, pero NO responsable;
+        // T-101-1 recibe además `asignado_a = dev`.
+        let actualizadas = tomar(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-1",
+            simular_ramas_cadena,
+            "2026-11-15T15:00:02.000Z",
+        )
+        .unwrap();
+        assert_eq!(actualizadas.len(), 2);
+        let padre = &actualizadas[0];
+        let hija = &actualizadas[1];
+        assert_eq!(padre.id, "T-101");
+        assert_eq!(
+            padre.rama_asociada.as_deref(),
+            Some("/main/dev/T-101-ia-de-enemigo")
+        );
+        assert_eq!(padre.modo_trabajo.as_deref(), Some(MODO_RAMA));
+        assert_eq!(padre.asignado_a, None, "el padre no recibe responsable");
+        assert_eq!(padre.ultimo_changeset_visto, Some(50));
+
+        assert_eq!(hija.id, "T-101-1");
+        assert_eq!(hija.asignado_a.as_deref(), Some(DEV));
+        assert_eq!(hija.modo_trabajo.as_deref(), Some(MODO_RAMA));
+        assert_eq!(
+            hija.rama_asociada.as_deref(),
+            Some("/main/dev/T-101-ia-de-enemigo/T-101-1-caminar")
+        );
+        assert_eq!(hija.ultimo_changeset_visto, Some(51));
+
+        // Intentar volver a tomar T-101-1 ya tomada se rechaza.
+        let err = tomar(
+            c,
+            &e.ops,
+            &tester,
+            "T-101-1",
+            simular_ramas_cadena,
+            "2026-11-15T15:00:03.000Z",
+        )
+        .unwrap_err();
+        assert_eq!(err.codigo(), "validacion");
+
+        // Tester toma T-101-2: el padre ya tiene rama, solo se crea la de T-101-2.
+        let segunda = tomar(
+            c,
+            &e.ops,
+            &tester,
+            "T-101-2",
+            simular_ramas_cadena,
+            "2026-11-15T15:00:04.000Z",
+        )
+        .unwrap();
+        assert_eq!(segunda.len(), 2);
+        assert_eq!(segunda[1].asignado_a.as_deref(), Some(TESTER));
+        assert_eq!(
+            segunda[1].rama_asociada.as_deref(),
+            Some("/main/dev/T-101-ia-de-enemigo/T-101-2-rugido")
+        );
+
+        // Máquina B sincroniza y llega exactamente al mismo estado.
+        let r = e.sincronizar_b();
+        assert_eq!(r.aplicados, 3);
+        assert_eq!(r.descartados, 0);
+        assert_eq!(
+            listar(e.db_b.conexion()).unwrap(),
+            listar(e.db_a.conexion()).unwrap()
+        );
+    }
+
+    #[test]
+    fn colaborador_externo_solo_toma_tareas_individuales() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let colab = AutorTarea {
+            email: COLAB,
+            rol: Rol::ColaboradorExterno,
+        };
+
+        // T-101 con subtarea T-101-1, y T-102 individual.
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Tarea grande".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::Audio,
+                    titulo: "Subtarea".into(),
+                    detalles: String::new(),
+                }],
+            },
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
+        crear(
+            c,
+            &e.ops,
+            &lider,
+            &datos_base("Modelo 3D suelto"),
+            "2026-11-15T15:00:02.000Z",
+            HOY,
+        )
+        .unwrap();
+
+        // Colaborador externo NO puede tomar la tarea con subtareas (T-101) ni la subtarea (T-101-1).
+        for id in ["T-101", "T-101-1"] {
+            let err = tomar(
+                c,
+                &e.ops,
+                &colab,
+                id,
+                simular_ramas_cadena,
+                "2026-11-15T15:00:03.000Z",
+            )
+            .unwrap_err();
+            assert_eq!(err.codigo(), "validacion");
+            assert!(err.to_string().contains("individuales"), "{err}");
+        }
+
+        // Sí puede tomar la tarea individual (T-102).
+        let tomada = tomar(
+            c,
+            &e.ops,
+            &colab,
+            "T-102",
+            simular_ramas_cadena,
+            "2026-11-15T15:00:04.000Z",
+        )
+        .unwrap();
+        assert_eq!(tomada.len(), 1);
+        assert_eq!(tomada[0].asignado_a.as_deref(), Some(COLAB));
+
+        // Si alguien suelta a mano en `ops/` un evento `tomar_tarea` de Colaborador externo
+        // sobre una subtarea, al sincronizar se descarta.
+        let mut falso = Evento::nuevo(
+            "tomar_tarea",
+            Some("T-101-1"),
+            COLAB,
+            serde_json::to_value(PayloadTomarTarea {
+                id: "T-101-1".into(),
+                asignado_a: COLAB.into(),
+                rama_asociada: "/main/dev/T-101-tarea-grande/T-101-1-subtarea".into(),
+                ultimo_changeset_visto: Some(10),
+                ramas_ancestros: vec![RamaAncestro {
+                    id: "T-101".into(),
+                    rama_asociada: "/main/dev/T-101-tarea-grande".into(),
+                    ultimo_changeset_visto: Some(9),
+                }],
+            })
+            .unwrap(),
+        );
+        falso.timestamp = "2026-11-15T15:00:05.000Z".into();
+        eventos::escribir_evento(&e.ops, &falso).unwrap();
+
+        let r = e.sincronizar_b();
+        assert_eq!(r.aplicados, 3);
+        assert_eq!(r.descartados, 1, "el evento falso se descarta");
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-101-1")
+                .unwrap()
+                .asignado_a,
+            None
+        );
+    }
+
     /// **Prueba en el entorno real** (CLAUDE.md): entra de verdad al repositorio
     /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` en un workspace
     /// temporal (`cm workspace create` + `entrar_en`), configura una subcarpeta
@@ -1157,6 +1674,171 @@ mod tests {
             .args(["workspace", "delete"])
             .arg(&ruta_ws)
             .ejecutar(&estado_a);
+        let _ = std::fs::remove_dir_all(&compartida);
+        println!("subcarpeta de prueba borrada: {}", !compartida.exists());
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    /// **Prueba en el entorno real** (CLAUDE.md, issue #96): entra al repositorio
+    /// real `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity`, crea una
+    /// tarea general con una subtarea, llama a `comandos::tareas::tomar_en` sobre
+    /// la subtarea (`T-101-1`), verifica que:
+    /// 1. Se crearon en Unity VC tanto la rama del padre como la de la subtarea,
+    ///    partiendo de la cabeza actual de `/main/dev`, con el comentario armado
+    ///    por el backend (`Rama de <id>: <título>`).
+    /// 2. El workspace local cambió (`cm switch`) a la rama de la subtarea.
+    /// 3. El padre quedó con `rama_asociada` y sin `asignado_a`, y la subtarea con
+    ///    `asignado_a`, `modo_trabajo = Rama` y `rama_asociada`.
+    /// 4. Una segunda máquina B sincroniza desde OneDrive y obtiene las mismas filas.
+    ///
+    /// Al terminar borra el workspace, las ramas de prueba en Unity VC y la
+    /// subcarpeta de OneDrive.
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_tomar_tarea_crea_rama_cambia_workspace_y_sincroniza() {
+        use crate::cm::lectura::rama_actual_workspace;
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::tareas::tomar_en;
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let repo_cm = format!("{repo}@{org}@unity");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-96-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let mut ramas_creadas: Vec<String> = Vec::new();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-96-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+            // Crea T-101 con subtarea T-101-1 (con sufijo único para la rama en el repo de pruebas).
+            estado_a
+                .con_db(|db_a| {
+                    crear_con_subtareas(
+                        db_a.conexion(),
+                        &ops_a,
+                        &AutorTarea {
+                            email: &admin_fila.email,
+                            rol: Rol::Administrador,
+                        },
+                        &DatosNuevaTareaConSubtareas {
+                            titulo: format!("Padre 96 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                            subtareas: vec![DatosSubtareaNueva {
+                                tipo: TipoTarea::Animacion,
+                                titulo: format!("Hija 96 {sufijo}"),
+                                detalles: String::new(),
+                            }],
+                        },
+                        "2026-11-15T15:00:01.000Z",
+                        HOY,
+                    )
+                })
+                .unwrap();
+
+            // Toma T-101-1 usando el flujo real (`tomar_en`): API REST + `cm switch` + evento en `ops/`.
+            let actualizadas = tomar_en(&estado_a, "T-101-1").unwrap();
+            assert_eq!(actualizadas.len(), 2);
+            let padre = &actualizadas[0];
+            let hija = &actualizadas[1];
+            let rama_padre = padre.rama_asociada.clone().expect("padre con rama");
+            let rama_hija = hija.rama_asociada.clone().expect("hija con rama");
+            ramas_creadas.push(rama_padre.clone());
+            ramas_creadas.push(rama_hija.clone());
+
+            assert_eq!(padre.asignado_a, None);
+            assert_eq!(padre.modo_trabajo.as_deref(), Some(MODO_RAMA));
+            assert_eq!(hija.asignado_a.as_deref(), Some(admin_fila.email.as_str()));
+            assert_eq!(hija.modo_trabajo.as_deref(), Some(MODO_RAMA));
+
+            // El workspace local quedó en la rama de la subtarea tomada.
+            let ws_actual = rama_actual_workspace(&estado_a, ws_a.path()).unwrap();
+            println!("workspace tras tomar_en: {}", ws_actual.rama);
+            assert_eq!(ws_actual.rama, rama_hija);
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Máquina B sincroniza desde OneDrive y llega al mismo estado.
+            let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
+                .unwrap()
+                .with_timezone(&Utc);
+            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            println!("B sincroniza tomar_tarea desde OneDrive: {sync_b:?}");
+            assert_eq!(sync_b.aplicados, 2);
+            assert_eq!(sync_b.descartados, 0);
+            assert_eq!(
+                listar(db_b.conexion()).unwrap(),
+                estado_a.con_db(|db_a| listar(db_a.conexion())).unwrap()
+            );
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
+        for rama in ramas_creadas.iter().rev() {
+            let salida = Comando::cm()
+                .args(["branch", "delete"])
+                .arg(format!("br:{rama}@{repo_cm}"))
+                .ejecutar(&estado_a)
+                .unwrap();
+            println!("borrada rama de prueba {rama}: {}", salida.exito());
+        }
         let _ = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", !compartida.exists());
         if let Err(p) = resultado {
