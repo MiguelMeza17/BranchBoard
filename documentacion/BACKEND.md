@@ -281,7 +281,7 @@ A diferencia del flujo anterior, este **no** pasa por Líder/Administrador exclu
 
 ## Estados, progreso y reaperturas
 
-**Nuevo (2026-11-07, según el frontend)**. Reglas que el frontend ya aplica y que el backend tiene que validar igual (al ejecutar el comando y al reproducir el evento):
+**Nuevo (2026-11-07, según el frontend; `cambiar_estado` implementado 2026-11-15 en #99)**. Reglas que el frontend ya aplica y que el backend tiene que validar igual (al ejecutar el comando y al reproducir el evento):
 
 - **Estados**: por hacer / en producción / en revisión / terminada. "Sin asignar" no es un estado: es "por hacer" sin `asignado_a`.
 - **El estado de una tarea con subtareas se calcula a partir de ellas** (se recalcula de abajo hacia arriba por toda la cadena de padres):

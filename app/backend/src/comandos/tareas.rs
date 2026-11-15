@@ -10,10 +10,13 @@ use crate::db::tareas::Tarea;
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos;
-use crate::modelo::{ahora_iso, hoy_local};
+use crate::modelo::{ahora_iso, hoy_local, EstadoTarea};
 use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
-use crate::tareas::{self, AutorTarea, CambiosTarea, DatosNuevaTarea, DatosNuevaTareaConSubtareas};
+use crate::tareas::{
+    self, AutorTarea, CambiosTarea, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
+    ResultadoCambioEstado,
+};
 
 fn con_ops<T>(
     estado: &AppState,
@@ -181,11 +184,20 @@ pub async fn desasignar_tarea(estado: State<'_, AppState>, id: String) -> Result
 
 /// Lo mismo que [`desasignar_tarea`], sin el envoltorio de Tauri.
 pub fn desasignar_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
-    let yo = estado.exigir_permiso("desasignar_tarea")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
-    let autor = AutorTarea {
-        email: &yo.email,
-        rol: yo.rol,
-    };
-    estado.con_db(|db| tareas::desasignar(db.conexion(), &ops, &autor, id, &ahora_iso()))
+    con_ops(estado, "desasignar_tarea", |c, ops, autor| {
+        tareas::desasignar(c, ops, autor, id, &ahora_iso())
+    })
+}
+
+/// `cambiar_estado(id, estado)`: cambia el estado de una tarea con todas las
+/// reglas de subtareas, progreso, préstamos y rol (#99).
+#[tauri::command]
+pub async fn cambiar_estado(
+    estado: State<'_, AppState>,
+    id: String,
+    nuevo_estado: EstadoTarea,
+) -> Resultado<ResultadoCambioEstado> {
+    con_ops(&estado, "cambiar_estado", |c, ops, autor| {
+        tareas::cambiar_estado(c, ops, autor, &id, nuevo_estado, &ahora_iso())
+    })
 }

@@ -31,6 +31,7 @@ pub const TIPOS: &[&str] = &[
     "tomar_tarea",
     "asignar_tarea",
     "desasignar_tarea",
+    "cambiar_estado",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -180,6 +181,21 @@ pub struct PayloadTomarTarea {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PayloadDesasignarTarea {
     pub id: String,
+}
+
+/// `payload` del evento `cambiar_estado` (#99).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadCambiarEstado {
+    pub id: String,
+    pub estado: EstadoTarea,
+}
+
+/// Respuesta de [`cambiar_estado`] (#99): tareas actualizadas y posibles
+/// tareas origen con cambios prestados vigentes al pasar a revisión.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResultadoCambioEstado {
+    pub tareas: Vec<Tarea>,
+    pub aviso_prestamos: Vec<String>,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -770,6 +786,56 @@ pub fn desasignar(
     db_tareas::obtener(c, &tarea.id)
 }
 
+fn prestamos_vigentes_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+    let mut origenes = Vec::new();
+    for tid in ids {
+        for p in commits::prestamos_vigentes(c, tid)? {
+            if !origenes.contains(&p.origen_id) {
+                origenes.push(p.origen_id);
+            }
+        }
+    }
+    Ok(origenes)
+}
+
+/// Cambia el estado de la tarea `id` (`cambiar_estado`, #99) aplicando todas las
+/// reglas de negocio (subtareas, progreso/commits, préstamos, rol para terminar,
+/// propagación hacia atrás y recálculo de padres de abajo hacia arriba).
+pub fn cambiar_estado(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    estado: EstadoTarea,
+    ahora: &str,
+) -> Resultado<ResultadoCambioEstado> {
+    let id = id.trim();
+    let payload = PayloadCambiarEstado {
+        id: id.to_string(),
+        estado,
+    };
+    let mut ev = Evento::nuevo(
+        "cambiar_estado",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar cambiar_estado: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+
+    let mut aviso_prestamos = Vec::new();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aviso_prestamos =
+            aplicar_cambiar_estado(tx, autor.email, Some(autor.rol), &payload, ahora)?;
+        Ok(())
+    })?;
+
+    Ok(ResultadoCambioEstado {
+        tareas: db_tareas::listar(c)?,
+        aviso_prestamos,
+    })
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -942,6 +1008,13 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("desasignar_tarea inválido: {e}")))?;
             aplicar_desasignar_tarea(c, &payload)
+        }
+        "cambiar_estado" => {
+            let payload: PayloadCambiarEstado = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("cambiar_estado inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_cambiar_estado(c, &evento.usuario, rol, &payload, &evento.timestamp)?;
+            Ok(())
         }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
@@ -1137,7 +1210,199 @@ fn aplicar_desasignar_tarea(c: &Connection, payload: &PayloadDesasignarTarea) ->
         sub.estado = EstadoTarea::PorHacer;
         db_tareas::actualizar(c, &sub)?;
     }
+    recalcular_padres(c, tarea.tarea_padre_id)?;
     Ok(())
+}
+
+/// Recalcula el estado de la cadena de padres desde `padre_id` hacia la raíz (#99).
+/// - "terminada" es final: no se vuelve a derivar.
+/// - Todas en "por hacer" -> "por hacer" (salvo que el padre tenga commits -> "en producción").
+/// - Alguna en "por hacer" o "en producción" -> "en producción".
+/// - Ninguna en "por hacer"/"en producción" -> "en revisión".
+/// - Si sale de "por hacer" y no tiene responsable, hereda el de alguna hija.
+fn recalcular_padres(c: &Connection, mut padre_id: Option<String>) -> Resultado<()> {
+    while let Some(pid) = padre_id {
+        let mut padre = db_tareas::obtener(c, &pid)?;
+        padre_id = padre.tarea_padre_id.clone();
+        if padre.eliminada || padre.estado == EstadoTarea::Terminada {
+            continue;
+        }
+        let hijas: Vec<Tarea> = db_tareas::hijas(c, &padre.id)?
+            .into_iter()
+            .filter(|h| !h.eliminada)
+            .collect();
+        if hijas.is_empty() {
+            continue;
+        }
+        let padre_con_commits = !commits::de_tarea(c, &padre.id)?.is_empty();
+        let derivado = if hijas.iter().all(|h| h.estado == EstadoTarea::PorHacer) {
+            if padre_con_commits {
+                EstadoTarea::EnProduccion
+            } else {
+                EstadoTarea::PorHacer
+            }
+        } else if hijas
+            .iter()
+            .any(|h| matches!(h.estado, EstadoTarea::PorHacer | EstadoTarea::EnProduccion))
+        {
+            EstadoTarea::EnProduccion
+        } else {
+            EstadoTarea::EnRevision
+        };
+
+        let heredado = if derivado != EstadoTarea::PorHacer && padre.asignado_a.is_none() {
+            hijas.iter().find_map(|h| h.asignado_a.clone())
+        } else {
+            None
+        };
+        let cambio_estado = padre.estado != derivado;
+        let cambio_responsable = heredado.is_some();
+        if cambio_estado || cambio_responsable {
+            padre.estado = derivado;
+            if let Some(resp) = heredado {
+                padre.asignado_a = Some(resp);
+            }
+            db_tareas::actualizar(c, &padre)?;
+        }
+    }
+    Ok(())
+}
+
+fn fecha_corta_de_iso(ahora: &str) -> String {
+    ahora.get(..10).unwrap_or(ahora).to_string()
+}
+
+fn aplicar_cambiar_estado(
+    c: &Connection,
+    autor_email: &str,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadCambiarEstado,
+    ahora: &str,
+) -> Resultado<Vec<String>> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if payload.estado == EstadoTarea::Terminada {
+        if let Some(rol) = rol_conocido {
+            if !rol.es_lider_o_admin() {
+                return Err(Error::Validacion(
+                    "Solo un Líder o Administrador puede marcar una tarea como terminada".into(),
+                ));
+            }
+        }
+    }
+
+    let descendientes = descendientes_activos(c, &tarea.id)?;
+    let mut ids_subarbol = vec![tarea.id.clone()];
+    ids_subarbol.extend(descendientes.iter().map(|d| d.id.clone()));
+
+    let mut aviso_prestamos = Vec::new();
+    if matches!(
+        payload.estado,
+        EstadoTarea::EnRevision | EstadoTarea::Terminada
+    ) {
+        if tarea.pendiente_aprobacion {
+            return Err(Error::Validacion(format!(
+                "La tarea {} sigue pendiente de aprobación",
+                tarea.id
+            )));
+        }
+        let abiertas: Vec<&str> = descendientes
+            .iter()
+            .filter(|h| {
+                if payload.estado == EstadoTarea::Terminada {
+                    h.estado != EstadoTarea::Terminada
+                } else {
+                    matches!(h.estado, EstadoTarea::PorHacer | EstadoTarea::EnProduccion)
+                }
+            })
+            .map(|h| h.id.as_str())
+            .collect();
+        if !abiertas.is_empty() {
+            return Err(Error::Validacion(format!(
+                "La tarea {} todavía tiene subtareas abiertas: {}",
+                tarea.id,
+                abiertas.join(", ")
+            )));
+        }
+        let prestamos = prestamos_vigentes_origenes(c, &ids_subarbol)?;
+        if payload.estado == EstadoTarea::Terminada && !prestamos.is_empty() {
+            return Err(Error::Validacion(format!(
+                "Antes de terminar {}, devuelve los cambios prestados de {}",
+                tarea.id,
+                prestamos.join(", ")
+            )));
+        }
+        aviso_prestamos = prestamos;
+    }
+
+    if payload.estado == EstadoTarea::PorHacer {
+        for tid in &ids_subarbol {
+            if !commits::de_tarea(c, tid)?.is_empty() {
+                return Err(Error::Validacion(format!(
+                    "No se puede volver a 'por hacer': {tid} ya tiene check-ins (hay progreso)"
+                )));
+            }
+        }
+    }
+
+    let anterior_estado = tarea.estado;
+    let autor = normalizar_email(autor_email);
+    let propaga = !matches!(
+        payload.estado,
+        EstadoTarea::EnRevision | EstadoTarea::Terminada
+    );
+
+    if payload.estado != EstadoTarea::PorHacer && tarea.asignado_a.is_none() {
+        tarea.asignado_a = descendientes
+            .iter()
+            .find_map(|d| d.asignado_a.clone())
+            .or(Some(autor.clone()));
+    }
+    tarea.estado = payload.estado;
+    if payload.estado == EstadoTarea::Terminada {
+        tarea.fecha_completada = Some(fecha_corta_de_iso(ahora));
+    }
+    db_tareas::actualizar(c, &tarea)?;
+
+    if propaga {
+        for mut sub in descendientes {
+            if payload.estado != EstadoTarea::PorHacer && sub.asignado_a.is_none() {
+                sub.asignado_a = Some(autor.clone());
+            }
+            sub.estado = payload.estado;
+            db_tareas::actualizar(c, &sub)?;
+        }
+    }
+
+    recalcular_padres(c, tarea.tarea_padre_id)?;
+
+    if anterior_estado != EstadoTarea::EnRevision && payload.estado == EstadoTarea::EnRevision {
+        for u in usuarios::listar(c)? {
+            if u.rol.es_lider_o_admin() {
+                insertar_notificacion_si_falta(
+                    c,
+                    &Notificacion {
+                        id: format!("noti_rev_{}_{}_{}", tarea.id, u.email, ahora),
+                        tipo: TipoNotificacion::TareaARevision,
+                        para: u.email,
+                        titulo: "Una tarea pasó a revisión".into(),
+                        cuerpo: format!("\"{}\" ({}) pasó a revisión.", tarea.titulo, tarea.id),
+                        leida: false,
+                        fecha: ahora.to_string(),
+                        tarea_id: Some(tarea.id.clone()),
+                        accionable: false,
+                    },
+                )?;
+            }
+        }
+    }
+
+    Ok(aviso_prestamos)
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -3355,5 +3620,216 @@ mod tests {
         if let Err(p) = resultado {
             std::panic::resume_unwind(p);
         }
+    }
+
+    #[test]
+    fn cambiar_estado_calcula_padres_subarbol_commits_prestamos_y_roles() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        // 1. Tarea pendiente de aprobación no puede ir a revisión.
+        crear(
+            c,
+            &e.ops,
+            &autor_dev,
+            &datos_base("Pendiente"),
+            "2026-11-15T10:00:00Z",
+            HOY,
+        )
+        .unwrap();
+        let err = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            EstadoTarea::EnRevision,
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("pendiente de aprobación"));
+
+        // 2. Tarea padre con dos subtareas: calcular estado de abajo hacia arriba.
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Sistema de UI".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![
+                    DatosSubtareaNueva {
+                        tipo: TipoTarea::UiInterfaz,
+                        titulo: "Botones".into(),
+                        detalles: String::new(),
+                    },
+                    DatosSubtareaNueva {
+                        tipo: TipoTarea::Audio,
+                        titulo: "Click".into(),
+                        detalles: String::new(),
+                    },
+                ],
+            },
+            "2026-11-15T10:02:00Z",
+            HOY,
+        )
+        .unwrap();
+
+        // Al pasar una hija a EnProduccion, el padre pasa a EnProduccion y hereda responsable.
+        let r1 = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102-1",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T10:03:00Z",
+        )
+        .unwrap();
+        let padre = r1.tareas.iter().find(|t| t.id == "T-102").unwrap();
+        assert_eq!(padre.estado, EstadoTarea::EnProduccion);
+        assert_eq!(padre.asignado_a.as_deref(), Some(DEV));
+
+        // Padre no puede ir a EnRevision si T-102-2 sigue abierta.
+        let err = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::EnRevision,
+            "2026-11-15T10:04:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("subtareas abiertas"));
+
+        // Pasar ambas hijas a EnRevision (con préstamo en T-102-2 -> avisa préstamo y notifica).
+        commits::insertar_prestamo(
+            c,
+            &commits::CambioPrestado {
+                id: "p1".into(),
+                tarea_id: "T-102-2".into(),
+                origen_id: "T-101".into(),
+                hash: None,
+                autor: DEV.into(),
+                fecha: HOY.into(),
+                archivos: vec!["Assets/a.cs".into()],
+                archivos_tocados: vec![],
+                quitado_en: None,
+                quitado_por: None,
+            },
+        )
+        .unwrap();
+
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102-1",
+            EstadoTarea::EnRevision,
+            "2026-11-15T10:05:00Z",
+        )
+        .unwrap();
+        let r2 = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102-2",
+            EstadoTarea::EnRevision,
+            "2026-11-15T10:06:00Z",
+        )
+        .unwrap();
+        assert_eq!(r2.aviso_prestamos, vec!["T-101".to_string()]);
+        let padre = r2.tareas.iter().find(|t| t.id == "T-102").unwrap();
+        assert_eq!(padre.estado, EstadoTarea::EnRevision);
+        assert!(!notificaciones::de_usuario(c, LIDER).unwrap().is_empty());
+
+        // Desarrollador no puede mandar a Terminada.
+        let err = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102-1",
+            EstadoTarea::Terminada,
+            "2026-11-15T10:07:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Líder o Administrador"));
+
+        // No puede terminar T-102-2 mientras tenga préstamo vigente; al quitarlo sí puede.
+        let err = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102-2",
+            EstadoTarea::Terminada,
+            "2026-11-15T10:08:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cambios prestados"));
+        commits::quitar_prestamo(c, "p1", LIDER, HOY).unwrap();
+
+        // Mover hacia atrás (EnProduccion) baja todo el subárbol; con commits no vuelve a PorHacer.
+        let r3 = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T10:09:00Z",
+        )
+        .unwrap();
+        assert!(r3
+            .tareas
+            .iter()
+            .filter(|t| t.id.starts_with("T-102"))
+            .all(|t| t.estado == EstadoTarea::EnProduccion));
+
+        commits::guardar(
+            c,
+            &commits::Commit {
+                id: "c99".into(),
+                tarea_id: "T-102-1".into(),
+                hash: "77".into(),
+                mensaje: "Trabajo".into(),
+                descripcion: None,
+                tipo: Some(TipoTarea::UiInterfaz),
+                autor: DEV.into(),
+                fecha: "2026-11-15T10:10:00Z".into(),
+            },
+        )
+        .unwrap();
+        let err = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::PorHacer,
+            "2026-11-15T10:11:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("check-ins"));
+
+        // Máquina B sincroniza y llega al mismo estado.
+        let sync = e.sincronizar_b();
+        assert!(sync.aplicados >= 6);
+        assert_eq!(sync.descartados, 0);
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-102")
+                .unwrap()
+                .estado,
+            EstadoTarea::EnProduccion
+        );
     }
 }
