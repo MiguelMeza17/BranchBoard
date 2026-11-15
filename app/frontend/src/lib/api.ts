@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { Rol, Tarea, TipoTarea } from '../types';
+import type { EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -247,6 +247,18 @@ export const api = {
   /** Suelta la tarea `id` (#98) si ni ella ni sus subtareas tienen check-ins. */
   desasignarTarea: (id: string, mockup: () => Tarea) =>
     llamar<Tarea>('desasignar_tarea', { id }, mockup),
+
+  /** Cambia el estado de `id` con recálculo de padres y aviso de préstamos (#99). */
+  cambiarEstado: (
+    id: string,
+    nuevoEstado: EstadoTarea,
+    mockup: () => { tareas: Tarea[]; aviso_prestamos: string[] },
+  ) =>
+    llamar<{ tareas: Tarea[]; aviso_prestamos: string[] }>(
+      'cambiar_estado',
+      { id, nuevoEstado },
+      mockup,
+    ),
 
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),

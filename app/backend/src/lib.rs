@@ -78,6 +78,7 @@ pub fn run() {
             comandos_tareas::tomar_tarea,
             comandos_tareas::asignar_tarea,
             comandos_tareas::desasignar_tarea,
+            comandos_tareas::cambiar_estado,
             comandos_tareas::volver_a_dev,
         ])
         .run(tauri::generate_context!())
