@@ -122,9 +122,9 @@ impl Rol {
     }
 }
 
-/// Fecha y hora actual en UTC, formato ISO 8601 (`2026-11-09T20:51:55Z`).
+/// Fecha y hora actual en UTC, formato ISO 8601 con milisegundos (`2026-11-09T20:51:55.123Z`).
 pub fn ahora_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Fecha local de hoy (`AAAA-MM-DD`), la que usa el equipo en tareas y sprints.

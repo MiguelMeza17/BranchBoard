@@ -12,6 +12,7 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::db::commits;
 use crate::db::notificaciones::{self, Notificacion};
 use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
@@ -28,6 +29,8 @@ pub const TIPOS: &[&str] = &[
     "crear_tarea_con_subtareas",
     "editar_tarea",
     "tomar_tarea",
+    "asignar_tarea",
+    "desasignar_tarea",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -161,7 +164,7 @@ pub struct RamaAncestro {
     pub ultimo_changeset_visto: Option<i64>,
 }
 
-/// `payload` del evento `tomar_tarea` (#96).
+/// `payload` del evento `tomar_tarea` (#96) y `asignar_tarea` (#98).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PayloadTomarTarea {
     pub id: String,
@@ -171,6 +174,12 @@ pub struct PayloadTomarTarea {
     pub ultimo_changeset_visto: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ramas_ancestros: Vec<RamaAncestro>,
+}
+
+/// `payload` del evento `desasignar_tarea` (#98).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadDesasignarTarea {
+    pub id: String,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -424,32 +433,7 @@ pub fn es_tarea_individual(c: &Connection, tarea: &Tarea) -> Resultado<bool> {
     Ok(hijas.iter().all(|h| h.eliminada))
 }
 
-/// Valida que `autor` pueda tomar la tarea `id` y arma la cadena desde la tarea
-/// general hasta `id` (inclusive) para [`crate::ramas::crear_ramas_de_cadena`].
-pub fn cadena_para_tomar(
-    c: &Connection,
-    autor: &AutorTarea<'_>,
-    id: &str,
-) -> Resultado<Vec<TareaDeCadena>> {
-    let tarea = db_tareas::obtener(c, id.trim())?;
-    if tarea.eliminada {
-        return Err(Error::Validacion(format!(
-            "La tarea {} está en la Papelera y no se puede tomar",
-            tarea.id
-        )));
-    }
-    if tarea.estado != EstadoTarea::PorHacer || tarea.asignado_a.is_some() {
-        return Err(Error::Validacion(format!(
-            "La tarea {} ya está asignada o no está por hacer",
-            tarea.id
-        )));
-    }
-    if autor.rol == Rol::ColaboradorExterno && !es_tarea_individual(c, &tarea)? {
-        return Err(Error::Validacion(
-            "Solo puedes tomar tareas individuales".into(),
-        ));
-    }
-
+fn cadena_hacia_raiz(c: &Connection, tarea: &Tarea, accion: &str) -> Resultado<Vec<TareaDeCadena>> {
     let mut inversa = vec![TareaDeCadena {
         id: tarea.id.clone(),
         titulo: tarea.titulo.clone(),
@@ -467,9 +451,9 @@ pub fn cadena_para_tomar(
         }
         ancestros += 1;
         if ancestros > MAX_ANCESTROS_TAREA {
-            return Err(Error::Validacion(
-                "No se puede tomar la tarea: superaría el límite de 5 niveles de ramas".into(),
-            ));
+            return Err(Error::Validacion(format!(
+                "No se puede {accion} la tarea: superaría el límite de 5 niveles de ramas"
+            )));
         }
         inversa.push(TareaDeCadena {
             id: padre.id.clone(),
@@ -482,20 +466,15 @@ pub fn cadena_para_tomar(
     Ok(inversa)
 }
 
-/// Registra en la base local y publica en `ops/` el evento `tomar_tarea` una vez
-/// que se crearon las ramas en Unity VC y se cambió el workspace local.
-/// Devuelve todas las tareas de `cadena` actualizadas (ancestros + la tarea tomada).
-pub fn registrar_toma(
-    c: &Connection,
-    ops: &Path,
-    autor: &AutorTarea<'_>,
+fn armar_payload_rama(
     cadena: &[TareaDeCadena],
     creadas: &[(String, Rama)],
-    ahora: &str,
-) -> Resultado<Vec<Tarea>> {
+    asignado_a: String,
+    etiqueta_vacio: &str,
+) -> Resultado<PayloadTomarTarea> {
     let objetivo = cadena
         .last()
-        .ok_or_else(|| Error::Validacion("No hay tarea para tomar".into()))?;
+        .ok_or_else(|| Error::Validacion(etiqueta_vacio.to_string()))?;
     let (rama_asociada, ultimo_changeset_visto) =
         match creadas.iter().find(|(tid, _)| tid == &objetivo.id) {
             Some((_, r)) => (r.name.clone(), Some(r.head_changeset)),
@@ -526,17 +505,64 @@ pub fn registrar_toma(
         }
     }
 
-    let asignado_a = normalizar_email(autor.email);
-    let payload = PayloadTomarTarea {
+    Ok(PayloadTomarTarea {
         id: objetivo.id.clone(),
-        asignado_a: asignado_a.clone(),
+        asignado_a,
         rama_asociada,
         ultimo_changeset_visto,
         ramas_ancestros,
-    };
+    })
+}
+
+/// Valida que `autor` pueda tomar la tarea `id` y arma la cadena desde la tarea
+/// general hasta `id` (inclusive) para [`crate::ramas::crear_ramas_de_cadena`].
+pub fn cadena_para_tomar(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    id: &str,
+) -> Resultado<Vec<TareaDeCadena>> {
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede tomar",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::PorHacer || tarea.asignado_a.is_some() {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está asignada o no está por hacer",
+            tarea.id
+        )));
+    }
+    if autor.rol == Rol::ColaboradorExterno && !es_tarea_individual(c, &tarea)? {
+        return Err(Error::Validacion(
+            "Solo puedes tomar tareas individuales".into(),
+        ));
+    }
+    cadena_hacia_raiz(c, &tarea, "tomar")
+}
+
+/// Registra en la base local y publica en `ops/` el evento `tomar_tarea` una vez
+/// que se crearon las ramas en Unity VC y se cambió el workspace local.
+/// Devuelve todas las tareas de `cadena` actualizadas (ancestros + la tarea tomada).
+pub fn registrar_toma(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    cadena: &[TareaDeCadena],
+    creadas: &[(String, Rama)],
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let asignado_a = normalizar_email(autor.email);
+    let payload = armar_payload_rama(
+        cadena,
+        creadas,
+        asignado_a.clone(),
+        "No hay tarea para tomar",
+    )?;
     let mut ev = Evento::nuevo(
         "tomar_tarea",
-        Some(&objetivo.id),
+        Some(&payload.id),
         &asignado_a,
         serde_json::to_value(&payload)
             .map_err(|e| Error::Interno(format!("no se pudo serializar tomar_tarea: {e}")))?,
@@ -567,6 +593,181 @@ pub fn tomar(
     let cadena = cadena_para_tomar(c, autor, id)?;
     let creadas = preparar_ramas_y_workspace(&cadena)?;
     registrar_toma(c, ops, autor, &cadena, &creadas, ahora)
+}
+
+/// Valida que `autor` (Líder/Admin) pueda asignar `id` a `email_destinatario`
+/// y arma la cadena desde la tarea general hasta `id` (inclusive) (#98).
+pub fn cadena_para_asignar(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    email_destinatario: &str,
+) -> Resultado<Vec<TareaDeCadena>> {
+    if !matches!(autor.rol, Rol::Lider | Rol::Administrador) {
+        return Err(Error::Validacion(
+            "Solo un Líder o Administrador puede asignar tareas".into(),
+        ));
+    }
+    let dest = normalizar_email(email_destinatario);
+    let usuario = usuarios::buscar(c, &dest)?
+        .ok_or_else(|| Error::Validacion(format!("El usuario {dest} no existe en el proyecto")))?;
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede asignar",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if db_tareas::hijas(c, &tarea.id)?.iter().any(|h| !h.eliminada) {
+        return Err(Error::Validacion(
+            "No se puede asignar una tarea que tiene subtareas".into(),
+        ));
+    }
+    if usuario.rol == Rol::ColaboradorExterno && !es_tarea_individual(c, &tarea)? {
+        return Err(Error::Validacion(
+            "Un colaborador externo solo puede recibir tareas individuales".into(),
+        ));
+    }
+    if tarea.asignado_a.as_deref().map(normalizar_email).as_deref() == Some(dest.as_str()) {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está asignada a {dest}",
+            tarea.id
+        )));
+    }
+    cadena_hacia_raiz(c, &tarea, "asignar")
+}
+
+/// Registra en la base local y publica en `ops/` el evento `asignar_tarea` (#98).
+/// A diferencia de `tomar_tarea`, nunca cambia el workspace de quien asigna.
+pub fn registrar_asignacion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    cadena: &[TareaDeCadena],
+    creadas: &[(String, Rama)],
+    email_destinatario: &str,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let dest = normalizar_email(email_destinatario);
+    let payload = armar_payload_rama(cadena, creadas, dest, "No hay tarea para asignar")?;
+    let mut ev = Evento::nuevo(
+        "asignar_tarea",
+        Some(&payload.id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar asignar_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_asignar_tarea(tx, autor.email, Some(autor.rol), &payload, ahora)
+    })?;
+
+    cadena
+        .iter()
+        .map(|paso| db_tareas::obtener(c, &paso.id))
+        .collect()
+}
+
+/// Asigna la tarea `id` a `email_destinatario` (`asignar_tarea`, #98):
+/// crea en Unity VC solo las ramas que falten (sin tocar el workspace local)
+/// y publica el evento en `ops/` con notificación `tarea_asignada`.
+pub fn asignar(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    email_destinatario: &str,
+    preparar_ramas: impl FnOnce(&[TareaDeCadena]) -> Resultado<Vec<(String, Rama)>>,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let cadena = cadena_para_asignar(c, autor, id, email_destinatario)?;
+    let creadas = if cadena.iter().any(|p| p.rama.is_none()) {
+        preparar_ramas(&cadena)?
+    } else {
+        Vec::new()
+    };
+    registrar_asignacion(c, ops, autor, &cadena, &creadas, email_destinatario, ahora)
+}
+
+fn descendientes_activos(c: &Connection, padre_id: &str) -> Resultado<Vec<Tarea>> {
+    let mut todos = Vec::new();
+    let mut cola = vec![padre_id.to_string()];
+    while let Some(actual) = cola.pop() {
+        for hija in db_tareas::hijas(c, &actual)? {
+            if !hija.eliminada {
+                cola.push(hija.id.clone());
+                todos.push(hija);
+            }
+        }
+    }
+    Ok(todos)
+}
+
+/// Suelta la tarea `id` (`desasignar_tarea`, #98): quita el responsable y deja la
+/// tarea y sus subtareas activas en `'por hacer'`. Rechaza si hay check-ins.
+pub fn desasignar(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let tarea = db_tareas::obtener(c, id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede soltar",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if tarea.asignado_a.is_none() && tarea.estado == EstadoTarea::PorHacer {
+        return Err(Error::Validacion(format!(
+            "La tarea {} no está asignada",
+            tarea.id
+        )));
+    }
+    if !commits::de_tarea(c, &tarea.id)?.is_empty() {
+        return Err(Error::Validacion(format!(
+            "No se puede soltar la tarea {} porque ya tiene check-ins",
+            tarea.id
+        )));
+    }
+    for sub in descendientes_activos(c, &tarea.id)? {
+        if !commits::de_tarea(c, &sub.id)?.is_empty() {
+            return Err(Error::Validacion(format!(
+                "No se puede soltar la tarea {} porque la subtarea {} ya tiene check-ins",
+                tarea.id, sub.id
+            )));
+        }
+    }
+
+    let payload = PayloadDesasignarTarea {
+        id: tarea.id.clone(),
+    };
+    let mut ev = Evento::nuevo(
+        "desasignar_tarea",
+        Some(&tarea.id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar desasignar_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+
+    eventos::publicar(c, ops, &ev, |tx| aplicar_desasignar_tarea(tx, &payload))?;
+    db_tareas::obtener(c, &tarea.id)
 }
 
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
@@ -731,6 +932,17 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_tomar_tarea(c, &evento.usuario, rol, &payload)
         }
+        "asignar_tarea" => {
+            let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("asignar_tarea inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_asignar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
+        }
+        "desasignar_tarea" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("desasignar_tarea inválido: {e}")))?;
+            aplicar_desasignar_tarea(c, &payload)
+        }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
         ))),
@@ -747,6 +959,28 @@ fn validar_ruta_rama_tarea(rama: &str) -> Resultado<String> {
         )));
     }
     Ok(limpia.to_string())
+}
+
+fn aplicar_ramas_ancestros(c: &Connection, ancestros: &[RamaAncestro]) -> Resultado<()> {
+    for anc in ancestros {
+        let rama_anc = validar_ruta_rama_tarea(&anc.rama_asociada)?;
+        let mut fila_anc = db_tareas::obtener(c, &anc.id)?;
+        if fila_anc.eliminada {
+            return Err(Error::Validacion(format!(
+                "La tarea padre {} está en la Papelera",
+                fila_anc.id
+            )));
+        }
+        if fila_anc.rama_asociada.is_none() {
+            fila_anc.rama_asociada = Some(rama_anc);
+            fila_anc.modo_trabajo = Some(MODO_RAMA.to_string());
+            if fila_anc.ultimo_changeset_visto.is_none() {
+                fila_anc.ultimo_changeset_visto = anc.ultimo_changeset_visto;
+            }
+            db_tareas::actualizar(c, &fila_anc)?;
+        }
+    }
+    Ok(())
 }
 
 fn aplicar_tomar_tarea(
@@ -782,24 +1016,7 @@ fn aplicar_tomar_tarea(
         ));
     }
 
-    for anc in &payload.ramas_ancestros {
-        let rama_anc = validar_ruta_rama_tarea(&anc.rama_asociada)?;
-        let mut fila_anc = db_tareas::obtener(c, &anc.id)?;
-        if fila_anc.eliminada {
-            return Err(Error::Validacion(format!(
-                "La tarea padre {} está en la Papelera",
-                fila_anc.id
-            )));
-        }
-        if fila_anc.rama_asociada.is_none() {
-            fila_anc.rama_asociada = Some(rama_anc);
-            fila_anc.modo_trabajo = Some(MODO_RAMA.to_string());
-            if fila_anc.ultimo_changeset_visto.is_none() {
-                fila_anc.ultimo_changeset_visto = anc.ultimo_changeset_visto;
-            }
-            db_tareas::actualizar(c, &fila_anc)?;
-        }
-    }
+    aplicar_ramas_ancestros(c, &payload.ramas_ancestros)?;
 
     tarea.asignado_a = Some(autor);
     tarea.modo_trabajo = Some(MODO_RAMA.to_string());
@@ -808,6 +1025,119 @@ fn aplicar_tomar_tarea(
         tarea.ultimo_changeset_visto = payload.ultimo_changeset_visto;
     }
     db_tareas::actualizar(c, &tarea)
+}
+
+fn aplicar_asignar_tarea(
+    c: &Connection,
+    _autor_email: &str,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadTomarTarea,
+    ahora: &str,
+) -> Resultado<()> {
+    if let Some(rol) = rol_conocido {
+        if !matches!(rol, Rol::Lider | Rol::Administrador) {
+            return Err(Error::Validacion(
+                "Solo un Líder o Administrador puede asignar tareas".into(),
+            ));
+        }
+    }
+    let rama = validar_ruta_rama_tarea(&payload.rama_asociada)?;
+    let dest = normalizar_email(&payload.asignado_a);
+    let usuario = usuarios::buscar(c, &dest)?
+        .ok_or_else(|| Error::Validacion(format!("El usuario {dest} no existe en el proyecto")))?;
+
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede asignar",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if db_tareas::hijas(c, &tarea.id)?.iter().any(|h| !h.eliminada) {
+        return Err(Error::Validacion(
+            "No se puede asignar una tarea que tiene subtareas".into(),
+        ));
+    }
+    if usuario.rol == Rol::ColaboradorExterno && !es_tarea_individual(c, &tarea)? {
+        return Err(Error::Validacion(
+            "Un colaborador externo solo puede recibir tareas individuales".into(),
+        ));
+    }
+
+    aplicar_ramas_ancestros(c, &payload.ramas_ancestros)?;
+
+    tarea.asignado_a = Some(dest.clone());
+    if tarea.rama_asociada.is_none() {
+        tarea.rama_asociada = Some(rama);
+        tarea.modo_trabajo = Some(MODO_RAMA.to_string());
+        if tarea.ultimo_changeset_visto.is_none() {
+            tarea.ultimo_changeset_visto = payload.ultimo_changeset_visto;
+        }
+    }
+    db_tareas::actualizar(c, &tarea)?;
+
+    insertar_notificacion_si_falta(
+        c,
+        &Notificacion {
+            id: format!("noti_asignar_{}_{}_{}", tarea.id, dest, ahora),
+            tipo: TipoNotificacion::TareaAsignada,
+            para: dest,
+            titulo: "Tarea asignada".into(),
+            cuerpo: format!("Se te asignó la tarea {}", tarea.id),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id),
+            accionable: false,
+        },
+    )
+}
+
+fn aplicar_desasignar_tarea(c: &Connection, payload: &PayloadDesasignarTarea) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede soltar",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if !commits::de_tarea(c, &tarea.id)?.is_empty() {
+        return Err(Error::Validacion(format!(
+            "No se puede soltar la tarea {} porque ya tiene check-ins",
+            tarea.id
+        )));
+    }
+    let descendientes = descendientes_activos(c, &tarea.id)?;
+    for sub in &descendientes {
+        if !commits::de_tarea(c, &sub.id)?.is_empty() {
+            return Err(Error::Validacion(format!(
+                "No se puede soltar la tarea {} porque la subtarea {} ya tiene check-ins",
+                tarea.id, sub.id
+            )));
+        }
+    }
+
+    tarea.asignado_a = None;
+    tarea.estado = EstadoTarea::PorHacer;
+    db_tareas::actualizar(c, &tarea)?;
+
+    for mut sub in descendientes {
+        sub.asignado_a = None;
+        sub.estado = EstadoTarea::PorHacer;
+        db_tareas::actualizar(c, &sub)?;
+    }
+    Ok(())
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -2607,6 +2937,421 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", !compartida.exists());
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    #[test]
+    fn asignar_tarea_valida_permisos_y_genera_notificacion() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let externo = "ext@ejemplo.com";
+        for conn in [c, e.db_b.conexion()] {
+            usuarios::insertar(
+                conn,
+                &usuarios::Usuario {
+                    email: externo.into(),
+                    nombre: "Ext".into(),
+                    apellido: "Uno".into(),
+                    rol: Rol::ColaboradorExterno,
+                    fecha_alta: HOY.into(),
+                    firma: Some(
+                        firmas::firmar_rol(&e.llave_admin, externo, Rol::ColaboradorExterno, AHORA)
+                            .unwrap(),
+                    ),
+                    firmado_en: Some(AHORA.into()),
+                    firmado_por: Some(ADMIN.into()),
+                    llave_publica: None,
+                    certificado: None,
+                },
+            )
+            .unwrap();
+        }
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Padre con hija".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::UiInterfaz,
+                    titulo: "Subtarea 1".into(),
+                    detalles: String::new(),
+                }],
+            },
+            "2026-11-15T10:00:00Z",
+            HOY,
+        )
+        .unwrap();
+
+        // Desarrollador no puede asignar.
+        let err = asignar(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101-1",
+            DEV,
+            |_| unreachable!(),
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Líder o Administrador"));
+
+        // No se puede asignar una tarea que tiene subtareas.
+        let err = asignar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            DEV,
+            |_| unreachable!(),
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("subtareas"));
+
+        // Colaborador externo no puede recibir una subtarea.
+        let err = asignar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            externo,
+            |_| unreachable!(),
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("colaborador externo"));
+
+        // Líder asigna T-101-1 a DEV: crea rama del padre y de la hija + notificación.
+        let res = asignar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            DEV,
+            |cadena| {
+                assert_eq!(cadena.len(), 2);
+                Ok(vec![
+                    (
+                        "T-101".into(),
+                        Rama {
+                            id: 1,
+                            name: "/main/dev/T-101-padre-con-hija".into(),
+                            head_changeset: 10,
+                        },
+                    ),
+                    (
+                        "T-101-1".into(),
+                        Rama {
+                            id: 2,
+                            name: "/main/dev/T-101-padre-con-hija/T-101-1-subtarea-1".into(),
+                            head_changeset: 11,
+                        },
+                    ),
+                ])
+            },
+            "2026-11-15T10:02:00Z",
+        )
+        .unwrap();
+        assert_eq!(res[1].asignado_a.as_deref(), Some(DEV));
+        assert_eq!(
+            res[1].rama_asociada.as_deref(),
+            Some("/main/dev/T-101-padre-con-hija/T-101-1-subtarea-1")
+        );
+
+        let notis = notificaciones::de_usuario(c, DEV).unwrap();
+        assert_eq!(notis.len(), 1);
+        assert_eq!(notis[0].tipo, TipoNotificacion::TareaAsignada);
+        assert_eq!(notis[0].tarea_id.as_deref(), Some("T-101-1"));
+
+        // Reasignar cuando ya tiene rama no llama a preparar_ramas y conserva la rama.
+        let res2 = asignar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            LIDER,
+            |_| panic!("no debe crear ramas si ya existen"),
+            "2026-11-15T10:03:00Z",
+        )
+        .unwrap();
+        assert_eq!(res2[1].asignado_a.as_deref(), Some(LIDER));
+        assert_eq!(
+            res2[1].rama_asociada.as_deref(),
+            Some("/main/dev/T-101-padre-con-hija/T-101-1-subtarea-1")
+        );
+
+        // Máquina B sincroniza y llega al mismo estado + notificaciones.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.aplicados, 3);
+        let t_b = db_tareas::obtener(e.db_b.conexion(), "T-101-1").unwrap();
+        assert_eq!(t_b.asignado_a.as_deref(), Some(LIDER));
+        assert_eq!(
+            notificaciones::de_usuario(e.db_b.conexion(), DEV)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn desasignar_tarea_limpia_responsable_y_rechaza_con_commits() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &datos_base("Con progreso"),
+            "2026-11-15T10:00:00Z",
+            HOY,
+        )
+        .unwrap();
+
+        tomar(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 3,
+                        name: "/main/dev/T-101-con-progreso".into(),
+                        head_changeset: 5,
+                    },
+                )])
+            },
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap();
+
+        // Sin commits: se puede soltar y vuelve a 'por hacer' sin asignado.
+        let soltada = desasignar(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:02:00Z").unwrap();
+        assert_eq!(soltada.asignado_a, None);
+        assert_eq!(soltada.estado, EstadoTarea::PorHacer);
+
+        // Volver a tomar y registrar un commit: ya no se puede soltar.
+        tomar(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            |_| Ok(vec![]),
+            "2026-11-15T10:03:00Z",
+        )
+        .unwrap();
+        commits::guardar(
+            c,
+            &commits::Commit {
+                id: "c1".into(),
+                tarea_id: "T-101".into(),
+                hash: "42".into(),
+                mensaje: "Avance".into(),
+                descripcion: None,
+                tipo: Some(TipoTarea::Audio),
+                autor: DEV.into(),
+                fecha: "2026-11-15T10:04:00Z".into(),
+            },
+        )
+        .unwrap();
+
+        let err = desasignar(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err();
+        assert!(err.to_string().contains("check-ins"));
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_asignar_y_soltar_tarea() {
+        use crate::cm::lectura::rama_actual_workspace;
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::tareas::{asignar_en, desasignar_en};
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida, lectura};
+        use chrono::{DateTime, Utc};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let repo_cm = format!("{repo}@{org}@unity");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-98-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let mut ramas_creadas: Vec<String> = Vec::new();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-98-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            let dev_fila = usuarios::Usuario {
+                email: DEV.into(),
+                nombre: "Dev".into(),
+                apellido: "Prueba".into(),
+                rol: Rol::Desarrollador,
+                fecha_alta: HOY.into(),
+                firma: None,
+                firmado_en: None,
+                firmado_por: None,
+                llave_publica: None,
+                certificado: None,
+            };
+            estado_a
+                .con_db(|db| usuarios::insertar(db.conexion(), &dev_fila))
+                .unwrap();
+
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+            usuarios::insertar(db_b.conexion(), &dev_fila).unwrap();
+
+            let ws_inicial = rama_actual_workspace(&estado_a, ws_a.path()).unwrap();
+            let autor_admin = AutorTarea {
+                email: &admin_fila.email,
+                rol: Rol::Administrador,
+            };
+            estado_a
+                .con_db(|db_a| {
+                    crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_admin,
+                        &DatosNuevaTarea {
+                            titulo: format!("Asignable 98 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        "2026-11-15T16:00:00.000Z",
+                        HOY,
+                    )
+                })
+                .unwrap();
+
+            // Admin asigna T-101 a DEV: crea rama en Unity VC y NO cambia su workspace.
+            let res = asignar_en(&estado_a, "T-101", DEV).unwrap();
+            assert_eq!(res.len(), 1);
+            let rama = res[0].rama_asociada.clone().expect("debe tener rama");
+            ramas_creadas.push(rama.clone());
+            assert_eq!(res[0].asignado_a.as_deref(), Some(DEV));
+            let ws_despues = rama_actual_workspace(&estado_a, ws_a.path()).unwrap();
+            assert_eq!(
+                ws_despues.rama, ws_inicial.rama,
+                "asignar no debe tocar workspace"
+            );
+
+            // Reasignar cuando ya tiene rama conserva la rama y cambia el responsable.
+            let res2 = asignar_en(&estado_a, "T-101", &admin_fila.email).unwrap();
+            assert_eq!(res2[0].rama_asociada.as_deref(), Some(rama.as_str()));
+            assert_eq!(
+                res2[0].asignado_a.as_deref(),
+                Some(admin_fila.email.as_str())
+            );
+
+            // Soltar la tarea sin commits la deja sin responsable y por hacer.
+            let soltada = desasignar_en(&estado_a, "T-101").unwrap();
+            assert_eq!(soltada.asignado_a, None);
+            assert_eq!(soltada.estado, EstadoTarea::PorHacer);
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
+                .unwrap()
+                .with_timezone(&Utc);
+            let sync_b = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            assert_eq!(sync_b.aplicados, 4);
+            assert_eq!(sync_b.descartados, 0);
+            let t_b = db_tareas::obtener(db_b.conexion(), "T-101").unwrap();
+            assert_eq!(t_b.asignado_a, None);
+            assert_eq!(t_b.estado, EstadoTarea::PorHacer);
+            assert_eq!(
+                notificaciones::de_usuario(db_b.conexion(), DEV)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
+        for rama in ramas_creadas.iter().rev() {
+            let _ = Comando::cm()
+                .args(["branch", "delete", "--delete-changesets"])
+                .arg(format!("br:{rama}@{repo_cm}"))
+                .ejecutar(&estado_a);
+        }
+        let _ = std::fs::remove_dir_all(&compartida);
         if let Err(p) = resultado {
             std::panic::resume_unwind(p);
         }

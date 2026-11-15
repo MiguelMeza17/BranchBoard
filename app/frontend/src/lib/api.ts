@@ -240,6 +240,14 @@ export const api = {
    */
   tomarTarea: (id: string, mockup: () => Tarea[]) => llamar<Tarea[]>('tomar_tarea', { id }, mockup),
 
+  /** Asigna la tarea `id` a `email` (Líder/Admin, #98) sin cambiar el workspace local. */
+  asignarTarea: (id: string, email: string, mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('asignar_tarea', { id, email }, mockup),
+
+  /** Suelta la tarea `id` (#98) si ni ella ni sus subtareas tienen check-ins. */
+  desasignarTarea: (id: string, mockup: () => Tarea) =>
+    llamar<Tarea>('desasignar_tarea', { id }, mockup),
+
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
