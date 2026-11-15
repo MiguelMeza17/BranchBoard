@@ -6,7 +6,7 @@ use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
 use crate::error::Resultado;
-use crate::estado::AppState;
+use crate::estado::{llave_publica_del_proyecto, AppState};
 use crate::eventos::{self, ResumenSincronizacion};
 use crate::modelo::Rol;
 
@@ -51,12 +51,10 @@ pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSinc
     }
     let ops = eventos::carpeta_ops(&carpeta)?;
     estado.con_db(|db| {
-        eventos::sincronizar(
-            db.conexion(),
-            &ops,
-            &carpeta,
-            Utc::now(),
-            eventos::lectura::aplicar_evento,
-        )
+        // Con la llave del Administrador se verifican los eventos firmados (#93).
+        let publica = llave_publica_del_proyecto(db)?;
+        eventos::sincronizar(db.conexion(), &ops, &carpeta, Utc::now(), |c, e| {
+            eventos::lectura::aplicar_evento(c, &publica, e)
+        })
     })
 }

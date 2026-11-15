@@ -190,6 +190,21 @@ impl Verificador {
         }
     }
 
+    /// Llave pública del Líder `email` si su certificado del Administrador
+    /// está vigente en `fecha` (ISO 8601 en UTC; se comparan los segundos, con
+    /// o sin milisegundos). Con ella se verifica la `firma_admin` de un evento
+    /// administrativo que emitió un Líder (issue #93).
+    pub fn llave_de_lider_en(&self, email: &str, fecha: &str) -> Option<&str> {
+        let lider = self.lideres.get(&normalizar_email(email))?;
+        let fecha = segundos(fecha);
+        let vigente = fecha >= segundos(&lider.desde)
+            && lider
+                .revocado_desde
+                .as_deref()
+                .map_or(true, |revocado| fecha <= segundos(revocado));
+        vigente.then_some(lider.llave_publica.as_str())
+    }
+
     fn firmada_por_lider(&self, usuario: &Usuario) -> bool {
         let Some(lider) = usuario
             .firmado_por
@@ -246,6 +261,12 @@ fn certificado_valido(publica_admin: &str, usuario: &Usuario) -> Option<LiderCer
         desde: desde.to_string(),
         revocado_desde,
     })
+}
+
+/// `AAAA-MM-DDTHH:MM:SS` de una fecha ISO 8601 en UTC, con o sin milisegundos,
+/// para comparar fechas de distinta precisión como texto.
+fn segundos(fecha: &str) -> &str {
+    fecha.get(..19).unwrap_or(fecha)
 }
 
 /// Verifica toda la tabla `usuarios`.

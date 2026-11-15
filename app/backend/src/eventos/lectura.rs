@@ -14,6 +14,8 @@
 //!   aplicado o descartado (ej. una toma doble que perdió) → se anota y no se repite;
 //!   tipo desconocido (lo escribió una versión más nueva de la app) → queda
 //!   pendiente para cuando esta máquina se actualice.
+//! - Los eventos administrativos (`eventos::TIPOS_FIRMADOS`) tienen que traer una
+//!   `firma_admin` válida; si falta o no coincide se descartan sin aplicar (#93).
 
 use std::io::Write;
 use std::path::Path;
@@ -24,7 +26,8 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use super::{marcar_aplicado, ya_aplicado, Evento};
-use crate::error::Resultado;
+use crate::error::{Error, Resultado};
+use crate::identidad::equipo;
 
 /// Cuánto puede adelantarse el reloj de otra máquina antes de desconfiar.
 const TOLERANCIA_FUTURO_MIN: i64 = 5;
@@ -190,9 +193,53 @@ fn registrar(carpeta_proyecto: &Path, ahora: DateTime<Utc>, avisos: &[String]) {
 }
 
 /// Aplicador de la app: cada tipo de evento compartido se registra aquí cuando su
-/// comando pasa a eventos (#93 usuarios, #95 tareas, …). Hoy no hay ninguno.
-pub fn aplicar_evento(_c: &Connection, _evento: &Evento) -> Resultado<Aplicacion> {
-    Ok(Aplicacion::Desconocido)
+/// comando pasa a eventos (#93 usuarios, #95 tareas, …).
+///
+/// 1. Si el tipo exige firma (`eventos::TIPOS_FIRMADOS`), primero se comprueba
+///    `firma_admin` contra la llave del Administrador fijada en esta máquina
+///    (`publica_admin`) o la de un Líder con certificado vigente. Sin firma
+///    válida el evento se **descarta** sin mirar su contenido, sea del tipo que
+///    sea: no hay "rol mínimo" al que degradar un evento.
+/// 2. Eventos de usuarios → `identidad::equipo::aplicar_evento`, con las mismas
+///    reglas que en la máquina que lo emitió. Si ya no las cumple (ej. el correo
+///    ya existe), se descarta; un error de la base detiene el escaneo.
+/// 3. Lo demás todavía es desconocido (#95 tareas…).
+pub fn aplicar_evento(
+    c: &Connection,
+    publica_admin: &str,
+    evento: &Evento,
+) -> Resultado<Aplicacion> {
+    let rol_firmante = if evento.exige_firma() {
+        match equipo::firmante_del_evento(c, publica_admin, evento)? {
+            Some(rol) => Some(rol),
+            None => {
+                return Ok(Aplicacion::Descartado(
+                    "firma_admin falta o no coincide".into(),
+                ))
+            }
+        }
+    } else {
+        None
+    };
+    match rol_firmante {
+        Some(rol) if equipo::TIPOS.contains(&evento.tipo.as_str()) => {
+            match equipo::aplicar_evento(c, publica_admin, rol, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        _ => Ok(Aplicacion::Desconocido),
+    }
+}
+
+/// Errores que significan "el evento no cumple las reglas con el estado actual"
+/// (se descarta), a diferencia de un fallo de la base o del disco.
+fn es_regla_rota(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::Validacion(_) | Error::SinPermiso | Error::NoEncontrado(_)
+    )
 }
 
 #[cfg(test)]
@@ -429,12 +476,41 @@ mod tests {
     }
 
     #[test]
-    fn hoy_ningun_tipo_es_conocido_por_la_app() {
+    fn los_tipos_que_exigen_firma_se_descartan_sin_ella_y_los_demas_siguen_desconocidos() {
+        use crate::identidad::llaves;
+
         let db = Db::en_memoria().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let publica = llaves::generar_llaves_admin(dir.path(), None).unwrap();
+        let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
+
+        // Un tipo cualquiera sin firma: todavía no lo conoce la app.
         assert_eq!(
-            aplicar_evento(db.conexion(), &evento(AHORA, "a@x.dev", 1)).unwrap(),
+            aplicar_evento(db.conexion(), &publica, &evento(AHORA, "a@x.dev", 1)).unwrap(),
             Aplicacion::Desconocido
         );
+        // `compactar_eventos` (#94) ya exige firma: sin ella se descarta…
+        let mut compactar = evento(AHORA, "a@x.dev", 1);
+        compactar.tipo = "compactar_eventos".into();
+        assert!(matches!(
+            aplicar_evento(db.conexion(), &publica, &compactar).unwrap(),
+            Aplicacion::Descartado(motivo) if motivo.contains("firma_admin")
+        ));
+        // …y con la firma del Administrador queda pendiente hasta que exista su aplicador.
+        let firmado = compactar.firmar(&admin);
+        assert_eq!(
+            aplicar_evento(db.conexion(), &publica, &firmado).unwrap(),
+            Aplicacion::Desconocido
+        );
+        // Un evento de usuarios bien firmado pero sin tabla `usuarios` detrás que lo
+        // respalde: regla rota, se descarta (no detiene el escaneo).
+        let mut usuario = evento(AHORA, "a@x.dev", 1);
+        usuario.tipo = "eliminar_usuario".into();
+        let usuario = usuario.firmar(&admin);
+        assert!(matches!(
+            aplicar_evento(db.conexion(), &publica, &usuario).unwrap(),
+            Aplicacion::Descartado(_)
+        ));
     }
 
     /// **Prueba en el entorno real** (CLAUDE.md): dos "máquinas" (cada una con su
