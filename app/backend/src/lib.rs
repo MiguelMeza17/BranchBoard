@@ -37,6 +37,9 @@ use comandos::{
     tareas as comandos_tareas, usuarios,
 };
 
+/// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
+const INTERVALO_POLLING_SEGUNDOS: u64 = 15;
+
 fn disparar_polling(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let estado = app.state::<estado::AppState>();
@@ -78,7 +81,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(15));
+                std::thread::sleep(std::time::Duration::from_secs(INTERVALO_POLLING_SEGUNDOS));
                 disparar_polling(handle.clone());
             });
             Ok(())

@@ -780,7 +780,7 @@ pub fn registrar_toma(
     ev.timestamp = ahora.to_string();
 
     eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_tomar_tarea(tx, autor.email, Some(autor.rol), &payload)
+        aplicar_tomar_tarea(tx, autor.email, Some(autor.rol), &payload, ahora)
     })?;
 
     cadena
@@ -1774,7 +1774,7 @@ pub fn convertir_espera_en_subtarea(
     );
     ev.timestamp = ahora.to_string();
     eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_crear_rama_desde_espera(tx, &payload)
+        aplicar_crear_rama_desde_espera(tx, &payload, ahora)
     })?;
     db_tareas::obtener(c, &payload.id)
 }
@@ -2536,7 +2536,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("tomar_tarea inválido: {e}")))?;
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
-            aplicar_tomar_tarea(c, &evento.usuario, rol, &payload)
+            aplicar_tomar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         "asignar_tarea" => {
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
@@ -2652,7 +2652,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 serde_json::from_value(evento.payload.clone()).map_err(|e| {
                     Error::Validacion(format!("crear_rama_desde_espera inválido: {e}"))
                 })?;
-            aplicar_crear_rama_desde_espera(c, &payload)
+            aplicar_crear_rama_desde_espera(c, &payload, &evento.timestamp)
         }
         "traer_cambios" => {
             let payload: PayloadTraerCambios = serde_json::from_value(evento.payload.clone())
@@ -2725,6 +2725,7 @@ fn aplicar_tomar_tarea(
     autor_email: &str,
     rol_conocido: Option<Rol>,
     payload: &PayloadTomarTarea,
+    ahora: &str,
 ) -> Resultado<()> {
     let autor = normalizar_email(autor_email);
     if normalizar_email(&payload.asignado_a) != autor {
@@ -2758,6 +2759,7 @@ fn aplicar_tomar_tarea(
     tarea.asignado_a = Some(autor);
     tarea.modo_trabajo = Some(MODO_RAMA.to_string());
     tarea.rama_asociada = Some(rama);
+    tarea.actividad_desde = Some(ahora.to_string());
     if tarea.ultimo_changeset_visto.is_none() {
         tarea.ultimo_changeset_visto = payload.ultimo_changeset_visto;
     }
@@ -2810,6 +2812,7 @@ fn aplicar_asignar_tarea(
     aplicar_ramas_ancestros(c, &payload.ramas_ancestros)?;
 
     tarea.asignado_a = Some(dest.clone());
+    tarea.actividad_desde = Some(ahora.to_string());
     if tarea.rama_asociada.is_none() {
         tarea.rama_asociada = Some(rama);
         tarea.modo_trabajo = Some(MODO_RAMA.to_string());
@@ -2867,11 +2870,13 @@ fn aplicar_desasignar_tarea(c: &Connection, payload: &PayloadDesasignarTarea) ->
 
     tarea.asignado_a = None;
     tarea.estado = EstadoTarea::PorHacer;
+    tarea.actividad_desde = None;
     db_tareas::actualizar(c, &tarea)?;
 
     for mut sub in descendientes {
         sub.asignado_a = None;
         sub.estado = EstadoTarea::PorHacer;
+        sub.actividad_desde = None;
         db_tareas::actualizar(c, &sub)?;
     }
     recalcular_padres(c, tarea.tarea_padre_id)?;
@@ -3052,6 +3057,13 @@ fn aplicar_cambiar_estado(
             .or(Some(autor.clone()));
     }
     tarea.estado = payload.estado;
+    if matches!(
+        payload.estado,
+        EstadoTarea::PorHacer | EstadoTarea::EnProduccion
+    ) && anterior_estado != payload.estado
+    {
+        tarea.actividad_desde = Some(ahora.to_string());
+    }
     if payload.estado == EstadoTarea::Terminada {
         tarea.fecha_completada = Some(fecha_corta_de_iso(ahora));
     }
@@ -3061,6 +3073,13 @@ fn aplicar_cambiar_estado(
         for mut sub in descendientes {
             if payload.estado != EstadoTarea::PorHacer && sub.asignado_a.is_none() {
                 sub.asignado_a = Some(autor.clone());
+            }
+            if matches!(
+                payload.estado,
+                EstadoTarea::PorHacer | EstadoTarea::EnProduccion
+            ) && sub.estado != payload.estado
+            {
+                sub.actividad_desde = Some(ahora.to_string());
             }
             sub.estado = payload.estado;
             db_tareas::actualizar(c, &sub)?;
@@ -3592,8 +3611,16 @@ fn aplicar_hacer_checkin(c: &Connection, payload: &PayloadHacerCheckin) -> Resul
         .ultimo_changeset_visto
         .unwrap_or(0)
         .max(payload.changeset);
+    let mut cambio = false;
     if tarea.ultimo_changeset_visto != Some(visto) {
         tarea.ultimo_changeset_visto = Some(visto);
+        cambio = true;
+    }
+    if !payload.commit.fecha.trim().is_empty() {
+        tarea.actividad_desde = Some(payload.commit.fecha.clone());
+        cambio = true;
+    }
+    if cambio {
         db_tareas::actualizar(c, &tarea)?;
     }
     Ok(())
@@ -3644,6 +3671,7 @@ fn aplicar_quitar_en_espera(c: &Connection, id: &str) -> Resultado<()> {
 fn aplicar_crear_rama_desde_espera(
     c: &Connection,
     payload: &PayloadCrearRamaDesdeEspera,
+    ahora: &str,
 ) -> Resultado<()> {
     validar_tipo_creacion(payload.tipo)?;
     let titulo = payload.titulo.trim();
@@ -3676,6 +3704,7 @@ fn aplicar_crear_rama_desde_espera(
     tarea.asignado_a = Some(normalizar_email(&payload.asignado_a));
     tarea.modo_trabajo = Some(MODO_RAMA.to_string());
     tarea.rama_asociada = Some(rama);
+    tarea.actividad_desde = Some(ahora.to_string());
     tarea.ultimo_changeset_visto = Some(payload.ultimo_changeset_visto);
     db_tareas::actualizar(c, &tarea)?;
     recalcular_padres(c, padre)
