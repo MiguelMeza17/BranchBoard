@@ -16,6 +16,7 @@ import type {
   Commit,
   EdicionPendiente,
   EstadoTarea,
+  Notificacion,
   Rol,
   Sprint,
   Tarea,
@@ -531,6 +532,22 @@ export const api = {
   /** Datos calculados para la vista General de Avance (#115). */
   datosAvanceGeneral: (mockup?: () => AvanceBacklog) =>
     llamar<AvanceBacklog>('datos_avance_general', undefined, mockup ?? (() => ({}) as AvanceBacklog)),
+
+  /** Notificaciones del usuario actual (más reciente primero, #116). */
+  obtenerNotificaciones: (mockup?: () => Notificacion[]) =>
+    llamar<Notificacion[]>('obtener_notificaciones', undefined, mockup ?? (() => [])),
+
+  /** Marca una notificación como leída en esta máquina (#116). */
+  marcarLeida: (notificacionId: string, mockup?: () => void) =>
+    llamar<void>('marcar_leida', { notificacionId }, mockup ?? (() => undefined)),
+
+  /** Vuelve a marcar una notificación como no leída en esta máquina (#116). */
+  desmarcarLeida: (notificacionId: string, mockup?: () => void) =>
+    llamar<void>('desmarcar_leida', { notificacionId }, mockup ?? (() => undefined)),
+
+  /** Marca todas las notificaciones pendientes del usuario actual como leídas (#116). */
+  marcarTodasLeidas: (mockup?: () => number) =>
+    llamar<number>('marcar_todas_leidas', undefined, mockup ?? (() => 0)),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),

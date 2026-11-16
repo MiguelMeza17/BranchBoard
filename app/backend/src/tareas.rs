@@ -14,13 +14,14 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::db::commits;
 use crate::db::ediciones;
-use crate::db::notificaciones::{self, Notificacion};
+use crate::db::notificaciones::Notificacion;
 use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
+use crate::notificaciones::{emitir_a_roles_si_falta, emitir_si_falta};
 use crate::ramas::TareaDeCadena;
 use crate::servidor::Rama;
 
@@ -506,7 +507,9 @@ pub fn crear(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| aplicar_crear_tarea(tx, &nueva))?;
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_crear_tarea(tx, &nueva, ahora, true)
+    })?;
     db_tareas::obtener(c, &nueva.id)
 }
 
@@ -583,7 +586,7 @@ pub fn crear_con_subtareas(
     ev.timestamp = ahora.to_string();
 
     eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_crear_tarea_con_subtareas(tx, &payload)
+        aplicar_crear_tarea_con_subtareas(tx, &payload, ahora)
     })?;
 
     let mut creadas = Vec::with_capacity(1 + subtareas.len());
@@ -2341,7 +2344,12 @@ pub fn evaluar_alerta_rama_ajena(
     })
 }
 
-fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
+fn aplicar_crear_tarea(
+    c: &Connection,
+    tarea: &Tarea,
+    ahora: &str,
+    notificar_pendiente: bool,
+) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
         return Err(Error::Validacion(
@@ -2351,14 +2359,34 @@ fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     if let Some(ref pid) = tarea.tarea_padre_id {
         validar_padre(c, pid)?;
     }
-    db_tareas::insertar(c, tarea)
+    db_tareas::insertar(c, tarea)?;
+    if notificar_pendiente && tarea.pendiente_aprobacion {
+        emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+            Notificacion {
+                id: format!("noti_apr_pend_{}_{}_{}", tarea.id, correo, ahora),
+                tipo: TipoNotificacion::AprobacionTarea,
+                para: correo.to_string(),
+                titulo: "Tarea pendiente de aprobación".into(),
+                cuerpo: format!(
+                    "\"{}\" ({}) fue creada por {} y espera tu aprobación.",
+                    tarea.titulo, tarea.id, tarea.creado_por
+                ),
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(tarea.id.clone()),
+                accionable: true,
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn aplicar_crear_tarea_con_subtareas(
     c: &Connection,
     payload: &PayloadTareaConSubtareas,
+    ahora: &str,
 ) -> Resultado<()> {
-    aplicar_crear_tarea(c, &payload.tarea)?;
+    aplicar_crear_tarea(c, &payload.tarea, ahora, true)?;
     for st in &payload.subtareas {
         if st.tarea_padre_id.as_deref() != Some(payload.tarea.id.as_str()) {
             return Err(Error::Validacion(format!(
@@ -2366,7 +2394,7 @@ fn aplicar_crear_tarea_con_subtareas(
                 st.id, payload.tarea.id
             )));
         }
-        aplicar_crear_tarea(c, st)?;
+        aplicar_crear_tarea(c, st, ahora, false)?;
     }
     Ok(())
 }
@@ -2477,7 +2505,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             if let Some(rol) = rol_verificado_de(c, publica_admin, &evento.usuario)? {
                 tarea.pendiente_aprobacion = !rol.es_lider_o_admin();
             }
-            aplicar_crear_tarea(c, &tarea)
+            aplicar_crear_tarea(c, &tarea, &evento.timestamp, true)
         }
         "crear_tarea_con_subtareas" => {
             let mut payload: PayloadTareaConSubtareas =
@@ -2496,7 +2524,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                     st.pendiente_aprobacion = !r.es_lider_o_admin();
                 }
             }
-            aplicar_crear_tarea_con_subtareas(c, &payload)
+            aplicar_crear_tarea_con_subtareas(c, &payload, &evento.timestamp)
         }
         "editar_tarea" => {
             let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
@@ -2791,7 +2819,7 @@ fn aplicar_asignar_tarea(
     }
     db_tareas::actualizar(c, &tarea)?;
 
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_asignar_{}_{}_{}", tarea.id, dest, ahora),
@@ -3042,24 +3070,19 @@ fn aplicar_cambiar_estado(
     recalcular_padres(c, tarea.tarea_padre_id)?;
 
     if anterior_estado != EstadoTarea::EnRevision && payload.estado == EstadoTarea::EnRevision {
-        for u in usuarios::listar(c)? {
-            if u.rol.es_lider_o_admin() {
-                insertar_notificacion_si_falta(
-                    c,
-                    &Notificacion {
-                        id: format!("noti_rev_{}_{}_{}", tarea.id, u.email, ahora),
-                        tipo: TipoNotificacion::TareaARevision,
-                        para: u.email,
-                        titulo: "Una tarea pasó a revisión".into(),
-                        cuerpo: format!("\"{}\" ({}) pasó a revisión.", tarea.titulo, tarea.id),
-                        leida: false,
-                        fecha: ahora.to_string(),
-                        tarea_id: Some(tarea.id.clone()),
-                        accionable: false,
-                    },
-                )?;
+        emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+            Notificacion {
+                id: format!("noti_rev_{}_{}_{}", tarea.id, correo, ahora),
+                tipo: TipoNotificacion::TareaARevision,
+                para: correo.to_string(),
+                titulo: "Una tarea pasó a revisión".into(),
+                cuerpo: format!("\"{}\" ({}) pasó a revisión.", tarea.titulo, tarea.id),
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(tarea.id.clone()),
+                accionable: false,
             }
-        }
+        })?;
     }
 
     Ok(aviso_prestamos)
@@ -3139,27 +3162,19 @@ fn aplicar_reabrir_tarea(
     db_tareas::actualizar(c, &tarea)?;
     recalcular_padres(c, tarea.tarea_padre_id.clone())?;
 
-    for u in usuarios::listar(c)? {
-        if u.rol.es_lider_o_admin() {
-            insertar_notificacion_si_falta(
-                c,
-                &Notificacion {
-                    id: format!(
-                        "noti_reabrir_{}_{}_{}",
-                        tarea.id, tarea.reaperturas, u.email
-                    ),
-                    tipo: TipoNotificacion::TareaReabierta,
-                    para: u.email,
-                    titulo: "Tarea reabierta".into(),
-                    cuerpo: format!("{} ({}/3): {motivo}", tarea.id, tarea.reaperturas),
-                    leida: false,
-                    fecha: ahora.to_string(),
-                    tarea_id: Some(tarea.id.clone()),
-                    accionable: false,
-                },
-            )?;
+    emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+        Notificacion {
+            id: format!("noti_reabrir_{}_{}_{}", tarea.id, tarea.reaperturas, correo),
+            tipo: TipoNotificacion::TareaReabierta,
+            para: correo.to_string(),
+            titulo: "Tarea reabierta".into(),
+            cuerpo: format!("{} ({}/3): {motivo}", tarea.id, tarea.reaperturas),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id.clone()),
+            accionable: false,
         }
-    }
+    })?;
     Ok(())
 }
 
@@ -3208,7 +3223,7 @@ fn aplicar_editar_y_aprobar_tarea(
     tarea.pendiente_aprobacion = false;
     db_tareas::actualizar(c, &tarea)?;
 
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_edit_apr_{}_{}", tarea.id, ahora),
@@ -3253,7 +3268,7 @@ fn aplicar_advertir_tarea_pendiente(
             tarea.id
         )));
     }
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_adv_{}_{}", tarea.id, ahora),
@@ -3331,27 +3346,22 @@ fn aplicar_proponer_edicion(
     tarea.detalles = detalles.to_string();
     db_tareas::actualizar(c, &tarea)?;
 
-    for u in usuarios::listar(c)? {
-        if u.rol.es_lider_o_admin() {
-            insertar_notificacion_si_falta(
-                c,
-                &Notificacion {
-                    id: format!("noti_ep_{}_{}_{}", tarea.id, u.email, ahora),
-                    tipo: TipoNotificacion::EdicionPendiente,
-                    para: u.email,
-                    titulo: "Hay una edición de tarea por aprobar".into(),
-                    cuerpo: format!(
-                        "\"{}\" ({}) fue editada por {} ({}).",
-                        tarea.titulo, tarea.id, creador, resumen_campos
-                    ),
-                    leida: false,
-                    fecha: ahora.to_string(),
-                    tarea_id: Some(tarea.id.clone()),
-                    accionable: true,
-                },
-            )?;
+    emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+        Notificacion {
+            id: format!("noti_ep_{}_{}_{}", tarea.id, correo, ahora),
+            tipo: TipoNotificacion::EdicionPendiente,
+            para: correo.to_string(),
+            titulo: "Hay una edición de tarea por aprobar".into(),
+            cuerpo: format!(
+                "\"{}\" ({}) fue editada por {} ({}).",
+                tarea.titulo, tarea.id, creador, resumen_campos
+            ),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id.clone()),
+            accionable: true,
         }
-    }
+    })?;
     Ok(())
 }
 
@@ -3495,7 +3505,7 @@ fn aplicar_eliminar_tarea(
         ediciones::quitar(c, &tarea.id)?;
         db_tareas::actualizar(c, &tarea)?;
 
-        insertar_notificacion_si_falta(
+        emitir_si_falta(
             c,
             &Notificacion {
                 id: format!("noti_elim_{}_{}", tarea.id, ahora),
@@ -3843,13 +3853,6 @@ fn buscar_evento_toma_en_ops(
     mejor
 }
 
-fn insertar_notificacion_si_falta(c: &Connection, n: &Notificacion) -> Resultado<()> {
-    if notificaciones::buscar(c, &n.id)?.is_none() {
-        notificaciones::insertar(c, n)?;
-    }
-    Ok(())
-}
-
 /// Resuelve una colisión de doble toma (#97) una vez comprobado si la rama del
 /// perdedor ya tiene changesets reales:
 /// - Sin changesets: revierte la toma al ganador (si hace falta) y notifica al
@@ -3905,7 +3908,7 @@ pub fn aplicar_resolucion_doble_toma(
                 tarea_id: Some(info.tarea_id.clone()),
                 accionable: false,
             };
-            insertar_notificacion_si_falta(c, &n)?;
+            emitir_si_falta(c, &n)?;
         }
         return Ok(false);
     }
@@ -3948,13 +3951,14 @@ pub fn aplicar_resolucion_doble_toma(
         tarea_id: Some(info.tarea_id.clone()),
         accionable: true,
     };
-    insertar_notificacion_si_falta(c, &n)?;
+    emitir_si_falta(c, &n)?;
     Ok(aplicado_entrante)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::notificaciones;
     use crate::db::Db;
     use crate::eventos::lectura::{self, sincronizar};
     use crate::identidad::equipo::{self, Firmante};
@@ -4822,7 +4826,11 @@ mod tests {
         );
         // Se avisó a ambos, al Líder y al Administrador (no al Colaborador externo).
         for correo in [DEV, TESTER, LIDER, ADMIN] {
-            let notifs = notificaciones::de_usuario(e.db_b.conexion(), correo).unwrap();
+            let notifs: Vec<_> = notificaciones::de_usuario(e.db_b.conexion(), correo)
+                .unwrap()
+                .into_iter()
+                .filter(|n| n.tipo == TipoNotificacion::Advertencia)
+                .collect();
             assert_eq!(notifs.len(), 1, "falta notificación para {correo}");
             assert!(!notifs[0].accionable);
             assert!(notifs[0].cuerpo.contains("T-101"));
@@ -5412,7 +5420,9 @@ mod tests {
             assert_eq!(
                 notificaciones::de_usuario(db_b.conexion(), &admin_fila.email)
                     .unwrap()
-                    .len(),
+                    .into_iter()
+                    .filter(|n| n.tipo == TipoNotificacion::Advertencia)
+                    .count(),
                 1
             );
 
