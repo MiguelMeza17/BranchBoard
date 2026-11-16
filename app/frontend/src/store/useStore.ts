@@ -509,7 +509,15 @@ export const useStore = create<State>((set, get) => {
   cargarTareas: async () => {
     try {
       const lista = await api.listarTareas(() => get().tareas);
-      set({ tareas: normalizar(lista) });
+      let ediciones = get().edicionesPendientes;
+      if (enTauri()) {
+        try {
+          ediciones = await api.listarEdicionesPendientes(() => get().edicionesPendientes);
+        } catch {
+          // Si no está listo o falla, mantener lo existente
+        }
+      }
+      set({ tareas: normalizar(lista), edicionesPendientes: ediciones });
     } catch (e) {
       get().showToast(mensajeDeError(e), 'danger');
     }
@@ -1428,6 +1436,21 @@ export const useStore = create<State>((set, get) => {
 
   aprobarEdiciones: (tareaIds) => {
     const set_ = new Set(tareaIds);
+    if (enTauri()) {
+      void api
+        .aprobarModificaciones(tareaIds, () =>
+          get().tareas.map((t) => (set_.has(t.id) ? { ...t, edicion_pendiente: false } : t)),
+        )
+        .then((lista) => {
+          set((s) => ({
+            tareas: normalizar(lista),
+            edicionesPendientes: s.edicionesPendientes.filter((e) => !set_.has(e.tarea_id)),
+          }));
+          get().showToast(`${tareaIds.length} ediciones aprobadas`);
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (set_.has(t.id) ? { ...t, edicion_pendiente: false } : t)),
       edicionesPendientes: s.edicionesPendientes.filter((e) => !set_.has(e.tarea_id)),
@@ -1509,6 +1532,20 @@ export const useStore = create<State>((set, get) => {
   },
 
   aprobarEdicion: (tareaId) => {
+    const tarea = get().tareas.find((t) => t.id === tareaId);
+    if (enTauri()) {
+      void api
+        .aprobarModificacion(tareaId, () => ({ ...(tarea as Tarea), edicion_pendiente: false }))
+        .then((actualizada) => {
+          set((s) => ({
+            tareas: s.tareas.map((t) => (t.id === tareaId ? actualizada : t)),
+            edicionesPendientes: s.edicionesPendientes.filter((e) => e.tarea_id !== tareaId),
+          }));
+          get().showToast('Edición aprobada');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (t.id === tareaId ? { ...t, edicion_pendiente: false } : t)),
       edicionesPendientes: s.edicionesPendientes.filter((e) => e.tarea_id !== tareaId),
@@ -1519,6 +1556,26 @@ export const useStore = create<State>((set, get) => {
   rechazarEdicion: (tareaId) => {
     const s = get();
     const ep = s.edicionesPendientes.find((e) => e.tarea_id === tareaId);
+    if (enTauri()) {
+      void api
+        .rechazarModificacion(tareaId, () => {
+          const rev: Partial<Tarea> = { edicion_pendiente: false };
+          if (ep) {
+            if (ep.campos_anteriores.titulo !== undefined) rev.titulo = ep.campos_anteriores.titulo;
+            if (ep.campos_anteriores.detalles !== undefined) rev.detalles = ep.campos_anteriores.detalles;
+          }
+          return { ...(s.tareas.find((t) => t.id === tareaId) as Tarea), ...rev };
+        })
+        .then((restaurada) => {
+          set((prev) => ({
+            tareas: prev.tareas.map((t) => (t.id === tareaId ? restaurada : t)),
+            edicionesPendientes: prev.edicionesPendientes.filter((e) => e.tarea_id !== tareaId),
+          }));
+          get().showToast('Edición rechazada — se revirtieron los valores', 'danger');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set({
       tareas: s.tareas.map((t) => {
         if (t.id !== tareaId) return t;
