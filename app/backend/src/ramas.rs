@@ -467,6 +467,40 @@ fn interpretar_pendientes(texto: &str) -> Vec<String> {
         .collect()
 }
 
+/// Comprueba si `rama` ya fue mergeada hacia `rama_padre` en Unity VC (`cm find merge`, #104).
+/// Solo cuentan merges reales (`merge`), nunca préstamos (`cherrypick`).
+pub fn rama_cerrada_hacia_padre(
+    estado: &AppState,
+    repo_cm: &str,
+    rama: &str,
+    rama_padre: &str,
+) -> Resultado<bool> {
+    let rama = rama.trim().trim_end_matches('/');
+    let rama_padre = rama_padre.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Ok(false);
+    }
+    let salida = Comando::cm()
+        .args(["find", "merge"])
+        .arg(format!(
+            "where srcbranch='br:{rama}' on repository '{repo_cm}'"
+        ))
+        .args(["--format={type}|{dstbranch}", "--nototal"])
+        .exigir_exito(estado)?;
+    Ok(parsear_rama_cerrada(&salida, rama_padre))
+}
+
+fn parsear_rama_cerrada(salida: &str, rama_padre: &str) -> bool {
+    let rama_padre = rama_padre.trim().trim_end_matches('/');
+    salida.lines().any(|linea| {
+        let Some((tipo, dst)) = linea.split_once('|') else {
+            return false;
+        };
+        let dst = dst.trim().trim_start_matches("br:").trim_end_matches('/');
+        tipo.trim().eq_ignore_ascii_case("merge") && dst.eq_ignore_ascii_case(rama_padre)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,5 +866,14 @@ mod tests {
         if let Err(p) = resultado {
             std::panic::resume_unwind(p);
         }
+    }
+
+    #[test]
+    fn parsea_cierre_de_rama_solo_con_merge_real_al_padre() {
+        let salida =
+            "cherrypick|br:/main/dev\ncherrypicksubtractive|/main/dev\nmerge|/main/dev/T-101\n";
+        assert!(!parsear_rama_cerrada(salida, "/main/dev"));
+        assert!(parsear_rama_cerrada(salida, "/main/dev/T-101"));
+        assert!(parsear_rama_cerrada("merge|br:/main/dev/\n", "/main/dev"));
     }
 }

@@ -18,6 +18,8 @@ pub struct AppState {
     operaciones_en_curso: AtomicUsize,
     /// `true` mientras se escanea `ops/`: dos escaneos a la vez no tienen sentido.
     sincronizando: AtomicBool,
+    /// `true` mientras corre el polling en Unity VC: evita revisiones duplicadas.
+    en_polling: AtomicBool,
     /// Base de datos del proyecto abierto; `None` mientras no se entra a ninguno.
     db: Mutex<Option<Db>>,
     /// Carpeta del workspace de Unity VC del proyecto abierto; `None` si no hay proyecto.
@@ -174,6 +176,25 @@ impl AppState {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
             .map(|_| GuardaSincronizacion { estado: self })
+    }
+
+    /// Marca que empezó una revisión de Unity VC (#104); `None` si ya hay una en curso.
+    pub fn iniciar_polling(&self) -> Option<GuardaPolling<'_>> {
+        self.en_polling
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| GuardaPolling { estado: self })
+    }
+}
+
+/// Mientras exista, hay una revisión de Unity VC en curso.
+pub struct GuardaPolling<'a> {
+    estado: &'a AppState,
+}
+
+impl Drop for GuardaPolling<'_> {
+    fn drop(&mut self) {
+        self.estado.en_polling.store(false, Ordering::SeqCst);
     }
 }
 

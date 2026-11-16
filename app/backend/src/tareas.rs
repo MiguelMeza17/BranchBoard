@@ -41,6 +41,7 @@ pub const TIPOS: &[&str] = &[
     "advertir_tarea_pendiente",
     "eliminar_tarea",
     "eliminar_definitivamente",
+    "tarea_cerrada_por_deteccion",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -238,6 +239,13 @@ pub struct PayloadAdvertirTarea {
 pub struct PayloadEliminarTarea {
     pub id: String,
     pub justificacion: String,
+}
+
+/// `payload` de `tarea_cerrada_por_deteccion` (#104).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadTareaCerradaDeteccion {
+    pub id: String,
+    pub fecha_completada: String,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -1151,6 +1159,65 @@ pub fn eliminar_definitivamente(
     Ok(purgadas)
 }
 
+/// Actualiza los indicadores locales de detección (`ultimo_changeset_visto` y
+/// `modificada`) en SQLite sin emitir evento a `ops/` (#104).
+/// Devuelve `true` si la fila cambió.
+pub fn actualizar_deteccion_local(
+    c: &Connection,
+    id: &str,
+    ultimo_cs: Option<i64>,
+    marcar_modificada: bool,
+) -> Resultado<bool> {
+    let mut tarea = db_tareas::obtener(c, id)?;
+    let mut cambio = false;
+    if let Some(cs) = ultimo_cs {
+        if tarea.ultimo_changeset_visto != Some(cs) {
+            tarea.ultimo_changeset_visto = Some(cs);
+            cambio = true;
+        }
+    }
+    if marcar_modificada && !tarea.modificada {
+        tarea.modificada = true;
+        cambio = true;
+    }
+    if cambio {
+        db_tareas::actualizar(c, &tarea)?;
+    }
+    Ok(cambio)
+}
+
+/// Marca una tarea como `terminada` al detectar que su rama fue mergeada a su
+/// padre en Unity VC (`tarea_cerrada_por_deteccion`, #104), emitiendo evento en `ops/`.
+pub fn cerrar_por_deteccion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+    fecha_completada: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadTareaCerradaDeteccion {
+        id: id.to_string(),
+        fecha_completada: fecha_completada.to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "tarea_cerrada_por_deteccion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar tarea_cerrada_por_deteccion: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_cerrar_por_deteccion(tx, id, fecha_completada)
+    })?;
+    db_tareas::obtener(c, id)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -1386,6 +1453,13 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_eliminar_definitivamente(c, rol, &payload.id)?;
             Ok(())
+        }
+        "tarea_cerrada_por_deteccion" => {
+            let payload: PayloadTareaCerradaDeteccion =
+                serde_json::from_value(evento.payload.clone()).map_err(|e| {
+                    Error::Validacion(format!("tarea_cerrada_por_deteccion inválido: {e}"))
+                })?;
+            aplicar_cerrar_por_deteccion(c, &payload.id, &payload.fecha_completada)
         }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
@@ -2113,6 +2187,25 @@ fn aplicar_eliminar_definitivamente(
         db_tareas::borrar_fila(c, &t.id)?;
     }
     Ok(purgadas)
+}
+
+fn aplicar_cerrar_por_deteccion(c: &Connection, id: &str, fecha_completada: &str) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Ok(());
+    }
+    let padre = tarea.tarea_padre_id.clone();
+    tarea.estado = EstadoTarea::Terminada;
+    tarea.fecha_completada = Some(fecha_completada.to_string());
+    tarea.modificada = false;
+    db_tareas::actualizar(c, &tarea)?;
+    recalcular_padres(c, padre)
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -5292,6 +5385,173 @@ mod tests {
         }));
 
         // Limpieza segura siempre (workspace temporal, rama si quedó, y carpeta OneDrive).
+        let _ = ramas::cambiar_a_rama(&estado_a, ws_a.path(), "/main/dev");
+        if let Some(rama) = rama_creada {
+            let _ = ramas::purgar_rama_definitiva(&estado_a, Some(ws_a.path()), &repo_cm, &rama);
+        }
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .exigir_exito(&estado_a);
+        let _ = std::fs::remove_dir_all(&compartida);
+
+        if let Err(err) = resultado {
+            std::panic::resume_unwind(err);
+        }
+    }
+
+    #[test]
+    fn deteccion_local_y_cierre_por_deteccion_viajan_por_ops() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        crear(
+            c,
+            &e.ops,
+            &autor_dev,
+            &datos_base("Tarea polling"),
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+        assert!(actualizar_deteccion_local(c, "T-101", Some(12), true).unwrap());
+        // Llamar de nuevo con los mismos datos no vuelve a mutar.
+        assert!(!actualizar_deteccion_local(c, "T-101", Some(12), true).unwrap());
+
+        let t = db_tareas::obtener(c, "T-101").unwrap();
+        assert_eq!(t.ultimo_changeset_visto, Some(12));
+        assert!(t.modificada);
+
+        let cerrada =
+            cerrar_por_deteccion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:00:01Z", HOY)
+                .unwrap();
+        assert_eq!(cerrada.estado, EstadoTarea::Terminada);
+        assert_eq!(cerrada.fecha_completada.as_deref(), Some(HOY));
+        assert!(!cerrada.modificada);
+
+        // Máquina B sincroniza y recibe la terminación automática.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let en_b = db_tareas::obtener(e.db_b.conexion(), "T-101").unwrap();
+        assert_eq!(en_b.estado, EstadoTarea::Terminada);
+        assert_eq!(en_b.fecha_completada.as_deref(), Some(HOY));
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_polling_unity_vc() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::tomar_en;
+        use crate::estado::AppState;
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+        use crate::{modelo, ramas};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let repo_cm = format!("{repo}@{org}@unity");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-104-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let mut rama_creada: Option<String> = None;
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-104-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+
+            let admin_fila = estado_a
+                .con_db(|db| Ok(usuarios::listar(db.conexion())?.into_iter().next().unwrap()))
+                .unwrap();
+            let autor_admin = AutorTarea {
+                email: &admin_fila.email,
+                rol: Rol::Administrador,
+            };
+            estado_a
+                .con_db(|db_a| {
+                    crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_admin,
+                        &DatosNuevaTarea {
+                            titulo: format!("Polling 104 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        &modelo::ahora_iso(),
+                        &modelo::hoy_local(),
+                    )
+                })
+                .unwrap();
+
+            let tomada = tomar_en(&estado_a, "T-101").unwrap();
+            let rama = tomada[0].rama_asociada.clone().unwrap();
+            rama_creada = Some(rama.clone());
+
+            // Check-in real desde fuera (como si viniera de Unity VC).
+            let archivo = ws_a.path().join(format!("polling_{sufijo}.txt"));
+            std::fs::write(&archivo, format!("prueba polling {sufijo}")).unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo.to_string_lossy().as_ref())
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+            Comando::cm()
+                .args(["checkin", "--all", "-c=Commit externo polling 104"])
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+
+            let resumen = revisar_actualizaciones_en(&estado_a, Some("T-101")).unwrap();
+            assert_eq!(resumen.rama_actual.as_deref(), Some(rama.as_str()));
+            assert_eq!(resumen.tareas_modificadas, vec!["T-101".to_string()]);
+            assert!(resumen.tareas_cerradas.is_empty());
+
+            let (tarea, cs_lista) = estado_a
+                .con_db(|db| {
+                    Ok((
+                        db_tareas::obtener(db.conexion(), "T-101")?,
+                        commits::de_tarea(db.conexion(), "T-101")?,
+                    ))
+                })
+                .unwrap();
+            assert!(tarea.modificada);
+            assert!(tarea.ultimo_changeset_visto.is_some());
+            assert!(cs_lista
+                .iter()
+                .any(|c| c.mensaje.contains("Commit externo polling 104")));
+        }));
+
         let _ = ramas::cambiar_a_rama(&estado_a, ws_a.path(), "/main/dev");
         if let Some(rama) = rama_creada {
             let _ = ramas::purgar_rama_definitiva(&estado_a, Some(ws_a.path()), &repo_cm, &rama);

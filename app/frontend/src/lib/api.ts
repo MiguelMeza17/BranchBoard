@@ -299,6 +299,14 @@ export const api = {
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
+  /** Revisa ramas activas y rama del workspace en Unity VC (#104). */
+  revisarActualizaciones: (tareaId?: string) =>
+    llamar<{ rama_actual: string | null; tareas_modificadas: string[]; tareas_cerradas: string[] }>(
+      'revisar_actualizaciones',
+      { tareaId: tareaId ?? null },
+      () => ({ rama_actual: null, tareas_modificadas: [], tareas_cerradas: [] })
+    ),
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 

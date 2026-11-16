@@ -2,17 +2,21 @@
 //! `ops/` (issue #91), escaneo de `ops/` (#92) y compactación con snapshot (#94).
 
 use chrono::Utc;
+use serde::Serialize;
 use tauri::State;
 
+use crate::checkins;
+use crate::cm::lectura::rama_actual_workspace;
 use crate::comandos::datos::carpeta_abierta;
+use crate::db::tareas as db_tareas;
 use crate::error::{Error, Resultado};
 use crate::estado::{llave_publica_del_proyecto, AppState};
 use crate::eventos::{self, ResumenCompactacion, ResumenSincronizacion};
 use crate::identidad::equipo::Firmante;
-use crate::modelo::{normalizar_email, Rol};
-use crate::ramas;
-use crate::servidor::{conectar, LlaveroSistema};
-use crate::tareas::InfoDobleToma;
+use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol};
+use crate::ramas::{self, RAMA_DEV};
+use crate::servidor::{conectar, Changeset, LlaveroSistema};
+use crate::tareas::{self, AutorTarea, InfoDobleToma};
 
 /// Ruta de la carpeta compartida del proyecto abierto, o `None` si no se configuró.
 #[tauri::command]
@@ -124,4 +128,151 @@ pub fn compactar_eventos(
         };
         eventos::compactar(db.conexion(), &ops, &publica, &firmante, Utc::now())
     })
+}
+
+/// Evento Tauri emitido al detectar cambios nuevos o cierres en Unity VC (#104).
+pub const EVENTO_UNITY_ACTUALIZADO: &str = "unity-vc-actualizado";
+
+/// Resumen de una revisión en Unity VC (#104).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ResumenPolling {
+    pub rama_actual: Option<String>,
+    pub tareas_modificadas: Vec<String>,
+    pub tareas_cerradas: Vec<String>,
+}
+
+impl ResumenPolling {
+    pub fn hubo_cambios(&self) -> bool {
+        self.rama_actual.is_some()
+            || !self.tareas_modificadas.is_empty()
+            || !self.tareas_cerradas.is_empty()
+    }
+}
+
+/// Revisa las ramas activas en Unity VC, detecta check-ins nuevos (`modificada`),
+/// cierres por merge (`tarea_cerrada_por_deteccion`) y la rama actual del workspace (#104).
+#[tauri::command]
+pub async fn revisar_actualizaciones(
+    estado: State<'_, AppState>,
+    tarea_id: Option<String>,
+) -> Resultado<ResumenPolling> {
+    revisar_actualizaciones_en(&estado, tarea_id.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`revisar_actualizaciones`] (para el polling
+/// en segundo plano y pruebas reales).
+pub fn revisar_actualizaciones_en(
+    estado: &AppState,
+    tarea_id: Option<&str>,
+) -> Resultado<ResumenPolling> {
+    let yo = estado.exigir_permiso("revisar_actualizaciones")?;
+    let Some(_guarda) = estado.iniciar_polling() else {
+        return Ok(ResumenPolling::default());
+    };
+
+    let mut resumen = ResumenPolling::default();
+    if let Ok(ws) = estado.workspace_abierto() {
+        resumen.rama_actual = rama_actual_workspace(estado, &ws).ok().map(|w| w.rama);
+    }
+
+    let Ok(repo) = estado.repo_abierto() else {
+        return Ok(resumen);
+    };
+    let filtro = tarea_id.map(str::trim).filter(|s| !s.is_empty());
+
+    // 1. Snapshot rápido de tareas activas con rama asociada.
+    let candidatas: Vec<(String, String, Option<i64>, String)> = estado.con_db(|db| {
+        let todas = db_tareas::listar(db.conexion())?;
+        let mut lista = Vec::new();
+        for t in &todas {
+            if t.eliminada || t.estado == EstadoTarea::Terminada {
+                continue;
+            }
+            if let Some(id_buscado) = filtro {
+                if t.id != id_buscado {
+                    continue;
+                }
+            }
+            let Some(ref rama) = t.rama_asociada else {
+                continue;
+            };
+            let rama_padre = t
+                .tarea_padre_id
+                .as_deref()
+                .and_then(|pid| todas.iter().find(|p| p.id == pid))
+                .and_then(|p| p.rama_asociada.clone())
+                .unwrap_or_else(|| RAMA_DEV.to_string());
+            lista.push((
+                t.id.clone(),
+                rama.clone(),
+                t.ultimo_changeset_visto,
+                rama_padre,
+            ));
+        }
+        Ok(lista)
+    })?;
+
+    if candidatas.is_empty() {
+        return Ok(resumen);
+    }
+
+    // 2. Consultas de red / `cm` fuera del lock de SQLite.
+    let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
+    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+    let mut resultados: Vec<(String, Option<i64>, Vec<Changeset>, bool)> =
+        Vec::with_capacity(candidatas.len());
+
+    for (id, rama, ultimo_cs, rama_padre) in candidatas {
+        let changesets = cliente
+            .changesets_de_rama(&repo.repo, &rama)?
+            .unwrap_or_default();
+        let cerrada =
+            ramas::rama_cerrada_hacia_padre(estado, &repo_cm, &rama, &rama_padre).unwrap_or(false);
+        resultados.push((id, ultimo_cs, changesets, cerrada));
+    }
+
+    // 3. Aplicar resultados en SQLite (y `ops/` si se cerró alguna rama).
+    let ops = carpeta_abierta(estado)
+        .ok()
+        .and_then(|carpeta| eventos::carpeta_ops(&carpeta).ok());
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+    let ahora = ahora_iso();
+    let hoy = hoy_local();
+
+    estado.con_db(|db| {
+        for (id, ultimo_cs, changesets, cerrada) in resultados {
+            let nuevos = checkins::guardar_changesets(db.conexion(), &id, &changesets)?;
+            let max_cs = changesets.iter().map(|c| c.changeset_id).max();
+            if max_cs > ultimo_cs || nuevos > 0 {
+                let hay_nuevos = max_cs
+                    .zip(ultimo_cs)
+                    .map(|(m, u)| m > u)
+                    .unwrap_or(nuevos > 0);
+                if tareas::actualizar_deteccion_local(db.conexion(), &id, max_cs, hay_nuevos)?
+                    && hay_nuevos
+                {
+                    resumen.tareas_modificadas.push(id.clone());
+                }
+            }
+            if cerrada {
+                if let Some(ref carpeta_ops) = ops {
+                    tareas::cerrar_por_deteccion(
+                        db.conexion(),
+                        carpeta_ops,
+                        &autor,
+                        &id,
+                        &ahora,
+                        &hoy,
+                    )?;
+                    resumen.tareas_cerradas.push(id);
+                }
+            }
+        }
+        Ok(())
+    })?;
+
+    Ok(resumen)
 }
