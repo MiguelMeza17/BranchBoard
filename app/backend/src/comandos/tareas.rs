@@ -197,8 +197,18 @@ pub async fn cambiar_estado(
     id: String,
     nuevo_estado: EstadoTarea,
 ) -> Resultado<ResultadoCambioEstado> {
-    con_ops(&estado, "cambiar_estado", |c, ops, autor| {
-        tareas::cambiar_estado(c, ops, autor, &id, nuevo_estado, &ahora_iso())
+    cambiar_estado_en(&estado, &id, nuevo_estado)
+}
+
+/// Lo mismo que [`cambiar_estado`], sin el envoltorio de Tauri (para pruebas en
+/// el entorno real).
+pub fn cambiar_estado_en(
+    estado: &AppState,
+    id: &str,
+    nuevo_estado: EstadoTarea,
+) -> Resultado<ResultadoCambioEstado> {
+    con_ops(estado, "cambiar_estado", |c, ops, autor| {
+        tareas::cambiar_estado(c, ops, autor, id, nuevo_estado, &ahora_iso())
     })
 }
 
@@ -246,16 +256,26 @@ pub async fn reabrir_tarea(
     id: String,
     motivo: String,
 ) -> Resultado<Tarea> {
-    con_ops(&estado, "reabrir_tarea", |c, ops, autor| {
-        tareas::reabrir(c, ops, autor, &id, &motivo, &ahora_iso())
+    reabrir_en(&estado, &id, &motivo)
+}
+
+/// Lo mismo que [`reabrir_tarea`], sin el envoltorio de Tauri.
+pub fn reabrir_en(estado: &AppState, id: &str, motivo: &str) -> Resultado<Tarea> {
+    con_ops(estado, "reabrir_tarea", |c, ops, autor| {
+        tareas::reabrir(c, ops, autor, id, motivo, &ahora_iso())
     })
 }
 
 /// `aprobar_tarea(id)`: Líder/Admin aprueba una tarea pendiente (`pendiente_aprobacion = false`) (#101).
 #[tauri::command]
 pub async fn aprobar_tarea(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
-    con_ops(&estado, "aprobar_tarea", |c, ops, autor| {
-        tareas::aprobar_tarea(c, ops, autor, &id, &ahora_iso())
+    aprobar_tarea_en(&estado, &id)
+}
+
+/// Lo mismo que [`aprobar_tarea`], sin el envoltorio de Tauri.
+pub fn aprobar_tarea_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    con_ops(estado, "aprobar_tarea", |c, ops, autor| {
+        tareas::aprobar_tarea(c, ops, autor, id, &ahora_iso())
     })
 }
 
@@ -265,8 +285,13 @@ pub async fn aprobar_tareas(
     estado: State<'_, AppState>,
     ids: Vec<String>,
 ) -> Resultado<Vec<Tarea>> {
-    con_ops(&estado, "aprobar_tareas", |c, ops, autor| {
-        tareas::aprobar_tareas(c, ops, autor, &ids, &ahora_iso())
+    aprobar_tareas_en(&estado, &ids)
+}
+
+/// Lo mismo que [`aprobar_tareas`], sin el envoltorio de Tauri.
+pub fn aprobar_tareas_en(estado: &AppState, ids: &[String]) -> Resultado<Vec<Tarea>> {
+    con_ops(estado, "aprobar_tareas", |c, ops, autor| {
+        tareas::aprobar_tareas(c, ops, autor, ids, &ahora_iso())
     })
 }
 
@@ -277,8 +302,13 @@ pub async fn editar_y_aprobar_tarea(
     id: String,
     campos: CambiosTarea,
 ) -> Resultado<Tarea> {
-    con_ops(&estado, "editar_y_aprobar_tarea", |c, ops, autor| {
-        tareas::editar_y_aprobar(c, ops, autor, &id, &campos, &ahora_iso())
+    editar_y_aprobar_en(&estado, &id, &campos)
+}
+
+/// Lo mismo que [`editar_y_aprobar_tarea`], sin el envoltorio de Tauri.
+pub fn editar_y_aprobar_en(estado: &AppState, id: &str, campos: &CambiosTarea) -> Resultado<Tarea> {
+    con_ops(estado, "editar_y_aprobar_tarea", |c, ops, autor| {
+        tareas::editar_y_aprobar(c, ops, autor, id, campos, &ahora_iso())
     })
 }
 
@@ -289,14 +319,24 @@ pub async fn advertir_tarea_pendiente(
     id: String,
     mensaje: String,
 ) -> Resultado<()> {
-    con_ops(&estado, "advertir_tarea_pendiente", |c, ops, autor| {
-        tareas::advertir_pendiente(c, ops, autor, &id, &mensaje, &ahora_iso())
+    advertir_pendiente_en(&estado, &id, &mensaje)
+}
+
+/// Lo mismo que [`advertir_tarea_pendiente`], sin el envoltorio de Tauri.
+pub fn advertir_pendiente_en(estado: &AppState, id: &str, mensaje: &str) -> Resultado<()> {
+    con_ops(estado, "advertir_tarea_pendiente", |c, ops, autor| {
+        tareas::advertir_pendiente(c, ops, autor, id, mensaje, &ahora_iso())
     })
 }
 
 /// Tareas en la Papelera ordenadas de la más reciente a la más antigua (#103).
 #[tauri::command]
 pub fn listar_papelera(estado: State<'_, AppState>) -> Resultado<Vec<Tarea>> {
+    listar_papelera_en(&estado)
+}
+
+/// Lo mismo que [`listar_papelera`], sin el envoltorio de Tauri.
+pub fn listar_papelera_en(estado: &AppState) -> Resultado<Vec<Tarea>> {
     let _yo = estado.exigir_permiso("listar_papelera")?;
     estado.con_db(|db| tareas::listar_papelera(db.conexion()))
 }
