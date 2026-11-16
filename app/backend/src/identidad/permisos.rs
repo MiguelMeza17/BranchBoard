@@ -65,6 +65,10 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("cambiar_estado", Acceso::Roles(TODOS)),
     ("borrar_progreso", Acceso::Roles(TODOS)),
     ("reabrir_tarea", Acceso::Roles(TODOS)),
+    ("aprobar_tarea", Acceso::Roles(LIDER_O_ADMIN)),
+    ("aprobar_tareas", Acceso::Roles(LIDER_O_ADMIN)),
+    ("editar_y_aprobar_tarea", Acceso::Roles(LIDER_O_ADMIN)),
+    ("advertir_tarea_pendiente", Acceso::Roles(LIDER_O_ADMIN)),
     ("volver_a_dev", Acceso::Roles(TODOS)),
 ];
 

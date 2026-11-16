@@ -81,6 +81,10 @@ pub fn run() {
             comandos_tareas::cambiar_estado,
             comandos_tareas::borrar_progreso,
             comandos_tareas::reabrir_tarea,
+            comandos_tareas::aprobar_tarea,
+            comandos_tareas::aprobar_tareas,
+            comandos_tareas::editar_y_aprobar_tarea,
+            comandos_tareas::advertir_tarea_pendiente,
             comandos_tareas::volver_a_dev,
         ])
         .run(tauri::generate_context!())
