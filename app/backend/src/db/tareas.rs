@@ -267,6 +267,17 @@ pub fn listar(c: &Connection) -> Resultado<Vec<Tarea>> {
     Ok(filas.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Tareas en la Papelera, ordenadas de la eliminación más reciente a la más
+/// antigua (a igual fecha, por `id` descendente).
+pub fn listar_papelera(c: &Connection) -> Resultado<Vec<Tarea>> {
+    let mut consulta = c.prepare(&format!(
+        "{} WHERE t.eliminada = 1 ORDER BY COALESCE(t.fecha_eliminacion, '') DESC, t.id DESC",
+        seleccion()
+    ))?;
+    let filas = consulta.query_map([], de_fila)?;
+    Ok(filas.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Subtareas directas de una tarea (incluye las eliminadas).
 pub fn hijas(c: &Connection, id_padre: &str) -> Resultado<Vec<Tarea>> {
     let mut consulta = c.prepare(&format!(

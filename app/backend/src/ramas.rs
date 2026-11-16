@@ -279,6 +279,68 @@ pub fn borrar_rama(estado: &AppState, repo_cm: &str, rama: &str) -> Resultado<()
     Ok(())
 }
 
+/// Marca en Unity VC una rama como eliminada usando el atributo
+/// `branchboard_eliminada` (#103). Como Unity VC no tiene "cerrar rama",
+/// esto deja constancia del motivo sin fallar si el servidor no permite crear
+/// atributos o la rama aún no fue subida.
+pub fn marcar_rama_eliminada(
+    estado: &AppState,
+    repo_cm: &str,
+    rama: &str,
+    justificacion: &str,
+) -> Resultado<()> {
+    let rama = rama.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Err(Error::Validacion(format!(
+            "Solo se pueden marcar ramas de tarea, no {rama}"
+        )));
+    }
+    let atributo = format!("att:branchboard_eliminada@{repo_cm}");
+    let _ = Comando::cm()
+        .args(["attribute", "create"])
+        .arg(&atributo)
+        .exigir_exito(estado);
+    let _ = Comando::cm()
+        .args(["attribute", "set"])
+        .arg(&atributo)
+        .arg(format!("br:{rama}@{repo_cm}"))
+        .arg(justificacion.trim())
+        .exigir_exito(estado);
+    Ok(())
+}
+
+/// Purga una rama y sus changesets huérfanos en Unity VC (`cm branch delete --delete-changesets`, #103).
+/// Si el workspace está sobre esa rama, primero intenta moverlo a `/main/dev`.
+/// Devuelve `true` si la rama se purgó; `false` si Unity VC la conservó en el
+/// historial (p. ej. porque ya fue mergeada, prestada o tiene hijas terminadas).
+pub fn purgar_rama_definitiva(
+    estado: &AppState,
+    workspace: Option<&Path>,
+    repo_cm: &str,
+    rama: &str,
+) -> Resultado<bool> {
+    let rama = rama.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Err(Error::Validacion(format!(
+            "Solo se pueden purgar ramas de tarea, no {rama}"
+        )));
+    }
+    if let Some(carpeta) = workspace {
+        if let Ok(actual) = rama_actual_workspace(estado, carpeta) {
+            if actual.rama.eq_ignore_ascii_case(rama) {
+                let _ = cambiar_a_rama(estado, carpeta, RAMA_DEV);
+            }
+        }
+    }
+    let ok = Comando::cm()
+        .args(["branch", "delete"])
+        .arg(format!("br:{rama}@{repo_cm}"))
+        .arg("--delete-changesets")
+        .exigir_exito(estado)
+        .is_ok();
+    Ok(ok)
+}
+
 /// Descarta todos los cambios pendientes sin check-in del workspace (`cm undo -r .`).
 pub fn descartar_cambios_pendientes(estado: &AppState, carpeta: &Path) -> Resultado<()> {
     let pendientes = cambios_pendientes(estado, carpeta)?;

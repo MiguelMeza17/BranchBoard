@@ -13,6 +13,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::db::commits;
+use crate::db::ediciones;
 use crate::db::notificaciones::{self, Notificacion};
 use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
@@ -38,6 +39,8 @@ pub const TIPOS: &[&str] = &[
     "aprobar_tareas",
     "editar_y_aprobar_tarea",
     "advertir_tarea_pendiente",
+    "eliminar_tarea",
+    "eliminar_definitivamente",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -230,6 +233,13 @@ pub struct PayloadAdvertirTarea {
     pub mensaje: String,
 }
 
+/// `payload` de `eliminar_tarea` (#103).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadEliminarTarea {
+    pub id: String,
+    pub justificacion: String,
+}
+
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InfoDobleToma {
@@ -317,6 +327,12 @@ fn armar_nueva_tarea(
 /// `edicion_pendiente` calculada).
 pub fn listar(c: &Connection) -> Resultado<Vec<Tarea>> {
     db_tareas::listar(c)
+}
+
+/// Lista las tareas en Papelera ordenadas de la eliminación más reciente a la
+/// más antigua (#103).
+pub fn listar_papelera(c: &Connection) -> Resultado<Vec<Tarea>> {
+    db_tareas::listar_papelera(c)
 }
 
 /// Crea una tarea y publica el evento `crear_tarea` en `ops/`.
@@ -1071,6 +1087,70 @@ pub fn advertir_pendiente(
     Ok(())
 }
 
+/// Envía una tarea a la Papelera con cascada sobre sus subtareas activas (#103).
+/// Solo Líder o Administrador. Limpia `pendiente_aprobacion` y ediciones pendientes,
+/// y emite notificación `tarea_eliminada` (#13) al creador de cada tarea afectada.
+/// Devuelve todas las tareas actualizadas (primero la raíz, luego las arrastradas).
+pub fn eliminar(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    justificacion: &str,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let id = id.trim();
+    let payload = PayloadEliminarTarea {
+        id: id.to_string(),
+        justificacion: justificacion.trim().to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "eliminar_tarea",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar eliminar_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    let mut afectadas = Vec::new();
+    eventos::publicar(c, ops, &ev, |tx| {
+        afectadas = aplicar_eliminar_tarea(tx, Some(autor.rol), &payload, ahora)?;
+        Ok(())
+    })?;
+    Ok(afectadas)
+}
+
+/// Purga definitivamente una tarea de la Papelera y sus subtareas en Papelera (#103).
+/// Solo Líder o Administrador. Devuelve las filas eliminadas en orden raíz -> hojas
+/// para que la capa de comandos pueda purgar sus ramas de hojas hacia raíz.
+pub fn eliminar_definitivamente(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let id = id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "eliminar_definitivamente",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar eliminar_definitivamente: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    let mut purgadas = Vec::new();
+    eventos::publicar(c, ops, &ev, |tx| {
+        purgadas = aplicar_eliminar_definitivamente(tx, Some(autor.rol), id)?;
+        Ok(())
+    })?;
+    Ok(purgadas)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -1290,6 +1370,22 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 })?;
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_advertir_tarea_pendiente(c, rol, &payload, &evento.timestamp)
+        }
+        "eliminar_tarea" => {
+            let payload: PayloadEliminarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("eliminar_tarea inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_eliminar_tarea(c, rol, &payload, &evento.timestamp)?;
+            Ok(())
+        }
+        "eliminar_definitivamente" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| {
+                    Error::Validacion(format!("eliminar_definitivamente inválido: {e}"))
+                })?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_eliminar_definitivamente(c, rol, &payload.id)?;
+            Ok(())
         }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
@@ -1882,6 +1978,141 @@ fn aplicar_advertir_tarea_pendiente(
             accionable: false,
         },
     )
+}
+
+fn recolectar_descendientes_activas(
+    c: &Connection,
+    padre_id: &str,
+    salida: &mut Vec<Tarea>,
+) -> Resultado<()> {
+    for hija in db_tareas::hijas(c, padre_id)? {
+        if !hija.eliminada && hija.estado != EstadoTarea::Terminada {
+            let hija_id = hija.id.clone();
+            salida.push(hija);
+            recolectar_descendientes_activas(c, &hija_id, salida)?;
+        }
+    }
+    Ok(())
+}
+
+fn recolectar_descendientes_papelera(
+    c: &Connection,
+    padre_id: &str,
+    salida: &mut Vec<Tarea>,
+) -> Resultado<()> {
+    for hija in db_tareas::hijas(c, padre_id)? {
+        if hija.eliminada {
+            let hija_id = hija.id.clone();
+            salida.push(hija);
+            recolectar_descendientes_papelera(c, &hija_id, salida)?;
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_eliminar_tarea(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadEliminarTarea,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    exigir_lider_o_admin(rol_conocido)?;
+    let justificacion = payload.justificacion.trim();
+    if justificacion.is_empty() {
+        return Err(Error::Validacion(
+            "Escribe la justificación para eliminar la tarea".into(),
+        ));
+    }
+    let raiz = db_tareas::obtener(c, &payload.id)?;
+    if raiz.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está en la Papelera",
+            raiz.id
+        )));
+    }
+    let raiz_id = raiz.id.clone();
+    let padre_raiz = raiz.tarea_padre_id.clone();
+
+    let mut cola = vec![raiz];
+    recolectar_descendientes_activas(c, &raiz_id, &mut cola)?;
+
+    let mut actualizadas = Vec::with_capacity(cola.len());
+    for (idx, mut tarea) in cola.into_iter().enumerate() {
+        let es_raiz = idx == 0;
+        let motivo_fila = if es_raiz {
+            justificacion.to_string()
+        } else {
+            format!("eliminada junto con su tarea padre {raiz_id}: {justificacion}")
+        };
+        let cuerpo = if es_raiz {
+            format!(
+                "\"{}\" ({}) fue enviada a la Papelera. Motivo: {}",
+                tarea.titulo, tarea.id, justificacion
+            )
+        } else {
+            format!(
+                "\"{}\" ({}) fue enviada a la Papelera junto con su tarea padre {raiz_id}. Motivo: {justificacion}",
+                tarea.titulo, tarea.id
+            )
+        };
+
+        tarea.eliminada = true;
+        tarea.justificacion_eliminacion = Some(motivo_fila);
+        tarea.fecha_eliminacion = Some(ahora.to_string());
+        tarea.pendiente_aprobacion = false;
+        ediciones::quitar(c, &tarea.id)?;
+        db_tareas::actualizar(c, &tarea)?;
+
+        insertar_notificacion_si_falta(
+            c,
+            &Notificacion {
+                id: format!("noti_elim_{}_{}", tarea.id, ahora),
+                tipo: TipoNotificacion::TareaEliminada,
+                para: normalizar_email(&tarea.creado_por),
+                titulo: "Tu tarea fue eliminada".into(),
+                cuerpo,
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(tarea.id.clone()),
+                accionable: false,
+            },
+        )?;
+        actualizadas.push(tarea);
+    }
+
+    if let Some(pid) = padre_raiz.as_deref() {
+        if let Some(padre) = db_tareas::buscar(c, pid)? {
+            if !padre.eliminada {
+                recalcular_padres(c, Some(pid.to_string()))?;
+            }
+        }
+    }
+
+    Ok(actualizadas)
+}
+
+fn aplicar_eliminar_definitivamente(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    id: &str,
+) -> Resultado<Vec<Tarea>> {
+    exigir_lider_o_admin(rol_conocido)?;
+    let raiz = db_tareas::obtener(c, id)?;
+    if !raiz.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} debe estar en la Papelera para eliminarla definitivamente",
+            raiz.id
+        )));
+    }
+    let raiz_id = raiz.id.clone();
+    let mut purgadas = vec![raiz];
+    recolectar_descendientes_papelera(c, &raiz_id, &mut purgadas)?;
+
+    // Borrar de hojas a raíz por orden limpio.
+    for t in purgadas.iter().rev() {
+        db_tareas::borrar_fila(c, &t.id)?;
+    }
+    Ok(purgadas)
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -4774,5 +5005,305 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn eliminar_y_papelera_con_cascada_notificaciones_y_purga() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        // Padre T-101 creado por DEV, con dos subtareas:
+        // T-101-1 (activa) y T-101-2 (terminada). Además T-102 independiente.
+        crear(c, &e.ops, &autor_dev, &datos_base("Padre"), AHORA, HOY).unwrap();
+
+        let mut sub_activa = datos_base("Sub activa");
+        sub_activa.tarea_padre_id = Some("T-101".into());
+        crear(
+            c,
+            &e.ops,
+            &autor_dev,
+            &sub_activa,
+            "2026-11-15T15:00:01Z",
+            HOY,
+        )
+        .unwrap();
+
+        let mut sub_term = datos_base("Sub terminada");
+        sub_term.tarea_padre_id = Some("T-101".into());
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &sub_term,
+            "2026-11-15T15:00:02Z",
+            HOY,
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-2",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T15:00:03Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-2",
+            EstadoTarea::Terminada,
+            "2026-11-15T15:00:04Z",
+        )
+        .unwrap();
+
+        crear(
+            c,
+            &e.ops,
+            &autor_dev,
+            &datos_base("Otra tarea"),
+            "2026-11-15T15:00:05Z",
+            HOY,
+        )
+        .unwrap();
+
+        // Desarrollador no puede eliminar; justificación vacía rechazada.
+        assert!(matches!(
+            eliminar(
+                c,
+                &e.ops,
+                &autor_dev,
+                "T-101",
+                "Motivo",
+                "2026-11-15T15:00:06Z"
+            )
+            .unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(matches!(
+            eliminar(
+                c,
+                &e.ops,
+                &autor_lider,
+                "T-101",
+                "   ",
+                "2026-11-15T15:00:06Z"
+            )
+            .unwrap_err(),
+            Error::Validacion(_)
+        ));
+
+        // No se puede purgar definitivamente una tarea que no está en Papelera.
+        assert!(matches!(
+            eliminar_definitivamente(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:00:06Z")
+                .unwrap_err(),
+            Error::Validacion(_)
+        ));
+
+        // Eliminar T-102 primero (más antigua), luego T-101 (más reciente).
+        eliminar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            "Duplicada",
+            "2026-11-15T15:00:07Z",
+        )
+        .unwrap();
+        let afectadas = eliminar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            "Ya no aplica",
+            "2026-11-15T15:00:08Z",
+        )
+        .unwrap();
+        let ids_afectadas: Vec<&str> = afectadas.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids_afectadas, vec!["T-101", "T-101-1"]);
+
+        // T-101 y T-101-1 en Papelera sin pendiente_aprobacion; T-101-2 sigue activa/terminada.
+        let p = db_tareas::obtener(c, "T-101").unwrap();
+        assert!(p.eliminada);
+        assert!(!p.pendiente_aprobacion);
+        assert_eq!(p.justificacion_eliminacion.as_deref(), Some("Ya no aplica"));
+        assert!(db_tareas::obtener(c, "T-101-1").unwrap().eliminada);
+        assert!(!db_tareas::obtener(c, "T-101-2").unwrap().eliminada);
+
+        // Papelera ordenada de la más reciente a la más antigua (a igual fecha por id desc).
+        let papelera_ids: Vec<String> = listar_papelera(c)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(papelera_ids, vec!["T-101-1", "T-101", "T-102"]);
+
+        // Notificación #13 al creador (DEV) por T-102, T-101 y T-101-1.
+        let notis_dev: Vec<_> = notificaciones::de_usuario(c, DEV)
+            .unwrap()
+            .into_iter()
+            .filter(|n| n.tipo == TipoNotificacion::TareaEliminada)
+            .collect();
+        assert_eq!(notis_dev.len(), 3);
+
+        // Purga definitiva sobre T-101 borra T-101 y T-101-1 en cascada, dejando T-101-2.
+        let purgadas =
+            eliminar_definitivamente(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:00:09Z")
+                .unwrap();
+        assert_eq!(purgadas.len(), 2);
+        assert!(db_tareas::buscar(c, "T-101").unwrap().is_none());
+        assert!(db_tareas::buscar(c, "T-101-1").unwrap().is_none());
+        assert!(db_tareas::buscar(c, "T-101-2").unwrap().is_some());
+
+        // Máquina B sincroniza y llega al mismo estado.
+        let sync = e.sincronizar_b();
+        let log = std::fs::read_to_string(e.local_b.join("eventos.log")).unwrap_or_default();
+        assert_eq!(
+            sync.descartados, 0,
+            "descartados: {:?}\nlog:\n{}",
+            sync, log
+        );
+        assert!(db_tareas::buscar(e.db_b.conexion(), "T-101")
+            .unwrap()
+            .is_none());
+        assert!(db_tareas::buscar(e.db_b.conexion(), "T-101-1")
+            .unwrap()
+            .is_none());
+        assert!(
+            db_tareas::obtener(e.db_b.conexion(), "T-102")
+                .unwrap()
+                .eliminada
+        );
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_eliminar_y_purgar() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::tareas::{eliminar_definitivamente_en, eliminar_tarea_en, tomar_en};
+        use crate::estado::AppState;
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+        use crate::{modelo, ramas};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let repo_cm = format!("{repo}@{org}@unity");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-103-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let mut rama_creada: Option<String> = None;
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-103-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+
+            let admin_fila = estado_a
+                .con_db(|db| Ok(usuarios::listar(db.conexion())?.into_iter().next().unwrap()))
+                .unwrap();
+            let autor_admin = AutorTarea {
+                email: &admin_fila.email,
+                rol: Rol::Administrador,
+            };
+            estado_a
+                .con_db(|db_a| {
+                    crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_admin,
+                        &DatosNuevaTarea {
+                            titulo: format!("Eliminar y purgar 103 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        &modelo::ahora_iso(),
+                        &modelo::hoy_local(),
+                    )
+                })
+                .unwrap();
+
+            let tomada = tomar_en(&estado_a, "T-101").unwrap();
+            let rama = tomada[0].rama_asociada.clone().unwrap();
+            rama_creada = Some(rama.clone());
+
+            // 1) Soft-delete a Papelera + marcado en Unity VC.
+            let en_papelera =
+                eliminar_tarea_en(&estado_a, "T-101", "Prueba real de eliminación").unwrap();
+            assert_eq!(en_papelera.len(), 1);
+            assert!(en_papelera[0].eliminada);
+            let papelera = estado_a
+                .con_db(|db| listar_papelera(db.conexion()))
+                .unwrap();
+            assert_eq!(papelera.len(), 1);
+
+            // 2) Purga definitiva: borra fila en SQLite y purga la rama en Unity VC.
+            let purgadas = eliminar_definitivamente_en(&estado_a, "T-101").unwrap();
+            assert_eq!(purgadas.len(), 1);
+            assert!(estado_a
+                .con_db(|db| db_tareas::buscar(db.conexion(), "T-101"))
+                .unwrap()
+                .is_none());
+            // Si la purga de la rama ya funcionó, `cm find branch` ya no la muestra.
+            let salida = Comando::cm()
+                .args(["find", "branch"])
+                .arg(format!("where name='{rama}' on repository '{repo_cm}'"))
+                .args(["--format={name}", "--nototal"])
+                .exigir_exito(&estado_a)
+                .unwrap_or_default();
+            assert!(
+                salida.trim().is_empty(),
+                "la rama {rama} debió purgarse en Unity VC, salida: {salida}"
+            );
+            rama_creada = None;
+        }));
+
+        // Limpieza segura siempre (workspace temporal, rama si quedó, y carpeta OneDrive).
+        let _ = ramas::cambiar_a_rama(&estado_a, ws_a.path(), "/main/dev");
+        if let Some(rama) = rama_creada {
+            let _ = ramas::purgar_rama_definitiva(&estado_a, Some(ws_a.path()), &repo_cm, &rama);
+        }
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .exigir_exito(&estado_a);
+        let _ = std::fs::remove_dir_all(&compartida);
+
+        if let Err(err) = resultado {
+            std::panic::resume_unwind(err);
+        }
     }
 }

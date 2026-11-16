@@ -293,3 +293,85 @@ pub async fn advertir_tarea_pendiente(
         tareas::advertir_pendiente(c, ops, autor, &id, &mensaje, &ahora_iso())
     })
 }
+
+/// Tareas en la Papelera ordenadas de la más reciente a la más antigua (#103).
+#[tauri::command]
+pub fn listar_papelera(estado: State<'_, AppState>) -> Resultado<Vec<Tarea>> {
+    let _yo = estado.exigir_permiso("listar_papelera")?;
+    estado.con_db(|db| tareas::listar_papelera(db.conexion()))
+}
+
+/// `eliminar_tarea(id, justificacion)`: manda a Papelera con cascada sobre
+/// subtareas activas, marca sus ramas en Unity VC y notifica a los creadores (#103).
+#[tauri::command]
+pub async fn eliminar_tarea(
+    estado: State<'_, AppState>,
+    id: String,
+    justificacion: String,
+) -> Resultado<Vec<Tarea>> {
+    eliminar_tarea_en(&estado, &id, &justificacion)
+}
+
+/// Versión sin envoltorio Tauri de [`eliminar_tarea`] (para pruebas reales).
+pub fn eliminar_tarea_en(
+    estado: &AppState,
+    id: &str,
+    justificacion: &str,
+) -> Resultado<Vec<Tarea>> {
+    let yo = estado.exigir_permiso("eliminar_tarea")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+    let afectadas = estado.con_db(|db| {
+        tareas::eliminar(db.conexion(), &ops, &autor, id, justificacion, &ahora_iso())
+    })?;
+    if let Ok(repo) = estado.repo_abierto() {
+        let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+        for t in &afectadas {
+            if let Some(ref rama) = t.rama_asociada {
+                let motivo = t
+                    .justificacion_eliminacion
+                    .as_deref()
+                    .unwrap_or(justificacion);
+                ramas::marcar_rama_eliminada(estado, &repo_cm, rama, motivo)?;
+            }
+        }
+    }
+    Ok(afectadas)
+}
+
+/// `eliminar_definitivamente(id)`: borra de SQLite una tarea en Papelera y sus
+/// subtareas en Papelera, e intenta purgar sus ramas en Unity VC de hojas a raíz (#103).
+#[tauri::command]
+pub async fn eliminar_definitivamente(
+    estado: State<'_, AppState>,
+    id: String,
+) -> Resultado<Vec<Tarea>> {
+    eliminar_definitivamente_en(&estado, &id)
+}
+
+/// Versión sin envoltorio Tauri de [`eliminar_definitivamente`] (para pruebas reales).
+pub fn eliminar_definitivamente_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
+    let yo = estado.exigir_permiso("eliminar_definitivamente")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+    let purgadas = estado.con_db(|db| {
+        tareas::eliminar_definitivamente(db.conexion(), &ops, &autor, id, &ahora_iso())
+    })?;
+    if let Ok(repo) = estado.repo_abierto() {
+        let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+        let workspace = estado.workspace_abierto().ok();
+        for t in purgadas.iter().rev() {
+            if let Some(ref rama) = t.rama_asociada {
+                let _ =
+                    ramas::purgar_rama_definitiva(estado, workspace.as_deref(), &repo_cm, rama)?;
+            }
+        }
+    }
+    Ok(purgadas)
+}

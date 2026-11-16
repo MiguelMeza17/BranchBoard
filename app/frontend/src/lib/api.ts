@@ -284,6 +284,18 @@ export const api = {
   advertirTareaPendiente: (id: string, mensaje: string, mockup: () => void) =>
     llamar<void>('advertir_tarea_pendiente', { id, mensaje }, mockup),
 
+  /** Lista la Papelera ordenada de la eliminación más reciente a la más antigua (#103). */
+  listarPapelera: (mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('listar_papelera', undefined, mockup),
+
+  /** Manda una tarea (y sus subtareas activas en cascada) a la Papelera (Líder/Admin, #103). */
+  eliminarTarea: (id: string, justificacion: string, mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('eliminar_tarea', { id, justificacion }, mockup),
+
+  /** Purga definitivamente una tarea de la Papelera y sus subtareas en Papelera (Líder/Admin, #103). */
+  eliminarDefinitivamente: (id: string, mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('eliminar_definitivamente', { id }, mockup),
+
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
