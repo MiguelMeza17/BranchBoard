@@ -13,6 +13,7 @@
 //! - `error` — error común `{ codigo, mensaje }`.
 //! - `estado` — estado compartido de la app.
 
+pub mod avance;
 pub mod checkins;
 pub mod cm;
 pub mod comandos;
@@ -138,6 +139,9 @@ pub fn run() {
             comandos_sprints::asignar_tarea_a_backlog,
             comandos_sprints::asignar_backlog_a_sprint,
             comandos_sprints::cerrar_sprint,
+            comandos_sprints::datos_avance_sprint,
+            comandos_sprints::datos_avance_backlog,
+            comandos_sprints::datos_avance_general,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

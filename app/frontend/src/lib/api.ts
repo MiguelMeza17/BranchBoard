@@ -9,7 +9,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { CambioTraido, Commit, EdicionPendiente, EstadoTarea, Rol, Sprint, Tarea, TipoTarea } from '../types';
+import type {
+  AvanceBacklog,
+  AvanceSprint,
+  CambioTraido,
+  Commit,
+  EdicionPendiente,
+  EstadoTarea,
+  Rol,
+  Sprint,
+  Tarea,
+  TipoTarea,
+} from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -504,6 +515,22 @@ export const api = {
   /** Cierra manualmente un sprint o backlog y genera su reporte final, solo Administrador (#114). */
   cerrarSprint: (sprintId: string, mockup?: () => Sprint) =>
     llamar<Sprint>('cerrar_sprint', { sprintId }, mockup ?? (() => ({}) as Sprint)),
+
+  /** Datos calculados para la gráfica de Avance de un sprint (#115). */
+  datosAvanceSprint: (sprintId: string, mockup?: () => AvanceSprint) =>
+    llamar<AvanceSprint>('datos_avance_sprint', { sprintId }, mockup ?? (() => ({}) as AvanceSprint)),
+
+  /** Datos calculados para la gráfica de Avance de un backlog (#115). */
+  datosAvanceBacklog: (backlogId: string, mockup?: () => AvanceBacklog) =>
+    llamar<AvanceBacklog>(
+      'datos_avance_backlog',
+      { backlogId },
+      mockup ?? (() => ({}) as AvanceBacklog),
+    ),
+
+  /** Datos calculados para la vista General de Avance (#115). */
+  datosAvanceGeneral: (mockup?: () => AvanceBacklog) =>
+    llamar<AvanceBacklog>('datos_avance_general', undefined, mockup ?? (() => ({}) as AvanceBacklog)),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
