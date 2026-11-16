@@ -42,6 +42,8 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("estado_warp", Acceso::Libre),
     ("alternar_warp", Acceso::Libre),
     ("instalar_warp", Acceso::Libre),
+    ("estado_cm", Acceso::Libre),
+    ("instalar_cm", Acceso::Libre),
     ("entrar_a_proyecto", Acceso::Libre),
     ("buscar_actualizacion", Acceso::Libre),
     ("instalar_actualizacion", Acceso::Libre),

@@ -236,6 +236,8 @@ interface State {
   vpnInstalado: boolean;
   vpnCargando: boolean;
   vpnInstalando: boolean;
+  cmInstalado: boolean;
+  cmInstalando: boolean;
   // Simula el resultado de `cm whoami` al arrancar — en false, la app muestra la
   // pantalla de "no hay sesión de Unity VC" en vez de los tableros (ver FRONTEND.md,
   // "Autenticación / acceso al proyecto"). Toggle de demo en el Topbar.
@@ -373,6 +375,9 @@ interface State {
   cargarEstadoWarp: () => Promise<void>;
   toggleVpn: () => Promise<void>;
   instalarWarp: () => Promise<void>;
+  cargarEstadoCm: () => Promise<void>;
+  marcarCmNoInstalado: () => void;
+  instalarCm: () => Promise<void>;
   toggleCmSesion: () => void;
   setAccesoCompletado: (v: boolean) => void;
   showToast: (msg: string, tone?: 'ok' | 'info' | 'danger') => void;
@@ -478,6 +483,8 @@ export const useStore = create<State>((set, get) => {
   vpnInstalado: true,
   vpnCargando: false,
   vpnInstalando: false,
+  cmInstalado: true,
+  cmInstalando: false,
   cmSesionActiva: true,
   accesoCompletado: false,
   proyectoActual: fx.PROYECTO_NOMBRE,
@@ -813,6 +820,33 @@ export const useStore = create<State>((set, get) => {
       set({ vpnInstalando: false });
       get().showToast(mensajeDeError(e), 'danger');
       void get().cargarEstadoWarp();
+    }
+  },
+  cargarEstadoCm: async () => {
+    if (!enTauri()) return;
+    try {
+      const estado = await api.estadoCm();
+      set({ cmInstalado: estado.instalado });
+    } catch {
+      // No bloquea la pantalla inicial si la consulta falla.
+    }
+  },
+  marcarCmNoInstalado: () => set({ cmInstalado: false }),
+  instalarCm: async () => {
+    if (!enTauri()) {
+      get().showToast('En la app de escritorio se instalará Unity Version Control con winget.', 'info');
+      return;
+    }
+    if (get().cmInstalando) return;
+    set({ cmInstalando: true });
+    try {
+      const res = await api.instalarCm();
+      set({ cmInstalado: res.estado.instalado, cmInstalando: false });
+      get().showToast(res.mensaje, res.instalado_ahora ? 'ok' : 'info');
+    } catch (e) {
+      set({ cmInstalando: false });
+      get().showToast(mensajeDeError(e), 'danger');
+      void get().cargarEstadoCm();
     }
   },
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),

@@ -491,7 +491,7 @@ Los comandos que estaban "pendientes de verificar al implementar", probados a ma
 Mismo patrón ya usado para [Conexión VPN (Cloudflare WARP)](#conexión-vpn-cloudflare-warp): si `cm` no está instalado (sin importar el rol — **corregido**, tampoco se excluye al Colaborador externo, ver arriba), aparece un botón **"Instalar Unity Version Control"**.
 
 - **Confirmado disponible en winget**: `winget install --id Codice.PlasticSCM.CloudEdition -e --accept-package-agreements --accept-source-agreements` — instala el cliente completo, que trae `cm` incluido (y con él, el modo Gluon para workspace parcial).
-- Mismo fallback que WARP: si `winget` falla o no está disponible, el botón abre la página oficial de descarga de Unity Version Control en el navegador.
+- Mismo fallback que WARP: si `winget` falla o no está disponible, el botón abre la página oficial de descarga de Unity Version Control (`https://www.plasticscm.com/download`) desde el backend en Rust. (**Implementado #123** en `app/backend/src/cm/instalacion.rs` y `comandos/cm.rs`: `estado_cm()`, `instalar_cm()`.)
 - Misma nota de UX: puede disparar un prompt de UAC, mostrar estado "instalando..." mientras corre.
 
 ## Workspace parcial (Gluon) para subtareas simples

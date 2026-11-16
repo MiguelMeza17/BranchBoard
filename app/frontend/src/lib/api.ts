@@ -202,6 +202,20 @@ export interface ResultadoInstalacionWarp {
   mensaje: string;
 }
 
+/** Estado de instalación de `cm` / Unity Version Control (#123). */
+export interface EstadoCm {
+  instalado: boolean;
+  ruta: string | null;
+}
+
+/** Respuesta de `instalar_cm` (#123). */
+export interface ResultadoInstalacionCm {
+  instalado_ahora: boolean;
+  abrio_descarga: boolean;
+  estado: EstadoCm;
+  mensaje: string;
+}
+
 // ───────── Comandos ─────────
 
 export const api = {
@@ -745,6 +759,28 @@ export const api = {
             detalle: null,
           },
           mensaje: 'Cloudflare WARP ya está instalado.',
+        })),
+    ),
+
+  /** Consulta si `cm` (Unity Version Control) está disponible en este equipo (#123). */
+  estadoCm: (mockup?: () => EstadoCm) =>
+    llamar<EstadoCm>(
+      'estado_cm',
+      undefined,
+      mockup ?? (() => ({ instalado: true, ruta: null })),
+    ),
+
+  /** Instala Unity Version Control con `winget` o abre la descarga oficial si falla (#123). */
+  instalarCm: (mockup?: () => ResultadoInstalacionCm) =>
+    llamar<ResultadoInstalacionCm>(
+      'instalar_cm',
+      undefined,
+      mockup ??
+        (() => ({
+          instalado_ahora: false,
+          abrio_descarga: false,
+          estado: { instalado: true, ruta: null },
+          mensaje: 'Unity Version Control (cm) ya está instalado.',
         })),
     ),
 
