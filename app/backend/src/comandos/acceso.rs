@@ -27,7 +27,7 @@ pub async fn entrar_a_proyecto(
 }
 
 /// `%LocalAppData%\BranchBoard` (ver "Base de datos local" en BACKEND.md).
-fn carpeta_datos(app: &AppHandle) -> Resultado<PathBuf> {
+pub fn carpeta_datos(app: &AppHandle) -> Resultado<PathBuf> {
     let base = app
         .path()
         .local_data_dir()

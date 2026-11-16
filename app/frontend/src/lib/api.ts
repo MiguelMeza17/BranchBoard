@@ -24,6 +24,8 @@ import type {
   Sprint,
   Tarea,
   TipoTarea,
+  /** Mismos tipos del frontend (`WorkspaceUnityVC`, #125). */
+  WorkspaceUnityVC,
 } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
@@ -228,6 +230,20 @@ export interface ResultadoReconexionUnityVc {
   email: string;
   reconectado: boolean;
   abrio_asistente: boolean;
+  mensaje: string;
+}
+
+/** Repositorio del servidor de Unity VC (`cm repo list`, #125). */
+export interface ProyectoServidor {
+  nombre: string;
+  repo: string;
+  org: string;
+  tiene_db_branchboard: boolean;
+}
+
+/** Progreso emitido por el evento `clonado-progreso` (#125). */
+export interface ProgresoClonado {
+  porcentaje: number;
   mensaje: string;
 }
 
@@ -832,6 +848,32 @@ export const api = {
   /** Revoca los PAT de BranchBoard en Unity VC, limpia credenciales locales y cierra el proyecto (#124). */
   cerrarSesionUnityVc: (mockup?: () => number) =>
     llamar<number>('cerrar_sesion_unity_vc', undefined, mockup ?? (() => 0)),
+
+  /** Workspaces locales de Unity VC con su marca local de BranchBoard (#125). */
+  listarWorkspacesLocales: (mockup?: () => WorkspaceUnityVC[]) =>
+    llamar<WorkspaceUnityVC[]>('listar_workspaces_locales', undefined, mockup ?? (() => [])),
+
+  /** "Tus proyectos": workspaces locales que ya tienen base de BranchBoard (#125). */
+  listarTusProyectos: (mockup?: () => WorkspaceUnityVC[]) =>
+    llamar<WorkspaceUnityVC[]>('listar_tus_proyectos', undefined, mockup ?? (() => [])),
+
+  /** Proyectos accesibles en Unity VC Cloud (`cm repo list`) con etiqueta "Con tareas" (#125). */
+  listarProyectosServidor: (mockup?: () => ProyectoServidor[]) =>
+    llamar<ProyectoServidor[]>('listar_proyectos_servidor', undefined, mockup ?? (() => [])),
+
+  /** Clona un proyecto de Unity VC Cloud (`cm workspace create` + `cm update`) en `carpeta` (#125). */
+  clonarProyecto: (repo: string, carpeta: string, mockup?: () => WorkspaceUnityVC) =>
+    llamar<WorkspaceUnityVC>(
+      'clonar_proyecto',
+      { repo, carpeta },
+      mockup ?? (() => ({ nombre: '', repo, ruta: carpeta, tiene_db_branchboard: false })),
+    ),
+
+  /** Escucha el progreso incremental del clonado (`clonado-progreso`, #125). */
+  alProgresoClonado: (fn: (p: ProgresoClonado) => void): Promise<() => void> =>
+    enTauri()
+      ? listen<ProgresoClonado>('clonado-progreso', (e) => fn(e.payload))
+      : Promise.resolve(() => {}),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
