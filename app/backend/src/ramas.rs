@@ -279,6 +279,105 @@ pub fn borrar_rama(estado: &AppState, repo_cm: &str, rama: &str) -> Resultado<()
     Ok(())
 }
 
+/// Descarta todos los cambios pendientes sin check-in del workspace (`cm undo -r .`).
+pub fn descartar_cambios_pendientes(estado: &AppState, carpeta: &Path) -> Resultado<()> {
+    let pendientes = cambios_pendientes(estado, carpeta)?;
+    if pendientes.is_empty() {
+        return Ok(());
+    }
+    Comando::cm()
+        .args(["undo", "-r", "."])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    Ok(())
+}
+
+/// Revierte `rama` en Unity VC hasta su changeset inicial (justo antes de borrar progreso, #100).
+/// - Si ningún changeset de la rama fue origen de un merge/préstamo: cambia el workspace fuera si
+///   estaba en ella y ejecuta `cm changeset delete` de la cabeza hacia atrás.
+/// - Si algún changeset fue prestado/mergeado: hace `cm merge cs:<cabeza> --subtractive --interval-origin=cs:<base> --merge`
+///   y `cm checkin --all` sobre `rama`.
+///
+/// Devuelve el changeset base resultante si se revirtieron changesets.
+pub fn revertir_rama_a_base(
+    estado: &AppState,
+    workspace: &Path,
+    repo_cm: &str,
+    rama: &str,
+    motivo: &str,
+) -> Resultado<Option<i64>> {
+    let rama = rama.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Err(Error::Validacion(format!(
+            "Solo se puede revertir una rama de tarea, no {rama}"
+        )));
+    }
+
+    let texto_cs = Comando::cm()
+        .args(["find", "changeset"])
+        .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
+        .args(["--format={changesetid} {parent}", "--nototal"])
+        .exigir_exito(estado)?;
+
+    let mut pares: Vec<(i64, i64)> = Vec::new();
+    for linea in texto_cs.lines() {
+        let mut partes = linea.split_whitespace();
+        if let (Some(a), Some(b)) = (partes.next(), partes.next()) {
+            if let (Ok(cs), Ok(parent)) = (a.parse::<i64>(), b.parse::<i64>()) {
+                pares.push((cs, parent));
+            }
+        }
+    }
+    if pares.is_empty() {
+        return Ok(None);
+    }
+    pares.sort_by_key(|(cs, _)| *cs);
+    let cs_base = pares[0].1;
+    let cabeza = pares.last().unwrap().0;
+
+    let merges = Comando::cm()
+        .args(["find", "merge"])
+        .arg(format!(
+            "where srcbranch='br:{rama}' on repository '{repo_cm}'"
+        ))
+        .args(["--format={srcchangeset}", "--nototal"])
+        .exigir_exito(estado)?;
+    let hay_merges = merges.lines().any(|l| !l.trim().is_empty());
+
+    if hay_merges {
+        descartar_cambios_pendientes(estado, workspace)?;
+        cambiar_a_rama(estado, workspace, rama)?;
+        Comando::cm()
+            .args([
+                "merge",
+                &format!("cs:{cabeza}"),
+                "--subtractive",
+                &format!("--interval-origin=cs:{cs_base}"),
+                "--merge",
+            ])
+            .en(workspace)
+            .exigir_exito(estado)?;
+        Comando::cm()
+            .args(["checkin", "--all", &format!("-c={motivo}")])
+            .en(workspace)
+            .exigir_exito(estado)?;
+        let nuevo_estado = crate::cm::lectura::rama_actual_workspace(estado, workspace)?;
+        Ok(nuevo_estado.changeset)
+    } else {
+        descartar_cambios_pendientes(estado, workspace)?;
+        let actual = crate::cm::lectura::rama_actual_workspace(estado, workspace)?;
+        if actual.rama == rama {
+            cambiar_a_rama(estado, workspace, RAMA_DEV)?;
+        }
+        for (cs, _) in pares.into_iter().rev() {
+            Comando::cm()
+                .args(["changeset", "delete", &format!("cs:{cs}@{repo_cm}")])
+                .exigir_exito(estado)?;
+        }
+        Ok(Some(cs_base))
+    }
+}
+
 /// Archivos con cambios sin check-in en el workspace (agregados, modificados,
 /// borrados, movidos o desprotegidos), sin contar los privados.
 pub fn cambios_pendientes(estado: &AppState, carpeta: &Path) -> Resultado<Vec<String>> {

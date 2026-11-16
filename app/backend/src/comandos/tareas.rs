@@ -201,3 +201,52 @@ pub async fn cambiar_estado(
         tareas::cambiar_estado(c, ops, autor, &id, nuevo_estado, &ahora_iso())
     })
 }
+
+/// `borrar_progreso(id)`: revierte en Unity VC las ramas del subárbol hasta su
+/// changeset inicial (descartando cambios pendientes sin check-in) y borra
+/// commits/préstamos en SQLite + `ops/` dejando la tarea en `'por hacer'` (#100).
+#[tauri::command]
+pub async fn borrar_progreso(estado: State<'_, AppState>, id: String) -> Resultado<Vec<Tarea>> {
+    borrar_progreso_en(&estado, &id)
+}
+
+/// Lo mismo que [`borrar_progreso`], sin el envoltorio de Tauri (para pruebas en
+/// el entorno real).
+pub fn borrar_progreso_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
+    let yo = estado.exigir_permiso("borrar_progreso")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let ramas_a_revertir = estado.con_db(|db| tareas::ramas_de_subarbol(db.conexion(), id))?;
+    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+    for rama in &ramas_a_revertir {
+        ramas::revertir_rama_a_base(
+            estado,
+            &workspace,
+            &repo_cm,
+            rama,
+            &format!("Revertir progreso de {}", id.trim()),
+        )?;
+    }
+
+    estado.con_db(|db| tareas::borrar_progreso(db.conexion(), &ops, &autor, id, &ahora_iso()))
+}
+
+/// `reabrir_tarea(id, motivo)`: devuelve una tarea `'terminada'` a `'en revisión'`
+/// con motivo obligatorio (máx. 3 veces; luego solo Administrador) y notifica a
+/// Líderes y Administradores (`tarea_reabierta`, #100).
+#[tauri::command]
+pub async fn reabrir_tarea(
+    estado: State<'_, AppState>,
+    id: String,
+    motivo: String,
+) -> Resultado<Tarea> {
+    con_ops(&estado, "reabrir_tarea", |c, ops, autor| {
+        tareas::reabrir(c, ops, autor, &id, &motivo, &ahora_iso())
+    })
+}

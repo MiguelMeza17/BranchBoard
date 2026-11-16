@@ -260,6 +260,14 @@ export const api = {
       mockup,
     ),
 
+  /** Borra commits, préstamos y cambios sin check-in y revierte la rama (#100). */
+  borrarProgreso: (id: string, mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('borrar_progreso', { id }, mockup),
+
+  /** Reabre una tarea terminada a 'en revisión' con motivo obligatorio (#100). */
+  reabrirTarea: (id: string, motivo: string, mockup: () => Tarea) =>
+    llamar<Tarea>('reabrir_tarea', { id, motivo }, mockup),
+
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
