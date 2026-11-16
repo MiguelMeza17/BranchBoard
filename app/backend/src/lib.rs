@@ -23,6 +23,7 @@ pub mod estado;
 pub mod eventos;
 pub mod identidad;
 pub mod modelo;
+pub mod notificaciones;
 pub mod ramas;
 pub mod servidor;
 pub mod sprints;
@@ -32,7 +33,8 @@ use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
     acceso, actualizaciones, datos, eventos as comandos_eventos, identidad as comandos_identidad,
-    sistema, sprints as comandos_sprints, tareas as comandos_tareas, usuarios,
+    notificaciones as comandos_notificaciones, sistema, sprints as comandos_sprints,
+    tareas as comandos_tareas, usuarios,
 };
 
 fn disparar_polling(app: tauri::AppHandle) {
@@ -142,6 +144,10 @@ pub fn run() {
             comandos_sprints::datos_avance_sprint,
             comandos_sprints::datos_avance_backlog,
             comandos_sprints::datos_avance_general,
+            comandos_notificaciones::obtener_notificaciones,
+            comandos_notificaciones::marcar_leida,
+            comandos_notificaciones::desmarcar_leida,
+            comandos_notificaciones::marcar_todas_leidas,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

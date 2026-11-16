@@ -224,7 +224,7 @@ fn nombre_archivo(timestamp: &str, usuario: &str, uuid: &str) -> Resultado<Strin
 }
 
 /// 128 bits al azar en hexadecimal.
-fn uuid() -> String {
+pub(crate) fn uuid() -> String {
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()

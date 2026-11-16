@@ -30,6 +30,7 @@ use super::{marcar_aplicado, ya_aplicado, Evento};
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
 use crate::modelo::Rol;
+use crate::notificaciones;
 use crate::sprints;
 use crate::tareas::{self, InfoDobleToma};
 
@@ -306,6 +307,13 @@ pub fn aplicar_evento(
         }
         None if sprints::TIPOS.contains(&evento.tipo.as_str()) => {
             match sprints::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if notificaciones::TIPOS.contains(&evento.tipo.as_str()) => {
+            match notificaciones::aplicar_evento(c, publica_admin, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),
                 Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
                 Err(e) => Err(e),
