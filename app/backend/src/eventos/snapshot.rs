@@ -1041,6 +1041,7 @@ mod tests {
                 quitado_en: None,
                 quitado_por: None,
                 changeset_merge: None,
+                changeset_limpio: None,
             },
         )
         .unwrap();

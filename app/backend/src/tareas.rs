@@ -51,6 +51,7 @@ pub const TIPOS: &[&str] = &[
     "crear_rama_desde_espera",
     "traer_cambios",
     "devolver_cambios_prestados",
+    "eliminar_cambios_ajenos",
     "tarea_cerrada_por_deteccion",
 ];
 
@@ -359,6 +360,14 @@ pub struct PayloadDevolverCambios {
     pub prestamo_id: String,
     pub quitado_en: String,
     pub quitado_por: String,
+}
+
+/// `payload` de `eliminar_cambios_ajenos` (#109).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadEliminarCambiosAjenos {
+    pub prestamo_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changeset_limpio: Option<i64>,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -955,16 +964,29 @@ pub fn desasignar(
     db_tareas::obtener(c, &tarea.id)
 }
 
-fn prestamos_vigentes_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+fn origenes_prestamos_filtrados(
+    c: &Connection,
+    ids: &[String],
+    solo_tocados: bool,
+) -> Resultado<Vec<String>> {
     let mut origenes = Vec::new();
     for tid in ids {
         for p in commits::prestamos_vigentes(c, tid)? {
-            if !origenes.contains(&p.origen_id) {
+            if (!solo_tocados || !p.archivos_tocados.is_empty()) && !origenes.contains(&p.origen_id)
+            {
                 origenes.push(p.origen_id);
             }
         }
     }
     Ok(origenes)
+}
+
+fn prestamos_vigentes_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+    origenes_prestamos_filtrados(c, ids, false)
+}
+
+fn prestamos_con_tocados_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+    origenes_prestamos_filtrados(c, ids, true)
 }
 
 /// Cambia el estado de la tarea `id` (`cambiar_estado`, #99) aplicando todas las
@@ -1924,6 +1946,7 @@ pub fn registrar_traer_cambios(
         quitado_en: None,
         quitado_por: None,
         changeset_merge: Some(datos.changeset_merge),
+        changeset_limpio: None,
     };
     let payload = PayloadTraerCambios {
         prestamo: prestamo.clone(),
@@ -1965,20 +1988,11 @@ pub fn preparar_devolver_cambios(
             "El préstamo no tiene changeset de merge registrado para devolver en Unity VC".into(),
         )
     })?;
-    let destino = db_tareas::obtener(c, &prestamo.tarea_id)?;
-    if destino.eliminada {
-        return Err(Error::Validacion(format!(
-            "La tarea {} está en la Papelera",
-            destino.id
-        )));
-    }
-    if destino.estado == EstadoTarea::Terminada {
-        return Err(Error::Validacion(format!(
-            "La tarea {} ya está terminada",
-            destino.id
-        )));
-    }
+    let rama_destino = validar_destino_para_prestamo(c, autor, &prestamo.tarea_id)?;
+    Ok((prestamo, rama_destino, cs_merge))
+}
 
+fn puede_operar_prestamo(c: &Connection, autor: &AutorTarea<'_>, destino: &Tarea) -> bool {
     let actor = normalizar_email(autor.email);
     let es_dueno_destino = destino
         .asignado_a
@@ -1994,24 +2008,175 @@ pub fn preparar_devolver_cambios(
         .map(|e| normalizar_email(&e) == actor)
         .unwrap_or(false);
 
-    let permitido = match destino.estado {
+    match destino.estado {
         EstadoTarea::EnRevision => autor.rol.es_lider_o_admin() || es_dueno_padre,
         EstadoTarea::PorHacer | EstadoTarea::EnProduccion => {
             es_dueno_destino || autor.rol.es_lider_o_admin()
         }
         EstadoTarea::Terminada => false,
-    };
-    if !permitido {
+    }
+}
+
+fn validar_destino_para_prestamo(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    tarea_id: &str,
+) -> Resultado<String> {
+    let destino = db_tareas::obtener(c, tarea_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            destino.id
+        )));
+    }
+    if !puede_operar_prestamo(c, autor, &destino) {
         return Err(Error::SinPermiso);
     }
-
-    let rama_destino = destino
+    destino
         .rama_asociada
         .as_deref()
         .map(validar_ruta_rama_tarea)
         .transpose()?
-        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asociada".into()))?;
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asociada".into()))
+}
+
+/// Normaliza y cruza rutas de cambios (pendientes o de un `cm diff`) contra la
+/// lista de archivos prestados, devolviendo sus nombres canónicos ordenados (#109).
+pub fn cruzar_archivos_tocados(
+    archivos_prestados: &[String],
+    candidatos_rutas: &[String],
+) -> Vec<String> {
+    let normalizar = |r: &str| {
+        r.trim()
+            .trim_matches('"')
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_lowercase()
+    };
+    let mut por_norm: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for a in archivos_prestados {
+        let norm = normalizar(a);
+        if !norm.is_empty() {
+            por_norm.entry(norm).or_insert_with(|| a.clone());
+        }
+    }
+    let mut tocados = std::collections::BTreeSet::new();
+    for c in candidatos_rutas {
+        let norm = normalizar(c);
+        if let Some(canon) = por_norm.get(&norm) {
+            tocados.insert(canon.clone());
+        }
+    }
+    tocados.into_iter().collect()
+}
+
+/// Actualiza `archivos_tocados` de los préstamos vigentes de `tarea_id` (#109)
+/// cruzando cambios pendientes del workspace (si está en la rama) y diffs de
+/// check-ins posteriores al merge/última limpieza. Devuelve `true` si cambió algo.
+pub fn actualizar_tocados_de_prestamos(
+    c: &Connection,
+    tarea_id: &str,
+    rutas_pendientes_en_rama: Option<&[String]>,
+    diffs_commits: &[(i64, Vec<String>)],
+) -> Resultado<bool> {
+    let prestamos = commits::prestamos_vigentes(c, tarea_id)?;
+    let mut hubo_cambios = false;
+    for p in prestamos {
+        let piso = p
+            .changeset_limpio
+            .into_iter()
+            .chain(p.changeset_merge)
+            .max()
+            .unwrap_or(0);
+
+        let mut candidatos: Vec<String> = Vec::new();
+        for (cs, rutas) in diffs_commits {
+            if *cs > piso {
+                candidatos.extend(rutas.iter().cloned());
+            }
+        }
+        if let Some(pendientes) = rutas_pendientes_en_rama {
+            candidatos.extend(pendientes.iter().cloned());
+        }
+
+        let mut nuevos = cruzar_archivos_tocados(&p.archivos, &candidatos);
+        if rutas_pendientes_en_rama.is_none() && !p.archivos_tocados.is_empty() {
+            let mut conjunto: std::collections::BTreeSet<String> =
+                p.archivos_tocados.iter().cloned().collect();
+            conjunto.extend(nuevos);
+            nuevos = conjunto.into_iter().collect();
+        }
+
+        if nuevos != p.archivos_tocados {
+            commits::marcar_tocados(c, &p.id, &nuevos)?;
+            hubo_cambios = true;
+        }
+    }
+    Ok(hubo_cambios)
+}
+
+/// Valida si `autor` puede eliminar cambios ajenos modificados en `prestamo_id` (#109).
+/// Devuelve `(prestamo, rama_destino, cs_merge)`.
+pub fn preparar_eliminar_cambios_ajenos(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+) -> Resultado<(commits::CambioPrestado, String, i64)> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    if prestamo.quitado_en.is_some() {
+        return Err(Error::Validacion(
+            "Esos cambios ya se habían devuelto".into(),
+        ));
+    }
+    if prestamo.archivos_tocados.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios ajenos tocados que eliminar en este préstamo".into(),
+        ));
+    }
+    let cs_merge = prestamo.changeset_merge.ok_or_else(|| {
+        Error::Validacion("El préstamo no tiene changeset de merge registrado".into())
+    })?;
+    let rama_destino = validar_destino_para_prestamo(c, autor, &prestamo.tarea_id)?;
     Ok((prestamo, rama_destino, cs_merge))
+}
+
+/// Limpia `archivos_tocados`, registra `changeset_limpio` y publica el evento
+/// `eliminar_cambios_ajenos` en `ops/` (#109).
+pub fn registrar_eliminar_cambios_ajenos(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+    changeset_limpio: Option<i64>,
+    ahora: &str,
+) -> Resultado<commits::CambioPrestado> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    let payload = PayloadEliminarCambiosAjenos {
+        prestamo_id: prestamo.id.clone(),
+        changeset_limpio,
+    };
+    let mut ev = Evento::nuevo(
+        "eliminar_cambios_ajenos",
+        Some(&prestamo.tarea_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar eliminar_cambios_ajenos: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_eliminar_cambios_ajenos(tx, &payload)
+    })?;
+    commits::obtener_prestamo(c, &prestamo.id)
 }
 
 /// Marca como devuelto en SQLite y publica `devolver_cambios_prestados` en `ops/`
@@ -2336,6 +2501,13 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                     Error::Validacion(format!("devolver_cambios_prestados inválido: {e}"))
                 })?;
             aplicar_devolver_cambios(c, &payload)
+        }
+        "eliminar_cambios_ajenos" => {
+            let payload: PayloadEliminarCambiosAjenos =
+                serde_json::from_value(evento.payload.clone()).map_err(|e| {
+                    Error::Validacion(format!("eliminar_cambios_ajenos inválido: {e}"))
+                })?;
+            aplicar_eliminar_cambios_ajenos(c, &payload)
         }
         "tarea_cerrada_por_deteccion" => {
             let payload: PayloadTareaCerradaDeteccion =
@@ -2670,6 +2842,16 @@ fn aplicar_cambiar_estado(
                 tarea.id,
                 abiertas.join(", ")
             )));
+        }
+        if payload.estado == EstadoTarea::Terminada {
+            let tocados = prestamos_con_tocados_origenes(c, &ids_subarbol)?;
+            if !tocados.is_empty() {
+                return Err(Error::Validacion(format!(
+                    "Se tocaron cambios ajenos prestados de {}: elimínalos antes de terminar {}",
+                    tocados.join(", "),
+                    tarea.id
+                )));
+            }
         }
         let prestamos = prestamos_vigentes_origenes(c, &ids_subarbol)?;
         if payload.estado == EstadoTarea::Terminada && !prestamos.is_empty() {
@@ -3386,6 +3568,23 @@ fn aplicar_devolver_cambios(c: &Connection, payload: &PayloadDevolverCambios) ->
         &payload.quitado_por,
         &payload.quitado_en,
     )
+}
+
+fn aplicar_eliminar_cambios_ajenos(
+    c: &Connection,
+    payload: &PayloadEliminarCambiosAjenos,
+) -> Resultado<()> {
+    let prestamo = commits::obtener_prestamo(c, &payload.prestamo_id)?;
+    commits::limpiar_tocados(c, &prestamo.id, payload.changeset_limpio)?;
+    if let Some(cs) = payload.changeset_limpio {
+        let mut tarea = db_tareas::obtener(c, &prestamo.tarea_id)?;
+        let visto = tarea.ultimo_changeset_visto.unwrap_or(0).max(cs);
+        if tarea.ultimo_changeset_visto != Some(visto) {
+            tarea.ultimo_changeset_visto = Some(visto);
+            db_tareas::actualizar(c, &tarea)?;
+        }
+    }
+    Ok(())
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -5908,6 +6107,7 @@ mod tests {
                             quitado_en: None,
                             quitado_por: None,
                             changeset_merge: None,
+                            changeset_limpio: None,
                         },
                     )
                 })
@@ -6101,6 +6301,7 @@ mod tests {
                 quitado_en: None,
                 quitado_por: None,
                 changeset_merge: None,
+                changeset_limpio: None,
             },
         )
         .unwrap();
@@ -6287,6 +6488,7 @@ mod tests {
                 quitado_en: None,
                 quitado_por: None,
                 changeset_merge: None,
+                changeset_limpio: None,
             },
         )
         .unwrap();
@@ -6441,6 +6643,7 @@ mod tests {
                             quitado_en: None,
                             quitado_por: None,
                             changeset_merge: None,
+                            changeset_limpio: None,
                         },
                     )
                 })
@@ -7787,6 +7990,150 @@ mod tests {
     }
 
     #[test]
+    fn detectar_y_eliminar_cambios_ajenos_bloquean_terminada_y_viajan_por_ops() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        for titulo in ["Origen 109", "Destino 109"] {
+            crear(c, &e.ops, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
+        }
+        for (id, rama) in [
+            ("T-101", "/main/dev/T-101-origen"),
+            ("T-102", "/main/dev/T-102-destino"),
+        ] {
+            tomar(
+                c,
+                &e.ops,
+                &autor_dev,
+                id,
+                |_| {
+                    Ok(vec![(
+                        id.into(),
+                        Rama {
+                            id: 1,
+                            name: rama.into(),
+                            head_changeset: 5,
+                        },
+                    )])
+                },
+                "2026-11-15T16:01:00Z",
+            )
+            .unwrap();
+        }
+
+        let prestamo = registrar_traer_cambios(
+            c,
+            &e.ops,
+            &autor_dev,
+            &DatosTraerCambios {
+                destino_id: "T-102",
+                origen_id: "T-101",
+                hash: None,
+                changeset_merge: 30,
+                archivos: vec!["Assets/Player.cs".into(), "Assets/HUD.png".into()],
+            },
+            "2026-11-15T16:02:00Z",
+        )
+        .unwrap();
+
+        // Cruce con pendientes de Windows (`\` / mayúsculas) y check-in <= 30 ignorado.
+        assert!(!actualizar_tocados_de_prestamos(
+            c,
+            "T-102",
+            Some(&[]),
+            &[(30, vec!["Assets/Player.cs".into()])]
+        )
+        .unwrap());
+        assert!(actualizar_tocados_de_prestamos(
+            c,
+            "T-102",
+            Some(&["assets\\player.cs".into(), "Assets/Propio.cs".into()]),
+            &[(31, vec!["Assets/HUD.png".into()])]
+        )
+        .unwrap());
+        let p_tocado = commits::obtener_prestamo(c, &prestamo.id).unwrap();
+        assert_eq!(
+            p_tocado.archivos_tocados,
+            vec!["Assets/HUD.png".to_string(), "Assets/Player.cs".to_string()]
+        );
+
+        // Si polling corre desde otra rama (`None`), no borra los tocados detectados.
+        assert!(!actualizar_tocados_de_prestamos(c, "T-102", None, &[]).unwrap());
+        assert_eq!(
+            commits::obtener_prestamo(c, &prestamo.id)
+                .unwrap()
+                .archivos_tocados
+                .len(),
+            2
+        );
+
+        // Bloquea pasar a Terminada (aunque tuviera que fallar antes incluso que el préstamo) y rechaza sin tocados tras limpiar.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102",
+            EstadoTarea::EnRevision,
+            "2026-11-15T16:03:00Z",
+        )
+        .unwrap();
+        let err_term = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::Terminada,
+            "2026-11-15T16:04:00Z",
+        )
+        .unwrap_err();
+        assert!(
+            err_term.to_string().contains("cambios ajenos"),
+            "{err_term}"
+        );
+
+        // Desarrollador no puede eliminar en EnRevision; Líder sí y viaja por ops/.
+        assert!(matches!(
+            preparar_eliminar_cambios_ajenos(c, &autor_dev, &prestamo.id).unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(preparar_eliminar_cambios_ajenos(c, &autor_lider, &prestamo.id).is_ok());
+
+        assert_eq!(e.sincronizar_b().descartados, 0);
+        let limpio = registrar_eliminar_cambios_ajenos(
+            c,
+            &e.ops,
+            &autor_lider,
+            &prestamo.id,
+            Some(32),
+            "2026-11-15T16:10:00Z",
+        )
+        .unwrap();
+        assert!(limpio.archivos_tocados.is_empty());
+        assert_eq!(limpio.changeset_limpio, Some(32));
+        // Poll posterior con cs 31 (anterior a 32) NO vuelve a marcar tocados.
+        assert!(!actualizar_tocados_de_prestamos(
+            c,
+            "T-102",
+            Some(&[]),
+            &[(31, vec!["Assets/HUD.png".into()])]
+        )
+        .unwrap());
+
+        assert_eq!(e.sincronizar_b().descartados, 0);
+        let pb = commits::obtener_prestamo(e.db_b.conexion(), &prestamo.id).unwrap();
+        assert!(pb.archivos_tocados.is_empty());
+        assert_eq!(pb.changeset_limpio, Some(32));
+    }
+
+    #[test]
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_hacer_checkin() {
         use crate::cm::Comando;
@@ -8425,6 +8772,170 @@ mod tests {
             let hist_b = commits::prestamos_de_tarea(env.db_b.conexion(), &destino.id).unwrap();
             assert_eq!(hist_b.len(), 2);
             assert!(hist_b.iter().all(|x| x.quitado_en.is_some()));
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambios_ajenos_tocados() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{
+            asignar_en, cambiar_estado_en, devolver_cambios_prestados_en,
+            eliminar_cambios_ajenos_en, hacer_checkin_en, tomar_en, traer_cambios_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("109", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let origen = env.crear_tarea(&admin_email, Rol::Administrador, "Origen ajenos 109");
+            let destino = env.crear_tarea(&admin_email, Rol::Administrador, "Destino ajenos 109");
+
+            let asg_origen = asignar_en(&env.estado_a, &origen.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_origen);
+            let rama_origen = asg_origen[0].rama_asociada.clone().unwrap();
+
+            let tom_destino = tomar_en(&env.estado_a, &destino.id).unwrap();
+            env.registrar_ramas_de(&tom_destino);
+            let rama_destino = tom_destino[0].rama_asociada.clone().unwrap();
+
+            // Commit en origen con 2 archivos prestables.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_origen).unwrap();
+            let a1 = env.ws_ruta.join("ajeno-uno-109.txt");
+            let a2 = env.ws_ruta.join("ajeno-dos-109.txt");
+            std::fs::write(&a1, "original ajeno 109").unwrap();
+            std::fs::write(&a2, "original dos 109").unwrap();
+            Comando::cm()
+                .arg("add")
+                .args([a1.to_string_lossy().as_ref(), a2.to_string_lossy().as_ref()])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_origen,
+                "Base prestamo 109",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::EnProduccion).unwrap();
+
+            // Trabajo propio en destino + préstamo de origen.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let propio = env.ws_ruta.join("propio-109.txt");
+            std::fs::write(&propio, "propio v1").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(propio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_destino,
+                "Propio inicial 109",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnProduccion).unwrap();
+
+            let prestamo = traer_cambios_en(&env.estado_a, &destino.id, &origen.id, None).unwrap();
+
+            // 1) Cambio sin check-in en archivo prestado: el polling lo detecta antes de guardarse.
+            std::fs::write(&a1, "tocado sin checkin").unwrap();
+            let pol1 = revisar_actualizaciones_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert!(pol1.tocados_detectados.contains(&destino.id));
+            let tras_local = env
+                .estado_a
+                .con_db(|db| commits::obtener_prestamo(db.conexion(), &prestamo.id))
+                .unwrap();
+            assert_eq!(
+                tras_local.archivos_tocados,
+                vec!["ajeno-uno-109.txt".to_string()]
+            );
+
+            // Limpiar el toque sin check-in vuelve el archivo al original.
+            let limpio_local = eliminar_cambios_ajenos_en(&env.estado_a, &prestamo.id).unwrap();
+            assert!(limpio_local.archivos_tocados.is_empty());
+            assert_eq!(std::fs::read_to_string(&a1).unwrap(), "original ajeno 109");
+
+            // 2) Tocar otro archivo prestado junto con uno propio y hacer check-in en Unity VC.
+            std::fs::write(&a2, "alterado en checkin 109").unwrap();
+            std::fs::write(&propio, "propio v2").unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_destino,
+                "Cambio propio mezclando ajeno",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            let tras_ci = env
+                .estado_a
+                .con_db(|db| commits::obtener_prestamo(db.conexion(), &prestamo.id))
+                .unwrap();
+            assert_eq!(
+                tras_ci.archivos_tocados,
+                vec!["ajeno-dos-109.txt".to_string()]
+            );
+
+            // También debe detectar desde cero vía polling por diff de check-in nuevo.
+            env.estado_a
+                .con_db(|db| commits::marcar_tocados(db.conexion(), &prestamo.id, &[]))
+                .unwrap();
+            let pol2 = revisar_actualizaciones_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert!(pol2.tocados_detectados.contains(&destino.id));
+
+            // Bloquea devolución y Terminada hasta limpiar cambios ajenos; valida guardia de rama.
+            assert!(devolver_cambios_prestados_en(&env.estado_a, &prestamo.id).is_err());
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnRevision).unwrap();
+            let err_term =
+                cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap_err();
+            assert!(
+                err_term.to_string().contains("cambios ajenos"),
+                "{err_term}"
+            );
+
+            env.volver_a_dev();
+            let err_guard = eliminar_cambios_ajenos_en(&env.estado_a, &prestamo.id).unwrap_err();
+            assert!(
+                err_guard.to_string().contains("cambia de rama"),
+                "{err_guard}"
+            );
+
+            // Restaurar en la rama + check-in automático; preserva `propio-109.txt` v2.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let limpio_ci = eliminar_cambios_ajenos_en(&env.estado_a, &prestamo.id).unwrap();
+            assert!(limpio_ci.archivos_tocados.is_empty());
+            assert!(limpio_ci.changeset_limpio.is_some());
+            assert_eq!(std::fs::read_to_string(&a2).unwrap(), "original dos 109");
+            assert_eq!(std::fs::read_to_string(&propio).unwrap(), "propio v2");
+
+            // Polling posterior NO vuelve a marcar el check-in ya restaurado, y queda registrado en Unity VC.
+            let pol3 = revisar_actualizaciones_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert!(!pol3.tocados_detectados.contains(&destino.id));
+            let commits_dest = env
+                .estado_a
+                .con_db(|db| commits::de_tarea(db.conexion(), &destino.id))
+                .unwrap();
+            assert!(commits_dest
+                .iter()
+                .any(|c| c.mensaje.contains("Se eliminaron cambios ajenos")));
+
+            // Máquina B recibe la limpieza por ops/, ya se puede devolver y pasar a Terminada.
+            env.sincronizar_b();
+            let pb = commits::obtener_prestamo(env.db_b.conexion(), &prestamo.id).unwrap();
+            assert!(pb.archivos_tocados.is_empty());
+            assert!(pb.changeset_limpio.is_some());
+
+            devolver_cambios_prestados_en(&env.estado_a, &prestamo.id).unwrap();
+            assert!(!a1.exists());
+            assert!(!a2.exists());
+            assert_eq!(std::fs::read_to_string(&propio).unwrap(), "propio v2");
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap();
         });
     }
 }

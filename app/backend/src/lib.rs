@@ -126,6 +126,7 @@ pub fn run() {
             comandos_tareas::listar_cambios_prestados,
             comandos_tareas::traer_cambios,
             comandos_tareas::devolver_cambios_prestados,
+            comandos_tareas::eliminar_cambios_ajenos,
             comandos_tareas::volver_a_dev,
         ])
         .run(tauri::generate_context!())

@@ -329,7 +329,7 @@ export const api = {
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
-  /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106). */
+  /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109). */
   revisarActualizaciones: (tareaId?: string) =>
     llamar<{
       rama_actual: string | null;
@@ -337,6 +337,7 @@ export const api = {
       tareas_cerradas: string[];
       espera_creada?: string | null;
       espera_quitada?: string | null;
+      tocados_detectados?: string[];
     }>(
       'revisar_actualizaciones',
       { tareaId: tareaId ?? null },
@@ -346,6 +347,7 @@ export const api = {
         tareas_cerradas: [],
         espera_creada: null,
         espera_quitada: null,
+        tocados_detectados: [],
       })
     ),
 
@@ -414,6 +416,14 @@ export const api = {
   devolverCambiosPrestados: (prestamoId: string, mockup?: () => CambioTraido) =>
     llamar<CambioTraido>(
       'devolver_cambios_prestados',
+      { prestamoId },
+      mockup ?? (() => ({}) as CambioTraido),
+    ),
+
+  /** Restaura los archivos prestados que se modificaron y hace check-in automático (#109). */
+  eliminarCambiosAjenos: (prestamoId: string, mockup?: () => CambioTraido) =>
+    llamar<CambioTraido>(
+      'eliminar_cambios_ajenos',
       { prestamoId },
       mockup ?? (() => ({}) as CambioTraido),
     ),

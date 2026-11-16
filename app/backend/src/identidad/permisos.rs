@@ -85,6 +85,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("listar_cambios_prestados", Acceso::Roles(TODOS)),
     ("traer_cambios", Acceso::Roles(TODOS)),
     ("devolver_cambios_prestados", Acceso::Roles(TODOS)),
+    ("eliminar_cambios_ajenos", Acceso::Roles(TODOS)),
     ("volver_a_dev", Acceso::Roles(TODOS)),
 ];
 

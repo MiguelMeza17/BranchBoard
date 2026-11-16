@@ -8,7 +8,7 @@ use tauri::State;
 use crate::checkins;
 use crate::cm::lectura::rama_actual_workspace;
 use crate::comandos::datos::carpeta_abierta;
-use crate::db::tareas as db_tareas;
+use crate::db::{commits, tareas as db_tareas};
 use crate::error::{Error, Resultado};
 use crate::estado::{llave_publica_del_proyecto, AppState};
 use crate::eventos::{self, ResumenCompactacion, ResumenSincronizacion};
@@ -133,7 +133,7 @@ pub fn compactar_eventos(
 /// Evento Tauri emitido al detectar cambios nuevos o cierres en Unity VC (#104).
 pub const EVENTO_UNITY_ACTUALIZADO: &str = "unity-vc-actualizado";
 
-/// Resumen de una revisión en Unity VC (#104, #106).
+/// Resumen de una revisión en Unity VC (#104, #106, #109).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ResumenPolling {
     pub rama_actual: Option<String>,
@@ -141,6 +141,7 @@ pub struct ResumenPolling {
     pub tareas_cerradas: Vec<String>,
     pub espera_creada: Option<String>,
     pub espera_quitada: Option<String>,
+    pub tocados_detectados: Vec<String>,
 }
 
 impl ResumenPolling {
@@ -150,11 +151,13 @@ impl ResumenPolling {
             || !self.tareas_cerradas.is_empty()
             || self.espera_creada.is_some()
             || self.espera_quitada.is_some()
+            || !self.tocados_detectados.is_empty()
     }
 }
 
 /// Revisa las ramas activas en Unity VC, detecta check-ins nuevos (`modificada`),
-/// cierres por merge (`tarea_cerrada_por_deteccion`), la subtarea `"En espera"` y la rama actual (#104, #106).
+/// cierres por merge (`tarea_cerrada_por_deteccion`), cambios ajenos tocados (#109),
+/// la subtarea `"En espera"` y la rama actual (#104, #106).
 #[tauri::command]
 pub async fn revisar_actualizaciones(
     estado: State<'_, AppState>,
@@ -193,8 +196,9 @@ pub fn revisar_actualizaciones_en(
     };
     let filtro = tarea_id.map(str::trim).filter(|s| !s.is_empty());
 
-    // 1. Snapshot rápido de tareas activas con rama asociada.
-    let candidatas: Vec<(String, String, Option<i64>, String)> = estado.con_db(|db| {
+    // 1. Snapshot rápido de tareas activas con rama asociada (y piso de préstamos vigentes).
+    type CandidataPolling = (String, String, Option<i64>, String, Option<i64>);
+    let candidatas: Vec<CandidataPolling> = estado.con_db(|db| {
         let todas = db_tareas::listar(db.conexion())?;
         let mut lista = Vec::new();
         for t in &todas {
@@ -215,29 +219,65 @@ pub fn revisar_actualizaciones_en(
                 .and_then(|pid| todas.iter().find(|p| p.id == pid))
                 .and_then(|p| p.rama_asociada.clone())
                 .unwrap_or_else(|| RAMA_DEV.to_string());
+            let vigentes = commits::prestamos_vigentes(db.conexion(), &t.id)?;
+            let piso_prestamos = (!vigentes.is_empty()).then(|| {
+                vigentes
+                    .iter()
+                    .filter_map(|p| {
+                        p.changeset_limpio
+                            .into_iter()
+                            .chain(p.changeset_merge)
+                            .max()
+                    })
+                    .min()
+                    .unwrap_or(0)
+            });
             lista.push((
                 t.id.clone(),
                 rama.clone(),
                 t.ultimo_changeset_visto,
                 rama_padre,
+                piso_prestamos,
             ));
         }
         Ok(lista)
     })?;
 
     // 2. Consultas de red / `cm` fuera del lock de SQLite.
-    let mut resultados: Vec<(String, Option<i64>, Vec<Changeset>, bool)> =
-        Vec::with_capacity(candidatas.len());
+    type ResultadoPolling = (
+        String,
+        String,
+        Option<i64>,
+        Vec<Changeset>,
+        bool,
+        Vec<(i64, Vec<String>)>,
+    );
+    let mut resultados: Vec<ResultadoPolling> = Vec::with_capacity(candidatas.len());
     if !candidatas.is_empty() {
         let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
         let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
-        for (id, rama, ultimo_cs, rama_padre) in candidatas {
+        for (id, rama, ultimo_cs, rama_padre, piso_prestamos) in candidatas {
             let changesets = cliente
                 .changesets_de_rama(&repo.repo, &rama)?
                 .unwrap_or_default();
             let cerrada = ramas::rama_cerrada_hacia_padre(estado, &repo_cm, &rama, &rama_padre)
                 .unwrap_or(false);
-            resultados.push((id, ultimo_cs, changesets, cerrada));
+            let mut diffs_prestamos = Vec::new();
+            if let Some(piso_min) = piso_prestamos {
+                for cs in &changesets {
+                    if cs.changeset_id > piso_min {
+                        let rutas = ramas::archivos_changeset(
+                            estado,
+                            ws_abierto.as_deref(),
+                            &repo_cm,
+                            cs.changeset_id,
+                        )
+                        .unwrap_or_default();
+                        diffs_prestamos.push((cs.changeset_id, rutas));
+                    }
+                }
+            }
+            resultados.push((id, rama, ultimo_cs, changesets, cerrada, diffs_prestamos));
         }
     }
 
@@ -254,7 +294,7 @@ pub fn revisar_actualizaciones_en(
     let yo_email = normalizar_email(&yo.email);
 
     estado.con_db(|db| {
-        for (id, ultimo_cs, changesets, cerrada) in resultados {
+        for (id, rama, ultimo_cs, changesets, cerrada, diffs_prestamos) in resultados {
             let nuevos = checkins::guardar_changesets(db.conexion(), &id, &changesets)?;
             let max_cs = changesets.iter().map(|c| c.changeset_id).max();
             if max_cs > ultimo_cs || nuevos > 0 {
@@ -267,6 +307,20 @@ pub fn revisar_actualizaciones_en(
                 {
                     resumen.tareas_modificadas.push(id.clone());
                 }
+            }
+            let en_esta_rama = resumen
+                .rama_actual
+                .as_deref()
+                .map(|r| r.eq_ignore_ascii_case(&rama))
+                .unwrap_or(false);
+            let pendientes_rama = en_esta_rama.then_some(pendientes_ws.as_slice());
+            if tareas::actualizar_tocados_de_prestamos(
+                db.conexion(),
+                &id,
+                pendientes_rama,
+                &diffs_prestamos,
+            )? {
+                resumen.tocados_detectados.push(id.clone());
             }
             if cerrada {
                 if let Some(ref carpeta_ops) = ops {
