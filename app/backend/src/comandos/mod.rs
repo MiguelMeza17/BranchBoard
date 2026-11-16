@@ -7,5 +7,6 @@ pub mod datos;
 pub mod eventos;
 pub mod identidad;
 pub mod sistema;
+pub mod sprints;
 pub mod tareas;
 pub mod usuarios;

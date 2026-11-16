@@ -2372,7 +2372,11 @@ fn aplicar_crear_tarea_con_subtareas(
 }
 
 /// Resuelve el rol verificado de `email` en la tabla `usuarios`, si existe.
-fn rol_verificado_de(c: &Connection, publica_admin: &str, email: &str) -> Resultado<Option<Rol>> {
+pub(crate) fn rol_verificado_de(
+    c: &Connection,
+    publica_admin: &str,
+    email: &str,
+) -> Resultado<Option<Rol>> {
     let email = normalizar_email(email);
     if publica_admin.is_empty() {
         return Ok(usuarios::buscar(c, &email)?.map(|u| u.rol));

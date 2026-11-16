@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { CambioTraido, Commit, EdicionPendiente, EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
+import type { CambioTraido, Commit, EdicionPendiente, EstadoTarea, Rol, Sprint, Tarea, TipoTarea } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -445,6 +445,60 @@ export const api = {
       'eliminar_cambios_ajenos',
       { prestamoId },
       mockup ?? (() => ({}) as CambioTraido),
+    ),
+
+  /** Lista todos los sprints y backlogs del proyecto (#113). */
+  listarSprints: (mockup?: () => Sprint[]) =>
+    llamar<Sprint[]>('listar_sprints', undefined, mockup ?? (() => [])),
+
+  /** Crea un sprint (`conFecha = true`) o backlog (`conFecha = false`), solo Líder/Admin (#113). */
+  crearSprint: (
+    nombre: string,
+    descripcion: string,
+    conFecha: boolean,
+    duracionDias?: number | null,
+    mockup?: () => Sprint,
+  ) =>
+    llamar<Sprint>(
+      'crear_sprint',
+      { nombre, descripcion, conFecha, duracionDias: duracionDias ?? null },
+      mockup ?? (() => ({}) as Sprint),
+    ),
+
+  /** Asigna o quita una tarea de un sprint (#113). */
+  asignarTareaASprint: (
+    tareaId: string,
+    sprintId?: string | null,
+    mockup?: () => Tarea,
+  ) =>
+    llamar<Tarea>(
+      'asignar_tarea_a_sprint',
+      { tareaId, sprintId: sprintId ?? null },
+      mockup ?? (() => ({}) as Tarea),
+    ),
+
+  /** Asigna o quita una tarea de un backlog (#113). */
+  asignarTareaABacklog: (
+    tareaId: string,
+    backlogId?: string | null,
+    mockup?: () => Tarea,
+  ) =>
+    llamar<Tarea>(
+      'asignar_tarea_a_backlog',
+      { tareaId, backlogId: backlogId ?? null },
+      mockup ?? (() => ({}) as Tarea),
+    ),
+
+  /** Mueve al sprint las tareas libres del backlog (`backlogId = null` usa las sin backlog, #113). */
+  asignarBacklogASprint: (
+    backlogId: string | null | undefined,
+    sprintId: string,
+    mockup?: () => Tarea[],
+  ) =>
+    llamar<Tarea[]>(
+      'asignar_backlog_a_sprint',
+      { backlogId: backlogId ?? null, sprintId },
+      mockup ?? (() => []),
     ),
 
   /** Versión instalada de la app. */
