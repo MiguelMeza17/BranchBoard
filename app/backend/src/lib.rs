@@ -24,13 +24,14 @@ pub mod identidad;
 pub mod modelo;
 pub mod ramas;
 pub mod servidor;
+pub mod sprints;
 pub mod tareas;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
     acceso, actualizaciones, datos, eventos as comandos_eventos, identidad as comandos_identidad,
-    sistema, tareas as comandos_tareas, usuarios,
+    sistema, sprints as comandos_sprints, tareas as comandos_tareas, usuarios,
 };
 
 fn disparar_polling(app: tauri::AppHandle) {
@@ -131,6 +132,11 @@ pub fn run() {
             comandos_tareas::devolver_cambios_prestados,
             comandos_tareas::eliminar_cambios_ajenos,
             comandos_tareas::volver_a_dev,
+            comandos_sprints::listar_sprints,
+            comandos_sprints::crear_sprint,
+            comandos_sprints::asignar_tarea_a_sprint,
+            comandos_sprints::asignar_tarea_a_backlog,
+            comandos_sprints::asignar_backlog_a_sprint,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

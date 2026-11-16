@@ -87,6 +87,11 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("devolver_cambios_prestados", Acceso::Roles(TODOS)),
     ("eliminar_cambios_ajenos", Acceso::Roles(TODOS)),
     ("volver_a_dev", Acceso::Roles(TODOS)),
+    ("listar_sprints", Acceso::Roles(TODOS)),
+    ("crear_sprint", Acceso::Roles(LIDER_O_ADMIN)),
+    ("asignar_tarea_a_sprint", Acceso::Roles(LIDER_O_ADMIN)),
+    ("asignar_tarea_a_backlog", Acceso::Roles(LIDER_O_ADMIN)),
+    ("asignar_backlog_a_sprint", Acceso::Roles(LIDER_O_ADMIN)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.
