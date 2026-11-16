@@ -137,6 +137,7 @@ pub fn run() {
             comandos_sprints::asignar_tarea_a_sprint,
             comandos_sprints::asignar_tarea_a_backlog,
             comandos_sprints::asignar_backlog_a_sprint,
+            comandos_sprints::cerrar_sprint,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

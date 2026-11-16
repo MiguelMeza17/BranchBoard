@@ -280,6 +280,8 @@ interface State {
   subirVersionDatos: () => void;
   /** Recarga la lista de tareas desde el backend (`listar_tareas`, #95). */
   cargarTareas: () => Promise<void>;
+  /** Recarga la lista de sprints y sus reportes desde el backend (`listar_sprints`, #113, #114). */
+  cargarSprints: () => Promise<void>;
 
   // datos
   usuarios: Usuario[];
@@ -481,6 +483,14 @@ export const useStore = create<State>((set, get) => {
     try {
       const lista = await api.listarTareas(() => get().tareas);
       set({ tareas: normalizar(lista) });
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
+  },
+  cargarSprints: async () => {
+    try {
+      const lista = await api.listarSprints(() => get().sprints);
+      set({ sprints: lista });
     } catch (e) {
       get().showToast(mensajeDeError(e), 'danger');
     }
@@ -1588,6 +1598,17 @@ export const useStore = create<State>((set, get) => {
     // Solo el Administrador cierra sprints y backlogs.
     if (get().currentUser().rol !== 'Administrador') {
       get().showToast('Solo el Administrador puede cerrar un sprint', 'danger');
+      return;
+    }
+    if (enTauri()) {
+      void api
+        .cerrarSprint(id, () => get().sprints.find((s) => s.id === id)!)
+        .then(async (cerrado) => {
+          await get().cargarSprints();
+          await get().cargarTareas();
+          get().showToast(`${cerrado.con_fecha ? 'Sprint' : 'Backlog'} cerrado — se generó su reporte`);
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
       return;
     }
     // Al cerrar un sprint se guarda la copia de sus tareas para el reporte, y las que no se terminaron

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { PageHeader, Card, EmptyState, Avatar, EstadoBadge } from '../components/primitives';
 import { BurndownChart } from '../components/BurndownChart';
@@ -8,20 +8,29 @@ export function Reportes() {
   const sprints = useStore((s) => s.sprints);
   const tareas = useStore((s) => s.tareas);
   const usuarios = useStore((s) => s.usuarios);
+  const cargarSprints = useStore((s) => s.cargarSprints);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const versionDatos = useStore((s) => s.versionDatos);
 
-  // Solo sprints que ya tienen reporte: cerrados, o que ya pasaron su fecha de fin (el reporte se genera ese
-  // día aunque sigan abiertos). Los en curso o por empezar no salen. El más reciente primero.
+  useEffect(() => {
+    void cargarSprints();
+    void cargarTareas();
+  }, [cargarSprints, cargarTareas, versionDatos]);
+
+  // Solo sprints que ya tienen reporte: cerrados, o que ya pasaron/llegaron a su fecha de fin (el
+  // reporte se genera ese día aunque sigan abiertos). Los en curso o por empezar no salen.
   const hoy = new Date().toISOString().slice(0, 10);
   const conFecha = sprints
-    .filter((s) => s.con_fecha && (s.cerrado || (s.fecha_fin !== null && s.fecha_fin < hoy)))
+    .filter((s) => s.con_fecha && (s.cerrado || Boolean(s.reporte) || (s.fecha_fin !== null && s.fecha_fin < hoy)))
     .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio));
   const [sel, setSel] = useState(conFecha[0]?.id ?? '');
-  const sprint = conFecha.find((s) => s.id === sel);
+  const sprint = conFecha.find((s) => s.id === sel) ?? conFecha[0];
+  const selId = sprint?.id ?? '';
 
   // Las tareas tal como quedaron al cierre (copia guardada); si no hay copia, las de ahora.
   const delSprint = useMemo(
-    () => sprint?.reporte ?? tareas.filter((t) => t.sprint_id === sel && !t.eliminada),
-    [tareas, sel, sprint]
+    () => sprint?.reporte ?? tareas.filter((t) => t.sprint_id === selId && !t.eliminada),
+    [tareas, selId, sprint]
   );
   const hechas = delSprint.filter((t) => t.estado === 'terminada');
   const enRevision = delSprint.filter((t) => t.estado === 'en revisión');
@@ -49,7 +58,7 @@ export function Reportes() {
         desc="Reporte automático de cierre de sprint (solo sprints con fecha). Visible para todos los roles."
         actions={
           conFecha.length > 0 ? (
-            <select className="input max-w-[260px]" value={sel} onChange={(e) => setSel(e.target.value)}>
+            <select className="input max-w-[260px]" value={selId} onChange={(e) => setSel(e.target.value)}>
               {conFecha.map((s) => (
                 <option key={s.id} value={s.id}>{s.nombre}</option>
               ))}

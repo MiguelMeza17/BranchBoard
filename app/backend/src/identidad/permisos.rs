@@ -92,6 +92,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("asignar_tarea_a_sprint", Acceso::Roles(LIDER_O_ADMIN)),
     ("asignar_tarea_a_backlog", Acceso::Roles(LIDER_O_ADMIN)),
     ("asignar_backlog_a_sprint", Acceso::Roles(LIDER_O_ADMIN)),
+    ("cerrar_sprint", Acceso::Roles(SOLO_ADMIN)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.

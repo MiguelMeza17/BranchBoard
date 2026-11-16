@@ -501,6 +501,10 @@ export const api = {
       mockup ?? (() => []),
     ),
 
+  /** Cierra manualmente un sprint o backlog y genera su reporte final, solo Administrador (#114). */
+  cerrarSprint: (sprintId: string, mockup?: () => Sprint) =>
+    llamar<Sprint>('cerrar_sprint', { sprintId }, mockup ?? (() => ({}) as Sprint)),
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 
