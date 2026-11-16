@@ -263,6 +263,39 @@ pub fn cambiar_a_rama(estado: &AppState, carpeta: &Path, rama: &str) -> Resultad
     Ok(ahora)
 }
 
+/// Cambia el workspace local de `carpeta` a un changeset puntual `cs:<n>` (#112).
+/// Bloquea si hay cambios sin check-in para evitar perder trabajo o colgar `cm switch`.
+pub fn cambiar_a_changeset(
+    estado: &AppState,
+    carpeta: &Path,
+    changeset: i64,
+) -> Resultado<EstadoWorkspace> {
+    if changeset <= 0 {
+        return Err(Error::Validacion(
+            "El número de changeset debe ser positivo".into(),
+        ));
+    }
+    let pendientes = cambios_pendientes(estado, carpeta)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in en esta rama. Haz check-in o deshazlos antes de abrir ese changeset",
+            pendientes.len()
+        )));
+    }
+    Comando::cm()
+        .args(["switch", &format!("cs:{changeset}")])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    let ahora = rama_actual_workspace(estado, carpeta)?;
+    if ahora.changeset != Some(changeset) {
+        return Err(Error::Cm(format!(
+            "El workspace quedó en cs:{:?} en vez de cs:{changeset}",
+            ahora.changeset
+        )));
+    }
+    Ok(ahora)
+}
+
 /// Cambia el workspace local a `rama` llevándose los cambios sin check-in mediante
 /// `cm switch br:<rama> --noinput` (shelve temporal automático de Unity VC, #106).
 /// Re-agrega (`cm add`) los archivos nuevos que `cm switch --noinput` deja como privados al moverlos.

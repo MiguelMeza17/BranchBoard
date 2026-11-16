@@ -20,6 +20,7 @@ use crate::tareas::{
     DatosRamaDesdeEspera, DatosTraerCambios, PendientesRama, ResultadoCambioEstado,
     ResultadoProponerEdicion,
 };
+use crate::unity::{self, ResultadoAbrirUnity};
 
 fn con_ops<T>(
     estado: &AppState,
@@ -907,4 +908,74 @@ pub fn eliminar_cambios_ajenos_en(
             &ahora_iso(),
         )
     })
+}
+
+/// Lista los check-ins cacheados en SQLite de una tarea o de todo el proyecto (#112).
+#[tauri::command]
+pub fn listar_commits(
+    estado: State<'_, AppState>,
+    tarea_id: Option<String>,
+) -> Resultado<Vec<Commit>> {
+    listar_commits_en(&estado, tarea_id.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`listar_commits`].
+pub fn listar_commits_en(estado: &AppState, tarea_id: Option<&str>) -> Resultado<Vec<Commit>> {
+    estado.exigir_permiso("listar_commits")?;
+    estado.con_db(
+        |db| match tarea_id.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => crate::db::commits::de_tarea(db.conexion(), id),
+            None => crate::db::commits::listar_todos(db.conexion()),
+        },
+    )
+}
+
+/// Versión sin envoltorio Tauri que cambia de rama/changeset y ubica Unity sin abrir GUI (#112).
+pub fn abrir_en_unity_preparar_en(
+    estado: &AppState,
+    tarea_id: &str,
+    rama: &str,
+    changeset: Option<&str>,
+) -> Resultado<ResultadoAbrirUnity> {
+    let _yo = estado.exigir_permiso("abrir_en_unity")?;
+    let workspace = estado.workspace_abierto()?;
+    let (lanzador, estado_ws) = estado
+        .con_db(|db| unity::preparar_apertura(estado, db, &workspace, tarea_id, rama, changeset))?;
+    Ok(ResultadoAbrirUnity {
+        rama_actual: estado_ws.rama,
+        changeset: estado_ws.changeset,
+        ejecutable: lanzador.ejecutable.to_string_lossy().to_string(),
+        usa_hub: lanzador.es_hub,
+    })
+}
+
+/// Versión sin envoltorio Tauri completa de [`abrir_en_unity`] (#112).
+pub fn abrir_en_unity_en(
+    estado: &AppState,
+    tarea_id: &str,
+    rama: &str,
+    changeset: Option<&str>,
+) -> Resultado<ResultadoAbrirUnity> {
+    let _yo = estado.exigir_permiso("abrir_en_unity")?;
+    let workspace = estado.workspace_abierto()?;
+    let (lanzador, estado_ws) = estado
+        .con_db(|db| unity::preparar_apertura(estado, db, &workspace, tarea_id, rama, changeset))?;
+    unity::lanzar_unity(&lanzador, &workspace)?;
+    Ok(ResultadoAbrirUnity {
+        rama_actual: estado_ws.rama,
+        changeset: estado_ws.changeset,
+        ejecutable: lanzador.ejecutable.to_string_lossy().to_string(),
+        usa_hub: lanzador.es_hub,
+    })
+}
+
+/// Cambia el workspace a la rama/changeset de la tarea y abre Unity Editor o Unity Hub (#112).
+#[tauri::command]
+pub async fn abrir_en_unity(
+    estado: State<'_, AppState>,
+    tarea_id: String,
+    rama: String,
+    changeset: Option<String>,
+) -> Resultado<ResultadoAbrirUnity> {
+    abrir_en_unity_en(&estado, &tarea_id, &rama, changeset.as_deref())
 }

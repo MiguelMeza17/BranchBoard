@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { enTauri } from '../lib/api';
 import { useStore } from '../store/useStore';
 import { estadoMeta, palabraCambios } from '../lib/ui';
 import { Modal } from './Modal';
 import { ramaDeTarea } from './AccionesRama';
 
-// Panel "Abrir en Unity" (solo frontend, simulado): elige con qué tarea vas a trabajar. Click en
-// una tarea: el workspace cambia a su rama (en el backend real: `cm switch`) y se abre el Editor de
+// Panel "Abrir en Unity": elige con qué tarea vas a trabajar. Click en
+// una tarea: el workspace cambia a su rama (`cm switch`) y se abre el Editor de
 // Unity parado en ella. Cada tarea despliega sus commits: click en uno abre Unity en ese commit
 // (changeset) de la rama.
 export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -14,9 +15,22 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
   const ramaWorkspace = useStore((s) => s.ramaWorkspace);
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
   const commits = useStore((s) => s.commits);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const cargarCommits = useStore((s) => s.cargarCommits);
+  const refrescarRamaWorkspace = useStore((s) => s.refrescarRamaWorkspace);
   const [desplegada, setDesplegada] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !enTauri()) return;
+    void cargarTareas();
+    void cargarCommits();
+    void refrescarRamaWorkspace();
+  }, [open, cargarTareas, cargarCommits, refrescarRamaWorkspace]);
+
   const [ramaWs, commitWs] = (ramaWorkspace ?? '').split(' @ ');
-  const tareaWs = ramaWorkspace ? tareas.find((t) => t.rama_asociada === ramaWs) : undefined;
+  const enRamaPrincipal = ramaWs === '/main/dev' || ramaWs === '/main';
+  const ramaVisible = enRamaPrincipal ? null : ramaWorkspace;
+  const tareaWs = ramaVisible ? tareas.find((t) => t.rama_asociada === ramaWs) : undefined;
 
   // Rama con la que se trabaja una tarea (ver ramaDeTarea).
   const ramaDe = (t: (typeof tareas)[number]) => ramaDeTarea(t, tareas);
@@ -33,10 +47,10 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
     >
       {/* Dónde está parado el workspace: si es una de tus tareas, se marca en azul en la lista. Aquí arriba
           solo sale si no está en ninguna, o si está en la rama de una tarea que no es tuya. */}
-      {!ramaWorkspace ? (
+      {!ramaVisible ? (
         // Sin rama: nunca se asume dev (trabajar ahí metería cambios directo en la integración).
         <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-200">
-          Tu workspace no está en ninguna tarea
+          No estás en ninguna tarea
         </div>
       ) : (
         !mias.some((t) => ramaDe(t) === ramaWs) && (

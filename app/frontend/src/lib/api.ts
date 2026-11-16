@@ -402,6 +402,33 @@ export const api = {
   cambiarARamaTarea: (id: string) =>
     llamar<string>('cambiar_a_rama_tarea', { id }, () => '/main/dev'),
 
+  /** Lista check-ins cacheados de una tarea o de todo el proyecto (#112). */
+  listarCommits: (tareaId?: string | null, mockup?: () => Commit[]) =>
+    llamar<Commit[]>(
+      'listar_commits',
+      { tareaId: tareaId ?? null },
+      mockup ?? (() => []),
+    ),
+
+  /** Cambia el workspace a la rama/changeset de la tarea y abre el Editor de Unity (#112). */
+  abrirEnUnity: (
+    tareaId: string,
+    rama: string,
+    changeset?: string | null,
+    mockup?: () => { rama_actual: string; changeset?: number | null; ejecutable: string; usa_hub: boolean },
+  ) =>
+    llamar<{ rama_actual: string; changeset?: number | null; ejecutable: string; usa_hub: boolean }>(
+      'abrir_en_unity',
+      { tareaId, rama, changeset: changeset ?? null },
+      mockup ??
+        (() => ({
+          rama_actual: rama,
+          changeset: changeset ? Number(changeset) || null : null,
+          ejecutable: 'Unity.exe',
+          usa_hub: false,
+        })),
+    ),
+
   /** Hace check-in en Unity VC desde BranchBoard con título, descripción y tipo (#105). */
   hacerCheckin: (
     rama: string,
