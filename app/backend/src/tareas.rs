@@ -32,6 +32,8 @@ pub const TIPOS: &[&str] = &[
     "asignar_tarea",
     "desasignar_tarea",
     "cambiar_estado",
+    "borrar_progreso",
+    "reabrir_tarea",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -196,6 +198,19 @@ pub struct PayloadCambiarEstado {
 pub struct ResultadoCambioEstado {
     pub tareas: Vec<Tarea>,
     pub aviso_prestamos: Vec<String>,
+}
+
+/// `payload` del evento `borrar_progreso` (#100).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadBorrarProgreso {
+    pub id: String,
+}
+
+/// `payload` del evento `reabrir_tarea` (#100).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadReabrirTarea {
+    pub id: String,
+    pub motivo: String,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -836,6 +851,80 @@ pub fn cambiar_estado(
     })
 }
 
+/// Lista las ramas asociadas de `id` y su subárbol activo (de hojas hacia la raíz)
+/// para revertirlas en Unity VC al borrar progreso (#100).
+pub fn ramas_de_subarbol(c: &Connection, id: &str) -> Resultado<Vec<String>> {
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    let mut ramas = Vec::new();
+    for sub in descendientes_activos(c, &tarea.id)?.into_iter().rev() {
+        if let Some(r) = sub.rama_asociada {
+            if !ramas.contains(&r) {
+                ramas.push(r);
+            }
+        }
+    }
+    if let Some(r) = tarea.rama_asociada {
+        if !ramas.contains(&r) {
+            ramas.push(r);
+        }
+    }
+    Ok(ramas)
+}
+
+/// Borra commits, préstamos y progreso de `id` y su subárbol (#100), dejando
+/// la tarea tomada y con su rama en `'por hacer'`.
+pub fn borrar_progreso(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let id = id.trim();
+    let payload = PayloadBorrarProgreso { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "borrar_progreso",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar borrar_progreso: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+
+    eventos::publicar(c, ops, &ev, |tx| aplicar_borrar_progreso(tx, &payload))?;
+    db_tareas::listar(c)
+}
+
+/// Reabre una tarea `'terminada'` a `'en revisión'` con motivo obligatorio (#100).
+/// Tope 3 reaperturas; a partir de 3, solo el Administrador puede volver a reabrirla.
+pub fn reabrir(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    motivo: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadReabrirTarea {
+        id: id.to_string(),
+        motivo: motivo.trim().to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "reabrir_tarea",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar reabrir_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_reabrir_tarea(tx, Some(autor.rol), &payload, ahora)
+    })?;
+    db_tareas::obtener(c, id)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -1015,6 +1104,17 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_cambiar_estado(c, &evento.usuario, rol, &payload, &evento.timestamp)?;
             Ok(())
+        }
+        "borrar_progreso" => {
+            let payload: PayloadBorrarProgreso = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("borrar_progreso inválido: {e}")))?;
+            aplicar_borrar_progreso(c, &payload)
+        }
+        "reabrir_tarea" => {
+            let payload: PayloadReabrirTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("reabrir_tarea inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_reabrir_tarea(c, rol, &payload, &evento.timestamp)
         }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
@@ -1403,6 +1503,104 @@ fn aplicar_cambiar_estado(
     }
 
     Ok(aviso_prestamos)
+}
+
+fn aplicar_borrar_progreso(c: &Connection, payload: &PayloadBorrarProgreso) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada; reábrela primero si necesitas revertirla",
+            tarea.id
+        )));
+    }
+
+    let descendientes = descendientes_activos(c, &tarea.id)?;
+    commits::borrar_de_tarea(c, &tarea.id)?;
+    commits::borrar_prestamos_de_tarea(c, &tarea.id)?;
+    tarea.estado = EstadoTarea::PorHacer;
+    db_tareas::actualizar(c, &tarea)?;
+
+    for mut sub in descendientes {
+        commits::borrar_de_tarea(c, &sub.id)?;
+        commits::borrar_prestamos_de_tarea(c, &sub.id)?;
+        sub.estado = EstadoTarea::PorHacer;
+        db_tareas::actualizar(c, &sub)?;
+    }
+
+    recalcular_padres(c, tarea.tarea_padre_id)?;
+    Ok(())
+}
+
+fn aplicar_reabrir_tarea(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadReabrirTarea,
+    ahora: &str,
+) -> Resultado<()> {
+    let motivo = payload.motivo.trim();
+    if motivo.is_empty() {
+        return Err(Error::Validacion(
+            "Escribe un motivo para reabrir la tarea".into(),
+        ));
+    }
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "Solo se pueden reabrir tareas terminadas ({} está en '{}')",
+            tarea.id,
+            tarea.estado.como_texto()
+        )));
+    }
+    if tarea.reaperturas >= 3 {
+        if let Some(rol) = rol_conocido {
+            if rol != Rol::Administrador {
+                return Err(Error::Validacion(
+                    "Esta tarea ya se reabrió 3 veces; solo un Administrador puede volver a reabrirla"
+                        .into(),
+                ));
+            }
+        }
+    }
+
+    tarea.reaperturas += 1;
+    tarea.estado = EstadoTarea::EnRevision;
+    db_tareas::actualizar(c, &tarea)?;
+    recalcular_padres(c, tarea.tarea_padre_id.clone())?;
+
+    for u in usuarios::listar(c)? {
+        if u.rol.es_lider_o_admin() {
+            insertar_notificacion_si_falta(
+                c,
+                &Notificacion {
+                    id: format!(
+                        "noti_reabrir_{}_{}_{}",
+                        tarea.id, tarea.reaperturas, u.email
+                    ),
+                    tipo: TipoNotificacion::TareaReabierta,
+                    para: u.email,
+                    titulo: "Tarea reabierta".into(),
+                    cuerpo: format!("{} ({}/3): {motivo}", tarea.id, tarea.reaperturas),
+                    leida: false,
+                    fecha: ahora.to_string(),
+                    tarea_id: Some(tarea.id.clone()),
+                    accionable: false,
+                },
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -3831,5 +4029,355 @@ mod tests {
                 .estado,
             EstadoTarea::EnProduccion
         );
+    }
+
+    #[test]
+    fn borrar_progreso_y_reabrir_cumplen_reglas_y_notifican() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_admin = AutorTarea {
+            email: ADMIN,
+            rol: Rol::Administrador,
+        };
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &datos_base("Tarea para borrar progreso y reabrir"),
+            "2026-11-15T10:00:00Z",
+            HOY,
+        )
+        .unwrap();
+        tomar(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 1,
+                        name: "/main/dev/T-101-tarea-para-borrar".into(),
+                        head_changeset: 5,
+                    },
+                )])
+            },
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T10:02:00Z",
+        )
+        .unwrap();
+        commits::guardar(
+            c,
+            &commits::Commit {
+                id: "c1".into(),
+                tarea_id: "T-101".into(),
+                hash: "10".into(),
+                mensaje: "Avance".into(),
+                descripcion: None,
+                tipo: Some(TipoTarea::Scripting),
+                autor: DEV.into(),
+                fecha: "2026-11-15T10:03:00Z".into(),
+            },
+        )
+        .unwrap();
+        commits::insertar_prestamo(
+            c,
+            &commits::CambioPrestado {
+                id: "p1".into(),
+                tarea_id: "T-101".into(),
+                origen_id: "T-100".into(),
+                hash: None,
+                autor: DEV.into(),
+                fecha: HOY.into(),
+                archivos: vec![],
+                archivos_tocados: vec![],
+                quitado_en: None,
+                quitado_por: None,
+            },
+        )
+        .unwrap();
+
+        let lista =
+            borrar_progreso(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:04:00Z").unwrap();
+        let t = lista.iter().find(|x| x.id == "T-101").unwrap();
+        assert_eq!(t.estado, EstadoTarea::PorHacer);
+        assert_eq!(t.asignado_a.as_deref(), Some(DEV));
+        assert!(t.rama_asociada.is_some());
+        assert!(commits::de_tarea(c, "T-101").unwrap().is_empty());
+        assert!(commits::prestamos_de_tarea(c, "T-101").unwrap().is_empty());
+
+        // Motivo vacío o tarea no terminada rechaza reabrir.
+        let err = reabrir(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            "   ",
+            "2026-11-15T10:05:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("motivo"));
+        let err = reabrir(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            "Falta prueba",
+            "2026-11-15T10:05:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("terminadas"));
+
+        // Pasar a terminada y reabrir 3 veces con Líder; la 4ª solo Administrador.
+        for n in 1..=3u32 {
+            let m_fin = n * 2;
+            let m_re = n * 2 + 1;
+            cambiar_estado(
+                c,
+                &e.ops,
+                &autor_lider,
+                "T-101",
+                EstadoTarea::Terminada,
+                &format!("2026-11-15T10:1{m_fin}:00Z"),
+            )
+            .unwrap();
+            let r = reabrir(
+                c,
+                &e.ops,
+                &autor_lider,
+                "T-101",
+                &format!("Motivo {n}"),
+                &format!("2026-11-15T10:1{m_re}:00Z"),
+            )
+            .unwrap();
+            assert_eq!(r.estado, EstadoTarea::EnRevision);
+            assert_eq!(r.reaperturas, n);
+        }
+
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            EstadoTarea::Terminada,
+            "2026-11-15T10:30:00Z",
+        )
+        .unwrap();
+        let err = reabrir(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            "Motivo 4",
+            "2026-11-15T10:31:00Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Administrador"));
+
+        let r4 = reabrir(
+            c,
+            &e.ops,
+            &autor_admin,
+            "T-101",
+            "Motivo 4 admin",
+            "2026-11-15T10:32:00Z",
+        )
+        .unwrap();
+        assert_eq!(r4.reaperturas, 4);
+        assert_eq!(r4.estado, EstadoTarea::EnRevision);
+        assert!(notificaciones::de_usuario(c, LIDER)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::TareaReabierta));
+
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let t_b = db_tareas::obtener(e.db_b.conexion(), "T-101").unwrap();
+        assert_eq!(t_b.reaperturas, 4);
+        assert_eq!(t_b.estado, EstadoTarea::EnRevision);
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_borrar_progreso() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::tareas::{borrar_progreso_en, tomar_en};
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida, lectura};
+        use chrono::{DateTime, Utc};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let repo_cm = format!("{repo}@{org}@unity");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-100-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let mut ramas_creadas: Vec<String> = Vec::new();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-100-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+            let autor_admin = AutorTarea {
+                email: &admin_fila.email,
+                rol: Rol::Administrador,
+            };
+            estado_a
+                .con_db(|db_a| {
+                    crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_admin,
+                        &DatosNuevaTarea {
+                            titulo: format!("Borrar progreso 100 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        "2026-11-15T17:00:00.000Z",
+                        HOY,
+                    )
+                })
+                .unwrap();
+
+            let tomadas = tomar_en(&estado_a, "T-101").unwrap();
+            let rama = tomadas[0].rama_asociada.clone().unwrap();
+            ramas_creadas.push(rama.clone());
+
+            // Check-in real + cambio pendiente sin check-in.
+            let archivo1 = ws_a.path().join("avance-100.txt");
+            std::fs::write(&archivo1, "hola").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo1.to_string_lossy().to_string())
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+            Comando::cm()
+                .args(["checkin", "--all", "-c=Avance real 100"])
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+
+            let archivo2 = ws_a.path().join("pendiente-100.txt");
+            std::fs::write(&archivo2, "pendiente").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo2.to_string_lossy().to_string())
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+
+            // Borrar progreso revierte cambios pendientes + changeset y deja en 'por hacer'.
+            let lista = borrar_progreso_en(&estado_a, "T-101").unwrap();
+            let t = lista.iter().find(|x| x.id == "T-101").unwrap();
+            assert_eq!(t.estado, EstadoTarea::PorHacer);
+            assert!(t.rama_asociada.is_some());
+            assert!(crate::ramas::cambios_pendientes(&estado_a, ws_a.path())
+                .unwrap()
+                .is_empty());
+
+            let cs_restantes = Comando::cm()
+                .args(["find", "changeset"])
+                .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
+                .args(["--format={changesetid}", "--nototal"])
+                .exigir_exito(&estado_a)
+                .unwrap();
+            assert!(
+                cs_restantes.trim().is_empty(),
+                "no deben quedar changesets tras revertir: {}",
+                cs_restantes
+            );
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
+                .unwrap()
+                .with_timezone(&Utc);
+            let sync_b = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            assert_eq!(sync_b.descartados, 0);
+            let t_b = db_tareas::obtener(db_b.conexion(), "T-101").unwrap();
+            assert_eq!(t_b.estado, EstadoTarea::PorHacer);
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
+        for rama in ramas_creadas.iter().rev() {
+            let _ = Comando::cm()
+                .args(["branch", "delete", "--delete-changesets"])
+                .arg(format!("br:{rama}@{repo_cm}"))
+                .ejecutar(&estado_a);
+        }
+        let _ = std::fs::remove_dir_all(&compartida);
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
     }
 }

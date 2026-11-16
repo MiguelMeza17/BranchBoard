@@ -231,6 +231,14 @@ pub fn quitar_prestamo(c: &Connection, id: &str, quitado_por: &str, fecha: &str)
     Ok(())
 }
 
+/// Borra todos los préstamos de `tarea_id` (usado al borrar progreso, #100).
+pub fn borrar_prestamos_de_tarea(c: &Connection, tarea_id: &str) -> Resultado<usize> {
+    Ok(c.execute(
+        "DELETE FROM cambios_prestados WHERE tarea_id = ?1",
+        [tarea_id],
+    )?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
