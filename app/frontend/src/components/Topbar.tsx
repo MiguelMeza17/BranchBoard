@@ -12,7 +12,11 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
   const user = useStore((s) => s.currentUser());
   const navigate = useNavigate();
   const vpnOn = useStore((s) => s.vpnOn);
+  const vpnInstalado = useStore((s) => s.vpnInstalado);
+  const vpnCargando = useStore((s) => s.vpnCargando);
+  const vpnInstalando = useStore((s) => s.vpnInstalando);
   const toggleVpn = useStore((s) => s.toggleVpn);
+  const instalarWarp = useStore((s) => s.instalarWarp);
   const setRolActual = useStore((s) => s.setRolActual);
   const notifs = useStore((s) => s.notificaciones);
   const email = useStore((s) => s.currentEmail);
@@ -72,25 +76,41 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
           </button>
         )}
         <button
-          onClick={toggleVpn}
-          className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium transition hover:border-border-strong"
-          title="Conexión VPN (Cloudflare WARP)"
+          onClick={() => void toggleVpn()}
+          disabled={!vpnInstalado || vpnCargando || vpnInstalando}
+          className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+          title={vpnInstalado ? 'Conexión VPN (Cloudflare WARP)' : 'Cloudflare WARP no está instalado'}
         >
           <span
             className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-              vpnOn ? 'bg-done' : 'bg-faint'
+              vpnInstalado && vpnOn ? 'bg-done' : 'bg-faint'
             }`}
           >
             <span
               className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                vpnOn ? 'translate-x-3.5' : 'translate-x-0.5'
+                vpnInstalado && vpnOn ? 'translate-x-3.5' : 'translate-x-0.5'
               }`}
             />
           </span>
-          <span className={vpnOn ? 'text-green-300' : 'text-muted'}>
-            <span className="hidden sm:inline">VPN</span><span className="hidden md:inline"> {vpnOn ? 'conectada' : 'apagada'}</span>
+          <span className={vpnInstalado && vpnOn ? 'text-green-300' : 'text-muted'}>
+            <span className="hidden sm:inline">VPN</span>
+            <span className="hidden md:inline">
+              {' '}
+              {!vpnInstalado ? 'no instalada' : vpnCargando ? 'cambiando…' : vpnOn ? 'conectada' : 'apagada'}
+            </span>
           </span>
         </button>
+        {!vpnInstalado && (
+          <button
+            type="button"
+            onClick={() => void instalarWarp()}
+            disabled={vpnInstalando}
+            className="btn-ghost btn-sm shrink-0 text-xs text-primary underline disabled:opacity-60"
+            title="Instalar Cloudflare WARP"
+          >
+            {vpnInstalando ? 'Instalando WARP…' : 'Instalar WARP'}
+          </button>
+        )}
 
         <button
           className="btn-outline btn-sm shrink-0"

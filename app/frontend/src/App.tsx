@@ -30,6 +30,12 @@ export function App() {
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
   const showToast = useStore((s) => s.showToast);
+  const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
+
+  // Al arrancar la app, consulta en segundo plano si Cloudflare WARP está instalado y conectado (#122).
+  useEffect(() => {
+    void cargarEstadoWarp();
+  }, [cargarEstadoWarp]);
 
   // Con una operación de Unity VC en curso, el backend no deja cerrar la ventana; aquí se avisa por qué.
   useEffect(() => {

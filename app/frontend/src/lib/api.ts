@@ -176,6 +176,32 @@ export type EntradaProyecto =
     }
   | { estado: 'pendiente' | 'no_registrado' | 'esperar_dueno'; email: string; proyecto: string };
 
+/** Estado concreto de Cloudflare WARP en esta máquina (#122). */
+export type EstadoConexionWarp =
+  | 'no_instalado'
+  | 'conectado'
+  | 'conectando'
+  | 'desconectado'
+  | 'sin_registro'
+  | 'desconocido';
+
+/** Respuesta de `estado_warp` y `alternar_warp` (#122). */
+export interface EstadoWarp {
+  instalado: boolean;
+  conectado: boolean;
+  conectando: boolean;
+  estado: EstadoConexionWarp;
+  detalle: string | null;
+}
+
+/** Respuesta de `instalar_warp` (#122). */
+export interface ResultadoInstalacionWarp {
+  instalado_ahora: boolean;
+  abrio_descarga: boolean;
+  estado: EstadoWarp;
+  mensaje: string;
+}
+
 // ───────── Comandos ─────────
 
 export const api = {
@@ -671,6 +697,56 @@ export const api = {
   /** Devuelve las huellas vistas guardadas `{ panel: huella }` del usuario actual (#121). */
   obtenerVistos: (mockup?: () => Record<string, string>) =>
     llamar<Record<string, string>>('obtener_vistos', undefined, mockup ?? (() => ({}))),
+
+  /** Consulta si `warp-cli` está instalado y si la VPN está conectada (#122). */
+  estadoWarp: (mockup?: () => EstadoWarp) =>
+    llamar<EstadoWarp>(
+      'estado_warp',
+      undefined,
+      mockup ??
+        (() => ({
+          instalado: true,
+          conectado: true,
+          conectando: false,
+          estado: 'conectado',
+          detalle: null,
+        })),
+    ),
+
+  /** Conecta o desconecta Cloudflare WARP (`warp-cli connect` / `disconnect`, #122). */
+  alternarWarp: (mockup?: () => EstadoWarp) =>
+    llamar<EstadoWarp>(
+      'alternar_warp',
+      undefined,
+      mockup ??
+        (() => ({
+          instalado: true,
+          conectado: false,
+          conectando: false,
+          estado: 'desconectado',
+          detalle: null,
+        })),
+    ),
+
+  /** Instala Cloudflare WARP vía `winget` o abre la descarga oficial si falla (#122). */
+  instalarWarp: (mockup?: () => ResultadoInstalacionWarp) =>
+    llamar<ResultadoInstalacionWarp>(
+      'instalar_warp',
+      undefined,
+      mockup ??
+        (() => ({
+          instalado_ahora: false,
+          abrio_descarga: false,
+          estado: {
+            instalado: true,
+            conectado: false,
+            conectando: false,
+            estado: 'desconectado',
+            detalle: null,
+          },
+          mensaje: 'Cloudflare WARP ya está instalado.',
+        })),
+    ),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
