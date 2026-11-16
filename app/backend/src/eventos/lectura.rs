@@ -28,6 +28,7 @@ use serde::Serialize;
 use super::snapshot::{self, es_snapshot};
 use super::{marcar_aplicado, ya_aplicado, Evento};
 use crate::chat;
+use crate::documentos;
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
 use crate::modelo::Rol;
@@ -322,6 +323,13 @@ pub fn aplicar_evento(
         }
         None if chat::TIPOS.contains(&evento.tipo.as_str()) => {
             match chat::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if documentos::TIPOS.contains(&evento.tipo.as_str()) => {
+            match documentos::aplicar_evento(c, publica_admin, None, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),
                 Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
                 Err(e) => Err(e),
