@@ -262,6 +262,20 @@ export interface ProgresoClonado {
 
 // ───────── Comandos ─────────
 
+/** Un ajuste de `configuracion_proyecto` tal como lo guarda el backend (#127). */
+export interface AjusteProyecto {
+  clave: string;
+  valor: string;
+  actualizado_por: string;
+  fecha_actualizacion: string;
+}
+
+/** Nombre e imagen del proyecto entero (#127). `imagen` es una `data:` URL o `null`. */
+export interface ConfiguracionProyecto {
+  nombre: string | null;
+  imagen: string | null;
+}
+
 export const api = {
   /** Comando de prueba: `"pong"` si el backend responde. */
   ping: () => llamar<string>('ping', undefined, () => 'pong (mockup)'),
@@ -743,6 +757,29 @@ export const api = {
   /** Abre un documento con la aplicación predeterminada del sistema en esta máquina (#120). */
   abrirDocumento: (id: string, mockup?: () => void) =>
     llamar<void>('abrir_documento', { id }, mockup ?? (() => undefined)),
+
+  /** Nombre e imagen (`data:image/png;base64,…`) del proyecto abierto; todos los roles (#127). */
+  obtenerConfiguracionProyecto: (mockup?: () => ConfiguracionProyecto) =>
+    llamar<ConfiguracionProyecto>(
+      'obtener_configuracion_proyecto',
+      undefined,
+      mockup ?? (() => ({ nombre: null, imagen: null }))
+    ),
+
+  /** Cambia el nombre del proyecto en BranchBoard, no el del repositorio de Unity VC (solo Administrador, #127). */
+  renombrarProyecto: (nombre: string, mockup: () => AjusteProyecto) =>
+    llamar<AjusteProyecto>('renombrar_proyecto', { nombre }, mockup),
+
+  /** Crea o cambia un ajuste clave/valor del proyecto entero (solo Administrador, #127). */
+  actualizarConfiguracionProyecto: (clave: string, valor: string, mockup: () => AjusteProyecto) =>
+    llamar<AjusteProyecto>('actualizar_configuracion_proyecto', { clave, valor }, mockup),
+
+  /**
+   * Pone la imagen de `ruta` (PNG, JPG o WebP, máx. 5 MB) como imagen del proyecto, recortada a
+   * 256×256. Devuelve la imagen nueva como `data:` URL (solo Administrador, #127).
+   */
+  subirImagenProyecto: (ruta: string, mockup: () => string) =>
+    llamar<string>('subir_imagen_proyecto', { ruta }, mockup),
 
   /** Guarda la huella vista de un panel para este usuario en esta máquina (#121). */
   marcarVisto: (panel: string, huella: string, mockup?: () => void) =>

@@ -33,6 +33,7 @@ use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
 use crate::modelo::Rol;
 use crate::notificaciones;
+use crate::proyecto;
 use crate::sprints;
 use crate::tareas::{self, InfoDobleToma};
 
@@ -330,6 +331,13 @@ pub fn aplicar_evento(
         }
         None if documentos::TIPOS.contains(&evento.tipo.as_str()) => {
             match documentos::aplicar_evento(c, publica_admin, None, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if proyecto::TIPOS.contains(&evento.tipo.as_str()) => {
+            match proyecto::aplicar_evento(c, publica_admin, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),
                 Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
                 Err(e) => Err(e),

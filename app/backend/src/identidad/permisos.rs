@@ -129,6 +129,13 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("aprobar_documento", Acceso::Roles(LIDER_O_ADMIN)),
     ("eliminar_documento", Acceso::Roles(LIDER_O_ADMIN)),
     ("abrir_documento", Acceso::Roles(TODOS)),
+    ("obtener_configuracion_proyecto", Acceso::Roles(TODOS)),
+    ("renombrar_proyecto", Acceso::Roles(SOLO_ADMIN)),
+    (
+        "actualizar_configuracion_proyecto",
+        Acceso::Roles(SOLO_ADMIN),
+    ),
+    ("subir_imagen_proyecto", Acceso::Roles(SOLO_ADMIN)),
     ("marcar_visto", Acceso::Roles(TODOS)),
     ("obtener_vistos", Acceso::Roles(TODOS)),
 ];
