@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { entrantesDe, estadoEntrante, useStore } from '../store/useStore';
-import { coincidePalabra, esTareaEnEspera, estadoMeta, palabraCambios } from '../lib/ui';
+import { coincidePalabra, esTareaEnEspera, estadoMeta, palabraCambios, ramaDeTarea } from '../lib/ui';
 import { Modal } from './Modal';
 import { EditarTareaModal } from './EditarTareaModal';
 import { DetalleCommit } from './HistorialRamas';
@@ -173,14 +173,7 @@ export function CambiosTraidos({ tarea }: { tarea: Tarea }) {
 //   terminada, en revisión o en producción con commits. Las en revisión avisan que todavía no están
 //   aprobadas; las en producción, que es trabajo en curso que todavía puede cambiar.
 
-/** Rama donde se trabaja una tarea: la suya; una "En espera" usa la de su padre (sus cambios están ahí). */
-export function ramaDeTarea(t: Tarea, tareas: Tarea[]): string | null {
-  if (t.rama_asociada) return t.rama_asociada;
-  if (esTareaEnEspera(t) && t.tarea_padre_id) {
-    return tareas.find((p) => p.id === t.tarea_padre_id)?.rama_asociada ?? null;
-  }
-  return null;
-}
+export { ramaDeTarea };
 
 export function AccionesRama({ tarea, onCerrar }: { tarea: Tarea; onCerrar: () => void }) {
   const tareas = useStore((s) => s.tareas);

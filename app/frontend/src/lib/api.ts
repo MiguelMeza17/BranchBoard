@@ -131,6 +131,19 @@ export interface AlertaRamaAjena {
   mensaje: string;
 }
 
+/** Resumen de cambios detectados por el polling de Unity VC (#104, #106, #109, #111). */
+export interface ResumenPolling {
+  rama_actual: string | null;
+  tareas_modificadas: string[];
+  tareas_cerradas: string[];
+  espera_creada?: string | null;
+  espera_quitada?: string | null;
+  tocados_detectados?: string[];
+  alerta_rama_ajena?: AlertaRamaAjena | null;
+  sprints_actualizados?: string[];
+  inactividad_notificada?: string[];
+}
+
 /** Datos para `crear_tarea` (#95). */
 export interface DatosNuevaTarea {
   titulo: string;
@@ -429,17 +442,7 @@ export const api = {
 
   /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109, #111). */
   revisarActualizaciones: (tareaId?: string) =>
-    llamar<{
-      rama_actual: string | null;
-      tareas_modificadas: string[];
-      tareas_cerradas: string[];
-      espera_creada?: string | null;
-      espera_quitada?: string | null;
-      tocados_detectados?: string[];
-      alerta_rama_ajena?: AlertaRamaAjena | null;
-      sprints_actualizados?: string[];
-      inactividad_notificada?: string[];
-    }>(
+    llamar<ResumenPolling>(
       'revisar_actualizaciones',
       { tareaId: tareaId ?? null },
       () => ({
@@ -454,6 +457,12 @@ export const api = {
         inactividad_notificada: [],
       })
     ),
+
+  /** Escucha actualizaciones periódicas detectadas en Unity VC (#104, #112). */
+  alUnityActualizado: async (alActualizar: (resumen: ResumenPolling) => void): Promise<() => void> => {
+    if (!enTauri()) return () => undefined;
+    return listen<ResumenPolling>('unity-vc-actualizado', (e) => alActualizar(e.payload));
+  },
 
   /** Escucha alertas en tiempo real cuando hay cambios en `dev` o una rama ajena (#111). */
   alAlertaRamaAjena: async (alAlertar: (alerta: AlertaRamaAjena) => void): Promise<() => void> => {

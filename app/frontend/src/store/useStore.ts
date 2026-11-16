@@ -18,8 +18,8 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as fx from '../data/fixtures';
-import { api, enTauri, ErrorBackend, mensajeDeError, type ProyectoServidor } from '../lib/api';
-import { esTareaEnEspera } from '../lib/ui';
+import { api, enTauri, ErrorBackend, mensajeDeError, type ProyectoServidor, type ResumenPolling } from '../lib/api';
+import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
 let idSeq = 1000;
@@ -55,6 +55,23 @@ function tituloParaRama(titulo: string): string {
   const corto = texto.slice(0, 30);
   const i = corto.lastIndexOf('-');
   return i > 0 ? corto.slice(0, i) : corto;
+}
+
+/** Normaliza lo que devuelve `cm status --header`: `/main`/`/main/dev` -> `null`, `cs:<n>` -> `<rama> @ <n>`. */
+function resolverRamaWorkspace(ramaRaw: string | null, tareas: Tarea[], commits: Commit[]): string | null {
+  if (!ramaRaw) return null;
+  const limpia = ramaRaw.trim().replace(/\/+$/, '');
+  const lower = limpia.toLowerCase();
+  if (!limpia || lower === '/main/dev' || lower === '/main') return null;
+  const matchCs = /^cs:(\d+)$/i.exec(limpia);
+  if (matchCs) {
+    const cs = matchCs[1];
+    const commit = commits.find((c) => c.hash === cs);
+    const tarea = commit ? tareas.find((t) => t.id === commit.tarea_id) : undefined;
+    const rama = tarea ? ramaDeTarea(tarea, tareas) : null;
+    return rama ? `${rama} @ ${cs}` : limpia;
+  }
+  return limpia;
 }
 
 /**
@@ -297,6 +314,8 @@ interface State {
   cargarCommits: () => Promise<void>;
   /** Consulta la rama real del workspace en Unity VC (`cambios_pendientes`, #112). */
   refrescarRamaWorkspace: () => Promise<void>;
+  /** Aplica al store un resumen de polling emitido por Unity VC (`unity-vc-actualizado`, #104, #112). */
+  aplicarResumenPolling: (resumen: ResumenPolling) => Promise<void>;
 
   // datos
   usuarios: Usuario[];
@@ -533,7 +552,10 @@ export const useStore = create<State>((set, get) => {
   cargarCommits: async () => {
     try {
       const lista = await api.listarCommits(null, () => get().commits);
-      set({ commits: lista });
+      set((s) => ({
+        commits: lista,
+        tareas: normalizarJerarquiaEstados(s.tareas, new Set(lista.map((c) => c.tarea_id))),
+      }));
     } catch (e) {
       get().showToast(mensajeDeError(e), 'danger');
     }
@@ -542,10 +564,30 @@ export const useStore = create<State>((set, get) => {
     if (!enTauri()) return;
     try {
       const res = await api.cambiosPendientes(null);
-      const limpia = res.rama_actual === '/main/dev' || res.rama_actual === '/main' ? null : res.rama_actual;
-      set({ ramaWorkspace: limpia });
+      set((s) => ({
+        ramaWorkspace: resolverRamaWorkspace(res.rama_actual, s.tareas, s.commits),
+      }));
     } catch {
       // Si no hay workspace local configurado aún (p. ej. rol no técnico), queda en null.
+    }
+  },
+  aplicarResumenPolling: async (resumen) => {
+    if (!enTauri()) return;
+    if (resumen.rama_actual !== undefined) {
+      set((s) => ({
+        ramaWorkspace: resolverRamaWorkspace(resumen.rama_actual, s.tareas, s.commits),
+      }));
+    }
+    const hayCambiosDatos =
+      resumen.tareas_modificadas.length > 0 ||
+      resumen.tareas_cerradas.length > 0 ||
+      !!resumen.espera_creada ||
+      !!resumen.espera_quitada ||
+      (resumen.tocados_detectados?.length ?? 0) > 0;
+    if (hayCambiosDatos) {
+      await get().cargarCommits();
+      await get().cargarTareas();
+      get().subirVersionDatos();
     }
   },
 
@@ -769,8 +811,10 @@ export const useStore = create<State>((set, get) => {
       void api
         .abrirEnUnity(tareaId, rama, hash ?? null)
         .then((res) => {
-          const limpia = res.rama_actual === '/main/dev' || res.rama_actual === '/main' ? null : res.rama_actual;
-          const visible = limpia && res.changeset ? `${limpia} @ ${res.changeset}` : limpia;
+          const cs = res.changeset ?? (hash ? Number(hash) || null : null);
+          const limpia = resolverRamaWorkspace(res.rama_actual, get().tareas, get().commits);
+          const base = limpia && !/^cs:\d+$/i.test(limpia) ? limpia : rama;
+          const visible = base && cs ? `${base} @ ${cs}` : limpia;
           set({ ramaWorkspace: visible });
           get().showToast(`Abriendo Unity en ${visible ?? destino} (${tareaId})…`, 'info');
         })
@@ -983,14 +1027,30 @@ export const useStore = create<State>((set, get) => {
       proyectoAClonar: nombre,
       proyectoRepoAClonar: repo,
     }),
-  entrarAProyecto: (nombre) =>
+  entrarAProyecto: (nombre) => {
     set({
       proyectoActual: nombre,
       accesoCompletado: true,
       accesoIrAWorkspaces: false,
       proyectoAClonar: null,
       proyectoRepoAClonar: null,
-    }),
+      ...(enTauri()
+        ? {
+            tareas: [],
+            commits: [],
+            cambiosTraidos: [],
+            notificaciones: [],
+            edicionesPendientes: [],
+            ramaWorkspace: null,
+          }
+        : {}),
+    });
+    if (enTauri()) {
+      void get()
+        .cargarCommits()
+        .then(() => Promise.all([get().cargarTareas(), get().refrescarRamaWorkspace()]));
+    }
+  },
   showToast: (msg, tone = 'ok') => {
     const id = Date.now();
     set({ toast: { id, msg, tone } });
@@ -1002,7 +1062,8 @@ export const useStore = create<State>((set, get) => {
 
   currentUser: () => {
     const s = get();
-    return s.usuarios.find((u) => u.email === s.currentEmail) ?? s.usuarios[0];
+    const email = s.currentEmail.toLowerCase();
+    return s.usuarios.find((u) => u.email.toLowerCase() === email) ?? s.usuarios[0];
   },
 
   puedeAvanzar: (id, estado) => {

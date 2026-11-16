@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useStore } from '../store/useStore';
-import { api } from './api';
+import { api, enTauri } from './api';
 
 /** Cada cuánto se revisa `ops/` mientras la app está abierta (BACKEND.md: 2 minutos). */
 export const INTERVALO_SINCRONIZACION_MS = 2 * 60 * 1000;
@@ -9,14 +9,17 @@ export const INTERVALO_SINCRONIZACION_MS = 2 * 60 * 1000;
  * Trae los cambios de las demás máquinas (`sincronizar_eventos`, #92): al entrar al proyecto, al volver
  * a la ventana y cada 2 minutos. Si llegó algo nuevo, sube `versionDatos` en el store: las pantallas
  * que leen del backend lo usan como dependencia para volver a pedir sus datos solas.
+ * También escucha el polling de Unity VC (`unity-vc-actualizado`) para mantener al día commits y rama.
  * Un fallo no se muestra cada 2 minutos: se reintenta en la próxima revisión.
  */
 export function useSincronizacionEventos(activo: boolean) {
   const subirVersionDatos = useStore((s) => s.subirVersionDatos);
+  const aplicarResumenPolling = useStore((s) => s.aplicarResumenPolling);
 
   useEffect(() => {
     if (!activo) return;
     let cancelado = false;
+    let dejarUnity: (() => void) | undefined;
     const revisar = async () => {
       try {
         const resumen = await api.sincronizarEventos();
@@ -29,15 +32,30 @@ export function useSincronizacionEventos(activo: boolean) {
       if (document.visibilityState === 'visible') void revisar();
     };
 
+    if (enTauri()) {
+      void api
+        .alUnityActualizado((resumen) => {
+          if (!cancelado) void aplicarResumenPolling(resumen);
+        })
+        .then((dejar) => {
+          if (cancelado) {
+            dejar();
+          } else {
+            dejarUnity = dejar;
+          }
+        });
+    }
+
     void revisar();
     const temporizador = window.setInterval(() => void revisar(), INTERVALO_SINCRONIZACION_MS);
     window.addEventListener('focus', alVolver);
     document.addEventListener('visibilitychange', alVolver);
     return () => {
       cancelado = true;
+      dejarUnity?.();
       window.clearInterval(temporizador);
       window.removeEventListener('focus', alVolver);
       document.removeEventListener('visibilitychange', alVolver);
     };
-  }, [activo, subirVersionDatos]);
+  }, [activo, subirVersionDatos, aplicarResumenPolling]);
 }
