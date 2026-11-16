@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { puedeEliminarDefinitivo } from '../lib/permisos';
 import { PageHeader, Card, EmptyState, TipoBadge, ReadOnlyTag } from '../components/primitives';
@@ -11,7 +11,13 @@ export function Papelera() {
   const user = useStore((s) => s.currentUser());
   const tareas = useStore((s) => s.tareas);
   const eliminarDefinitivo = useStore((s) => s.eliminarDefinitivo);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const versionDatos = useStore((s) => s.versionDatos);
   const [target, setTarget] = useState<Tarea | null>(null);
+
+  useEffect(() => {
+    void cargarTareas();
+  }, [cargarTareas, versionDatos]);
   // Click en una tarea de la Papelera: sus detalles (solo lectura, está eliminada).
   const [detalle, setDetalle] = useState<Tarea | null>(null);
   const usuarios = useStore((s) => s.usuarios);
