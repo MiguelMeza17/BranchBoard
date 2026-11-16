@@ -16,6 +16,8 @@ import type {
   Commit,
   EdicionPendiente,
   EstadoTarea,
+  GrupoChat,
+  Mensaje,
   Notificacion,
   Rol,
   Sprint,
@@ -568,6 +570,50 @@ export const api = {
       { motivo },
       mockup ?? (() => []),
     ),
+
+  /** Estado completo de chat del usuario actual (#119). */
+  obtenerChat: (
+    mockup?: () => {
+      grupos: GrupoChat[];
+      mensajes: Mensaje[];
+      conversaciones_sin_leer: string[];
+      eliminados: Record<string, string>;
+    },
+  ) =>
+    llamar<{
+      grupos: GrupoChat[];
+      mensajes: Mensaje[];
+      conversaciones_sin_leer: string[];
+      eliminados: Record<string, string>;
+    }>(
+      'obtener_chat',
+      undefined,
+      mockup ?? (() => ({ grupos: [], mensajes: [], conversaciones_sin_leer: [], eliminados: {} })),
+    ),
+
+  /** Conversaciones con mensajes sin leer para el badge del menú (#119). */
+  conversacionesSinLeer: (mockup?: () => string[]) =>
+    llamar<string[]>('conversaciones_sin_leer', undefined, mockup ?? (() => [])),
+
+  /** Envía un mensaje a `grupo`, grupo creado o privado (#119). */
+  enviarChat: (para: string, texto: string, mockup?: () => Mensaje) =>
+    llamar<Mensaje>('enviar_chat', { para, texto }, mockup ?? (() => ({}) as Mensaje)),
+
+  /** Crea un grupo de chat incluyendo al creador (#119). */
+  crearGrupoChat: (nombre: string, miembros: string[], mockup?: () => GrupoChat) =>
+    llamar<GrupoChat>(
+      'crear_grupo_chat',
+      { nombre, miembros },
+      mockup ?? (() => ({}) as GrupoChat),
+    ),
+
+  /** Marca como leídos los mensajes de una conversación en esta máquina (#119). */
+  marcarChatLeido: (conversacion: string, mockup?: () => number) =>
+    llamar<number>('marcar_chat_leido', { conversacion }, mockup ?? (() => 0)),
+
+  /** Oculta localmente una conversación dejando visibles futuros mensajes (#119). */
+  eliminarChat: (conversacion: string, mockup?: () => void) =>
+    llamar<void>('eliminar_chat', { conversacion }, mockup ?? (() => undefined)),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),

@@ -3,6 +3,7 @@
 
 pub mod acceso;
 pub mod actualizaciones;
+pub mod chat;
 pub mod datos;
 pub mod eventos;
 pub mod identidad;
