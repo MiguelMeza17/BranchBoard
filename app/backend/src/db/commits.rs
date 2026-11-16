@@ -52,6 +52,9 @@ pub struct CambioPrestado {
     /// Changeset creado en la rama destino al traer los cambios (#108).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changeset_merge: Option<i64>,
+    /// Último changeset en que se eliminaron cambios ajenos tocados (#109).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changeset_limpio: Option<i64>,
 }
 
 const COLUMNAS_COMMIT: &str = "id, tarea_id, hash, mensaje, descripcion, tipo, autor, fecha";
@@ -120,7 +123,7 @@ pub fn borrar_de_tarea(c: &Connection, tarea_id: &str) -> Resultado<usize> {
 }
 
 const COLUMNAS_PRESTAMO: &str =
-    "id, tarea_id, origen_id, hash, autor, fecha, archivos, archivos_tocados, quitado_en, quitado_por, changeset_merge";
+    "id, tarea_id, origen_id, hash, autor, fecha, archivos, archivos_tocados, quitado_en, quitado_por, changeset_merge, changeset_limpio";
 
 fn lista_de_json(f: &Row<'_>, i: usize) -> rusqlite::Result<Vec<String>> {
     let texto: String = f.get(i)?;
@@ -146,6 +149,7 @@ fn prestamo_de_fila(f: &Row<'_>) -> rusqlite::Result<CambioPrestado> {
         quitado_en: f.get(8)?,
         quitado_por: f.get(9)?,
         changeset_merge: f.get(10)?,
+        changeset_limpio: f.get(11)?,
     })
 }
 
@@ -160,7 +164,7 @@ pub fn insertar_prestamo(c: &Connection, prestamo: &CambioPrestado) -> Resultado
     }
     c.execute(
         &format!(
-            "INSERT INTO cambios_prestados ({COLUMNAS_PRESTAMO}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+            "INSERT INTO cambios_prestados ({COLUMNAS_PRESTAMO}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
         ),
         params![
             prestamo.id,
@@ -173,7 +177,8 @@ pub fn insertar_prestamo(c: &Connection, prestamo: &CambioPrestado) -> Resultado
             lista_a_json(&prestamo.archivos_tocados)?,
             prestamo.quitado_en,
             prestamo.quitado_por,
-            prestamo.changeset_merge
+            prestamo.changeset_merge,
+            prestamo.changeset_limpio
         ],
     )?;
     Ok(())
@@ -223,6 +228,22 @@ pub fn marcar_tocados(c: &Connection, id: &str, archivos_tocados: &[String]) -> 
     let cambiadas = c.execute(
         "UPDATE cambios_prestados SET archivos_tocados = ?2 WHERE id = ?1",
         params![id, lista_a_json(archivos_tocados)?],
+    )?;
+    if cambiadas == 0 {
+        return Err(Error::NoEncontrado(format!("el préstamo {id}")));
+    }
+    Ok(())
+}
+
+/// Limpia `archivos_tocados` tras restaurar las revisiones prestadas y registra
+/// el changeset desde el cual no volver a marcar check-ins anteriores (#109).
+pub fn limpiar_tocados(c: &Connection, id: &str, changeset_limpio: Option<i64>) -> Resultado<()> {
+    let cambiadas = c.execute(
+        "UPDATE cambios_prestados
+         SET archivos_tocados = '[]',
+             changeset_limpio = COALESCE(?2, changeset_limpio)
+         WHERE id = ?1",
+        params![id, changeset_limpio],
     )?;
     if cambiadas == 0 {
         return Err(Error::NoEncontrado(format!("el préstamo {id}")));
@@ -302,6 +323,7 @@ mod tests {
             quitado_en: None,
             quitado_por: None,
             changeset_merge: Some(42),
+            changeset_limpio: None,
         }
     }
 

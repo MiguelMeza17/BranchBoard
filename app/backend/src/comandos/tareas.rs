@@ -602,8 +602,24 @@ pub fn hacer_checkin_en(
     let comentario = tareas::armar_comentario_checkin(titulo, descripcion, tipo)?;
 
     let cs = ramas::hacer_checkin_workspace(estado, &workspace, rama_tarea, &comentario)?;
+    let diffs_checkin = if let Ok(repo) = estado.repo_abierto() {
+        let hay_prestamos = estado
+            .con_db(|db| {
+                Ok(!crate::db::commits::prestamos_vigentes(db.conexion(), &tarea.id)?.is_empty())
+            })
+            .unwrap_or(false);
+        if hay_prestamos {
+            let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+            ramas::archivos_changeset(estado, Some(&workspace), &repo_cm, cs).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     estado.con_db(|db| {
-        tareas::registrar_checkin(
+        let commit = tareas::registrar_checkin(
             db.conexion(),
             &ops,
             &autor,
@@ -616,7 +632,16 @@ pub fn hacer_checkin_en(
             },
             &ahora_iso(),
             &ahora_local_segundo(),
-        )
+        )?;
+        if !diffs_checkin.is_empty() {
+            tareas::actualizar_tocados_de_prestamos(
+                db.conexion(),
+                &tarea.id,
+                Some(&[]),
+                &[(cs, diffs_checkin)],
+            )?;
+        }
+        Ok(commit)
     })
 }
 
@@ -825,5 +850,61 @@ pub fn devolver_cambios_prestados_en(
 
     estado.con_db(|db| {
         tareas::registrar_devolver_cambios(db.conexion(), &ops, &autor, &prestamo.id, &ahora_iso())
+    })
+}
+
+/// `eliminar_cambios_ajenos(prestamo_id)`: restaura los archivos prestados modificados
+/// a la revisión que llegó en `changeset_merge`, crea un check-in automático si modificó
+/// el workspace respecto a la cabeza y publica `eliminar_cambios_ajenos` en `ops/` (#109).
+#[tauri::command]
+pub async fn eliminar_cambios_ajenos(
+    estado: State<'_, AppState>,
+    prestamo_id: String,
+) -> Resultado<CambioPrestado> {
+    eliminar_cambios_ajenos_en(&estado, &prestamo_id)
+}
+
+/// Versión sin envoltorio Tauri de [`eliminar_cambios_ajenos`].
+pub fn eliminar_cambios_ajenos_en(
+    estado: &AppState,
+    prestamo_id: &str,
+) -> Resultado<CambioPrestado> {
+    let yo = estado.exigir_permiso("eliminar_cambios_ajenos")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (prestamo, rama_destino, cs_merge) = estado.con_db(|db| {
+        tareas::preparar_eliminar_cambios_ajenos(db.conexion(), &autor, prestamo_id)
+    })?;
+
+    let comentario = format!(
+        "Se eliminaron cambios ajenos (prestados de {})",
+        prestamo.origen_id
+    );
+    let cs_limpio = ramas::eliminar_cambios_ajenos_workspace(
+        estado,
+        &workspace,
+        &repo_cm,
+        &rama_destino,
+        cs_merge,
+        &prestamo.archivos_tocados,
+        &comentario,
+    )?;
+
+    estado.con_db(|db| {
+        tareas::registrar_eliminar_cambios_ajenos(
+            db.conexion(),
+            &ops,
+            &autor,
+            &prestamo.id,
+            cs_limpio,
+            &ahora_iso(),
+        )
     })
 }
