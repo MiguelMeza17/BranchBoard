@@ -4256,46 +4256,66 @@ mod tests {
         assert!(err.to_string().contains("check-ins"));
     }
 
-    #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
-    fn entorno_real_asignar_y_soltar_tarea() {
-        use crate::cm::lectura::rama_actual_workspace;
-        use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
-        use crate::comandos::tareas::{asignar_en, desasignar_en};
-        use crate::estado::{llave_publica_del_proyecto, AppState};
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida, lectura};
-        use chrono::{DateTime, Utc};
+    struct EntornoRealPrueba {
+        repo_cm: String,
+        compartida: PathBuf,
+        estado_a: crate::estado::AppState,
+        db_b: Db,
+        _ws_a_dir: tempfile::TempDir,
+        ws_ruta: PathBuf,
+        _datos_a: tempfile::TempDir,
+        _maquina_b: tempfile::TempDir,
+        local_b: PathBuf,
+        ops_a: PathBuf,
+        ops_b: PathBuf,
+        publica: String,
+        llave_admin: LlavePrivada,
+        admin_fila: usuarios::Usuario,
+        ramas_creadas: Vec<String>,
+    }
 
-        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
-        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
-        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
-        let compartida = nube.join(format!("BranchBoard-prueba-98-{sufijo}"));
-        std::fs::create_dir_all(&compartida).unwrap();
+    impl EntornoRealPrueba {
+        fn nuevo(etiqueta: &str) -> Self {
+            use crate::cm::Comando;
+            use crate::comandos::acceso::entrar_en;
+            use crate::comandos::datos::carpeta_abierta;
+            use crate::estado::{llave_publica_del_proyecto, AppState};
+            use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
-        let estado_a = AppState::default();
-        let ws_a = tempfile::tempdir().unwrap();
-        let datos_a = tempfile::tempdir().unwrap();
-        let maquina_b = tempfile::tempdir().unwrap();
-        let ruta_ws = ws_a.path().to_string_lossy().to_string();
-        let mut ramas_creadas: Vec<String> = Vec::new();
+            let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+            let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+            let repo_cm = format!("{repo}@{org}@unity");
+            let nube = PathBuf::from(
+                std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                    .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+            );
+            let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+            let compartida = nube.join(format!("BranchBoard-prueba-{etiqueta}-{sufijo}"));
+            std::fs::create_dir_all(&compartida).unwrap();
 
-        Comando::cm()
-            .args(["workspace", "create"])
-            .arg(format!("bb-prueba-98-{sufijo}"))
-            .arg(&ruta_ws)
-            .arg(format!("rep:{repo_cm}"))
-            .exigir_exito(&estado_a)
-            .unwrap();
+            let estado_a = AppState::default();
+            let ws_a_dir = tempfile::tempdir().unwrap();
+            let datos_a = tempfile::tempdir().unwrap();
+            let maquina_b = tempfile::tempdir().unwrap();
+            let ws_ruta = ws_a_dir.path().to_path_buf();
 
-        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            Comando::cm()
+                .args(["workspace", "create"])
+                .arg(format!("bb-prueba-{etiqueta}-{sufijo}"))
+                .arg(ws_ruta.to_string_lossy().as_ref())
+                .arg(format!("rep:{repo_cm}"))
+                .exigir_exito(&estado_a)
+                .unwrap();
+
+            if let Err(err) = entrar_en(&estado_a, datos_a.path(), &ws_ruta) {
+                let _ = Comando::cm()
+                    .args(["workspace", "delete"])
+                    .arg(ws_ruta.to_string_lossy().as_ref())
+                    .ejecutar(&estado_a);
+                let _ = std::fs::remove_dir_all(&compartida);
+                panic!("entrar_en falló: {err}");
+            }
+
             let local_a = carpeta_abierta(&estado_a).unwrap();
             let local_b = maquina_b
                 .path()
@@ -4314,40 +4334,77 @@ mod tests {
                     Ok((pub_k, todos.into_iter().next().unwrap()))
                 })
                 .unwrap();
-            let dev_fila = usuarios::Usuario {
-                email: DEV.into(),
-                nombre: "Dev".into(),
-                apellido: "Prueba".into(),
-                rol: Rol::Desarrollador,
-                fecha_alta: HOY.into(),
-                firma: None,
-                firmado_en: None,
-                firmado_por: None,
-                llave_publica: None,
-                certificado: None,
-            };
-            estado_a
-                .con_db(|db| usuarios::insertar(db.conexion(), &dev_fila))
-                .unwrap();
-
+            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
             fijar_llave_publica_admin(&local_b, &publica).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
-            usuarios::insertar(db_b.conexion(), &dev_fila).unwrap();
 
-            let ws_inicial = rama_actual_workspace(&estado_a, ws_a.path()).unwrap();
-            let autor_admin = AutorTarea {
-                email: &admin_fila.email,
+            Self {
+                repo_cm,
+                compartida,
+                estado_a,
+                db_b,
+                _ws_a_dir: ws_a_dir,
+                ws_ruta,
+                _datos_a: datos_a,
+                _maquina_b: maquina_b,
+                local_b,
+                ops_a,
+                ops_b,
+                publica,
+                llave_admin,
+                admin_fila,
+                ramas_creadas: Vec::new(),
+            }
+        }
+
+        fn registrar_rama(&mut self, rama: impl Into<String>) {
+            let rama = rama.into();
+            if !self.ramas_creadas.contains(&rama) {
+                self.ramas_creadas.push(rama);
+            }
+        }
+
+        fn registrar_ramas_de(&mut self, tareas: &[Tarea]) {
+            for t in tareas {
+                if let Some(ref r) = t.rama_asociada {
+                    self.registrar_rama(r.clone());
+                }
+            }
+        }
+
+        fn crear_usuario(&self, email: &str, rol: Rol) -> usuarios::Usuario {
+            let firmante = Firmante {
+                email: &self.admin_fila.email,
                 rol: Rol::Administrador,
+                llave: &self.llave_admin,
             };
-            estado_a
+            self.estado_a
+                .con_db(|db_a| {
+                    equipo::crear(
+                        db_a.conexion(),
+                        &self.ops_a,
+                        &self.publica,
+                        &firmante,
+                        email,
+                        rol,
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
+                    )
+                })
+                .unwrap()
+        }
+
+        fn crear_tarea(&self, email: &str, rol: Rol, titulo: &str) -> Tarea {
+            let autor = AutorTarea { email, rol };
+            self.estado_a
                 .con_db(|db_a| {
                     crear(
                         db_a.conexion(),
-                        &ops_a,
-                        &autor_admin,
+                        &self.ops_a,
+                        &autor,
                         &DatosNuevaTarea {
-                            titulo: format!("Asignable 98 {sufijo}"),
+                            titulo: titulo.into(),
                             detalles: String::new(),
                             tipo: TipoTarea::Scripting,
                             tarea_padre_id: None,
@@ -4356,73 +4413,404 @@ mod tests {
                             con_fecha: false,
                             fecha_limite: None,
                         },
-                        "2026-11-15T16:00:00.000Z",
-                        HOY,
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
                     )
                 })
-                .unwrap();
+                .unwrap()
+        }
 
-            // Admin asigna T-101 a DEV: crea rama en Unity VC y NO cambia su workspace.
-            let res = asignar_en(&estado_a, "T-101", DEV).unwrap();
-            assert_eq!(res.len(), 1);
-            let rama = res[0].rama_asociada.clone().expect("debe tener rama");
-            ramas_creadas.push(rama.clone());
-            assert_eq!(res[0].asignado_a.as_deref(), Some(DEV));
-            let ws_despues = rama_actual_workspace(&estado_a, ws_a.path()).unwrap();
+        fn crear_con_subtareas(
+            &self,
+            email: &str,
+            rol: Rol,
+            titulo: &str,
+            subs: &[&str],
+        ) -> Vec<Tarea> {
+            let autor = AutorTarea { email, rol };
+            self.estado_a
+                .con_db(|db_a| {
+                    crear_con_subtareas(
+                        db_a.conexion(),
+                        &self.ops_a,
+                        &autor,
+                        &DatosNuevaTareaConSubtareas {
+                            titulo: titulo.into(),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                            subtareas: subs
+                                .iter()
+                                .map(|s| DatosSubtareaNueva {
+                                    tipo: TipoTarea::UiInterfaz,
+                                    titulo: (*s).into(),
+                                    detalles: String::new(),
+                                })
+                                .collect(),
+                        },
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
+                    )
+                })
+                .unwrap()
+        }
+
+        fn commit_real(&self, archivo: &str, contenido: &str, mensaje: &str) {
+            use crate::cm::Comando;
+            let ruta = self.ws_ruta.join(archivo);
+            std::fs::write(&ruta, contenido).unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(ruta.to_string_lossy().as_ref())
+                .en(&self.ws_ruta)
+                .exigir_exito(&self.estado_a)
+                .unwrap();
+            Comando::cm()
+                .args(["checkin", "--all", &format!("-c={mensaje}")])
+                .en(&self.ws_ruta)
+                .exigir_exito(&self.estado_a)
+                .unwrap();
+        }
+
+        fn volver_a_dev(&self) {
+            let _ = crate::ramas::cambiar_a_rama(&self.estado_a, &self.ws_ruta, "/main/dev");
+        }
+
+        fn sincronizar_b(&self) -> crate::eventos::lectura::ResumenSincronizacion {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let ahora = Utc::now() + chrono::Duration::minutes(5);
+            let sync = lectura::sincronizar(
+                self.db_b.conexion(),
+                &self.ops_b,
+                &self.local_b,
+                ahora,
+                |c, e| lectura::aplicar_evento(c, &self.publica, e),
+            )
+            .unwrap();
+            assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
+            sync
+        }
+    }
+
+    fn correr_entorno_real<F: FnOnce(&mut EntornoRealPrueba)>(etiqueta: &str, f: F) {
+        use crate::cm::Comando;
+
+        let mut env = EntornoRealPrueba::nuevo(etiqueta);
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut env)));
+
+        env.volver_a_dev();
+        let ws_str = env.ws_ruta.to_string_lossy().to_string();
+        env.estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ws_str)
+            .ejecutar(&env.estado_a);
+
+        // Borra ramas en reversa; si alguna quedó por merges cruzados, limpia changesets primero y reintenta.
+        let borrar_ramas = |ramas: &[String]| {
+            for rama in ramas.iter().rev() {
+                let _ = Comando::cm()
+                    .args(["branch", "delete", "--delete-changesets"])
+                    .arg(format!("br:{rama}@{}", env.repo_cm))
+                    .ejecutar(&env.estado_a);
+            }
+        };
+        borrar_ramas(&env.ramas_creadas);
+        for _ in 0..2 {
+            for rama in &env.ramas_creadas {
+                if let Ok(sal) = Comando::cm()
+                    .args(["find", "changeset"])
+                    .arg(format!(
+                        "where branch='{rama}' on repository '{}'",
+                        env.repo_cm
+                    ))
+                    .args(["--format={changesetid}", "--nototal"])
+                    .exigir_exito(&env.estado_a)
+                {
+                    let ids: Vec<&str> = sal
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .collect();
+                    for cs in ids.into_iter().rev() {
+                        let _ = Comando::cm()
+                            .args(["changeset", "delete", &format!("cs:{cs}@{}", env.repo_cm)])
+                            .ejecutar(&env.estado_a);
+                    }
+                }
+            }
+        }
+        borrar_ramas(&env.ramas_creadas);
+
+        let _ = std::fs::remove_dir_all(&env.compartida);
+        drop(env);
+
+        if let Err(err) = resultado {
+            std::panic::resume_unwind(err);
+        }
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_asignar_y_soltar_tarea() {
+        use crate::cm::lectura::rama_actual_workspace;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{asignar_en, cambiar_estado_en, desasignar_en};
+
+        correr_entorno_real("98", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            let admin_email = env.admin_fila.email.clone();
+
+            let grupo =
+                env.crear_con_subtareas(&admin_email, Rol::Administrador, "Padre 98", &["Sub 98"]);
+            let padre_id = grupo[0].id.clone();
+            let sub_id = grupo[1].id.clone();
+            let t2 = env.crear_tarea(&admin_email, Rol::Administrador, "Con commit 98");
+            let t3 = env.crear_tarea(&admin_email, Rol::Administrador, "Terminada 98");
+
+            // DEV no puede asignar; Admin no puede asignar tarea con subtareas ni terminada.
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(asignar_en(&env.estado_a, &sub_id, DEV).is_err());
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            assert!(asignar_en(&env.estado_a, &padre_id, DEV).is_err());
+
+            cambiar_estado_en(&env.estado_a, &t3.id, EstadoTarea::EnProduccion).unwrap();
+            cambiar_estado_en(&env.estado_a, &t3.id, EstadoTarea::EnRevision).unwrap();
+            cambiar_estado_en(&env.estado_a, &t3.id, EstadoTarea::Terminada).unwrap();
+            assert!(asignar_en(&env.estado_a, &t3.id, DEV).is_err());
+
+            let ws_inicial = rama_actual_workspace(&env.estado_a, &env.ws_ruta).unwrap();
+
+            // 1) Admin asigna subtarea a DEV: crea ramas en Unity VC sin cambiar el workspace local.
+            let res = asignar_en(&env.estado_a, &sub_id, DEV).unwrap();
+            assert_eq!(res.len(), 2);
+            env.registrar_ramas_de(&res);
+            let rama_sub = res[1]
+                .rama_asociada
+                .clone()
+                .expect("subtarea debe tener rama");
+            assert_eq!(res[1].asignado_a.as_deref(), Some(DEV));
+            let ws_despues = rama_actual_workspace(&env.estado_a, &env.ws_ruta).unwrap();
             assert_eq!(
                 ws_despues.rama, ws_inicial.rama,
                 "asignar no debe tocar workspace"
             );
 
-            // Reasignar cuando ya tiene rama conserva la rama y cambia el responsable.
-            let res2 = asignar_en(&estado_a, "T-101", &admin_fila.email).unwrap();
-            assert_eq!(res2[0].rama_asociada.as_deref(), Some(rama.as_str()));
+            // Máquina B sincroniza asignación y notificación al DEV.
+            env.sincronizar_b();
+            let sub_b = db_tareas::obtener(env.db_b.conexion(), &sub_id).unwrap();
+            assert_eq!(sub_b.asignado_a.as_deref(), Some(DEV));
             assert_eq!(
-                res2[0].asignado_a.as_deref(),
-                Some(admin_fila.email.as_str())
+                notificaciones::de_usuario(env.db_b.conexion(), DEV)
+                    .unwrap()
+                    .iter()
+                    .filter(|n| n.tipo == TipoNotificacion::TareaAsignada)
+                    .count(),
+                1
             );
 
-            // Soltar la tarea sin commits la deja sin responsable y por hacer.
-            let soltada = desasignar_en(&estado_a, "T-101").unwrap();
+            // 2) Reasignar cuando ya tiene rama conserva la rama y cambia el responsable.
+            let res2 = asignar_en(&env.estado_a, &sub_id, &admin_email).unwrap();
+            let sub2 = res2.iter().find(|t| t.id == sub_id).unwrap();
+            assert_eq!(sub2.rama_asociada.as_deref(), Some(rama_sub.as_str()));
+            assert_eq!(sub2.asignado_a.as_deref(), Some(admin_email.as_str()));
+
+            // 3) Soltar la subtarea sin check-ins la deja sin responsable y en 'por hacer'.
+            let soltada = desasignar_en(&env.estado_a, &sub_id).unwrap();
             assert_eq!(soltada.asignado_a, None);
             assert_eq!(soltada.estado, EstadoTarea::PorHacer);
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
-                .unwrap()
-                .with_timezone(&Utc);
-            let sync_b = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
-            })
-            .unwrap();
-            assert_eq!(sync_b.aplicados, 4);
-            assert_eq!(sync_b.descartados, 0);
-            let t_b = db_tareas::obtener(db_b.conexion(), "T-101").unwrap();
-            assert_eq!(t_b.asignado_a, None);
-            assert_eq!(t_b.estado, EstadoTarea::PorHacer);
-            assert_eq!(
-                notificaciones::de_usuario(db_b.conexion(), DEV)
-                    .unwrap()
-                    .len(),
-                1
+            // 4) Asignar t2, hacer check-in real y verificar que desasignar rechaza si hay commits.
+            let res_t2 = asignar_en(&env.estado_a, &t2.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&res_t2);
+            let rama_t2 = res_t2[0].rama_asociada.clone().unwrap();
+            crate::ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_t2).unwrap();
+            env.commit_real("commit-98.txt", "avance 98", "Check-in real 98");
+            revisar_actualizaciones_en(&env.estado_a, Some(&t2.id)).unwrap();
+            assert!(
+                desasignar_en(&env.estado_a, &t2.id).is_err(),
+                "desasignar debe rechazar si ya hay check-ins"
             );
-        }));
 
-        estado_a.cerrar_proyecto();
-        let _ = Comando::cm()
-            .args(["workspace", "delete"])
-            .arg(&ruta_ws)
-            .ejecutar(&estado_a);
-        for rama in ramas_creadas.iter().rev() {
-            let _ = Comando::cm()
-                .args(["branch", "delete", "--delete-changesets"])
-                .arg(format!("br:{rama}@{repo_cm}"))
-                .ejecutar(&estado_a);
-        }
-        let _ = std::fs::remove_dir_all(&compartida);
-        if let Err(p) = resultado {
-            std::panic::resume_unwind(p);
-        }
+            env.volver_a_dev();
+            env.sincronizar_b();
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &sub_id)
+                    .unwrap()
+                    .asignado_a,
+                None
+            );
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &t2.id)
+                    .unwrap()
+                    .asignado_a
+                    .as_deref(),
+                Some(admin_email.as_str())
+            );
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambiar_estado() {
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{aprobar_tareas_en, cambiar_estado_en, tomar_en};
+
+        correr_entorno_real("99", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            env.crear_usuario(TESTER, Rol::Tester);
+            let admin_email = env.admin_fila.email.clone();
+
+            // DEV crea padre + 2 subtareas (quedan pendiente_aprobacion = true).
+            let grupo = env.crear_con_subtareas(
+                DEV,
+                Rol::Desarrollador,
+                "Padre 99",
+                &["Sub 99 A", "Sub 99 B"],
+            );
+            let padre_id = grupo[0].id.clone();
+            let sub1_id = grupo[1].id.clone();
+            let sub2_id = grupo[2].id.clone();
+            let origen = env.crear_tarea(&admin_email, Rol::Administrador, "Origen prestamo 99");
+
+            // Pendiente de aprobación rechaza pasar a EnRevision.
+            assert!(cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::EnRevision).is_err());
+
+            // Admin aprueba las 3 y toma sub1 y sub2 en Unity VC.
+            aprobar_tareas_en(
+                &env.estado_a,
+                &[padre_id.clone(), sub1_id.clone(), sub2_id.clone()],
+            )
+            .unwrap();
+            let t1 = tomar_en(&env.estado_a, &sub1_id).unwrap();
+            env.registrar_ramas_de(&t1);
+            let t2 = tomar_en(&env.estado_a, &sub2_id).unwrap();
+            env.registrar_ramas_de(&t2);
+
+            // Check-in real en sub2 para comprobar bloqueo de regreso a PorHacer.
+            env.commit_real("commit-99.txt", "codigo 99", "Commit real 99");
+            revisar_actualizaciones_en(&env.estado_a, Some(&sub2_id)).unwrap();
+            env.volver_a_dev();
+
+            // Pasar ambas subtareas a EnProduccion recalcula automáticamente al padre a EnProduccion.
+            cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::EnProduccion).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub2_id, EstadoTarea::EnProduccion).unwrap();
+            assert_eq!(
+                env.estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &padre_id))
+                    .unwrap()
+                    .estado,
+                EstadoTarea::EnProduccion
+            );
+            assert!(cambiar_estado_en(&env.estado_a, &padre_id, EstadoTarea::EnRevision).is_err());
+
+            // sub1 -> EnRevision genera notificación TareaARevision.
+            cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::EnRevision).unwrap();
+
+            // Préstamo vigente sobre sub2 avisa al mandarla a EnRevision.
+            env.estado_a
+                .con_db(|db| {
+                    commits::insertar_prestamo(
+                        db.conexion(),
+                        &commits::CambioPrestado {
+                            id: "P-99".into(),
+                            tarea_id: sub2_id.clone(),
+                            origen_id: origen.id.clone(),
+                            hash: None,
+                            autor: admin_email.clone(),
+                            fecha: crate::modelo::hoy_local(),
+                            archivos: vec!["Assets/P99.cs".into()],
+                            archivos_tocados: vec![],
+                            quitado_en: None,
+                            quitado_por: None,
+                        },
+                    )
+                })
+                .unwrap();
+            let rev2 = cambiar_estado_en(&env.estado_a, &sub2_id, EstadoTarea::EnRevision).unwrap();
+            assert!(!rev2.aviso_prestamos.is_empty());
+
+            // Desarrollador y Tester no pueden mandar a Terminada.
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::Terminada).is_err());
+            env.estado_a.fijar_usuario(Some(TESTER));
+            assert!(cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::Terminada).is_err());
+
+            // Admin termina sub1; sub2 con préstamo vigente bloquea Terminada hasta quitar el préstamo.
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::Terminada).unwrap();
+            assert!(cambiar_estado_en(&env.estado_a, &sub2_id, EstadoTarea::Terminada).is_err());
+            env.estado_a
+                .con_db(|db| {
+                    commits::quitar_prestamo(
+                        db.conexion(),
+                        "P-99",
+                        &admin_email,
+                        &crate::modelo::hoy_local(),
+                    )
+                })
+                .unwrap();
+            cambiar_estado_en(&env.estado_a, &sub2_id, EstadoTarea::Terminada).unwrap();
+            assert_eq!(
+                env.estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &padre_id))
+                    .unwrap()
+                    .estado,
+                EstadoTarea::EnRevision
+            );
+            cambiar_estado_en(&env.estado_a, &padre_id, EstadoTarea::Terminada).unwrap();
+            let padre_term = env
+                .estado_a
+                .con_db(|db| db_tareas::obtener(db.conexion(), &padre_id))
+                .unwrap();
+            assert_eq!(padre_term.estado, EstadoTarea::Terminada);
+            assert!(padre_term.fecha_completada.is_some());
+
+            // Hacia atrás: sub2 con commit impide devolver el subárbol a PorHacer, pero sí a EnProduccion.
+            assert!(cambiar_estado_en(&env.estado_a, &padre_id, EstadoTarea::PorHacer).is_err());
+            cambiar_estado_en(&env.estado_a, &padre_id, EstadoTarea::EnProduccion).unwrap();
+            assert_eq!(
+                env.estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &sub2_id))
+                    .unwrap()
+                    .estado,
+                EstadoTarea::EnProduccion
+            );
+            // sub1 (sin commits) vuelve a PorHacer; sub2 (con commit) lo rechaza.
+            cambiar_estado_en(&env.estado_a, &sub1_id, EstadoTarea::PorHacer).unwrap();
+            assert!(cambiar_estado_en(&env.estado_a, &sub2_id, EstadoTarea::PorHacer).is_err());
+
+            // Máquina B sincroniza vía OneDrive el estado final del subárbol y las notificaciones.
+            env.sincronizar_b();
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &padre_id)
+                    .unwrap()
+                    .estado,
+                EstadoTarea::EnProduccion
+            );
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &sub1_id)
+                    .unwrap()
+                    .estado,
+                EstadoTarea::PorHacer
+            );
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &sub2_id)
+                    .unwrap()
+                    .estado,
+                EstadoTarea::EnProduccion
+            );
+            assert!(
+                notificaciones::de_usuario(env.db_b.conexion(), &admin_email)
+                    .unwrap()
+                    .iter()
+                    .any(|n| n.tipo == TipoNotificacion::TareaARevision)
+            );
+        });
     }
 
     #[test]
@@ -4824,166 +5212,163 @@ mod tests {
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_borrar_progreso() {
         use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
-        use crate::comandos::tareas::{borrar_progreso_en, tomar_en};
-        use crate::estado::{llave_publica_del_proyecto, AppState};
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida, lectura};
-        use chrono::{DateTime, Utc};
+        use crate::comandos::tareas::{
+            borrar_progreso_en, cambiar_estado_en, reabrir_en, tomar_en,
+        };
 
-        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
-        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
-        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
-        let compartida = nube.join(format!("BranchBoard-prueba-100-{sufijo}"));
-        std::fs::create_dir_all(&compartida).unwrap();
+        correr_entorno_real("100", |env| {
+            env.crear_usuario(LIDER, Rol::Lider);
+            let admin_email = env.admin_fila.email.clone();
 
-        let estado_a = AppState::default();
-        let ws_a = tempfile::tempdir().unwrap();
-        let datos_a = tempfile::tempdir().unwrap();
-        let maquina_b = tempfile::tempdir().unwrap();
-        let ruta_ws = ws_a.path().to_string_lossy().to_string();
-        let mut ramas_creadas: Vec<String> = Vec::new();
+            let t1 = env.crear_tarea(&admin_email, Rol::Administrador, "Borrar progreso 100");
+            let t2 = env.crear_tarea(&admin_email, Rol::Administrador, "Reabrir 100");
+            let t3 = env.crear_tarea(&admin_email, Rol::Administrador, "Subtractive origen 100");
+            let t4 = env.crear_tarea(&admin_email, Rol::Administrador, "Subtractive destino 100");
 
-        Comando::cm()
-            .args(["workspace", "create"])
-            .arg(format!("bb-prueba-100-{sufijo}"))
-            .arg(&ruta_ws)
-            .arg(format!("rep:{repo_cm}"))
-            .exigir_exito(&estado_a)
-            .unwrap();
-
-        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
-            let local_a = carpeta_abierta(&estado_a).unwrap();
-            let local_b = maquina_b
-                .path()
-                .join("proyectos")
-                .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-
-            let (publica, admin_fila) = estado_a
-                .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
-                    let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
-                })
+            // 1) T-101: check-in real + cambio sin check-in + préstamo en SQLite -> borrar_progreso revierte todo.
+            let tomadas1 = tomar_en(&env.estado_a, &t1.id).unwrap();
+            env.registrar_ramas_de(&tomadas1);
+            let rama1 = tomadas1[0].rama_asociada.clone().unwrap();
+            env.commit_real("avance-100.txt", "hola", "Avance real 100");
+            std::fs::write(env.ws_ruta.join("pendiente-100.txt"), "pendiente").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(
+                    env.ws_ruta
+                        .join("pendiente-100.txt")
+                        .to_string_lossy()
+                        .as_ref(),
+                )
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let db_b = Db::abrir(&local_b).unwrap();
-            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
-
-            let autor_admin = AutorTarea {
-                email: &admin_fila.email,
-                rol: Rol::Administrador,
-            };
-            estado_a
-                .con_db(|db_a| {
-                    crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &autor_admin,
-                        &DatosNuevaTarea {
-                            titulo: format!("Borrar progreso 100 {sufijo}"),
-                            detalles: String::new(),
-                            tipo: TipoTarea::Scripting,
-                            tarea_padre_id: None,
-                            sprint_id: None,
-                            backlog_id: None,
-                            con_fecha: false,
-                            fecha_limite: None,
+            env.estado_a
+                .con_db(|db| {
+                    commits::insertar_prestamo(
+                        db.conexion(),
+                        &commits::CambioPrestado {
+                            id: "P-100".into(),
+                            tarea_id: t1.id.clone(),
+                            origen_id: t2.id.clone(),
+                            hash: None,
+                            autor: admin_email.clone(),
+                            fecha: crate::modelo::hoy_local(),
+                            archivos: vec!["Assets/P100.cs".into()],
+                            archivos_tocados: vec![],
+                            quitado_en: None,
+                            quitado_por: None,
                         },
-                        "2026-11-15T17:00:00.000Z",
-                        HOY,
                     )
                 })
                 .unwrap();
 
-            let tomadas = tomar_en(&estado_a, "T-101").unwrap();
-            let rama = tomadas[0].rama_asociada.clone().unwrap();
-            ramas_creadas.push(rama.clone());
-
-            // Check-in real + cambio pendiente sin check-in.
-            let archivo1 = ws_a.path().join("avance-100.txt");
-            std::fs::write(&archivo1, "hola").unwrap();
-            Comando::cm()
-                .arg("add")
-                .arg(archivo1.to_string_lossy().to_string())
-                .en(ws_a.path())
-                .exigir_exito(&estado_a)
-                .unwrap();
-            Comando::cm()
-                .args(["checkin", "--all", "-c=Avance real 100"])
-                .en(ws_a.path())
-                .exigir_exito(&estado_a)
-                .unwrap();
-
-            let archivo2 = ws_a.path().join("pendiente-100.txt");
-            std::fs::write(&archivo2, "pendiente").unwrap();
-            Comando::cm()
-                .arg("add")
-                .arg(archivo2.to_string_lossy().to_string())
-                .en(ws_a.path())
-                .exigir_exito(&estado_a)
-                .unwrap();
-
-            // Borrar progreso revierte cambios pendientes + changeset y deja en 'por hacer'.
-            let lista = borrar_progreso_en(&estado_a, "T-101").unwrap();
-            let t = lista.iter().find(|x| x.id == "T-101").unwrap();
-            assert_eq!(t.estado, EstadoTarea::PorHacer);
-            assert!(t.rama_asociada.is_some());
-            assert!(crate::ramas::cambios_pendientes(&estado_a, ws_a.path())
-                .unwrap()
-                .is_empty());
-
+            let lista = borrar_progreso_en(&env.estado_a, &t1.id).unwrap();
+            let res_t1 = lista.iter().find(|x| x.id == t1.id).unwrap();
+            assert_eq!(res_t1.estado, EstadoTarea::PorHacer);
+            assert!(res_t1.rama_asociada.is_some());
+            assert!(
+                crate::ramas::cambios_pendientes(&env.estado_a, &env.ws_ruta)
+                    .unwrap()
+                    .is_empty()
+            );
             let cs_restantes = Comando::cm()
                 .args(["find", "changeset"])
-                .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
+                .arg(format!(
+                    "where branch='{rama1}' on repository '{}'",
+                    env.repo_cm
+                ))
                 .args(["--format={changesetid}", "--nototal"])
-                .exigir_exito(&estado_a)
+                .exigir_exito(&env.estado_a)
                 .unwrap();
             assert!(
                 cs_restantes.trim().is_empty(),
-                "no deben quedar changesets tras revertir: {}",
-                cs_restantes
+                "no deben quedar changesets tras revertir: {cs_restantes}"
             );
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
+            // 2) T-103 + T-104: cuando hay préstamo/cherrypick hacia otra rama, usa `cm merge --subtractive`.
+            let tomadas3 = tomar_en(&env.estado_a, &t3.id).unwrap();
+            env.registrar_ramas_de(&tomadas3);
+            let rama3 = tomadas3[0].rama_asociada.clone().unwrap();
+            env.commit_real(
+                "subtractive-100.txt",
+                "codigo prestado",
+                "Commit prestable 100",
+            );
+            let cs3 = Comando::cm()
+                .args(["find", "changeset"])
+                .arg(format!(
+                    "where branch='{rama3}' on repository '{}'",
+                    env.repo_cm
+                ))
+                .args(["--format={changesetid}", "--nototal"])
+                .exigir_exito(&env.estado_a)
                 .unwrap()
-                .with_timezone(&Utc);
-            let sync_b = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
-            })
-            .unwrap();
-            assert_eq!(sync_b.descartados, 0);
-            let t_b = db_tareas::obtener(db_b.conexion(), "T-101").unwrap();
-            assert_eq!(t_b.estado, EstadoTarea::PorHacer);
-        }));
+                .lines()
+                .last()
+                .unwrap()
+                .trim()
+                .to_string();
+            let tomadas4 = tomar_en(&env.estado_a, &t4.id).unwrap();
+            env.registrar_ramas_de(&tomadas4);
+            Comando::cm()
+                .args(["merge", &format!("cs:{cs3}"), "--cherrypicking", "--merge"])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            Comando::cm()
+                .args(["checkin", "--all", "-c=Cherrypick prestamo 100"])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            borrar_progreso_en(&env.estado_a, &t3.id).unwrap();
+            assert!(!env.ws_ruta.join("subtractive-100.txt").exists());
+            env.volver_a_dev();
 
-        estado_a.cerrar_proyecto();
-        let _ = Comando::cm()
-            .args(["workspace", "delete"])
-            .arg(&ruta_ws)
-            .ejecutar(&estado_a);
-        for rama in ramas_creadas.iter().rev() {
-            let _ = Comando::cm()
-                .args(["branch", "delete", "--delete-changesets"])
-                .arg(format!("br:{rama}@{repo_cm}"))
-                .ejecutar(&estado_a);
-        }
-        let _ = std::fs::remove_dir_all(&compartida);
-        if let Err(p) = resultado {
-            std::panic::resume_unwind(p);
-        }
+            // 3) Reabrir tarea terminada hasta 3 veces como Líder; 4ta rechaza para Líder y acepta para Admin.
+            let tomadas2 = tomar_en(&env.estado_a, &t2.id).unwrap();
+            env.registrar_ramas_de(&tomadas2);
+            env.volver_a_dev();
+            cambiar_estado_en(&env.estado_a, &t2.id, EstadoTarea::EnProduccion).unwrap();
+            for intento in 1..=3 {
+                env.estado_a.fijar_usuario(Some(&admin_email));
+                if intento == 1 {
+                    cambiar_estado_en(&env.estado_a, &t2.id, EstadoTarea::EnRevision).unwrap();
+                }
+                cambiar_estado_en(&env.estado_a, &t2.id, EstadoTarea::Terminada).unwrap();
+                env.estado_a.fijar_usuario(Some(LIDER));
+                let reabierta =
+                    reabrir_en(&env.estado_a, &t2.id, &format!("Reapertura {intento}")).unwrap();
+                assert_eq!(reabierta.estado, EstadoTarea::EnRevision);
+                assert_eq!(reabierta.reaperturas, intento);
+            }
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            cambiar_estado_en(&env.estado_a, &t2.id, EstadoTarea::Terminada).unwrap();
+            env.estado_a.fijar_usuario(Some(LIDER));
+            assert!(reabrir_en(&env.estado_a, &t2.id, "Cuarta por lider").is_err());
+
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            let cuarta = reabrir_en(&env.estado_a, &t2.id, "Cuarta por admin").unwrap();
+            assert_eq!(cuarta.reaperturas, 4);
+            assert_eq!(cuarta.estado, EstadoTarea::EnRevision);
+
+            // 4) Máquina B sincroniza vía OneDrive el borrado de progreso, las reaperturas y notificaciones.
+            env.sincronizar_b();
+            let t1_b = db_tareas::obtener(env.db_b.conexion(), &t1.id).unwrap();
+            assert_eq!(t1_b.estado, EstadoTarea::PorHacer);
+            assert!(commits::de_tarea(env.db_b.conexion(), &t1.id)
+                .unwrap()
+                .is_empty());
+            assert!(commits::prestamos_de_tarea(env.db_b.conexion(), &t1.id)
+                .unwrap()
+                .is_empty());
+            let t2_b = db_tareas::obtener(env.db_b.conexion(), &t2.id).unwrap();
+            assert_eq!(t2_b.estado, EstadoTarea::EnRevision);
+            assert_eq!(t2_b.reaperturas, 4);
+            assert!(notificaciones::de_usuario(env.db_b.conexion(), LIDER)
+                .unwrap()
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::TareaReabierta));
+        });
     }
 
     #[test]
@@ -5098,6 +5483,80 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_aprobar_editar_y_advertir() {
+        use crate::comandos::tareas::{
+            advertir_pendiente_en, aprobar_tarea_en, aprobar_tareas_en, editar_y_aprobar_en,
+        };
+
+        correr_entorno_real("101", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            env.crear_usuario(LIDER, Rol::Lider);
+
+            // DEV crea 4 tareas pendientes de aprobación.
+            let t1 = env.crear_tarea(DEV, Rol::Desarrollador, "Pendiente 101 A");
+            let t2 = env.crear_tarea(DEV, Rol::Desarrollador, "Pendiente 101 B");
+            let t3 = env.crear_tarea(DEV, Rol::Desarrollador, "Pendiente 101 C");
+            let t4 = env.crear_tarea(DEV, Rol::Desarrollador, "Pendiente 101 D");
+            assert!(t1.pendiente_aprobacion && t2.pendiente_aprobacion);
+
+            // DEV no puede aprobar, editar ni advertir.
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(aprobar_tarea_en(&env.estado_a, &t2.id).is_err());
+            assert!(aprobar_tareas_en(&env.estado_a, &[t3.id.clone(), t4.id.clone()]).is_err());
+            assert!(advertir_pendiente_en(&env.estado_a, &t1.id, "No autorizado").is_err());
+
+            // Líder advierte T1 (sigue pendiente), luego edita+aprueba T1, aprueba T2 y aprueba T3+T4 en lote.
+            env.estado_a.fijar_usuario(Some(LIDER));
+            advertir_pendiente_en(&env.estado_a, &t1.id, "Detalla mejor la meta").unwrap();
+            assert!(
+                env.estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &t1.id))
+                    .unwrap()
+                    .pendiente_aprobacion
+            );
+
+            let editada = editar_y_aprobar_en(
+                &env.estado_a,
+                &t1.id,
+                &CambiosTarea {
+                    titulo: Some("Pendiente 101 A corregida".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(editada.titulo, "Pendiente 101 A corregida");
+            assert!(!editada.pendiente_aprobacion);
+
+            let aprobada2 = aprobar_tarea_en(&env.estado_a, &t2.id).unwrap();
+            assert!(!aprobada2.pendiente_aprobacion);
+
+            let lote = aprobar_tareas_en(&env.estado_a, &[t3.id.clone(), t4.id.clone()]).unwrap();
+            assert_eq!(lote.len(), 4);
+            assert!(lote.iter().all(|t| !t.pendiente_aprobacion));
+
+            // Máquina B sincroniza vía OneDrive: todas aprobadas y el creador DEV recibe las dos notificaciones.
+            env.sincronizar_b();
+            let t1_b = db_tareas::obtener(env.db_b.conexion(), &t1.id).unwrap();
+            assert_eq!(t1_b.titulo, "Pendiente 101 A corregida");
+            for tid in [&t1.id, &t2.id, &t3.id, &t4.id] {
+                assert!(
+                    !db_tareas::obtener(env.db_b.conexion(), tid)
+                        .unwrap()
+                        .pendiente_aprobacion
+                );
+            }
+            let notis_dev = notificaciones::de_usuario(env.db_b.conexion(), DEV).unwrap();
+            assert!(notis_dev
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::Advertencia));
+            assert!(notis_dev
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::EditadaAprobada));
+        });
     }
 
     #[test]
@@ -5282,122 +5741,166 @@ mod tests {
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_eliminar_y_purgar() {
         use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
-        use crate::comandos::tareas::{eliminar_definitivamente_en, eliminar_tarea_en, tomar_en};
-        use crate::estado::AppState;
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
-        use crate::{modelo, ramas};
+        use crate::comandos::tareas::{
+            aprobar_tareas_en, cambiar_estado_en, eliminar_definitivamente_en, eliminar_tarea_en,
+            listar_papelera_en, tomar_en,
+        };
 
-        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
-        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
-        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
-        let compartida = nube.join(format!("BranchBoard-prueba-103-{sufijo}"));
-        std::fs::create_dir_all(&compartida).unwrap();
+        correr_entorno_real("103", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            let admin_email = env.admin_fila.email.clone();
 
-        let estado_a = AppState::default();
-        let ws_a = tempfile::tempdir().unwrap();
-        let datos_a = tempfile::tempdir().unwrap();
-        let ruta_ws = ws_a.path().to_string_lossy().to_string();
-        let mut rama_creada: Option<String> = None;
+            // DEV crea padre T1 con sub1 (activa) y sub2 (terminada), más t2 independiente.
+            let grupo = env.crear_con_subtareas(
+                DEV,
+                Rol::Desarrollador,
+                "Padre 103",
+                &["Sub activa 103", "Sub terminada 103"],
+            );
+            let padre_id = grupo[0].id.clone();
+            let sub_act_id = grupo[1].id.clone();
+            let sub_term_id = grupo[2].id.clone();
+            let t2 = env.crear_tarea(DEV, Rol::Desarrollador, "Independiente 103");
 
-        Comando::cm()
-            .args(["workspace", "create"])
-            .arg(format!("bb-prueba-103-{sufijo}"))
-            .arg(&ruta_ws)
-            .arg(format!("rep:{repo_cm}"))
-            .exigir_exito(&estado_a)
+            aprobar_tareas_en(
+                &env.estado_a,
+                &[
+                    padre_id.clone(),
+                    sub_act_id.clone(),
+                    sub_term_id.clone(),
+                    t2.id.clone(),
+                ],
+            )
             .unwrap();
 
-        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
-            let local_a = carpeta_abierta(&estado_a).unwrap();
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
+            let tom1 = tomar_en(&env.estado_a, &sub_act_id).unwrap();
+            env.registrar_ramas_de(&tom1);
+            let rama_sub_act = tom1.last().unwrap().rama_asociada.clone().unwrap();
 
-            let admin_fila = estado_a
-                .con_db(|db| Ok(usuarios::listar(db.conexion())?.into_iter().next().unwrap()))
-                .unwrap();
-            let autor_admin = AutorTarea {
-                email: &admin_fila.email,
-                rol: Rol::Administrador,
-            };
-            estado_a
-                .con_db(|db_a| {
-                    crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &autor_admin,
-                        &DatosNuevaTarea {
-                            titulo: format!("Eliminar y purgar 103 {sufijo}"),
-                            detalles: String::new(),
-                            tipo: TipoTarea::Scripting,
-                            tarea_padre_id: None,
-                            sprint_id: None,
-                            backlog_id: None,
-                            con_fecha: false,
-                            fecha_limite: None,
-                        },
-                        &modelo::ahora_iso(),
-                        &modelo::hoy_local(),
-                    )
-                })
-                .unwrap();
+            let tom_term = tomar_en(&env.estado_a, &sub_term_id).unwrap();
+            env.registrar_ramas_de(&tom_term);
+            let rama_sub_term = tom_term.last().unwrap().rama_asociada.clone().unwrap();
 
-            let tomada = tomar_en(&estado_a, "T-101").unwrap();
-            let rama = tomada[0].rama_asociada.clone().unwrap();
-            rama_creada = Some(rama.clone());
+            let tom2 = tomar_en(&env.estado_a, &t2.id).unwrap();
+            env.registrar_ramas_de(&tom2);
+            let rama_t2 = tom2[0].rama_asociada.clone().unwrap();
+            env.volver_a_dev();
 
-            // 1) Soft-delete a Papelera + marcado en Unity VC.
+            // Terminamos sub_term_id para comprobar que la cascada NO elimina subtareas terminadas.
+            cambiar_estado_en(&env.estado_a, &sub_term_id, EstadoTarea::EnRevision).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub_term_id, EstadoTarea::Terminada).unwrap();
+
+            // 1) Soft-delete primero de t2, 25 ms después del padre -> orden más reciente primero en Papelera.
+            eliminar_tarea_en(&env.estado_a, &t2.id, "Descartada primero").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(25));
             let en_papelera =
-                eliminar_tarea_en(&estado_a, "T-101", "Prueba real de eliminación").unwrap();
-            assert_eq!(en_papelera.len(), 1);
-            assert!(en_papelera[0].eliminada);
-            let papelera = estado_a
-                .con_db(|db| listar_papelera(db.conexion()))
-                .unwrap();
-            assert_eq!(papelera.len(), 1);
+                eliminar_tarea_en(&env.estado_a, &padre_id, "Padre descartado después").unwrap();
+            assert_eq!(en_papelera.len(), 2);
+            assert!(en_papelera.iter().all(|t| t.eliminada));
+            assert!(
+                !env.estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &sub_term_id))
+                    .unwrap()
+                    .eliminada,
+                "la subtarea terminada no debe eliminarse por cascada"
+            );
 
-            // 2) Purga definitiva: borra fila en SQLite y purga la rama en Unity VC.
-            let purgadas = eliminar_definitivamente_en(&estado_a, "T-101").unwrap();
-            assert_eq!(purgadas.len(), 1);
-            assert!(estado_a
-                .con_db(|db| db_tareas::buscar(db.conexion(), "T-101"))
+            let papelera = listar_papelera_en(&env.estado_a).unwrap();
+            assert_eq!(papelera.len(), 3);
+            let pos_padre = papelera.iter().position(|t| t.id == padre_id).unwrap();
+            let pos_t2 = papelera.iter().position(|t| t.id == t2.id).unwrap();
+            assert!(
+                pos_padre < pos_t2,
+                "Papelera debe venir ordenada de la más reciente a la más antigua"
+            );
+
+            // Máquina B sincroniza Papelera, no-cascada a terminada y notificación TareaEliminada a DEV.
+            env.sincronizar_b();
+            let pap_b = db_tareas::listar_papelera(env.db_b.conexion()).unwrap();
+            assert_eq!(pap_b.len(), 3);
+            assert!(
+                !db_tareas::obtener(env.db_b.conexion(), &sub_term_id)
+                    .unwrap()
+                    .eliminada
+            );
+            let notis_elim = notificaciones::de_usuario(env.db_b.conexion(), DEV)
                 .unwrap()
-                .is_none());
-            // Si la purga de la rama ya funcionó, `cm find branch` ya no la muestra.
-            let salida = Comando::cm()
+                .into_iter()
+                .filter(|n| n.tipo == TipoNotificacion::TareaEliminada)
+                .count();
+            assert!(
+                notis_elim >= 2,
+                "DEV debe recibir notificación por sus tareas eliminadas, recibidas: {notis_elim}"
+            );
+
+            // Admin también participa si creó tareas; aseguramos estado limpio en A.
+            assert_eq!(env.admin_fila.email, admin_email);
+
+            // 2) Purga definitiva: borra filas de Papelera en SQLite y purga ramas en Unity VC.
+            let purgadas_p = eliminar_definitivamente_en(&env.estado_a, &padre_id).unwrap();
+            assert_eq!(purgadas_p.len(), 2);
+            let purgadas_2 = eliminar_definitivamente_en(&env.estado_a, &t2.id).unwrap();
+            assert_eq!(purgadas_2.len(), 1);
+
+            for id_gone in [&padre_id, &sub_act_id, &t2.id] {
+                assert!(env
+                    .estado_a
+                    .con_db(|db| db_tareas::buscar(db.conexion(), id_gone))
+                    .unwrap()
+                    .is_none());
+            }
+            for rama in [&rama_sub_act, &rama_t2] {
+                let corto = rama.rsplit('/').next().unwrap();
+                let salida = Comando::cm()
+                    .args(["find", "branch"])
+                    .arg(format!(
+                        "where name='{corto}' on repository '{}'",
+                        env.repo_cm
+                    ))
+                    .args(["--format={name}", "--nototal"])
+                    .exigir_exito(&env.estado_a)
+                    .unwrap_or_default();
+                assert!(
+                    !salida.lines().any(|l| l.trim() == rama.as_str()),
+                    "la rama {rama} debió purgarse en Unity VC, salida: {salida}"
+                );
+            }
+            // La subtarea terminada y su rama siguen vivas.
+            assert!(env
+                .estado_a
+                .con_db(|db| db_tareas::buscar(db.conexion(), &sub_term_id))
+                .unwrap()
+                .is_some());
+            let corto_term = rama_sub_term.rsplit('/').next().unwrap();
+            let vive_term = Comando::cm()
                 .args(["find", "branch"])
-                .arg(format!("where name='{rama}' on repository '{repo_cm}'"))
+                .arg(format!(
+                    "where name='{corto_term}' on repository '{}'",
+                    env.repo_cm
+                ))
                 .args(["--format={name}", "--nototal"])
-                .exigir_exito(&estado_a)
+                .exigir_exito(&env.estado_a)
                 .unwrap_or_default();
             assert!(
-                salida.trim().is_empty(),
-                "la rama {rama} debió purgarse en Unity VC, salida: {salida}"
+                vive_term.lines().any(|l| l.trim() == rama_sub_term.as_str()),
+                "la rama terminada {rama_sub_term} debió permanecer en Unity VC, salida: {vive_term}"
             );
-            rama_creada = None;
-        }));
 
-        // Limpieza segura siempre (workspace temporal, rama si quedó, y carpeta OneDrive).
-        let _ = ramas::cambiar_a_rama(&estado_a, ws_a.path(), "/main/dev");
-        if let Some(rama) = rama_creada {
-            let _ = ramas::purgar_rama_definitiva(&estado_a, Some(ws_a.path()), &repo_cm, &rama);
-        }
-        let _ = Comando::cm()
-            .args(["workspace", "delete"])
-            .arg(&ruta_ws)
-            .exigir_exito(&estado_a);
-        let _ = std::fs::remove_dir_all(&compartida);
-
-        if let Err(err) = resultado {
-            std::panic::resume_unwind(err);
-        }
+            // Máquina B sincroniza la purga definitiva vía OneDrive.
+            env.sincronizar_b();
+            assert!(db_tareas::buscar(env.db_b.conexion(), &padre_id)
+                .unwrap()
+                .is_none());
+            assert!(db_tareas::buscar(env.db_b.conexion(), &sub_act_id)
+                .unwrap()
+                .is_none());
+            assert!(db_tareas::buscar(env.db_b.conexion(), &t2.id)
+                .unwrap()
+                .is_none());
+            assert!(db_tareas::buscar(env.db_b.conexion(), &sub_term_id)
+                .unwrap()
+                .is_some());
+        });
     }
 
     #[test]
@@ -5445,125 +5948,102 @@ mod tests {
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_polling_unity_vc() {
         use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::eventos::revisar_actualizaciones_en;
         use crate::comandos::tareas::tomar_en;
-        use crate::estado::AppState;
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
-        use crate::{modelo, ramas};
+        use crate::ramas;
 
-        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
-        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
-        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
-        let compartida = nube.join(format!("BranchBoard-prueba-104-{sufijo}"));
-        std::fs::create_dir_all(&compartida).unwrap();
+        correr_entorno_real("104", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 104",
+                &["Sub polling 104"],
+            );
+            let padre_id = grupo[0].id.clone();
+            let sub_id = grupo[1].id.clone();
 
-        let estado_a = AppState::default();
-        let ws_a = tempfile::tempdir().unwrap();
-        let datos_a = tempfile::tempdir().unwrap();
-        let ruta_ws = ws_a.path().to_string_lossy().to_string();
-        let mut rama_creada: Option<String> = None;
+            let tomadas = tomar_en(&env.estado_a, &sub_id).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+            let rama_sub = tomadas[1].rama_asociada.clone().unwrap();
 
-        Comando::cm()
-            .args(["workspace", "create"])
-            .arg(format!("bb-prueba-104-{sufijo}"))
-            .arg(&ruta_ws)
-            .arg(format!("rep:{repo_cm}"))
-            .exigir_exito(&estado_a)
-            .unwrap();
+            // 1) Check-in externo en la rama de la subtarea -> detecta rama actual y check-in nuevo (`modificada`).
+            env.commit_real(
+                "polling_104.txt",
+                "prueba polling 104",
+                "Commit externo polling 104",
+            );
 
-        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
-            let local_a = carpeta_abierta(&estado_a).unwrap();
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-
-            let admin_fila = estado_a
-                .con_db(|db| Ok(usuarios::listar(db.conexion())?.into_iter().next().unwrap()))
-                .unwrap();
-            let autor_admin = AutorTarea {
-                email: &admin_fila.email,
-                rol: Rol::Administrador,
-            };
-            estado_a
-                .con_db(|db_a| {
-                    crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &autor_admin,
-                        &DatosNuevaTarea {
-                            titulo: format!("Polling 104 {sufijo}"),
-                            detalles: String::new(),
-                            tipo: TipoTarea::Scripting,
-                            tarea_padre_id: None,
-                            sprint_id: None,
-                            backlog_id: None,
-                            con_fecha: false,
-                            fecha_limite: None,
-                        },
-                        &modelo::ahora_iso(),
-                        &modelo::hoy_local(),
-                    )
-                })
-                .unwrap();
-
-            let tomada = tomar_en(&estado_a, "T-101").unwrap();
-            let rama = tomada[0].rama_asociada.clone().unwrap();
-            rama_creada = Some(rama.clone());
-
-            // Check-in real desde fuera (como si viniera de Unity VC).
-            let archivo = ws_a.path().join(format!("polling_{sufijo}.txt"));
-            std::fs::write(&archivo, format!("prueba polling {sufijo}")).unwrap();
-            Comando::cm()
-                .arg("add")
-                .arg(archivo.to_string_lossy().as_ref())
-                .en(ws_a.path())
-                .exigir_exito(&estado_a)
-                .unwrap();
-            Comando::cm()
-                .args(["checkin", "--all", "-c=Commit externo polling 104"])
-                .en(ws_a.path())
-                .exigir_exito(&estado_a)
-                .unwrap();
-
-            let resumen = revisar_actualizaciones_en(&estado_a, Some("T-101")).unwrap();
-            assert_eq!(resumen.rama_actual.as_deref(), Some(rama.as_str()));
-            assert_eq!(resumen.tareas_modificadas, vec!["T-101".to_string()]);
+            let resumen = revisar_actualizaciones_en(&env.estado_a, Some(&sub_id)).unwrap();
+            assert_eq!(resumen.rama_actual.as_deref(), Some(rama_sub.as_str()));
+            assert_eq!(resumen.tareas_modificadas, vec![sub_id.clone()]);
             assert!(resumen.tareas_cerradas.is_empty());
 
-            let (tarea, cs_lista) = estado_a
+            let (sub_despues, cs_lista) = env
+                .estado_a
                 .con_db(|db| {
                     Ok((
-                        db_tareas::obtener(db.conexion(), "T-101")?,
-                        commits::de_tarea(db.conexion(), "T-101")?,
+                        db_tareas::obtener(db.conexion(), &sub_id)?,
+                        commits::de_tarea(db.conexion(), &sub_id)?,
                     ))
                 })
                 .unwrap();
-            assert!(tarea.modificada);
-            assert!(tarea.ultimo_changeset_visto.is_some());
+            assert!(sub_despues.modificada);
+            assert!(sub_despues.ultimo_changeset_visto.is_some());
             assert!(cs_lista
                 .iter()
                 .any(|c| c.mensaje.contains("Commit externo polling 104")));
-        }));
 
-        let _ = ramas::cambiar_a_rama(&estado_a, ws_a.path(), "/main/dev");
-        if let Some(rama) = rama_creada {
-            let _ = ramas::purgar_rama_definitiva(&estado_a, Some(ws_a.path()), &repo_cm, &rama);
-        }
-        let _ = Comando::cm()
-            .args(["workspace", "delete"])
-            .arg(&ruta_ws)
-            .exigir_exito(&estado_a);
-        let _ = std::fs::remove_dir_all(&compartida);
+            // 2) Merge real de la rama de subtarea hacia su rama padre (sin tocar /main/dev)
+            //    -> polling detecta rama cerrada, pasa a terminada y emite `tarea_cerrada_por_deteccion`.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            Comando::cm()
+                .args([
+                    "merge",
+                    &format!("br:{rama_sub}@{}", env.repo_cm),
+                    "--merge",
+                ])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            Comando::cm()
+                .args(["checkin", "--all", "-c=Merge subtarea a padre 104"])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
 
-        if let Err(err) = resultado {
-            std::panic::resume_unwind(err);
-        }
+            let cierre = revisar_actualizaciones_en(&env.estado_a, Some(&sub_id)).unwrap();
+            assert_eq!(cierre.rama_actual.as_deref(), Some(rama_padre.as_str()));
+            assert_eq!(cierre.tareas_cerradas, vec![sub_id.clone()]);
+
+            let sub_final = env
+                .estado_a
+                .con_db(|db| db_tareas::obtener(db.conexion(), &sub_id))
+                .unwrap();
+            assert_eq!(sub_final.estado, EstadoTarea::Terminada);
+            assert!(sub_final.fecha_completada.is_some());
+            assert!(!sub_final.modificada);
+            let padre_final = env
+                .estado_a
+                .con_db(|db| db_tareas::obtener(db.conexion(), &padre_id))
+                .unwrap();
+            assert_eq!(padre_final.estado, EstadoTarea::EnRevision);
+
+            // 3) Máquina B sincroniza vía OneDrive el evento `tarea_cerrada_por_deteccion`.
+            env.sincronizar_b();
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &sub_id)
+                    .unwrap()
+                    .estado,
+                EstadoTarea::Terminada
+            );
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &padre_id)
+                    .unwrap()
+                    .estado,
+                EstadoTarea::EnRevision
+            );
+        });
     }
 }
