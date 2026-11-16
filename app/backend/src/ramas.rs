@@ -467,6 +467,38 @@ fn interpretar_pendientes(texto: &str) -> Vec<String> {
         .collect()
 }
 
+/// Comprueba que el workspace esté en `rama_esperada` (guardia de rama), verifica
+/// que existan cambios pendientes y ejecuta `cm checkin --all` (#105).
+/// Devuelve el número de changeset resultante.
+pub fn hacer_checkin_workspace(
+    estado: &AppState,
+    carpeta: &Path,
+    rama_esperada: &str,
+    comentario: &str,
+) -> Resultado<i64> {
+    let rama_esperada = rama_esperada.trim().trim_end_matches('/');
+    validar_destino_checkin(rama_esperada)?;
+    let actual = rama_actual_workspace(estado, carpeta)?;
+    if !actual.rama.eq_ignore_ascii_case(rama_esperada) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero esta tarea es de la rama {rama_esperada} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+    let pendientes = cambios_pendientes(estado, carpeta)?;
+    if pendientes.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios pendientes para hacer check-in".into(),
+        ));
+    }
+    Comando::cm()
+        .args(["checkin", "--all", &format!("-c={comentario}")])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    let despues = rama_actual_workspace(estado, carpeta)?;
+    Ok(despues.changeset.or(actual.changeset).unwrap_or(0))
+}
+
 /// Comprueba si `rama` ya fue mergeada hacia `rama_padre` en Unity VC (`cm find merge`, #104).
 /// Solo cuentan merges reales (`merge`), nunca préstamos (`cherrypick`).
 pub fn rama_cerrada_hacia_padre(
