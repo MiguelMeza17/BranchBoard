@@ -362,6 +362,8 @@ export const api = {
       espera_quitada?: string | null;
       tocados_detectados?: string[];
       alerta_rama_ajena?: AlertaRamaAjena | null;
+      sprints_actualizados?: string[];
+      inactividad_notificada?: string[];
     }>(
       'revisar_actualizaciones',
       { tareaId: tareaId ?? null },
@@ -373,6 +375,8 @@ export const api = {
         espera_quitada: null,
         tocados_detectados: [],
         alerta_rama_ajena: null,
+        sprints_actualizados: [],
+        inactividad_notificada: [],
       })
     ),
 

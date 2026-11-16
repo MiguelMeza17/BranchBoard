@@ -10,15 +10,19 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::notificaciones::{self as db_notis, Notificacion};
-use crate::db::usuarios;
+use crate::db::{commits, tareas as db_tareas, usuarios};
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
-use crate::modelo::{normalizar_email, Rol, TipoNotificacion};
+use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 use crate::tareas::rol_verificado_de;
+
+/// Días sin check-ins ni actividad antes de enviar recordatorio de inactividad (#117).
+pub const UMBRAL_INACTIVIDAD_DIAS: i64 = 3;
 
 /// Tipos de evento propios manejados por este módulo.
 pub const TIPOS: &[&str] = &["crear_notificacion", "crear_notificaciones"];
@@ -90,6 +94,24 @@ pub fn crear(
     datos: &DatosNotificacion<'_>,
     ahora: &str,
 ) -> Resultado<Notificacion> {
+    let id = format!("noti_{}", eventos::uuid());
+    crear_con_id(c, ops, emisor, &id, datos, ahora)
+}
+
+/// Igual que [`crear`], pero usando un `id` determinista para evitar duplicados cuando varias
+/// máquinas detectan el mismo suceso antes de sincronizar `ops/` (p. ej. inactividad #117).
+pub fn crear_con_id(
+    c: &Connection,
+    ops: &Path,
+    emisor: &str,
+    id: &str,
+    datos: &DatosNotificacion<'_>,
+    ahora: &str,
+) -> Resultado<Notificacion> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(Error::Validacion("La notificación no tiene id".into()));
+    }
     let dest = normalizar_email(datos.para);
     if dest.is_empty() || usuarios::buscar(c, &dest)?.is_none() {
         return Err(Error::NoEncontrado(format!("el usuario {dest}")));
@@ -99,7 +121,7 @@ pub fn crear(
         return Err(Error::Validacion("La notificación no tiene título".into()));
     }
     let noti = Notificacion {
-        id: format!("noti_{}", eventos::uuid()),
+        id: id.to_string(),
         tipo: datos.tipo,
         para: dest,
         titulo: titulo.to_string(),
@@ -242,6 +264,151 @@ pub fn marcar_leida(c: &Connection, email: &str, id: &str, leida: bool) -> Resul
 /// Marca todas las notificaciones pendientes de `email` como leídas (#116).
 pub fn marcar_todas_leidas(c: &Connection, email: &str) -> Resultado<usize> {
     db_notis::marcar_todas_leidas(c, &normalizar_email(email))
+}
+
+fn parse_fecha_dia(fecha: &str) -> Option<NaiveDate> {
+    let s = fecha.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Some(d);
+    }
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(dt.date());
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Local).date_naive());
+    }
+    let prefijo = s.get(..10)?;
+    NaiveDate::parse_from_str(prefijo, "%Y-%m-%d").ok()
+}
+
+fn id_notificacion_inactividad(
+    tarea_id: &str,
+    dueno: &str,
+    ultima_actividad: NaiveDate,
+    ciclo: i64,
+) -> String {
+    let slug: String = dueno
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
+    format!(
+        "inact_{tarea_id}_{slug}_{}_{ciclo}",
+        ultima_actividad.format("%Y%m%d")
+    )
+}
+
+/// Revisa tareas activas con rama asociada y responsable que lleven al menos
+/// [`UMBRAL_INACTIVIDAD_DIAS`] días sin changesets nuevos ni cambios de activación (#117).
+/// Emite una notificación `inactividad` al dueño por `ops/` deduplicada por ciclo.
+pub fn evaluar_inactividad(
+    c: &Connection,
+    ops: &Path,
+    emisor: &str,
+    filtro_tarea: Option<&str>,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<Vec<Notificacion>> {
+    let hoy_dia = parse_fecha_dia(hoy).ok_or_else(|| {
+        Error::Validacion(format!("Fecha inválida para evaluar inactividad: {hoy}"))
+    })?;
+    let filtro = filtro_tarea.map(str::trim).filter(|s| !s.is_empty());
+    let todas = db_tareas::listar(c)?;
+
+    let mut padres_con_subtareas = BTreeSet::new();
+    for t in &todas {
+        if !t.eliminada && t.tipo != TipoTarea::SinDefinir {
+            if let Some(ref pid) = t.tarea_padre_id {
+                padres_con_subtareas.insert(pid.clone());
+            }
+        }
+    }
+
+    let mut emitidas = Vec::new();
+    for t in &todas {
+        if t.eliminada
+            || t.tipo == TipoTarea::SinDefinir
+            || padres_con_subtareas.contains(&t.id)
+            || !matches!(t.estado, EstadoTarea::PorHacer | EstadoTarea::EnProduccion)
+        {
+            continue;
+        }
+        if let Some(id_buscado) = filtro {
+            if t.id != id_buscado {
+                continue;
+            }
+        }
+        if t.rama_asociada
+            .as_deref()
+            .map_or(true, |r| r.trim().is_empty())
+        {
+            continue;
+        }
+        let Some(dueno) = t
+            .asignado_a
+            .as_deref()
+            .map(normalizar_email)
+            .filter(|e| !e.is_empty())
+        else {
+            continue;
+        };
+        if usuarios::buscar(c, &dueno)?.is_none() {
+            continue;
+        }
+
+        let commit_max = commits::de_tarea(c, &t.id)?
+            .into_iter()
+            .filter_map(|cm| parse_fecha_dia(&cm.fecha))
+            .max();
+        let inicio_max = t.actividad_desde.as_deref().and_then(parse_fecha_dia);
+        let ultima_actividad = match (commit_max, inicio_max) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        }
+        .or_else(|| parse_fecha_dia(&t.fecha_creacion));
+
+        let Some(ref_dia) = ultima_actividad else {
+            continue;
+        };
+        let dias = (hoy_dia - ref_dia).num_days();
+        if dias < UMBRAL_INACTIVIDAD_DIAS {
+            continue;
+        }
+        let ciclo = dias / UMBRAL_INACTIVIDAD_DIAS;
+        let id = id_notificacion_inactividad(&t.id, &dueno, ref_dia, ciclo);
+        if db_notis::buscar(c, &id)?.is_some() {
+            continue;
+        }
+
+        let accion = if t.estado == EstadoTarea::PorHacer {
+            "empezar a trabajarla y subir tu primer check-in"
+        } else {
+            "subir un check-in o actualizar tu avance"
+        };
+        let cuerpo = format!(
+            "Llevas {dias} días sin actividad en \"{}\" ({}), recuerda {accion}.",
+            t.titulo, t.id
+        );
+        let noti = crear_con_id(
+            c,
+            ops,
+            emisor,
+            &id,
+            &DatosNotificacion {
+                tipo: TipoNotificacion::Inactividad,
+                para: &dueno,
+                titulo: "Recordatorio de inactividad",
+                cuerpo: &cuerpo,
+                tarea_id: Some(&t.id),
+                accionable: false,
+            },
+            ahora,
+        )?;
+        emitidas.push(noti);
+    }
+    Ok(emitidas)
 }
 
 #[cfg(test)]
@@ -571,6 +738,272 @@ mod tests {
         assert!(tipos_dev.contains(&TipoNotificacion::TareaEliminada));
     }
 
+    #[test]
+    fn recordatorio_inactividad_por_umbral_ciclos_y_reapertura() {
+        let e = setup();
+        let admin = AutorTarea {
+            email: ADMIN,
+            rol: Rol::Administrador,
+        };
+        let dev_autor = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        // 1. Tarea general creada el 1 nov, pero tomada recién el 10 nov:
+        //    el reloj debe arrancar desde la toma (`actividad_desde = 2026-11-10`).
+        let mut t = crear_tarea(
+            e.db_a.conexion(),
+            &e.ops,
+            &admin,
+            &DatosNuevaTarea {
+                titulo: "Salto doble".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+            },
+            "2026-11-01T10:00:00Z",
+            "2026-11-01",
+        )
+        .unwrap();
+        crate::tareas::tomar(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev_autor,
+            &t.id,
+            |cadena| {
+                Ok(vec![(
+                    cadena[0].id.clone(),
+                    crate::servidor::Rama {
+                        id: 1,
+                        name: "/main/dev/T-101-salto-doble".into(),
+                        head_changeset: 1,
+                    },
+                )])
+            },
+            "2026-11-10T09:00:00Z",
+        )
+        .unwrap();
+
+        t = cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev_autor,
+            &t.id,
+            EstadoTarea::EnProduccion,
+            "2026-11-10T09:05:00Z",
+        )
+        .unwrap()
+        .tareas
+        .into_iter()
+        .find(|x| x.id == t.id)
+        .unwrap();
+        assert!(t.actividad_desde.is_some());
+
+        // Padre con subtarea activa (el padre se excluye; solo la subtarea con rama se vigila).
+        let grupo = crear_con_subtareas(
+            e.db_a.conexion(),
+            &e.ops,
+            &admin,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Padre con subs".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Audio,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::Audio,
+                    titulo: "Sub activa".into(),
+                    detalles: String::new(),
+                }],
+            },
+            "2026-11-10T10:00:00Z",
+            "2026-11-10",
+        )
+        .unwrap();
+        let sub_id = grupo[1].id.clone();
+        crate::tareas::tomar(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev_autor,
+            &sub_id,
+            |cadena| {
+                Ok(cadena
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        (
+                            p.id.clone(),
+                            crate::servidor::Rama {
+                                id: 10 + i as i64,
+                                name: format!("/main/dev/{}", p.id),
+                                head_changeset: 1,
+                            },
+                        )
+                    })
+                    .collect())
+            },
+            "2026-11-15T10:00:00Z",
+        )
+        .unwrap();
+
+        // Subtarea En espera tampoco debe alertar.
+        let mut t_espera = db_tareas::Tarea::nueva(
+            "T-999",
+            "En espera 1",
+            TipoTarea::SinDefinir,
+            DEV,
+            "2026-11-01",
+        );
+        t_espera.asignado_a = Some(DEV.into());
+        t_espera.rama_asociada = Some("/main/dev/T-999-espera".into());
+        t_espera.estado = EstadoTarea::EnProduccion;
+        db_tareas::insertar(e.db_a.conexion(), &t_espera).unwrap();
+
+        // Día 12 (2 días): < 3 días -> 0 notificaciones (tampoco dispara por fecha_creacion 2026-11-01).
+        assert!(evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            None,
+            "2026-11-12T10:00:00Z",
+            "2026-11-12",
+        )
+        .unwrap()
+        .is_empty());
+
+        // Día 13 (3 días): emite 1 recordatorio para `t.id` al Desarrollador dueño vía `ops/`.
+        let dia_3 = evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            None,
+            "2026-11-13T10:00:00Z",
+            "2026-11-13",
+        )
+        .unwrap();
+        assert_eq!(dia_3.len(), 1);
+        assert_eq!(dia_3[0].tipo, TipoNotificacion::Inactividad);
+        assert_eq!(dia_3[0].para, DEV);
+        assert_eq!(dia_3[0].tarea_id.as_deref(), Some(t.id.as_str()));
+        assert!(!dia_3[0].accionable);
+        assert!(dia_3[0].cuerpo.contains("Llevas 3 días sin actividad"));
+
+        // Misma ventana (día 13 y día 14): NO duplica el recordatorio.
+        assert!(evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            None,
+            "2026-11-13T12:00:00Z",
+            "2026-11-13",
+        )
+        .unwrap()
+        .is_empty());
+        assert!(evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            None,
+            "2026-11-14T10:00:00Z",
+            "2026-11-14",
+        )
+        .unwrap()
+        .is_empty());
+
+        // Día 16 (6 días = ciclo 2): vuelve a recordar para `t.id`.
+        let dia_6 = evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            Some(&t.id),
+            "2026-11-16T10:00:00Z",
+            "2026-11-16",
+        )
+        .unwrap();
+        assert_eq!(dia_6.len(), 1);
+        assert!(dia_6[0].cuerpo.contains("Llevas 6 días sin actividad"));
+
+        // Un check-in el día 16 reinicia el reloj: el día 18 (2 días después) -> 0 avisos.
+        crate::db::commits::guardar(
+            e.db_a.conexion(),
+            &crate::db::commits::Commit {
+                id: format!("C-{}-10", t.id),
+                tarea_id: t.id.clone(),
+                hash: "10".into(),
+                mensaje: "Primer avance".into(),
+                descripcion: None,
+                tipo: Some(TipoTarea::Scripting),
+                autor: DEV.into(),
+                fecha: "2026-11-16T15:00:00".into(),
+            },
+        )
+        .unwrap();
+        assert!(evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            Some(&t.id),
+            "2026-11-18T10:00:00Z",
+            "2026-11-18",
+        )
+        .unwrap()
+        .is_empty());
+
+        // Subtarea en revisión + padre con subtareas nunca disparan recordatorio de inactividad.
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &admin,
+            &sub_id,
+            EstadoTarea::EnRevision,
+            "2026-11-18T11:00:00Z",
+        )
+        .unwrap();
+        assert!(evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            Some(&grupo[0].id),
+            "2026-11-25T10:00:00Z",
+            "2026-11-25",
+        )
+        .unwrap()
+        .is_empty());
+        assert!(evaluar_inactividad(
+            e.db_a.conexion(),
+            &e.ops,
+            ADMIN,
+            Some(&sub_id),
+            "2026-11-25T10:00:00Z",
+            "2026-11-25",
+        )
+        .unwrap()
+        .is_empty());
+
+        // B sincroniza por ops/ y recibe ambos avisos de inactividad (ciclo 1 y ciclo 2).
+        let ahora = DateTime::parse_from_rfc3339("2026-11-30T00:00:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
+            lectura::aplicar_evento(c, &e.publica, ev)
+        })
+        .unwrap();
+        let inactivas_b: Vec<_> = listar_de_usuario(e.db_b.conexion(), DEV)
+            .unwrap()
+            .into_iter()
+            .filter(|n| n.tipo == TipoNotificacion::Inactividad)
+            .collect();
+        assert_eq!(inactivas_b.len(), 2);
+    }
+
     /// **Prueba en el entorno real** (CLAUDE.md, issue #116): contra
     /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` + OneDrive real,
     /// prueba:
@@ -846,6 +1279,271 @@ mod tests {
             .args(["workspace", "delete"])
             .arg(&ruta_ws)
             .ejecutar(&estado_a);
+        let _ = std::fs::remove_dir_all(&compartida);
+        println!("subcarpeta de prueba borrada: {}", !compartida.exists());
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    /// **Prueba en el entorno real** (CLAUDE.md, issue #117): contra
+    /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` + OneDrive real,
+    /// prueba el flujo completo de recordatorio de inactividad:
+    /// 1. Crea y asigna/toma tareas con ramas reales en Unity VC (`BranchBoard-Pruebas`).
+    /// 2. Ejecuta `revisar_actualizaciones_en` (la misma función del temporizador en
+    ///    segundo plano de `lib.rs`): sin días vencidos no notifica; con >= 3 días sin
+    ///    changesets emite `inactividad` por `ops/` hacia OneDrive (`ResumenPolling`),
+    ///    sin duplicar en reevaluaciones posteriores y replicando en máquina B.
+    /// 3. Hace un check-in real (`hacer_checkin_en`), vuelve a sincronizar con
+    ///    `revisar_actualizaciones_en` desde Unity VC REST API y verifica que el
+    ///    changeset real reinicia el contador de inactividad.
+    ///
+    /// Al terminar borra workspace, ramas con `--delete-changesets` y carpeta en OneDrive.
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_recordatorio_inactividad() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{asignar_en, hacer_checkin_en, tomar_en};
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::identidad::equipo::{self, Firmante};
+        use crate::modelo::hoy_local;
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-117-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+        let repo_cm = format!("{repo}@{org}@unity");
+        let mut ramas_creadas: Vec<String> = Vec::new();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-117-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo_cm}"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
+
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+            let hoy_real = hoy_local();
+            let pausa = || std::thread::sleep(std::time::Duration::from_millis(5));
+            let ahora_pausa = || {
+                pausa();
+                crate::modelo::ahora_iso()
+            };
+
+            let (t_inact, t_propia) = estado_a
+                .con_db(|db_a| {
+                    let firmante_admin = Firmante {
+                        email: &admin_fila.email,
+                        rol: Rol::Administrador,
+                        llave: &llave_admin,
+                    };
+                    equipo::crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &publica,
+                        &firmante_admin,
+                        DEV,
+                        Rol::Desarrollador,
+                        &ahora_pausa(),
+                        &hoy_real,
+                    )?;
+                    let admin_autor = AutorTarea {
+                        email: &admin_fila.email,
+                        rol: Rol::Administrador,
+                    };
+                    let t1 = crear_tarea(
+                        db_a.conexion(),
+                        &ops_a,
+                        &admin_autor,
+                        &DatosNuevaTarea {
+                            titulo: format!("Inactiva 117 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        &ahora_pausa(),
+                        &hoy_real,
+                    )?;
+                    let t2 = crear_tarea(
+                        db_a.conexion(),
+                        &ops_a,
+                        &admin_autor,
+                        &DatosNuevaTarea {
+                            titulo: format!("Con checkin 117 {sufijo}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        &ahora_pausa(),
+                        &hoy_real,
+                    )?;
+                    Ok((t1, t2))
+                })
+                .unwrap();
+
+            // 1. Asignar t1 a DEV y tomar t2 como Admin -> ambas crean ramas reales en Unity VC.
+            pausa();
+            let asig_t1 = asignar_en(&estado_a, &t_inact.id, DEV).unwrap();
+            let rama_t1 = asig_t1.last().unwrap().rama_asociada.clone().unwrap();
+            ramas_creadas.push(rama_t1);
+
+            pausa();
+            let tom_t2 = tomar_en(&estado_a, &t_propia.id).unwrap();
+            let rama_t2 = tom_t2.last().unwrap().rama_asociada.clone().unwrap();
+            ramas_creadas.push(rama_t2.clone());
+
+            // Recién creadas (0 días): el polling real no envía recordatorios.
+            let poll0 = revisar_actualizaciones_en(&estado_a, None).unwrap();
+            assert!(poll0.inactividad_notificada.is_empty());
+
+            // 2. Simular 4 días sin cambios en t1 y ejecutar `revisar_actualizaciones_en` real.
+            let hace_4_dias = (chrono::Local::now().date_naive() - chrono::Duration::days(4))
+                .format("%Y-%m-%d")
+                .to_string();
+            estado_a
+                .con_db(|db_a| {
+                    let mut fila = db_tareas::obtener(db_a.conexion(), &t_inact.id)?;
+                    fila.actividad_desde = Some(format!("{hace_4_dias}T10:00:00Z"));
+                    db_tareas::actualizar(db_a.conexion(), &fila)
+                })
+                .unwrap();
+
+            let poll1 = revisar_actualizaciones_en(&estado_a, Some(&t_inact.id)).unwrap();
+            assert_eq!(poll1.inactividad_notificada, vec![t_inact.id.clone()]);
+            assert!(poll1.hubo_cambios());
+
+            // Reejecutar enseguida no duplica notificaciones.
+            let poll2 = revisar_actualizaciones_en(&estado_a, Some(&t_inact.id)).unwrap();
+            assert!(poll2.inactividad_notificada.is_empty());
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // 3. Máquina B sincroniza vía OneDrive y recibe `inactividad` para DEV.
+            let ahora = Utc::now() + chrono::Duration::minutes(1);
+            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            println!("B sincroniza recordatorio de inactividad desde OneDrive: {sync_b:?}");
+            let notis_dev_b: Vec<_> = listar_de_usuario(db_b.conexion(), DEV)
+                .unwrap()
+                .into_iter()
+                .filter(|n| n.tipo == TipoNotificacion::Inactividad)
+                .collect();
+            assert_eq!(notis_dev_b.len(), 1);
+            assert!(notis_dev_b[0]
+                .cuerpo
+                .contains("Llevas 4 días sin actividad"));
+
+            // 4. Con un check-in real en t2 + polling desde Unity VC, el reloj se reinicia.
+            let hace_4_dias_ts = format!("{hace_4_dias}T09:00:00Z");
+            estado_a
+                .con_db(|db_a| {
+                    let mut fila = db_tareas::obtener(db_a.conexion(), &t_propia.id)?;
+                    fila.actividad_desde = Some(hace_4_dias_ts);
+                    db_tareas::actualizar(db_a.conexion(), &fila)
+                })
+                .unwrap();
+
+            let archivo_ws = ws_a.path().join(format!("avance_117_{sufijo}.txt"));
+            std::fs::write(&archivo_ws, "checkin real 117").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo_ws.to_string_lossy().as_ref())
+                .en(ws_a.path())
+                .exigir_exito(&estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &estado_a,
+                &rama_t2,
+                "Avance real 117",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            let poll_post_ci = revisar_actualizaciones_en(&estado_a, Some(&t_propia.id)).unwrap();
+            assert!(poll_post_ci.inactividad_notificada.is_empty());
+
+            let dentro_2_dias = (chrono::Local::now().date_naive() + chrono::Duration::days(2))
+                .format("%Y-%m-%d")
+                .to_string();
+            let sin_alerta_2_dias = estado_a
+                .con_db(|db_a| {
+                    evaluar_inactividad(
+                        db_a.conexion(),
+                        &ops_a,
+                        &admin_fila.email,
+                        Some(&t_propia.id),
+                        &crate::modelo::ahora_iso(),
+                        &dentro_2_dias,
+                    )
+                })
+                .unwrap();
+            assert!(sin_alerta_2_dias.is_empty());
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
+        for rama in ramas_creadas.iter().rev() {
+            let salida = Comando::cm()
+                .args(["branch", "delete", "--delete-changesets"])
+                .arg(format!("br:{rama}@{repo_cm}"))
+                .ejecutar(&estado_a)
+                .unwrap();
+            println!("limpieza rama {rama}: {}", salida.exito());
+        }
         let _ = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", !compartida.exists());
         if let Err(p) = resultado {

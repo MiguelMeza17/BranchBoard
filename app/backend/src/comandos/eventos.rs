@@ -150,6 +150,7 @@ pub struct ResumenPolling {
     pub tocados_detectados: Vec<String>,
     pub alerta_rama_ajena: Option<AlertaRamaAjena>,
     pub sprints_actualizados: Vec<String>,
+    pub inactividad_notificada: Vec<String>,
 }
 
 impl ResumenPolling {
@@ -162,6 +163,7 @@ impl ResumenPolling {
             || !self.tocados_detectados.is_empty()
             || self.alerta_rama_ajena.is_some()
             || !self.sprints_actualizados.is_empty()
+            || !self.inactividad_notificada.is_empty()
     }
 }
 
@@ -437,6 +439,19 @@ pub fn revisar_actualizaciones_en(
                     }
                 }
             }
+        }
+
+        if let Some(ref carpeta_ops) = ops {
+            let inactivas = crate::notificaciones::evaluar_inactividad(
+                db.conexion(),
+                carpeta_ops,
+                &yo.email,
+                filtro,
+                &ahora,
+                &hoy,
+            )?;
+            resumen.inactividad_notificada =
+                inactivas.into_iter().filter_map(|n| n.tarea_id).collect();
         }
 
         Ok(())
