@@ -8,20 +8,29 @@ use chrono::{Days, NaiveDate};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::db::sprints::{self as db_sprints, Sprint};
+use crate::db::sprints::{self as db_sprints, ReporteSprint, Sprint};
 use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
-use crate::modelo::{normalizar_email, TipoTarea};
+use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoTarea};
 use crate::tareas::{rol_verificado_de, AutorTarea};
 
 /// Tipos de evento que maneja este módulo.
 pub const TIPOS: &[&str] = &[
     "crear_sprint",
+    "cerrar_sprint",
+    "cerrar_sprint_automatico",
+    "reporte_sprint_fecha_fin",
     "asignar_tarea_a_sprint",
     "asignar_tarea_a_backlog",
     "asignar_backlog_a_sprint",
 ];
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PayloadCerrarSprint {
+    sprint_id: String,
+    fecha: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct PayloadAsignarTareaGrupo {
@@ -54,6 +63,57 @@ fn exigir_lider_o_admin_evento(c: &Connection, publica_admin: &str, email: &str)
         Some(rol) if rol.es_lider_o_admin() => Ok(()),
         _ => Err(Error::SinPermiso),
     }
+}
+
+fn exigir_admin_autor(autor: &AutorTarea<'_>) -> Resultado<()> {
+    if autor.rol != Rol::Administrador {
+        return Err(Error::SinPermiso);
+    }
+    Ok(())
+}
+
+fn exigir_admin_evento(c: &Connection, publica_admin: &str, email: &str) -> Resultado<()> {
+    match rol_verificado_de(c, publica_admin, email)? {
+        Some(Rol::Administrador) => Ok(()),
+        _ => Err(Error::SinPermiso),
+    }
+}
+
+fn exigir_miembro_evento(c: &Connection, publica_admin: &str, email: &str) -> Resultado<()> {
+    if rol_verificado_de(c, publica_admin, email)?.is_none() {
+        return Err(Error::SinPermiso);
+    }
+    Ok(())
+}
+
+fn obtener_con_reporte(c: &Connection, id: &str) -> Resultado<Sprint> {
+    let mut sprint = db_sprints::obtener(c, id)?;
+    sprint.reporte = db_sprints::ultimo_reporte(c, id)?.map(|r| r.tareas);
+    Ok(sprint)
+}
+
+fn snapshot_tareas_grupo(c: &Connection, sprint: &Sprint) -> Resultado<Vec<Tarea>> {
+    Ok(db_tareas::listar(c)?
+        .into_iter()
+        .filter(|t| {
+            !t.eliminada
+                && if sprint.con_fecha {
+                    t.sprint_id.as_deref() == Some(sprint.id.as_str())
+                } else {
+                    t.backlog_id.as_deref() == Some(sprint.id.as_str())
+                }
+        })
+        .collect())
+}
+
+fn liberar_tareas_sin_terminar_de_sprint(c: &Connection, sprint_id: &str) -> Resultado<()> {
+    for mut t in db_tareas::listar(c)? {
+        if t.sprint_id.as_deref() == Some(sprint_id) && t.estado != EstadoTarea::Terminada {
+            t.sprint_id = None;
+            db_tareas::actualizar(c, &t)?;
+        }
+    }
+    Ok(())
 }
 
 /// Suma `dias` días calendario a `fecha` (`AAAA-MM-DD`).
@@ -248,26 +308,184 @@ pub fn asignar_backlog_a_sprint(
     Ok(actualizadas)
 }
 
+/// Cierra manualmente un sprint (incluso antes de su `fecha_fin`) o un backlog,
+/// guardando la copia de sus tareas como reporte final y dejando en su backlog
+/// (con `sprint_id = null`) las tareas no terminadas (#114). Exclusivo Administrador.
+pub fn cerrar_sprint(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    sprint_id: &str,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<Sprint> {
+    exigir_admin_autor(autor)?;
+    let id = sprint_id.trim();
+    let payload = PayloadCerrarSprint {
+        sprint_id: id.to_string(),
+        fecha: hoy.to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "cerrar_sprint",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar cerrar_sprint: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_cerrar_sprint(tx, &payload))?;
+    obtener_con_reporte(c, id)
+}
+
+/// Revisa todos los sprints abiertos con fecha de fin vencida (`fecha_fin <= hoy`):
+/// - si todas sus tareas activas están en `Terminada`, los cierra automáticamente
+///   guardando el reporte final;
+/// - si falta alguna tarea, genera el reporte de la fecha de fin (sin duplicar si
+///   ya existía) y deja el sprint abierto hasta que terminen todas o lo cierre el
+///   Administrador (#114). Backlogs (`con_fecha = false`) nunca se cierran solos.
+pub fn evaluar_cierre_sprints(
+    c: &Connection,
+    ops: Option<&Path>,
+    usuario_email: &str,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<Vec<String>> {
+    let email = normalizar_email(usuario_email);
+    let mut actualizados = Vec::new();
+    for sprint in db_sprints::listar(c)? {
+        if !sprint.con_fecha || sprint.cerrado {
+            continue;
+        }
+        let Some(ref fecha_fin) = sprint.fecha_fin else {
+            continue;
+        };
+        if hoy < fecha_fin.as_str() {
+            continue;
+        }
+        let tareas_sprint = snapshot_tareas_grupo(c, &sprint)?;
+        let todas_terminadas = tareas_sprint
+            .iter()
+            .all(|t| t.estado == EstadoTarea::Terminada);
+        let previos = db_sprints::reportes(c, &sprint.id)?;
+
+        if todas_terminadas {
+            let max_comp = tareas_sprint
+                .iter()
+                .filter_map(|t| t.fecha_completada.as_deref())
+                .max();
+            let fecha_cierre = if previos.is_empty()
+                && (max_comp.is_none() || max_comp <= Some(fecha_fin.as_str()))
+            {
+                fecha_fin.clone()
+            } else if let Some(f) = max_comp.filter(|&f| f > fecha_fin.as_str() && f <= hoy) {
+                f.to_string()
+            } else {
+                hoy.to_string()
+            };
+            let payload = PayloadCerrarSprint {
+                sprint_id: sprint.id.clone(),
+                fecha: fecha_cierre,
+            };
+            publicar_o_aplicar_cierre(
+                c,
+                ops,
+                &email,
+                ahora,
+                "cerrar_sprint_automatico",
+                &payload,
+                aplicar_cerrar_sprint_automatico,
+            )?;
+            actualizados.push(sprint.id);
+        } else if !previos.iter().any(|r| !r.de_cierre) {
+            let payload = PayloadCerrarSprint {
+                sprint_id: sprint.id.clone(),
+                fecha: fecha_fin.clone(),
+            };
+            publicar_o_aplicar_cierre(
+                c,
+                ops,
+                &email,
+                ahora,
+                "reporte_sprint_fecha_fin",
+                &payload,
+                aplicar_reporte_fecha_fin,
+            )?;
+            actualizados.push(sprint.id);
+        }
+    }
+    Ok(actualizados)
+}
+
+fn publicar_o_aplicar_cierre(
+    c: &Connection,
+    ops: Option<&Path>,
+    email: &str,
+    ahora: &str,
+    tipo: &str,
+    payload: &PayloadCerrarSprint,
+    aplicar: fn(&Connection, &PayloadCerrarSprint) -> Resultado<()>,
+) -> Resultado<()> {
+    if let Some(carpeta_ops) = ops {
+        let mut ev = Evento::nuevo(
+            tipo,
+            Some(&payload.sprint_id),
+            email,
+            serde_json::to_value(payload)
+                .map_err(|e| Error::Interno(format!("no se pudo serializar {tipo}: {e}")))?,
+        );
+        ev.timestamp = ahora.to_string();
+        eventos::publicar(c, carpeta_ops, &ev, |tx| aplicar(tx, payload))?;
+        Ok(())
+    } else {
+        aplicar(c, payload)
+    }
+}
+
 /// Reproduce un evento de planificación recibido de `ops/`.
 pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
-    exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
     match evento.tipo.as_str() {
         "crear_sprint" => {
+            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
             let sprint: Sprint = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("crear_sprint inválido: {e}")))?;
             aplicar_crear_sprint(c, &sprint)
         }
+        "cerrar_sprint" => {
+            exigir_admin_evento(c, publica_admin, &evento.usuario)?;
+            let payload: PayloadCerrarSprint = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("cerrar_sprint inválido: {e}")))?;
+            aplicar_cerrar_sprint(c, &payload)
+        }
+        "cerrar_sprint_automatico" => {
+            exigir_miembro_evento(c, publica_admin, &evento.usuario)?;
+            let payload: PayloadCerrarSprint = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| {
+                    Error::Validacion(format!("cerrar_sprint_automatico inválido: {e}"))
+                })?;
+            aplicar_cerrar_sprint_automatico(c, &payload)
+        }
+        "reporte_sprint_fecha_fin" => {
+            exigir_miembro_evento(c, publica_admin, &evento.usuario)?;
+            let payload: PayloadCerrarSprint = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| {
+                    Error::Validacion(format!("reporte_sprint_fecha_fin inválido: {e}"))
+                })?;
+            aplicar_reporte_fecha_fin(c, &payload)
+        }
         "asignar_tarea_a_sprint" => {
+            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
             let payload: PayloadAsignarTareaGrupo = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_tarea_a_sprint inválido: {e}")))?;
             aplicar_asignar_tarea_a_sprint(c, &payload)
         }
         "asignar_tarea_a_backlog" => {
+            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
             let payload: PayloadAsignarTareaGrupo = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_tarea_a_backlog inválido: {e}")))?;
             aplicar_asignar_tarea_a_backlog(c, &payload)
         }
         "asignar_backlog_a_sprint" => {
+            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
             let payload: PayloadAsignarBacklogASprint =
                 serde_json::from_value(evento.payload.clone()).map_err(|e| {
                     Error::Validacion(format!("asignar_backlog_a_sprint inválido: {e}"))
@@ -278,6 +496,113 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             "tipo de evento de planificación no soportado: {otro}"
         ))),
     }
+}
+
+fn aplicar_cerrar_sprint(c: &Connection, payload: &PayloadCerrarSprint) -> Resultado<()> {
+    let mut sprint = db_sprints::obtener(c, payload.sprint_id.trim())?;
+    if sprint.cerrado {
+        return Err(Error::Validacion(format!(
+            "El sprint {} ya está cerrado",
+            sprint.id
+        )));
+    }
+    let snapshot = snapshot_tareas_grupo(c, &sprint)?;
+    let reporte = ReporteSprint {
+        sprint_id: sprint.id.clone(),
+        fecha: payload.fecha.clone(),
+        de_cierre: true,
+        tareas: snapshot,
+    };
+    db_sprints::guardar_reporte(c, &reporte)?;
+    sprint.cerrado = true;
+    sprint.fecha_cierre_real = Some(payload.fecha.clone());
+    db_sprints::actualizar(c, &sprint)?;
+    if sprint.con_fecha {
+        liberar_tareas_sin_terminar_de_sprint(c, &sprint.id)?;
+    }
+    Ok(())
+}
+
+fn aplicar_cerrar_sprint_automatico(
+    c: &Connection,
+    payload: &PayloadCerrarSprint,
+) -> Resultado<()> {
+    let mut sprint = db_sprints::obtener(c, payload.sprint_id.trim())?;
+    if !sprint.con_fecha {
+        return Err(Error::Validacion(format!(
+            "{} es un backlog y no se cierra automáticamente",
+            sprint.id
+        )));
+    }
+    if sprint.cerrado {
+        return Ok(());
+    }
+    let Some(ref fecha_fin) = sprint.fecha_fin else {
+        return Err(Error::Validacion("El sprint no tiene fecha de fin".into()));
+    };
+    if payload.fecha.as_str() < fecha_fin.as_str() {
+        return Err(Error::Validacion(format!(
+            "El sprint {} aún no llega a su fecha de fin ({fecha_fin})",
+            sprint.id
+        )));
+    }
+    let snapshot = snapshot_tareas_grupo(c, &sprint)?;
+    if snapshot.iter().any(|t| t.estado != EstadoTarea::Terminada) {
+        return Err(Error::Validacion(format!(
+            "Todavía hay tareas sin terminar en {}",
+            sprint.id
+        )));
+    }
+    let reporte = ReporteSprint {
+        sprint_id: sprint.id.clone(),
+        fecha: payload.fecha.clone(),
+        de_cierre: true,
+        tareas: snapshot,
+    };
+    db_sprints::guardar_reporte(c, &reporte)?;
+    sprint.cerrado = true;
+    sprint.fecha_cierre_real = Some(payload.fecha.clone());
+    db_sprints::actualizar(c, &sprint)?;
+    liberar_tareas_sin_terminar_de_sprint(c, &sprint.id)?;
+    Ok(())
+}
+
+fn aplicar_reporte_fecha_fin(c: &Connection, payload: &PayloadCerrarSprint) -> Resultado<()> {
+    let sprint = db_sprints::obtener(c, payload.sprint_id.trim())?;
+    if !sprint.con_fecha {
+        return Err(Error::Validacion(format!(
+            "{} es un backlog y no genera reporte por fecha de fin",
+            sprint.id
+        )));
+    }
+    if sprint.cerrado {
+        return Ok(());
+    }
+    let Some(ref fecha_fin) = sprint.fecha_fin else {
+        return Err(Error::Validacion("El sprint no tiene fecha de fin".into()));
+    };
+    if payload.fecha.as_str() != fecha_fin.as_str() {
+        return Err(Error::Validacion(format!(
+            "La fecha del reporte ({}) no coincide con fecha_fin ({fecha_fin})",
+            payload.fecha
+        )));
+    }
+    if db_sprints::reportes(c, &sprint.id)?
+        .iter()
+        .any(|r| !r.de_cierre)
+    {
+        return Ok(());
+    }
+    let snapshot = snapshot_tareas_grupo(c, &sprint)?;
+    db_sprints::guardar_reporte(
+        c,
+        &ReporteSprint {
+            sprint_id: sprint.id,
+            fecha: payload.fecha.clone(),
+            de_cierre: false,
+            tareas: snapshot,
+        },
+    )
 }
 
 fn aplicar_crear_sprint(c: &Connection, sprint: &Sprint) -> Resultado<()> {
@@ -398,6 +723,12 @@ fn validar_asignacion_backlog_a_sprint(
                 backlog.id
             )));
         }
+        if backlog.cerrado {
+            return Err(Error::Validacion(format!(
+                "El backlog {} ya está cerrado",
+                backlog.id
+            )));
+        }
     }
     Ok(())
 }
@@ -445,8 +776,8 @@ mod tests {
     use crate::identidad::llaves::{
         cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin,
     };
-    use crate::modelo::Rol;
-    use crate::tareas::{crear, crear_en_espera, eliminar, DatosNuevaTarea};
+    use crate::modelo::{hoy_local, EstadoTarea, Rol};
+    use crate::tareas::{cambiar_estado, crear, crear_en_espera, eliminar, DatosNuevaTarea};
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
@@ -1417,6 +1748,785 @@ mod tests {
             })
             .unwrap();
             println!("B sincroniza planificación desde OneDrive: {sync_b:?}");
+            assert_eq!(sync_b.descartados, 1);
+
+            let sprints_a = listar_sprints_en(&estado_a).unwrap();
+            let sprints_b = listar(db_b.conexion()).unwrap();
+            assert_eq!(sprints_b, sprints_a);
+
+            let tareas_a = estado_a
+                .con_db(|db| db_tareas::listar(db.conexion()))
+                .unwrap();
+            let tareas_b = db_tareas::listar(db_b.conexion()).unwrap();
+            assert_eq!(tareas_b, tareas_a);
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
+        let _ = std::fs::remove_dir_all(&compartida);
+        println!("subcarpeta de prueba borrada: {}", !compartida.exists());
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    fn autor_admin() -> AutorTarea<'static> {
+        AutorTarea {
+            email: ADMIN,
+            rol: Rol::Administrador,
+        }
+    }
+
+    #[test]
+    fn cerrar_sprint_solo_admin_guarda_copia_y_libera_pendientes() {
+        let e = setup();
+        let s1 = nuevo_sprint(
+            &e,
+            &autor_lider(),
+            "Sprint Anticipado",
+            "Meta",
+            true,
+            Some(14),
+            "2026-11-16T10:01:00.000Z",
+        )
+        .unwrap();
+        let b1 = nuevo_sprint(
+            &e,
+            &autor_lider(),
+            "Backlog Base",
+            "",
+            false,
+            None,
+            "2026-11-16T10:01:01.000Z",
+        )
+        .unwrap();
+
+        let t_hecha = crear_tarea_ok(&e, "Ya hecha", "2026-11-16T10:01:02.000Z");
+        let t_libre = crear_tarea_ok(&e, "Aun en produccion", "2026-11-16T10:01:03.000Z");
+
+        asignar_tarea_a_backlog(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t_libre.id,
+            Some(&b1.id),
+            "2026-11-16T10:01:04.000Z",
+        )
+        .unwrap();
+        asignar_tarea_a_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t_hecha.id,
+            Some(&s1.id),
+            "2026-11-16T10:01:05.000Z",
+        )
+        .unwrap();
+        asignar_tarea_a_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t_libre.id,
+            Some(&s1.id),
+            "2026-11-16T10:01:06.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t_hecha.id,
+            EstadoTarea::Terminada,
+            "2026-11-16T10:01:07.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_dev(),
+            &t_libre.id,
+            EstadoTarea::EnProduccion,
+            "2026-11-16T10:01:08.000Z",
+        )
+        .unwrap();
+
+        // Líder y Desarrollador no pueden cerrar sprints ni backlogs.
+        assert!(matches!(
+            cerrar_sprint(
+                e.db_a.conexion(),
+                &e.ops,
+                &autor_lider(),
+                &s1.id,
+                "2026-11-16T10:01:09.000Z",
+                "2026-11-20",
+            ),
+            Err(Error::SinPermiso)
+        ));
+        assert!(matches!(
+            cerrar_sprint(
+                e.db_a.conexion(),
+                &e.ops,
+                &autor_dev(),
+                &b1.id,
+                "2026-11-16T10:01:10.000Z",
+                "2026-11-20",
+            ),
+            Err(Error::SinPermiso)
+        ));
+
+        // Administrador cierra S-1 antes de fecha_fin (2026-11-30): cierra el 2026-11-20.
+        let cerrado = cerrar_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_admin(),
+            &s1.id,
+            "2026-11-16T10:01:11.000Z",
+            "2026-11-20",
+        )
+        .unwrap();
+        assert!(cerrado.cerrado);
+        assert_eq!(cerrado.fecha_cierre_real.as_deref(), Some("2026-11-20"));
+        let copia = cerrado.reporte.as_ref().expect("debe guardar copia");
+        assert_eq!(copia.len(), 2);
+        assert_eq!(
+            copia.iter().find(|t| t.id == t_libre.id).unwrap().estado,
+            EstadoTarea::EnProduccion
+        );
+
+        // La hecha conserva sprint_id; la inacabada queda libre (sprint_id = None) en su backlog.
+        let hech_ahora = db_tareas::obtener(e.db_a.conexion(), &t_hecha.id).unwrap();
+        let lib_ahora = db_tareas::obtener(e.db_a.conexion(), &t_libre.id).unwrap();
+        assert_eq!(hech_ahora.sprint_id.as_deref(), Some("S-1"));
+        assert_eq!(lib_ahora.sprint_id, None);
+        assert_eq!(lib_ahora.backlog_id.as_deref(), Some("B-1"));
+
+        // Cambiar la tarea libre después NO altera la copia histórica del reporte.
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t_libre.id,
+            EstadoTarea::Terminada,
+            "2026-11-16T10:01:12.000Z",
+        )
+        .unwrap();
+        let s1_lista = listar(e.db_a.conexion())
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == s1.id)
+            .unwrap();
+        assert_eq!(
+            s1_lista
+                .reporte
+                .unwrap()
+                .iter()
+                .find(|t| t.id == t_libre.id)
+                .unwrap()
+                .estado,
+            EstadoTarea::EnProduccion
+        );
+
+        // No se puede volver a cerrar ni meter más tareas.
+        assert!(matches!(
+            cerrar_sprint(
+                e.db_a.conexion(),
+                &e.ops,
+                &autor_admin(),
+                &s1.id,
+                "2026-11-16T10:01:13.000Z",
+                "2026-11-21",
+            ),
+            Err(Error::Validacion(_))
+        ));
+
+        // El Administrador también puede cerrar manualmente el backlog B-1.
+        let b1_cerrado = cerrar_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_admin(),
+            &b1.id,
+            "2026-11-16T10:01:14.000Z",
+            "2026-11-22",
+        )
+        .unwrap();
+        assert!(b1_cerrado.cerrado);
+        assert_eq!(b1_cerrado.fecha_cierre_real.as_deref(), Some("2026-11-22"));
+
+        // Sincroniza a B y descarta evento falso de Líder intentando cerrar sin ser Admin.
+        let mut ev_falso = Evento::nuevo(
+            "cerrar_sprint",
+            Some(&s1.id),
+            LIDER,
+            serde_json::to_value(&PayloadCerrarSprint {
+                sprint_id: s1.id.clone(),
+                fecha: "2026-11-23".into(),
+            })
+            .unwrap(),
+        );
+        ev_falso.timestamp = "2026-11-16T10:01:15.000Z".into();
+        eventos::escribir_evento(&e.ops, &ev_falso).unwrap();
+
+        let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let sync_b = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
+            lectura::aplicar_evento(c, &e.publica, ev)
+        })
+        .unwrap();
+        assert_eq!(sync_b.descartados, 1);
+        assert_eq!(
+            listar(e.db_b.conexion()).unwrap(),
+            listar(e.db_a.conexion()).unwrap()
+        );
+        let _ = e.local_a;
+    }
+
+    #[test]
+    fn fecha_fin_cierra_solo_si_todo_terminado_y_sino_deja_abierto_con_reporte() {
+        let e = setup();
+        let s1 = nuevo_sprint(
+            &e,
+            &autor_lider(),
+            "Todo Listo",
+            "",
+            true,
+            Some(5),
+            "2026-11-16T10:01:00.000Z",
+        )
+        .unwrap(); // fin 2026-11-21
+        let s2 = nuevo_sprint(
+            &e,
+            &autor_lider(),
+            "Con Pendiente",
+            "",
+            true,
+            Some(5),
+            "2026-11-16T10:01:01.000Z",
+        )
+        .unwrap(); // fin 2026-11-21
+        let b1 = nuevo_sprint(
+            &e,
+            &autor_lider(),
+            "Backlog Eterno",
+            "",
+            false,
+            None,
+            "2026-11-16T10:01:02.000Z",
+        )
+        .unwrap();
+
+        let t1 = crear_tarea_ok(&e, "T S1", "2026-11-16T10:01:03.000Z");
+        let t2a = crear_tarea_ok(&e, "T S2 hecha", "2026-11-16T10:01:04.000Z");
+        let t2b = crear_tarea_ok(&e, "T S2 en revision", "2026-11-16T10:01:05.000Z");
+
+        asignar_tarea_a_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t1.id,
+            Some(&s1.id),
+            "2026-11-16T10:01:06.000Z",
+        )
+        .unwrap();
+        asignar_tarea_a_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t2a.id,
+            Some(&s2.id),
+            "2026-11-16T10:01:07.000Z",
+        )
+        .unwrap();
+        asignar_tarea_a_sprint(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t2b.id,
+            Some(&s2.id),
+            "2026-11-16T10:01:08.000Z",
+        )
+        .unwrap();
+
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t1.id,
+            EstadoTarea::Terminada,
+            "2026-11-16T10:01:09.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t2a.id,
+            EstadoTarea::Terminada,
+            "2026-11-16T10:01:10.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_dev(),
+            &t2b.id,
+            EstadoTarea::EnRevision,
+            "2026-11-16T10:01:11.000Z",
+        )
+        .unwrap();
+
+        // Antes de fecha_fin (2026-11-20) no cambia nada.
+        assert!(evaluar_cierre_sprints(
+            e.db_a.conexion(),
+            Some(&e.ops),
+            DEV,
+            "2026-11-16T10:01:12.000Z",
+            "2026-11-20",
+        )
+        .unwrap()
+        .is_empty());
+
+        // Al llegar fecha_fin (2026-11-21): S-1 cierra solo; S-2 genera reporte del día pero sigue abierto.
+        let cam = evaluar_cierre_sprints(
+            e.db_a.conexion(),
+            Some(&e.ops),
+            DEV,
+            "2026-11-16T10:01:13.000Z",
+            "2026-11-21",
+        )
+        .unwrap();
+        assert_eq!(cam, vec![s1.id.clone(), s2.id.clone()]);
+
+        let s1_fin = db_sprints::obtener(e.db_a.conexion(), &s1.id).unwrap();
+        assert!(s1_fin.cerrado);
+        assert_eq!(s1_fin.fecha_cierre_real.as_deref(), Some("2026-11-21"));
+
+        let s2_fin = db_sprints::obtener(e.db_a.conexion(), &s2.id).unwrap();
+        assert!(!s2_fin.cerrado);
+        assert_eq!(s2_fin.fecha_cierre_real, None);
+        let reps_s2 = db_sprints::reportes(e.db_a.conexion(), &s2.id).unwrap();
+        assert_eq!(reps_s2.len(), 1);
+        assert!(!reps_s2[0].de_cierre);
+        assert_eq!(reps_s2[0].fecha, "2026-11-21");
+        assert_eq!(reps_s2[0].tareas.len(), 2);
+
+        // Correr otra vez al día siguiente sin cambios no duplica el reporte de S-2.
+        assert!(evaluar_cierre_sprints(
+            e.db_a.conexion(),
+            Some(&e.ops),
+            LIDER,
+            "2026-11-16T10:01:14.000Z",
+            "2026-11-22",
+        )
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            db_sprints::reportes(e.db_a.conexion(), &s2.id)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Cuando termina t2b el 2026-11-23, S-2 se cierra solo con reporte final.
+        cambiar_estado(
+            e.db_a.conexion(),
+            &e.ops,
+            &autor_lider(),
+            &t2b.id,
+            EstadoTarea::Terminada,
+            "2026-11-23T10:01:15.000Z",
+        )
+        .unwrap();
+
+        let cierre_s2 = evaluar_cierre_sprints(
+            e.db_a.conexion(),
+            Some(&e.ops),
+            LIDER,
+            "2026-11-23T10:01:16.000Z",
+            "2026-11-23",
+        )
+        .unwrap();
+        assert_eq!(cierre_s2, vec![s2.id.clone()]);
+        let s2_cerrado = db_sprints::obtener(e.db_a.conexion(), &s2.id).unwrap();
+        assert!(s2_cerrado.cerrado);
+        assert_eq!(s2_cerrado.fecha_cierre_real.as_deref(), Some("2026-11-23"));
+        let reps_final = db_sprints::reportes(e.db_a.conexion(), &s2.id).unwrap();
+        assert_eq!(reps_final.len(), 2);
+        assert!(reps_final[1].de_cierre);
+
+        // El backlog nunca se cierra solo.
+        assert!(
+            !db_sprints::obtener(e.db_a.conexion(), &b1.id)
+                .unwrap()
+                .cerrado
+        );
+
+        // Un evento forjado de auto-cierre antes de fecha_fin se descarta en B.
+        let s3 = nuevo_sprint(
+            &e,
+            &autor_lider(),
+            "Futuro",
+            "",
+            true,
+            Some(30),
+            "2026-11-23T10:01:17.000Z",
+        )
+        .unwrap();
+        let mut ev_premature = Evento::nuevo(
+            "cerrar_sprint_automatico",
+            Some(&s3.id),
+            DEV,
+            serde_json::to_value(&PayloadCerrarSprint {
+                sprint_id: s3.id.clone(),
+                fecha: "2026-11-20".into(),
+            })
+            .unwrap(),
+        );
+        ev_premature.timestamp = "2026-11-23T10:01:18.000Z".into();
+        eventos::escribir_evento(&e.ops, &ev_premature).unwrap();
+
+        let ahora = DateTime::parse_from_rfc3339("2026-11-23T10:05:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let sync_b = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
+            lectura::aplicar_evento(c, &e.publica, ev)
+        })
+        .unwrap();
+        assert_eq!(sync_b.descartados, 1);
+        assert_eq!(
+            listar(e.db_b.conexion()).unwrap(),
+            listar(e.db_a.conexion()).unwrap()
+        );
+    }
+
+    /// **Prueba en el entorno real** (CLAUDE.md, issue #114): contra
+    /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` + OneDrive real,
+    /// prueba:
+    /// 1. `cerrar_sprint_en` (solo Administrador, incluso antes de `fecha_fin`):
+    ///    guarda la copia congelada de las tareas del sprint, conserva `sprint_id`
+    ///    en las terminadas y deja libres (`sprint_id = null`) en su backlog las
+    ///    que no estaban terminadas; rechaza cierre manual a Líder/Desarrollador.
+    /// 2. Sprints cuya `fecha_fin` coincide con hoy (`hoy_local()`):
+    ///    - `revisar_actualizaciones_en` / `listar_sprints_en` cierra automáticamente
+    ///      el sprint cuyas tareas ya están todas en `Terminada` (`de_cierre = true`).
+    ///    - El sprint con tarea sin terminar genera el reporte del día
+    ///      (`de_cierre = false`) y sigue abierto sin duplicar reportes; al
+    ///      terminar la última tarea se cierra solo con su reporte final.
+    /// 3. La máquina B sincroniza vía OneDrive todos los eventos y descarta un
+    ///    `cerrar_sprint` forjado de Líder, llegando exactamente al mismo estado.
+    ///
+    /// Al terminar borra el workspace y la subcarpeta de OneDrive.
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cierre_sprints_y_reportes() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::sprints::{
+            asignar_tarea_a_backlog_en, asignar_tarea_a_sprint_en, cerrar_sprint_en,
+            crear_sprint_en, listar_sprints_en,
+        };
+        use crate::comandos::tareas::cambiar_estado_en;
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-114-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-114-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo}@{org}@unity"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
+
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+            let hoy_real = hoy_local();
+            let hace_7_dias = (chrono::Local::now().date_naive() - Days::new(7))
+                .format("%Y-%m-%d")
+                .to_string();
+            let pausa = || std::thread::sleep(std::time::Duration::from_millis(5));
+            let ahora_pausa = || {
+                pausa();
+                crate::modelo::ahora_iso()
+            };
+
+            estado_a
+                .con_db(|db_a| {
+                    let firmante_admin = Firmante {
+                        email: &admin_fila.email,
+                        rol: Rol::Administrador,
+                        llave: &llave_admin,
+                    };
+                    equipo::crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &publica,
+                        &firmante_admin,
+                        LIDER,
+                        Rol::Lider,
+                        &ahora_pausa(),
+                        &hoy_real,
+                    )?;
+                    equipo::crear(
+                        db_a.conexion(),
+                        &ops_a,
+                        &publica,
+                        &firmante_admin,
+                        DEV,
+                        Rol::Desarrollador,
+                        &ahora_pausa(),
+                        &hoy_real,
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+
+            // S-1: sprint futuro para cierre manual anticipado. B-1: backlog para verificar tareas liberadas.
+            pausa();
+            let s1 = crear_sprint_en(
+                &estado_a,
+                "Sprint Anticipado",
+                "Cierre manual",
+                true,
+                Some(14),
+            )
+            .unwrap();
+            pausa();
+            let b1 = crear_sprint_en(&estado_a, "Backlog Destino", "", false, None).unwrap();
+            pausa();
+
+            // S-2 y S-3: sprints creados hace 7 días con duración 7 -> fecha_fin == hoy_local().
+            let (s2, s3, t_s1_ok, t_s1_pend, t_s2_ok, t_s3_pend) = estado_a
+                .con_db(|db_a| {
+                    let s2 = crear_sprint(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_lider(),
+                        &DatosNuevoSprint {
+                            nombre: "Sprint Auto Cierre",
+                            descripcion: "Todas terminadas hoy",
+                            con_fecha: true,
+                            duracion_dias: Some(7),
+                        },
+                        &ahora_pausa(),
+                        &hace_7_dias,
+                    )?;
+                    let s3 = crear_sprint(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_lider(),
+                        &DatosNuevoSprint {
+                            nombre: "Sprint Con Pendiente Hoy",
+                            descripcion: "Genera reporte hoy y sigue abierto",
+                            con_fecha: true,
+                            duracion_dias: Some(7),
+                        },
+                        &ahora_pausa(),
+                        &hace_7_dias,
+                    )?;
+                    let mk = |titulo: &str| {
+                        crear(
+                            db_a.conexion(),
+                            &ops_a,
+                            &autor_lider(),
+                            &DatosNuevaTarea {
+                                titulo: titulo.into(),
+                                detalles: String::new(),
+                                tipo: TipoTarea::Scripting,
+                                tarea_padre_id: None,
+                                sprint_id: None,
+                                backlog_id: None,
+                                con_fecha: false,
+                                fecha_limite: None,
+                            },
+                            &ahora_pausa(),
+                            &hoy_real,
+                        )
+                    };
+                    let t_s1_ok = mk("S1 terminada")?;
+                    let t_s1_pend = mk("S1 vuelve a backlog")?;
+                    let t_s2_ok = mk("S2 terminada")?;
+                    let t_s3_pend = mk("S3 pendiente al corte")?;
+
+                    asignar_tarea_a_sprint(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_lider(),
+                        &t_s2_ok.id,
+                        Some(&s2.id),
+                        &ahora_pausa(),
+                    )?;
+                    asignar_tarea_a_sprint(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_lider(),
+                        &t_s3_pend.id,
+                        Some(&s3.id),
+                        &ahora_pausa(),
+                    )?;
+                    Ok((s2, s3, t_s1_ok, t_s1_pend, t_s2_ok, t_s3_pend))
+                })
+                .unwrap();
+
+            asignar_tarea_a_backlog_en(&estado_a, &t_s1_pend.id, Some(&b1.id)).unwrap();
+            pausa();
+            asignar_tarea_a_sprint_en(&estado_a, &t_s1_ok.id, Some(&s1.id)).unwrap();
+            pausa();
+            asignar_tarea_a_sprint_en(&estado_a, &t_s1_pend.id, Some(&s1.id)).unwrap();
+            pausa();
+            assert!(matches!(
+                estado_a.con_db(|db_a| {
+                    cerrar_sprint(
+                        db_a.conexion(),
+                        &ops_a,
+                        &autor_lider(),
+                        &s1.id,
+                        &crate::modelo::ahora_iso(),
+                        &hoy_real,
+                    )
+                }),
+                Err(Error::SinPermiso)
+            ));
+
+            cambiar_estado_en(&estado_a, &t_s1_ok.id, EstadoTarea::Terminada).unwrap();
+            pausa();
+            cambiar_estado_en(&estado_a, &t_s1_pend.id, EstadoTarea::EnProduccion).unwrap();
+            pausa();
+            cambiar_estado_en(&estado_a, &t_s2_ok.id, EstadoTarea::Terminada).unwrap();
+            pausa();
+            cambiar_estado_en(&estado_a, &t_s3_pend.id, EstadoTarea::EnProduccion).unwrap();
+            pausa();
+
+            // 1. Cierre manual anticipado de S-1 por Administrador.
+            let s1_cerrado = cerrar_sprint_en(&estado_a, &s1.id).unwrap();
+            pausa();
+            assert!(s1_cerrado.cerrado);
+            assert_eq!(
+                s1_cerrado.fecha_cierre_real.as_deref(),
+                Some(hoy_real.as_str())
+            );
+            assert_eq!(s1_cerrado.reporte.as_ref().unwrap().len(), 2);
+
+            estado_a
+                .con_db(|db_a| {
+                    assert_eq!(
+                        db_tareas::obtener(db_a.conexion(), &t_s1_ok.id)?
+                            .sprint_id
+                            .as_deref(),
+                        Some("S-1")
+                    );
+                    let libre = db_tareas::obtener(db_a.conexion(), &t_s1_pend.id)?;
+                    assert_eq!(libre.sprint_id, None);
+                    assert_eq!(libre.backlog_id.as_deref(), Some("B-1"));
+                    Ok(())
+                })
+                .unwrap();
+
+            // 2. El polling real (revisar_actualizaciones_en) evalúa fecha_fin == hoy_local():
+            // S-2 se cierra solo; S-3 genera reporte de hoy y sigue abierto.
+            let poll = revisar_actualizaciones_en(&estado_a, None).unwrap();
+            pausa();
+            assert!(poll.sprints_actualizados.contains(&s2.id));
+            assert!(poll.sprints_actualizados.contains(&s3.id));
+
+            let lista_mid = listar_sprints_en(&estado_a).unwrap();
+            let s2_mid = lista_mid.iter().find(|s| s.id == s2.id).unwrap();
+            let s3_mid = lista_mid.iter().find(|s| s.id == s3.id).unwrap();
+            assert!(s2_mid.cerrado);
+            assert!(!s3_mid.cerrado);
+            assert_eq!(s3_mid.reporte.as_ref().unwrap().len(), 1);
+            assert_eq!(
+                s3_mid.reporte.as_ref().unwrap()[0].estado,
+                EstadoTarea::EnProduccion
+            );
+
+            // Correr polling otra vez no duplica reportes de S-3.
+            let poll2 = revisar_actualizaciones_en(&estado_a, None).unwrap();
+            assert!(poll2.sprints_actualizados.is_empty());
+
+            // Terminar S-3 -> listar_sprints_en lo cierra solo con su reporte final.
+            cambiar_estado_en(&estado_a, &t_s3_pend.id, EstadoTarea::Terminada).unwrap();
+            pausa();
+            let lista_fin = listar_sprints_en(&estado_a).unwrap();
+            pausa();
+            let s3_fin = lista_fin.iter().find(|s| s.id == s3.id).unwrap();
+            assert!(s3_fin.cerrado);
+            assert_eq!(
+                s3_fin.reporte.as_ref().unwrap()[0].estado,
+                EstadoTarea::Terminada
+            );
+
+            // También se inyecta evento forjado de Líder cerrando B-1 en OneDrive para confirmar descarte.
+            let mut ev_falso = Evento::nuevo(
+                "cerrar_sprint",
+                Some(&b1.id),
+                LIDER,
+                serde_json::to_value(&PayloadCerrarSprint {
+                    sprint_id: b1.id.clone(),
+                    fecha: hoy_real.clone(),
+                })
+                .unwrap(),
+            );
+            ev_falso.timestamp = crate::modelo::ahora_iso();
+            eventos::escribir_evento(&ops_a, &ev_falso).unwrap();
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            let ahora = Utc::now() + chrono::Duration::minutes(1);
+            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            println!("B sincroniza cierres y reportes desde OneDrive: {sync_b:?}");
+            if sync_b.descartados != 1 {
+                eprintln!(
+                    "eventos.log B:\n{}",
+                    std::fs::read_to_string(local_b.join("eventos.log")).unwrap_or_default()
+                );
+            }
             assert_eq!(sync_b.descartados, 1);
 
             let sprints_a = listar_sprints_en(&estado_a).unwrap();

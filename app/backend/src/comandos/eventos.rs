@@ -55,10 +55,11 @@ pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSinc
     };
     let carpeta = carpeta_abierta(&estado)?;
     if eventos::carpeta_compartida(&carpeta)?.is_none() {
+        let _ = crate::comandos::sprints::evaluar_cierres_en(&estado, &yo.email)?;
         return Ok(ResumenSincronizacion::default());
     }
     let ops = eventos::carpeta_ops(&carpeta)?;
-    estado.con_db(|db| {
+    let resumen = estado.con_db(|db| {
         // Con la llave del Administrador se verifican los eventos firmados (#93).
         let publica = llave_publica_del_proyecto(db)?;
         eventos::lectura::sincronizar_con_doble_toma(
@@ -70,7 +71,9 @@ pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSinc
             |c, e| eventos::lectura::aplicar_evento(c, &publica, e),
             |info| revisar_y_cerrar_rama_perdedor(&estado, &yo.email, info),
         )
-    })
+    })?;
+    let _ = crate::comandos::sprints::evaluar_cierres_en(&estado, &yo.email)?;
+    Ok(resumen)
 }
 
 /// Comprueba en Unity VC si la rama del perdedor en una doble toma (#97)
@@ -146,6 +149,7 @@ pub struct ResumenPolling {
     pub espera_quitada: Option<String>,
     pub tocados_detectados: Vec<String>,
     pub alerta_rama_ajena: Option<AlertaRamaAjena>,
+    pub sprints_actualizados: Vec<String>,
 }
 
 impl ResumenPolling {
@@ -157,6 +161,7 @@ impl ResumenPolling {
             || self.espera_quitada.is_some()
             || !self.tocados_detectados.is_empty()
             || self.alerta_rama_ajena.is_some()
+            || !self.sprints_actualizados.is_empty()
     }
 }
 
@@ -197,6 +202,8 @@ pub fn revisar_actualizaciones_en(
     };
 
     let Ok(repo) = estado.repo_abierto() else {
+        resumen.sprints_actualizados =
+            crate::comandos::sprints::evaluar_cierres_en(estado, &yo.email)?;
         return Ok(resumen);
     };
     let filtro = tarea_id.map(str::trim).filter(|s| !s.is_empty());
@@ -435,5 +442,6 @@ pub fn revisar_actualizaciones_en(
         Ok(())
     })?;
 
+    resumen.sprints_actualizados = crate::comandos::sprints::evaluar_cierres_en(estado, &yo.email)?;
     Ok(resumen)
 }

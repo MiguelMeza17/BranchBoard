@@ -54,6 +54,7 @@ pub fn entrar_en(estado: &AppState, datos: &Path, workspace: &Path) -> Resultado
     if let Some(db) = db {
         estado.abrir_proyecto(db);
         estado.fijar_workspace(Some(workspace.to_path_buf()), Some(repo));
+        let _ = crate::comandos::sprints::evaluar_cierres_en(estado, &email)?;
     }
     Ok(entrada)
 }

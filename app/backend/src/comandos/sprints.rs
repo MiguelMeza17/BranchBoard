@@ -12,15 +12,34 @@ use crate::modelo::{ahora_iso, hoy_local};
 use crate::sprints;
 use crate::tareas::AutorTarea;
 
-/// Lista todos los sprints y backlogs del proyecto (#113).
+/// Lista todos los sprints y backlogs del proyecto, evaluando primero si algún
+/// sprint alcanzó su fecha de fin (#113, #114).
 #[tauri::command]
 pub fn listar_sprints(estado: State<'_, AppState>) -> Resultado<Vec<Sprint>> {
     listar_sprints_en(&estado)
 }
 
+/// Evalúa los sprints vencidos del proyecto abierto si ya existe una carpeta de datos
+/// (publica en `ops/` cuando está configurada, #114).
+pub(crate) fn evaluar_cierres_en(estado: &AppState, email: &str) -> Resultado<Vec<String>> {
+    let ops = carpeta_abierta(estado)
+        .ok()
+        .and_then(|c| eventos::carpeta_ops(&c).ok());
+    estado.con_db(|db| {
+        sprints::evaluar_cierre_sprints(
+            db.conexion(),
+            ops.as_deref(),
+            email,
+            &ahora_iso(),
+            &hoy_local(),
+        )
+    })
+}
+
 /// Versión sin envoltorio Tauri de [`listar_sprints`].
 pub fn listar_sprints_en(estado: &AppState) -> Resultado<Vec<Sprint>> {
-    let _yo = estado.exigir_permiso("listar_sprints")?;
+    let yo = estado.exigir_permiso("listar_sprints")?;
+    let _ = evaluar_cierres_en(estado, &yo.email)?;
     estado.con_db(|db| sprints::listar(db.conexion()))
 }
 
@@ -166,6 +185,32 @@ pub fn asignar_backlog_a_sprint_en(
             backlog_id,
             sprint_id,
             &ahora_iso(),
+        )
+    })
+}
+
+/// Cierra manualmente un sprint o backlog (exclusivo Administrador, incluso antes de `fecha_fin`, #114).
+#[tauri::command]
+pub fn cerrar_sprint(estado: State<'_, AppState>, sprint_id: String) -> Resultado<Sprint> {
+    cerrar_sprint_en(&estado, &sprint_id)
+}
+
+/// Versión sin envoltorio Tauri de [`cerrar_sprint`].
+pub fn cerrar_sprint_en(estado: &AppState, sprint_id: &str) -> Resultado<Sprint> {
+    let yo = estado.exigir_permiso("cerrar_sprint")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+    estado.con_db(|db| {
+        sprints::cerrar_sprint(
+            db.conexion(),
+            &ops,
+            &autor,
+            sprint_id,
+            &ahora_iso(),
+            &hoy_local(),
         )
     })
 }
