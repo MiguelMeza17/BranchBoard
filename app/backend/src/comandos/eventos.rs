@@ -16,7 +16,7 @@ use crate::identidad::equipo::Firmante;
 use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol, TipoTarea};
 use crate::ramas::{self, RAMA_DEV};
 use crate::servidor::{conectar, Changeset, LlaveroSistema};
-use crate::tareas::{self, AutorTarea, InfoDobleToma};
+use crate::tareas::{self, AlertaRamaAjena, AutorTarea, InfoDobleToma};
 
 /// Ruta de la carpeta compartida del proyecto abierto, o `None` si no se configuró.
 #[tauri::command]
@@ -133,7 +133,10 @@ pub fn compactar_eventos(
 /// Evento Tauri emitido al detectar cambios nuevos o cierres en Unity VC (#104).
 pub const EVENTO_UNITY_ACTUALIZADO: &str = "unity-vc-actualizado";
 
-/// Resumen de una revisión en Unity VC (#104, #106, #109).
+/// Evento Tauri emitido al detectar cambios significativos en una rama ajena o en `dev` (#111).
+pub const EVENTO_RAMA_AJENA: &str = "alerta-rama-ajena";
+
+/// Resumen de una revisión en Unity VC (#104, #106, #109, #111).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ResumenPolling {
     pub rama_actual: Option<String>,
@@ -142,6 +145,7 @@ pub struct ResumenPolling {
     pub espera_creada: Option<String>,
     pub espera_quitada: Option<String>,
     pub tocados_detectados: Vec<String>,
+    pub alerta_rama_ajena: Option<AlertaRamaAjena>,
 }
 
 impl ResumenPolling {
@@ -152,6 +156,7 @@ impl ResumenPolling {
             || self.espera_creada.is_some()
             || self.espera_quitada.is_some()
             || !self.tocados_detectados.is_empty()
+            || self.alerta_rama_ajena.is_some()
     }
 }
 
@@ -244,6 +249,7 @@ pub fn revisar_actualizaciones_en(
     })?;
 
     // 2. Consultas de red / `cm` fuera del lock de SQLite.
+    let yo_email = normalizar_email(&yo.email);
     type ResultadoPolling = (
         String,
         String,
@@ -253,6 +259,7 @@ pub fn revisar_actualizaciones_en(
         Vec<(i64, Vec<String>)>,
     );
     let mut resultados: Vec<ResultadoPolling> = Vec::with_capacity(candidatas.len());
+    let mut commits_recientes_rama_ws: Vec<String> = Vec::new();
     if !candidatas.is_empty() {
         let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
         let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
@@ -277,6 +284,31 @@ pub fn revisar_actualizaciones_en(
                     }
                 }
             }
+            let es_rama_ws = resumen
+                .rama_actual
+                .as_deref()
+                .map(|r| r.eq_ignore_ascii_case(&rama))
+                .unwrap_or(false);
+            if es_rama_ws {
+                for cs in &changesets {
+                    let es_nuevo = ultimo_cs.map(|u| cs.changeset_id > u).unwrap_or(false);
+                    if es_nuevo && normalizar_email(&cs.owner) == yo_email {
+                        if let Some((_, existentes)) = diffs_prestamos
+                            .iter()
+                            .find(|(cid, _)| *cid == cs.changeset_id)
+                        {
+                            commits_recientes_rama_ws.extend(existentes.iter().cloned());
+                        } else if let Ok(rutas) = ramas::archivos_changeset(
+                            estado,
+                            ws_abierto.as_deref(),
+                            &repo_cm,
+                            cs.changeset_id,
+                        ) {
+                            commits_recientes_rama_ws.extend(rutas);
+                        }
+                    }
+                }
+            }
             resultados.push((id, rama, ultimo_cs, changesets, cerrada, diffs_prestamos));
         }
     }
@@ -291,7 +323,6 @@ pub fn revisar_actualizaciones_en(
     };
     let ahora = ahora_iso();
     let hoy = hoy_local();
-    let yo_email = normalizar_email(&yo.email);
 
     estado.con_db(|db| {
         for (id, rama, ultimo_cs, changesets, cerrada, diffs_prestamos) in resultados {
@@ -339,6 +370,13 @@ pub fn revisar_actualizaciones_en(
 
         if let Some(ref rama_ws) = resumen.rama_actual {
             let todas_ahora = db_tareas::listar(db.conexion())?;
+            resumen.alerta_rama_ajena = tareas::evaluar_alerta_rama_ajena(
+                &todas_ahora,
+                &yo_email,
+                rama_ws,
+                &pendientes_ws,
+                &commits_recientes_rama_ws,
+            );
             if let Some(padre) = todas_ahora.iter().find(|t| {
                 !t.eliminada
                     && t.estado != EstadoTarea::Terminada

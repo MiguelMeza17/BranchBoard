@@ -103,6 +103,17 @@ export interface ResumenCompactacion {
   archivo: string | null;
 }
 
+/** Alerta en pantalla cuando hay cambios en `main`, `dev` o una rama ajena (#111). */
+export interface AlertaRamaAjena {
+  rama_actual: string;
+  tarea_ajena_id: string | null;
+  dueno_rama: string | null;
+  rama_sugerida: string | null;
+  tarea_sugerida_id: string | null;
+  archivos: string[];
+  mensaje: string;
+}
+
 /** Datos para `crear_tarea` (#95). */
 export interface DatosNuevaTarea {
   titulo: string;
@@ -329,7 +340,7 @@ export const api = {
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
-  /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109). */
+  /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109, #111). */
   revisarActualizaciones: (tareaId?: string) =>
     llamar<{
       rama_actual: string | null;
@@ -338,6 +349,7 @@ export const api = {
       espera_creada?: string | null;
       espera_quitada?: string | null;
       tocados_detectados?: string[];
+      alerta_rama_ajena?: AlertaRamaAjena | null;
     }>(
       'revisar_actualizaciones',
       { tareaId: tareaId ?? null },
@@ -348,8 +360,15 @@ export const api = {
         espera_creada: null,
         espera_quitada: null,
         tocados_detectados: [],
+        alerta_rama_ajena: null,
       })
     ),
+
+  /** Escucha alertas en tiempo real cuando hay cambios en `dev` o una rama ajena (#111). */
+  alAlertaRamaAjena: async (alAlertar: (alerta: AlertaRamaAjena) => void): Promise<() => void> => {
+    if (!enTauri()) return () => undefined;
+    return listen<AlertaRamaAjena>('alerta-rama-ajena', (e) => alAlertar(e.payload));
+  },
 
   /** Lista cambios sin check-in del workspace y valida la rama esperada (#105). */
   cambiosPendientes: (rama?: string | null) =>

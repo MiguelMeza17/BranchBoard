@@ -40,6 +40,9 @@ fn disparar_polling(app: tauri::AppHandle) {
             if resumen.hubo_cambios() {
                 let _ = app.emit(comandos_eventos::EVENTO_UNITY_ACTUALIZADO, &resumen);
             }
+            if let Some(ref alerta) = resumen.alerta_rama_ajena {
+                let _ = app.emit(comandos_eventos::EVENTO_RAMA_AJENA, alerta);
+            }
         }
     });
 }

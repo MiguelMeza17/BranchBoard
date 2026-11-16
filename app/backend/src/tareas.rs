@@ -370,6 +370,19 @@ pub struct PayloadEliminarCambiosAjenos {
     pub changeset_limpio: Option<i64>,
 }
 
+/// Alerta en pantalla cuando el workspace está en `main`, `dev` o una rama que no
+/// pertenece al usuario y tiene cambios significativos (#111). Solo avisa; nunca deshace.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AlertaRamaAjena {
+    pub rama_actual: String,
+    pub tarea_ajena_id: Option<String>,
+    pub dueno_rama: Option<String>,
+    pub rama_sugerida: Option<String>,
+    pub tarea_sugerida_id: Option<String>,
+    pub archivos: Vec<String>,
+    pub mensaje: String,
+}
+
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InfoDobleToma {
@@ -2207,6 +2220,125 @@ pub fn registrar_devolver_cambios(
     ev.timestamp = ahora.to_string();
     eventos::publicar(c, ops, &ev, |tx| aplicar_devolver_cambios(tx, &payload))?;
     commits::obtener_prestamo(c, &prestamo.id)
+}
+
+/// Filtra cambios menores automáticos de Unity (ej. `.meta`) para no disparar
+/// falsas alertas al detectar ediciones en una rama ajena (#111).
+pub fn cambios_significativos(rutas: &[String]) -> Vec<String> {
+    let mut significativos = std::collections::BTreeSet::new();
+    for r in rutas {
+        let limpia = r
+            .trim()
+            .trim_matches('"')
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+        if !limpia.is_empty() && !limpia.to_ascii_lowercase().ends_with(".meta") {
+            significativos.insert(limpia);
+        }
+    }
+    significativos.into_iter().collect()
+}
+
+/// Evalúa si el workspace actual apunta a `main`, `dev` o una rama que no es de las
+/// tareas asignadas al usuario y registra cambios significativos sin check-in o un
+/// check-in reciente del propio usuario (#111). No modifica ni deshace nada.
+pub fn evaluar_alerta_rama_ajena(
+    todas: &[Tarea],
+    usuario_email: &str,
+    rama_actual: &str,
+    pendientes_ws: &[String],
+    commits_recientes_propios: &[String],
+) -> Option<AlertaRamaAjena> {
+    let rama = rama_actual.trim().trim_end_matches('/');
+    if rama.is_empty() {
+        return None;
+    }
+    let yo = normalizar_email(usuario_email);
+    if yo.is_empty() {
+        return None;
+    }
+
+    let mut candidatos = Vec::with_capacity(pendientes_ws.len() + commits_recientes_propios.len());
+    candidatos.extend(pendientes_ws.iter().cloned());
+    candidatos.extend(commits_recientes_propios.iter().cloned());
+    let archivos = cambios_significativos(&candidatos);
+    if archivos.is_empty() {
+        return None;
+    }
+
+    let activa_en_rama = todas.iter().find(|t| {
+        !t.eliminada
+            && t.rama_asociada
+                .as_deref()
+                .map(|r| r.trim().trim_end_matches('/').eq_ignore_ascii_case(rama))
+                .unwrap_or(false)
+    });
+
+    if let Some(t) = activa_en_rama {
+        if t.estado != EstadoTarea::Terminada {
+            let es_mia =
+                t.asignado_a.as_deref().map(normalizar_email).as_deref() == Some(yo.as_str());
+            if es_mia {
+                return None;
+            }
+            // Si es rama padre contenedora sin asignar donde el usuario trabaja una subtarea
+            // y son solo cambios locales sin check-in, el flujo "En espera" (#106) los recoge.
+            if t.asignado_a.is_none() && commits_recientes_propios.is_empty() {
+                let tiene_subtarea_mia = todas.iter().any(|h| {
+                    !h.eliminada
+                        && h.tarea_padre_id.as_deref() == Some(t.id.as_str())
+                        && h.tipo != TipoTarea::SinDefinir
+                        && h.asignado_a.as_deref().map(normalizar_email).as_deref()
+                            == Some(yo.as_str())
+                });
+                if tiene_subtarea_mia {
+                    return None;
+                }
+            }
+        }
+    }
+
+    let sugerida = [
+        EstadoTarea::EnProduccion,
+        EstadoTarea::PorHacer,
+        EstadoTarea::EnRevision,
+    ]
+    .into_iter()
+    .find_map(|est| {
+        todas.iter().find(|t| {
+            !t.eliminada
+                && t.estado == est
+                && t.rama_asociada.is_some()
+                && t.asignado_a.as_deref().map(normalizar_email).as_deref() == Some(yo.as_str())
+        })
+    });
+
+    let rama_sugerida = sugerida.and_then(|t| t.rama_asociada.clone());
+    let tarea_sugerida_id = sugerida.map(|t| t.id.clone());
+    let tarea_ajena_id = activa_en_rama.map(|t| t.id.clone());
+    let dueno_rama = activa_en_rama.and_then(|t| t.asignado_a.clone());
+
+    let donde = match tarea_ajena_id {
+        Some(ref tid) => format!("la rama de la tarea {tid}, que no te pertenece"),
+        None => format!("{rama}, que no pertenece a ninguna de tus tareas"),
+    };
+    let recomendacion = match rama_sugerida {
+        Some(ref r) => format!(" Cambia a tu rama asignada {r} antes de continuar."),
+        None => String::new(),
+    };
+    let mensaje = format!("Estás haciendo cambios en {donde}.{recomendacion}");
+
+    Some(AlertaRamaAjena {
+        rama_actual: rama.to_string(),
+        tarea_ajena_id,
+        dueno_rama,
+        rama_sugerida,
+        tarea_sugerida_id,
+        archivos,
+        mensaje,
+    })
 }
 
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
@@ -8134,6 +8266,81 @@ mod tests {
     }
 
     #[test]
+    fn alerta_rama_ajena_ignora_meta_y_no_deshace_cambios() {
+        let mut ajena = Tarea::nueva("T-101", "Ajena", TipoTarea::Scripting, ADMIN, HOY);
+        ajena.asignado_a = Some(LIDER.into());
+        ajena.estado = EstadoTarea::EnProduccion;
+        ajena.rama_asociada = Some("/main/dev/T-101-ajena".into());
+
+        let mut propia = Tarea::nueva("T-102", "Mia", TipoTarea::Scripting, ADMIN, HOY);
+        propia.asignado_a = Some(DEV.into());
+        propia.estado = EstadoTarea::EnProduccion;
+        propia.rama_asociada = Some("/main/dev/T-102-mia".into());
+
+        let mut terminada = Tarea::nueva("T-103", "Cerrada", TipoTarea::Scripting, ADMIN, HOY);
+        terminada.asignado_a = Some(DEV.into());
+        terminada.estado = EstadoTarea::Terminada;
+        terminada.rama_asociada = Some("/main/dev/T-103-cerrada".into());
+
+        let todas = vec![ajena, propia, terminada];
+
+        // Solo `.meta` o rama propia asignada NO disparan alerta.
+        assert!(evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-101-ajena",
+            &["Assets/Player.cs.meta".into()],
+            &[]
+        )
+        .is_none());
+        assert!(evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-102-mia",
+            &["Assets/Player.cs".into()],
+            &[]
+        )
+        .is_none());
+
+        // En `dev` con cambio real sí alerta y sugiere la rama asignada.
+        let en_dev = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev",
+            &["Assets/Enemy.cs".into(), "Assets/Enemy.cs.meta".into()],
+            &[],
+        )
+        .expect("debe alertar en /main/dev");
+        assert_eq!(en_dev.tarea_ajena_id, None);
+        assert_eq!(en_dev.rama_sugerida.as_deref(), Some("/main/dev/T-102-mia"));
+        assert_eq!(en_dev.archivos, vec!["Assets/Enemy.cs".to_string()]);
+        assert!(en_dev.mensaje.contains("/main/dev/T-102-mia"));
+
+        // En rama ajena o terminada con check-in reciente propio sí alerta e identifica tarea/dueño.
+        let en_ajena = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-101-ajena",
+            &[],
+            &["Assets/UI.png".into()],
+        )
+        .expect("debe alertar en rama ajena");
+        assert_eq!(en_ajena.tarea_ajena_id.as_deref(), Some("T-101"));
+        assert_eq!(en_ajena.dueno_rama.as_deref(), Some(LIDER));
+        assert!(en_ajena.mensaje.contains("T-101"));
+
+        let en_cerrada = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-103-cerrada",
+            &["Assets/Fix.cs".into()],
+            &[],
+        )
+        .expect("rama terminada ya no debe editarse");
+        assert_eq!(en_cerrada.tarea_ajena_id.as_deref(), Some("T-103"));
+    }
+
+    #[test]
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_hacer_checkin() {
         use crate::cm::Comando;
@@ -8936,6 +9143,132 @@ mod tests {
             assert!(!a2.exists());
             assert_eq!(std::fs::read_to_string(&propio).unwrap(), "propio v2");
             cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap();
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_alerta_rama_ajena() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::asignar_en;
+        use crate::ramas;
+
+        correr_entorno_real("111", |env| {
+            let compa = "compa.ajeno@ejemplo.com";
+            env.crear_usuario(compa, Rol::Desarrollador);
+            let admin_email = env.admin_fila.email.clone();
+
+            let ajena = env.crear_tarea(&admin_email, Rol::Administrador, "Rama ajena 111");
+            let propia = env.crear_tarea(&admin_email, Rol::Administrador, "Rama propia 111");
+
+            let asg_ajena = asignar_en(&env.estado_a, &ajena.id, compa).unwrap();
+            env.registrar_ramas_de(&asg_ajena);
+            let rama_ajena = asg_ajena[0].rama_asociada.clone().unwrap();
+
+            let asg_propia = asignar_en(&env.estado_a, &propia.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_propia);
+            let rama_propia = asg_propia[0].rama_asociada.clone().unwrap();
+
+            // 1) Cambios exclusivos .meta en /main/dev NO generan falsa alarma.
+            env.volver_a_dev();
+            let meta_dev = env.ws_ruta.join("AutoUnity.cs.meta");
+            std::fs::write(&meta_dev, "guid: 123").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(meta_dev.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_meta = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            assert!(pol_meta.alerta_rama_ajena.is_none());
+
+            // 2) Cambio real sin check-in en /main/dev dispara alerta, sugiere rama propia y NO deshace nada.
+            let dev_real = env.ws_ruta.join("cambio-en-dev-111.txt");
+            std::fs::write(&dev_real, "contenido sin perder 111").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(dev_real.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_dev = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let alerta_dev = pol_dev
+                .alerta_rama_ajena
+                .expect("debe alertar cambio real en /main/dev");
+            assert_eq!(alerta_dev.tarea_ajena_id, None);
+            assert_eq!(
+                alerta_dev.rama_sugerida.as_deref(),
+                Some(rama_propia.as_str())
+            );
+            assert_eq!(
+                alerta_dev.archivos,
+                vec!["cambio-en-dev-111.txt".to_string()]
+            );
+            assert_eq!(
+                std::fs::read_to_string(&dev_real).unwrap(),
+                "contenido sin perder 111"
+            );
+
+            // Limpiamos antes de cambiar de rama en el workspace.
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            let _ = std::fs::remove_file(&meta_dev);
+            let _ = std::fs::remove_file(&dev_real);
+
+            // 3) En rama de otro compañero (`compa`): cambio sin check-in y luego check-in directo.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_ajena).unwrap();
+            let arch_ajeno = env.ws_ruta.join("edicion-ajena-111.txt");
+            std::fs::write(&arch_ajeno, "editado en rama ajena").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(arch_ajeno.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pol_ajena = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let alerta_aj = pol_ajena
+                .alerta_rama_ajena
+                .expect("debe alertar cambio pendiente en rama ajena");
+            assert_eq!(alerta_aj.tarea_ajena_id.as_deref(), Some(ajena.id.as_str()));
+            assert_eq!(alerta_aj.dueno_rama.as_deref(), Some(compa));
+            assert_eq!(
+                alerta_aj.rama_sugerida.as_deref(),
+                Some(rama_propia.as_str())
+            );
+            assert!(arch_ajeno.exists());
+
+            // Simular check-in directo hecho desde Unity VC en la rama ajena.
+            Comando::cm()
+                .args(["checkin", "--all", "-c=Checkin equivocado 111"])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_ci = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let alerta_ci = pol_ci
+                .alerta_rama_ajena
+                .expect("debe alertar check-in propio reciente en rama ajena");
+            assert_eq!(alerta_ci.tarea_ajena_id.as_deref(), Some(ajena.id.as_str()));
+            assert!(alerta_ci
+                .archivos
+                .iter()
+                .any(|a| a.contains("edicion-ajena-111.txt")));
+
+            // 4) En la rama propia asignada NO dispara alerta aunque tenga cambios reales.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_propia).unwrap();
+            let arch_mio = env.ws_ruta.join("mio-111.txt");
+            std::fs::write(&arch_mio, "mio OK").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(arch_mio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_propia = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            assert!(pol_propia.alerta_rama_ajena.is_none());
+
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            let _ = std::fs::remove_file(&arch_mio);
         });
     }
 }
