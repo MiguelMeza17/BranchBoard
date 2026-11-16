@@ -30,6 +30,7 @@ pub enum Acceso {
 
 pub const TODOS: &[Rol] = Rol::TODOS;
 pub const LIDER_O_ADMIN: &[Rol] = &[Rol::Administrador, Rol::Lider];
+pub const LIDER_O_DESARROLLADOR: &[Rol] = &[Rol::Lider, Rol::Desarrollador];
 pub const SOLO_ADMIN: &[Rol] = &[Rol::Administrador];
 
 /// Todos los comandos de Tauri y quién puede usarlos. Al agregar un comando a
@@ -100,6 +101,8 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("marcar_leida", Acceso::Roles(TODOS)),
     ("desmarcar_leida", Acceso::Roles(TODOS)),
     ("marcar_todas_leidas", Acceso::Roles(TODOS)),
+    ("enviar_mensaje", Acceso::Roles(TODOS)),
+    ("solicitar_accion_bd", Acceso::Roles(LIDER_O_DESARROLLADOR)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.

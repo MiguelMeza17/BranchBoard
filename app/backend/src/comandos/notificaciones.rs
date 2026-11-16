@@ -2,9 +2,12 @@
 
 use tauri::State;
 
+use crate::comandos::datos::carpeta_abierta;
 use crate::db::notificaciones::Notificacion;
 use crate::error::Resultado;
 use crate::estado::AppState;
+use crate::eventos;
+use crate::modelo::ahora_iso;
 use crate::notificaciones;
 
 /// Lista todas las notificaciones del usuario actual (de la más reciente a la más antigua, #116).
@@ -55,4 +58,48 @@ pub fn marcar_todas_leidas(estado: State<'_, AppState>) -> Resultado<usize> {
 pub fn marcar_todas_leidas_en(estado: &AppState) -> Resultado<usize> {
     let yo = estado.exigir_permiso("marcar_todas_leidas")?;
     estado.con_db(|db| notificaciones::marcar_todas_leidas(db.conexion(), &yo.email))
+}
+
+/// Envía un mensaje manual (máx. 500 caracteres) a otro miembro del equipo vía `ops/` (#118).
+#[tauri::command]
+pub fn enviar_mensaje(
+    estado: State<'_, AppState>,
+    para: String,
+    texto: String,
+) -> Resultado<Notificacion> {
+    enviar_mensaje_en(&estado, &para, &texto)
+}
+
+/// Versión sin envoltorio Tauri de [`enviar_mensaje`].
+pub fn enviar_mensaje_en(estado: &AppState, para: &str, texto: &str) -> Resultado<Notificacion> {
+    let yo = estado.exigir_permiso("enviar_mensaje")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    estado.con_db(|db| {
+        notificaciones::enviar_mensaje(db.conexion(), &ops, &yo.email, para, texto, &ahora_iso())
+    })
+}
+
+/// Solicita revisión o restauración de la base de datos a todos los Administradores (#118).
+#[tauri::command]
+pub fn solicitar_accion_bd(
+    estado: State<'_, AppState>,
+    motivo: String,
+) -> Resultado<Vec<Notificacion>> {
+    solicitar_accion_bd_en(&estado, &motivo)
+}
+
+/// Versión sin envoltorio Tauri de [`solicitar_accion_bd`].
+pub fn solicitar_accion_bd_en(estado: &AppState, motivo: &str) -> Resultado<Vec<Notificacion>> {
+    let yo = estado.exigir_permiso("solicitar_accion_bd")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    estado.con_db(|db| {
+        notificaciones::solicitar_accion_bd(
+            db.conexion(),
+            &ops,
+            &yo.email,
+            yo.rol,
+            motivo,
+            &ahora_iso(),
+        )
+    })
 }

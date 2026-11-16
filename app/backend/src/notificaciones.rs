@@ -24,6 +24,9 @@ use crate::tareas::rol_verificado_de;
 /// Días sin check-ins ni actividad antes de enviar recordatorio de inactividad (#117).
 pub const UMBRAL_INACTIVIDAD_DIAS: i64 = 3;
 
+/// Longitud máxima permitida para un mensaje manual enviado a otro miembro (#118).
+pub const MAX_CARACTERES_MENSAJE: usize = 500;
+
 /// Tipos de evento propios manejados por este módulo.
 pub const TIPOS: &[&str] = &["crear_notificacion", "crear_notificaciones"];
 
@@ -407,6 +410,115 @@ pub fn evaluar_inactividad(
             ahora,
         )?;
         emitidas.push(noti);
+    }
+    Ok(emitidas)
+}
+
+fn nombre_visible_usuario(c: &Connection, email: &str) -> Resultado<String> {
+    let limpio = normalizar_email(email);
+    let usuario = usuarios::buscar(c, &limpio)?
+        .ok_or_else(|| Error::NoEncontrado(format!("el usuario {limpio}")))?;
+    let completo = format!("{} {}", usuario.nombre.trim(), usuario.apellido.trim())
+        .trim()
+        .to_string();
+    Ok(if completo.is_empty() {
+        limpio
+    } else {
+        completo
+    })
+}
+
+/// Envía un mensaje manual de `emisor` hacia `para` (máx. [`MAX_CARACTERES_MENSAJE`]) vía `ops/` (#118).
+pub fn enviar_mensaje(
+    c: &Connection,
+    ops: &Path,
+    emisor: &str,
+    para: &str,
+    texto: &str,
+    ahora: &str,
+) -> Resultado<Notificacion> {
+    let emisor_norm = normalizar_email(emisor);
+    let dest = normalizar_email(para);
+    if dest.is_empty() || usuarios::buscar(c, &dest)?.is_none() {
+        return Err(Error::NoEncontrado(format!("el usuario {dest}")));
+    }
+    if dest == emisor_norm {
+        return Err(Error::Validacion(
+            "No puedes enviarte un mensaje a ti mismo".into(),
+        ));
+    }
+    let texto_limpio = texto.trim();
+    if texto_limpio.is_empty() {
+        return Err(Error::Validacion(
+            "Escribe un mensaje antes de enviarlo".into(),
+        ));
+    }
+    if texto_limpio.chars().count() > MAX_CARACTERES_MENSAJE {
+        return Err(Error::Validacion(format!(
+            "El mensaje no puede superar los {MAX_CARACTERES_MENSAJE} caracteres"
+        )));
+    }
+    let nombre = nombre_visible_usuario(c, &emisor_norm)?;
+    let titulo = format!("Mensaje de {nombre}");
+    crear(
+        c,
+        ops,
+        &emisor_norm,
+        &DatosNotificacion {
+            tipo: TipoNotificacion::Mensaje,
+            para: &dest,
+            titulo: &titulo,
+            cuerpo: texto_limpio,
+            tarea_id: None,
+            accionable: false,
+        },
+        ahora,
+    )
+}
+
+/// Envía a todos los Administradores un reporte de problema con la base de datos (`accion_bd`, #118).
+/// Solo Líder o Desarrollador pueden emitirlo.
+pub fn solicitar_accion_bd(
+    c: &Connection,
+    ops: &Path,
+    emisor: &str,
+    rol_emisor: Rol,
+    motivo: &str,
+    ahora: &str,
+) -> Resultado<Vec<Notificacion>> {
+    if !matches!(rol_emisor, Rol::Lider | Rol::Desarrollador) {
+        return Err(Error::SinPermiso);
+    }
+    let motivo_limpio = motivo.trim();
+    if motivo_limpio.is_empty() {
+        return Err(Error::Validacion(
+            "Describe el problema con la base de datos".into(),
+        ));
+    }
+    let emisor_norm = normalizar_email(emisor);
+    let nombre = nombre_visible_usuario(c, &emisor_norm)?;
+    let cuerpo = format!(
+        "{nombre} ({}) solicita revisar la base de datos: {motivo_limpio}",
+        rol_emisor.como_texto()
+    );
+    let emitidas = crear_para_roles(
+        c,
+        ops,
+        &emisor_norm,
+        &DatosNotificacionRoles {
+            tipo: TipoNotificacion::AccionBd,
+            roles: &[Rol::Administrador],
+            titulo: "Solicitud de acción sobre la base de datos",
+            cuerpo: &cuerpo,
+            tarea_id: None,
+            accionable: false,
+        },
+        ahora,
+    )?;
+    if emitidas.is_empty() {
+        return Err(Error::NoEncontrado(
+            "No hay Administradores registrados para recibir la solicitud".into(),
+        ));
     }
     Ok(emitidas)
 }
@@ -1004,6 +1116,136 @@ mod tests {
         assert_eq!(inactivas_b.len(), 2);
     }
 
+    #[test]
+    fn enviar_mensaje_y_solicitar_accion_bd_reglas_y_viajan_por_ops() {
+        let e = setup();
+        // Agrega un Tester para probar restricción de `solicitar_accion_bd`.
+        const TESTER: &str = "tester@estudio.com";
+        let tester_fila = usuarios::Usuario {
+            email: TESTER.into(),
+            nombre: "Tess".into(),
+            apellido: "Uno".into(),
+            rol: Rol::Tester,
+            fecha_alta: HOY.into(),
+            firma: None,
+            firmado_en: None,
+            firmado_por: None,
+            llave_publica: None,
+            certificado: None,
+        };
+        usuarios::insertar(e.db_a.conexion(), &tester_fila).unwrap();
+        usuarios::insertar(e.db_b.conexion(), &tester_fila).unwrap();
+
+        // Validaciones de `enviar_mensaje`: vacío, >500 caracteres Unicode, autoenvío y usuario inexistente.
+        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, LIDER, "   ", AHORA).is_err());
+        let largo_501 = "á".repeat(501);
+        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, LIDER, &largo_501, AHORA).is_err());
+        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, DEV, "hola", AHORA).is_err());
+        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, INTRUSO, "hola", AHORA).is_err());
+
+        let exacto_500 = "ñ".repeat(500);
+        let msg = enviar_mensaje(
+            e.db_a.conexion(),
+            &e.ops,
+            DEV,
+            "LIDER@estudio.com",
+            &format!("  {exacto_500}  "),
+            "2026-11-16T10:01:00.000Z",
+        )
+        .unwrap();
+        assert_eq!(msg.tipo, TipoNotificacion::Mensaje);
+        assert_eq!(msg.para, LIDER);
+        assert!(msg.titulo.starts_with("Mensaje de "));
+        assert_eq!(msg.cuerpo, exacto_500);
+        assert!(!msg.accionable);
+
+        // `solicitar_accion_bd`: vacío rechazado, Tester y Admin rechazados (`sin_permiso`).
+        assert!(solicitar_accion_bd(
+            e.db_a.conexion(),
+            &e.ops,
+            DEV,
+            Rol::Desarrollador,
+            "   ",
+            AHORA,
+        )
+        .is_err());
+        assert_eq!(
+            solicitar_accion_bd(
+                e.db_a.conexion(),
+                &e.ops,
+                TESTER,
+                Rol::Tester,
+                "Tabla rota",
+                AHORA,
+            )
+            .unwrap_err()
+            .codigo(),
+            "sin_permiso"
+        );
+        assert_eq!(
+            solicitar_accion_bd(
+                e.db_a.conexion(),
+                &e.ops,
+                ADMIN,
+                Rol::Administrador,
+                "Soy admin",
+                AHORA,
+            )
+            .unwrap_err()
+            .codigo(),
+            "sin_permiso"
+        );
+
+        let req_dev = solicitar_accion_bd(
+            e.db_a.conexion(),
+            &e.ops,
+            DEV,
+            Rol::Desarrollador,
+            "Registros duplicados en T-104",
+            "2026-11-16T10:02:00.000Z",
+        )
+        .unwrap();
+        assert_eq!(req_dev.len(), 1);
+        assert_eq!(req_dev[0].para, ADMIN);
+        assert_eq!(req_dev[0].tipo, TipoNotificacion::AccionBd);
+
+        let req_lider = solicitar_accion_bd(
+            e.db_a.conexion(),
+            &e.ops,
+            LIDER,
+            Rol::Lider,
+            "Diferencia tras rollback",
+            "2026-11-16T10:03:00.000Z",
+        )
+        .unwrap();
+        assert_eq!(req_lider.len(), 1);
+
+        // B sincroniza vía ops/ y comprueba destinatarios exactos.
+        let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
+            lectura::aplicar_evento(c, &e.publica, ev)
+        })
+        .unwrap();
+
+        let notis_admin_b = listar_de_usuario(e.db_b.conexion(), ADMIN).unwrap();
+        assert_eq!(
+            notis_admin_b
+                .iter()
+                .filter(|n| n.tipo == TipoNotificacion::AccionBd)
+                .count(),
+            2
+        );
+        let notis_lider_b = listar_de_usuario(e.db_b.conexion(), LIDER).unwrap();
+        assert!(notis_lider_b
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::Mensaje && n.cuerpo == exacto_500));
+        assert!(!notis_lider_b
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::AccionBd));
+    }
+
     /// **Prueba en el entorno real** (CLAUDE.md, issue #116): contra
     /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` + OneDrive real,
     /// prueba:
@@ -1544,6 +1786,209 @@ mod tests {
                 .unwrap();
             println!("limpieza rama {rama}: {}", salida.exito());
         }
+        let _ = std::fs::remove_dir_all(&compartida);
+        println!("subcarpeta de prueba borrada: {}", !compartida.exists());
+        if let Err(p) = resultado {
+            std::panic::resume_unwind(p);
+        }
+    }
+
+    /// **Prueba en el entorno real** (CLAUDE.md, issue #118): contra
+    /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` + OneDrive real,
+    /// ejerce los comandos Tauri `enviar_mensaje_en` y `solicitar_accion_bd_en`:
+    /// 1. Crea Desarrollador, Líder y Tester en el proyecto conectado a `BranchBoard-Pruebas`.
+    /// 2. Cambia de usuario en `estado_a` verificando roles con firma criptográfica:
+    ///    - `enviar_mensaje_en`: todos los roles pueden enviar (rechaza >500 chars/autoenvío).
+    ///    - `solicitar_accion_bd_en`: Tester y Administrador reciben `sin_permiso`,
+    ///      mientras Desarrollador y Líder notifican solo a Administradores vía `ops/`.
+    /// 3. Máquina B sincroniza desde OneDrive y confirma que cada rol ve solo lo suyo.
+    ///
+    /// Al terminar borra workspace y carpeta de OneDrive.
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_mensajes_y_accion_bd() {
+        use crate::cm::Comando;
+        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::datos::carpeta_abierta;
+        use crate::comandos::notificaciones::{enviar_mensaje_en, solicitar_accion_bd_en};
+        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::identidad::equipo::{self, Firmante};
+        use crate::modelo::hoy_local;
+
+        const TESTER: &str = "tester118@estudio.com";
+
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let nube = PathBuf::from(
+            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
+                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
+        );
+        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+        let compartida = nube.join(format!("BranchBoard-prueba-118-{sufijo}"));
+        std::fs::create_dir_all(&compartida).unwrap();
+
+        let estado_a = AppState::default();
+        let ws_a = tempfile::tempdir().unwrap();
+        let datos_a = tempfile::tempdir().unwrap();
+        let maquina_b = tempfile::tempdir().unwrap();
+        let ruta_ws = ws_a.path().to_string_lossy().to_string();
+
+        Comando::cm()
+            .args(["workspace", "create"])
+            .arg(format!("bb-prueba-118-{sufijo}"))
+            .arg(&ruta_ws)
+            .arg(format!("rep:{repo}@{org}@unity"))
+            .exigir_exito(&estado_a)
+            .unwrap();
+
+        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            let local_a = carpeta_abierta(&estado_a).unwrap();
+            let local_b = maquina_b
+                .path()
+                .join("proyectos")
+                .join(local_a.file_name().unwrap());
+
+            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
+            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
+            let ops_a = carpeta_ops(&local_a).unwrap();
+            let ops_b = carpeta_ops(&local_b).unwrap();
+
+            let (publica, admin_fila) = estado_a
+                .con_db(|db| {
+                    let pub_k = llave_publica_del_proyecto(db)?;
+                    let todos = usuarios::listar(db.conexion())?;
+                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                })
+                .unwrap();
+            fijar_llave_publica_admin(&local_b, &publica).unwrap();
+            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
+
+            let db_b = Db::abrir(&local_b).unwrap();
+            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+            let hoy_real = hoy_local();
+            let pausa = || std::thread::sleep(std::time::Duration::from_millis(5));
+            let ahora_pausa = || {
+                pausa();
+                crate::modelo::ahora_iso()
+            };
+
+            estado_a
+                .con_db(|db_a| {
+                    let firmante_admin = Firmante {
+                        email: &admin_fila.email,
+                        rol: Rol::Administrador,
+                        llave: &llave_admin,
+                    };
+                    for (correo, rol) in [
+                        (DEV, Rol::Desarrollador),
+                        (LIDER, Rol::Lider),
+                        (TESTER, Rol::Tester),
+                    ] {
+                        equipo::crear(
+                            db_a.conexion(),
+                            &ops_a,
+                            &publica,
+                            &firmante_admin,
+                            correo,
+                            rol,
+                            &ahora_pausa(),
+                            &hoy_real,
+                        )?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+
+            // 1. Tester: puede enviar mensaje (<= 500 chars), rechazado en >500 y en `solicitar_accion_bd_en`.
+            estado_a.fijar_usuario(Some(TESTER));
+            pausa();
+            assert_eq!(
+                solicitar_accion_bd_en(&estado_a, "No debería poder Tester")
+                    .unwrap_err()
+                    .codigo(),
+                "sin_permiso"
+            );
+            assert!(enviar_mensaje_en(&estado_a, DEV, &"x".repeat(501)).is_err());
+            let m_tester =
+                enviar_mensaje_en(&estado_a, DEV, "Ya subí captura del bug en escena").unwrap();
+            assert_eq!(m_tester.tipo, TipoNotificacion::Mensaje);
+            assert_eq!(m_tester.para, DEV);
+
+            // 2. Administrador: puede enviar mensajes, pero `solicitar_accion_bd_en` devuelve `sin_permiso`.
+            estado_a.fijar_usuario(Some(&admin_fila.email));
+            pausa();
+            assert_eq!(
+                solicitar_accion_bd_en(&estado_a, "Admin no solicita")
+                    .unwrap_err()
+                    .codigo(),
+                "sin_permiso"
+            );
+            assert!(enviar_mensaje_en(&estado_a, &admin_fila.email, "Autoenvío").is_err());
+            enviar_mensaje_en(&estado_a, LIDER, "Revisemos sprint antes de cierre").unwrap();
+
+            // 3. Desarrollador y Líder solicitan acción sobre BD -> notifica solo a Administradores.
+            estado_a.fijar_usuario(Some(DEV));
+            pausa();
+            let req_dev =
+                solicitar_accion_bd_en(&estado_a, "La tarea T-102 aparece duplicada en mi copia")
+                    .unwrap();
+            assert_eq!(req_dev.len(), 1);
+            assert_eq!(req_dev[0].para, admin_fila.email);
+
+            estado_a.fijar_usuario(Some(LIDER));
+            pausa();
+            let req_lider =
+                solicitar_accion_bd_en(&estado_a, "Necesitamos restaurar respaldo de ayer")
+                    .unwrap();
+            assert_eq!(req_lider.len(), 1);
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // 4. Máquina B sincroniza vía OneDrive y valida cada destinatario.
+            let ahora = Utc::now() + chrono::Duration::minutes(1);
+            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            println!("B sincroniza mensajes y accion_bd desde OneDrive: {sync_b:?}");
+
+            let notis_admin_b = listar_de_usuario(db_b.conexion(), &admin_fila.email).unwrap();
+            let bd_b: Vec<_> = notis_admin_b
+                .iter()
+                .filter(|n| n.tipo == TipoNotificacion::AccionBd)
+                .collect();
+            assert_eq!(bd_b.len(), 2);
+            assert!(bd_b
+                .iter()
+                .any(|n| n.cuerpo.contains("Desarrollador") && n.cuerpo.contains("duplicada")));
+            assert!(bd_b
+                .iter()
+                .any(|n| n.cuerpo.contains("Líder") && n.cuerpo.contains("respaldo")));
+
+            let notis_dev_b = listar_de_usuario(db_b.conexion(), DEV).unwrap();
+            assert!(notis_dev_b
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::Mensaje && n.cuerpo.contains("captura")));
+            assert!(notis_dev_b
+                .iter()
+                .all(|n| n.tipo != TipoNotificacion::AccionBd));
+
+            let notis_lider_b = listar_de_usuario(db_b.conexion(), LIDER).unwrap();
+            assert!(notis_lider_b
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::Mensaje && n.cuerpo.contains("cierre")));
+            assert!(notis_lider_b
+                .iter()
+                .all(|n| n.tipo != TipoNotificacion::AccionBd));
+        }));
+
+        estado_a.cerrar_proyecto();
+        let _ = Comando::cm()
+            .args(["workspace", "delete"])
+            .arg(&ruta_ws)
+            .ejecutar(&estado_a);
         let _ = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", !compartida.exists());
         if let Err(p) = resultado {

@@ -151,6 +151,8 @@ pub fn run() {
             comandos_notificaciones::marcar_leida,
             comandos_notificaciones::desmarcar_leida,
             comandos_notificaciones::marcar_todas_leidas,
+            comandos_notificaciones::enviar_mensaje,
+            comandos_notificaciones::solicitar_accion_bd,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");
