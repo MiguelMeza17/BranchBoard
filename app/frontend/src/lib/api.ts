@@ -553,6 +553,22 @@ export const api = {
   marcarTodasLeidas: (mockup?: () => number) =>
     llamar<number>('marcar_todas_leidas', undefined, mockup ?? (() => 0)),
 
+  /** Envía un mensaje manual (máx. 500 caracteres) a un compañero como notificación (#118). */
+  enviarMensaje: (para: string, texto: string, mockup?: () => Notificacion) =>
+    llamar<Notificacion>(
+      'enviar_mensaje',
+      { para, texto },
+      mockup ?? (() => ({}) as Notificacion),
+    ),
+
+  /** Reporta un problema de base de datos a los Administradores (Líder y Desarrollador, #118). */
+  solicitarAccionBd: (motivo: string, mockup?: () => Notificacion[]) =>
+    llamar<Notificacion[]>(
+      'solicitar_accion_bd',
+      { motivo },
+      mockup ?? (() => []),
+    ),
+
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),
 

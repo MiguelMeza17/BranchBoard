@@ -1065,7 +1065,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `asignarTareaASprint` / `asignarTareaABacklog` / `asignarBacklogASprint` | `asignar_tarea_a_sprint` / `asignar_tarea_a_backlog` / `asignar_backlog_a_sprint` | Líder/Admin |
 | `crearUsuario` / `cambiarRol` / `eliminarUsuario` / `confirmarUsuario` | `crear_usuario` / `cambiar_rol` / `eliminar_usuario` / `confirmar_usuario` | ver [Comandos de usuarios](#comandos-de-usuarios-y-ajustes) |
 | `renombrarProyecto` / `restaurarBackup` | `renombrar_proyecto` / `restaurar_backup` (local) | Administrador |
-| `enviarMensaje` | `enviar_mensaje` | todos |
+| `enviarMensaje` / `solicitarAccionBd` | `enviar_mensaje` / `solicitar_accion_bd` | todos / Líder y Desarrollador |
 | `subirDocumentos` / `aprobarDocumento` / `eliminarDocumento` / `abrirDocumento` | `subir_documentos` / `aprobar_documento` / `eliminar_documento` / `abrir_documento` (local) | todos / Líder/Admin / Líder/Admin / todos |
 | `enviarChat` / `crearGrupoChat` / `marcarChatLeido` / `eliminarChat` | `enviar_chat` / `crear_grupo_chat` / `marcar_chat_leido` (local) / `eliminar_chat` (local) | todos |
 | `marcarLeida` / `desmarcarLeida` / `marcarTodasLeidas` | igual (local) | todos |
