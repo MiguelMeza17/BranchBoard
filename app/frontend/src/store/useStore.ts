@@ -1117,6 +1117,19 @@ export const useStore = create<State>((set, get) => {
 
   eliminarTarea: (id, justificacion) => {
     const tarea = get().tareas.find((t) => t.id === id);
+    if (enTauri()) {
+      void api
+        .eliminarTarea(id, justificacion, () => [])
+        .then((afectadas) => {
+          const mapa = new Map(afectadas.map((t) => [t.id, t]));
+          set((s) => ({
+            tareas: s.tareas.map((t) => mapa.get(t.id) ?? t),
+          }));
+          get().showToast('Tarea enviada a la Papelera', 'danger');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) =>
         t.id === id
@@ -1146,6 +1159,17 @@ export const useStore = create<State>((set, get) => {
   },
 
   eliminarDefinitivo: (id) => {
+    if (enTauri()) {
+      void api
+        .eliminarDefinitivamente(id, () => [])
+        .then((purgadas) => {
+          const borradas = new Set(purgadas.map((t) => t.id));
+          set((s) => ({ tareas: s.tareas.filter((t) => !borradas.has(t.id)) }));
+          get().showToast('Tarea eliminada definitivamente', 'danger');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({ tareas: s.tareas.filter((t) => t.id !== id) }));
     get().showToast('Tarea eliminada definitivamente', 'danger');
   },
