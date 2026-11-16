@@ -1087,6 +1087,18 @@ export const useStore = create<State>((set, get) => {
   // Notificación #11: avisa al creador que su tarea pendiente fue editada y aprobada.
   editarYAprobarTarea: (id, campos) => {
     const tarea = get().tareas.find((t) => t.id === id);
+    if (enTauri()) {
+      void api
+        .editarYAprobarTarea(id, campos, () => ({ ...(tarea as Tarea), ...campos, pendiente_aprobacion: false }))
+        .then((actualizada) => {
+          set((s) => ({
+            tareas: s.tareas.map((t) => (t.id === id ? actualizada : t)),
+          }));
+          get().showToast('Tarea editada y aprobada');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (t.id === id ? { ...t, ...campos, pendiente_aprobacion: false } : t)),
     }));
@@ -1139,6 +1151,19 @@ export const useStore = create<State>((set, get) => {
   },
 
   aprobarTarea: (id) => {
+    const tarea = get().tareas.find((t) => t.id === id);
+    if (enTauri()) {
+      void api
+        .aprobarTarea(id, () => ({ ...(tarea as Tarea), pendiente_aprobacion: false }))
+        .then((actualizada) => {
+          set((s) => ({
+            tareas: s.tareas.map((t) => (t.id === id ? actualizada : t)),
+          }));
+          get().showToast('Tarea aprobada');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (t.id === id ? { ...t, pendiente_aprobacion: false } : t)),
     }));
@@ -1147,6 +1172,18 @@ export const useStore = create<State>((set, get) => {
 
   aprobarTareas: (ids) => {
     const set_ = new Set(ids);
+    if (enTauri()) {
+      void api
+        .aprobarTareas(ids, () =>
+          get().tareas.map((t) => (set_.has(t.id) ? { ...t, pendiente_aprobacion: false } : t)),
+        )
+        .then((lista) => {
+          set({ tareas: normalizar(lista) });
+          get().showToast(`${ids.length} tareas nuevas aprobadas`);
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (set_.has(t.id) ? { ...t, pendiente_aprobacion: false } : t)),
     }));
@@ -1165,6 +1202,13 @@ export const useStore = create<State>((set, get) => {
   // Notificación #12 (BACKEND.md): advertencia sobre tarea pendiente — no toca la tarea, solo avisa.
   advertirTarea: (id, mensaje) => {
     const tarea = get().tareas.find((t) => t.id === id);
+    if (enTauri()) {
+      void api
+        .advertirTareaPendiente(id, mensaje, () => undefined)
+        .then(() => get().showToast('Advertencia enviada al creador', 'info'))
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     get().showToast('Advertencia enviada al creador', 'info');
     if (tarea) {
       notificar({

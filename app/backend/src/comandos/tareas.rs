@@ -250,3 +250,46 @@ pub async fn reabrir_tarea(
         tareas::reabrir(c, ops, autor, &id, &motivo, &ahora_iso())
     })
 }
+
+/// `aprobar_tarea(id)`: Líder/Admin aprueba una tarea pendiente (`pendiente_aprobacion = false`) (#101).
+#[tauri::command]
+pub async fn aprobar_tarea(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    con_ops(&estado, "aprobar_tarea", |c, ops, autor| {
+        tareas::aprobar_tarea(c, ops, autor, &id, &ahora_iso())
+    })
+}
+
+/// `aprobar_tareas(ids)`: Líder/Admin aprueba varias tareas pendientes a la vez (#101).
+#[tauri::command]
+pub async fn aprobar_tareas(
+    estado: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Resultado<Vec<Tarea>> {
+    con_ops(&estado, "aprobar_tareas", |c, ops, autor| {
+        tareas::aprobar_tareas(c, ops, autor, &ids, &ahora_iso())
+    })
+}
+
+/// `editar_y_aprobar_tarea(id, campos)`: Líder/Admin edita y aprueba una tarea pendiente en un solo comando (#101).
+#[tauri::command]
+pub async fn editar_y_aprobar_tarea(
+    estado: State<'_, AppState>,
+    id: String,
+    campos: CambiosTarea,
+) -> Resultado<Tarea> {
+    con_ops(&estado, "editar_y_aprobar_tarea", |c, ops, autor| {
+        tareas::editar_y_aprobar(c, ops, autor, &id, &campos, &ahora_iso())
+    })
+}
+
+/// `advertir_tarea_pendiente(id, mensaje)`: Líder/Admin avisa al creador sin aprobarla (#101).
+#[tauri::command]
+pub async fn advertir_tarea_pendiente(
+    estado: State<'_, AppState>,
+    id: String,
+    mensaje: String,
+) -> Resultado<()> {
+    con_ops(&estado, "advertir_tarea_pendiente", |c, ops, autor| {
+        tareas::advertir_pendiente(c, ops, autor, &id, &mensaje, &ahora_iso())
+    })
+}

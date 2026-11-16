@@ -34,6 +34,10 @@ pub const TIPOS: &[&str] = &[
     "cambiar_estado",
     "borrar_progreso",
     "reabrir_tarea",
+    "aprobar_tarea",
+    "aprobar_tareas",
+    "editar_y_aprobar_tarea",
+    "advertir_tarea_pendiente",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -211,6 +215,19 @@ pub struct PayloadBorrarProgreso {
 pub struct PayloadReabrirTarea {
     pub id: String,
     pub motivo: String,
+}
+
+/// `payload` de `aprobar_tareas` (#101).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadAprobarTareas {
+    pub ids: Vec<String>,
+}
+
+/// `payload` de `advertir_tarea_pendiente` (#101).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadAdvertirTarea {
+    pub id: String,
+    pub mensaje: String,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -925,6 +942,135 @@ pub fn reabrir(
     db_tareas::obtener(c, id)
 }
 
+fn exigir_lider_o_admin(rol_conocido: Option<Rol>) -> Resultado<()> {
+    if let Some(rol) = rol_conocido {
+        if !rol.es_lider_o_admin() {
+            return Err(Error::SinPermiso);
+        }
+    }
+    Ok(())
+}
+
+/// Aprueba una tarea pendiente (`aprobar_tarea`, #101): solo Líder/Admin.
+/// Pone `pendiente_aprobacion = false` sin tocar `estado`.
+pub fn aprobar_tarea(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "aprobar_tarea",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar aprobar_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_aprobar_tareas(tx, Some(autor.rol), std::slice::from_ref(&payload.id))
+    })?;
+    db_tareas::obtener(c, id)
+}
+
+/// Aprueba varias tareas pendientes en una sola operación (`aprobar_tareas`, #101).
+pub fn aprobar_tareas(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    ids: &[String],
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let limpias: Vec<String> = ids
+        .iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    if limpias.is_empty() {
+        return Err(Error::Validacion(
+            "Selecciona al menos una tarea para aprobar".into(),
+        ));
+    }
+    let payload = PayloadAprobarTareas { ids: limpias };
+    let mut ev = Evento::nuevo(
+        "aprobar_tareas",
+        payload.ids.first().map(String::as_str),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar aprobar_tareas: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_aprobar_tareas(tx, Some(autor.rol), &payload.ids)
+    })?;
+    db_tareas::listar(c)
+}
+
+/// Edita campos de una tarea pendiente y la aprueba en la misma operación
+/// (`editar_y_aprobar_tarea`, #101). Emite notificación `editada_aprobada` (#11).
+pub fn editar_y_aprobar(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    cambios: &CambiosTarea,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadEditarTarea {
+        id: id.to_string(),
+        cambios: cambios.clone(),
+    };
+    let mut ev = Evento::nuevo(
+        "editar_y_aprobar_tarea",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar editar_y_aprobar_tarea: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_editar_y_aprobar_tarea(tx, Some(autor.rol), &payload, ahora)
+    })?;
+    db_tareas::obtener(c, id)
+}
+
+/// Envía una advertencia escrita al creador de una tarea pendiente sin aprobarla
+/// (`advertir_tarea_pendiente`, #101). Emite notificación `advertencia` (#12).
+pub fn advertir_pendiente(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    mensaje: &str,
+    ahora: &str,
+) -> Resultado<()> {
+    let id = id.trim();
+    let payload = PayloadAdvertirTarea {
+        id: id.to_string(),
+        mensaje: mensaje.trim().to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "advertir_tarea_pendiente",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar advertir_tarea_pendiente: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_advertir_tarea_pendiente(tx, Some(autor.rol), &payload, ahora)
+    })?;
+    Ok(())
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -967,29 +1113,7 @@ fn rol_verificado_de(c: &Connection, publica_admin: &str, email: &str) -> Result
         .and_then(|u| u.rol_efectivo))
 }
 
-fn aplicar_editar_tarea(
-    c: &Connection,
-    autor_email: &str,
-    rol_conocido: Option<Rol>,
-    payload: &PayloadEditarTarea,
-) -> Resultado<()> {
-    let mut tarea = db_tareas::obtener(c, &payload.id)?;
-    if tarea.eliminada {
-        return Err(Error::Validacion(format!(
-            "La tarea {} está en la Papelera y no se puede editar",
-            tarea.id
-        )));
-    }
-
-    let autor_email = normalizar_email(autor_email);
-    let es_creador_pendiente =
-        tarea.pendiente_aprobacion && normalizar_email(&tarea.creado_por) == autor_email;
-    let es_lider_o_admin = rol_conocido.is_some_and(|r| r.es_lider_o_admin());
-    if !es_lider_o_admin && !es_creador_pendiente {
-        return Err(Error::SinPermiso);
-    }
-
-    let c_edit = &payload.cambios;
+fn aplicar_cambios_en_fila(tarea: &mut Tarea, c_edit: &CambiosTarea) -> Resultado<()> {
     if let Some(ref titulo) = c_edit.titulo {
         let limpio = titulo.trim();
         if limpio.is_empty() {
@@ -1039,7 +1163,32 @@ fn aplicar_editar_tarea(
             None
         };
     }
+    Ok(())
+}
 
+fn aplicar_editar_tarea(
+    c: &Connection,
+    autor_email: &str,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadEditarTarea,
+) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede editar",
+            tarea.id
+        )));
+    }
+
+    let autor_email = normalizar_email(autor_email);
+    let es_creador_pendiente =
+        tarea.pendiente_aprobacion && normalizar_email(&tarea.creado_por) == autor_email;
+    let es_lider_o_admin = rol_conocido.is_some_and(|r| r.es_lider_o_admin());
+    if !es_lider_o_admin && !es_creador_pendiente {
+        return Err(Error::SinPermiso);
+    }
+
+    aplicar_cambios_en_fila(&mut tarea, &payload.cambios)?;
     db_tareas::actualizar(c, &tarea)
 }
 
@@ -1115,6 +1264,32 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 .map_err(|e| Error::Validacion(format!("reabrir_tarea inválido: {e}")))?;
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_reabrir_tarea(c, rol, &payload, &evento.timestamp)
+        }
+        "aprobar_tarea" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("aprobar_tarea inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_aprobar_tareas(c, rol, &[payload.id])
+        }
+        "aprobar_tareas" => {
+            let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("aprobar_tareas inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_aprobar_tareas(c, rol, &payload.ids)
+        }
+        "editar_y_aprobar_tarea" => {
+            let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("editar_y_aprobar_tarea inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_editar_y_aprobar_tarea(c, rol, &payload, &evento.timestamp)
+        }
+        "advertir_tarea_pendiente" => {
+            let payload: PayloadAdvertirTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| {
+                    Error::Validacion(format!("advertir_tarea_pendiente inválido: {e}"))
+                })?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_advertir_tarea_pendiente(c, rol, &payload, &evento.timestamp)
         }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
@@ -1601,6 +1776,112 @@ fn aplicar_reabrir_tarea(
         }
     }
     Ok(())
+}
+
+fn aplicar_aprobar_tareas(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    ids: &[String],
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    if ids.is_empty() {
+        return Err(Error::Validacion(
+            "Selecciona al menos una tarea para aprobar".into(),
+        ));
+    }
+    for id in ids {
+        let mut tarea = db_tareas::obtener(c, id)?;
+        if tarea.eliminada {
+            return Err(Error::Validacion(format!(
+                "La tarea {} está en la Papelera y no se puede aprobar",
+                tarea.id
+            )));
+        }
+        if tarea.pendiente_aprobacion {
+            tarea.pendiente_aprobacion = false;
+            db_tareas::actualizar(c, &tarea)?;
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_editar_y_aprobar_tarea(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadEditarTarea,
+    ahora: &str,
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    aplicar_cambios_en_fila(&mut tarea, &payload.cambios)?;
+    tarea.pendiente_aprobacion = false;
+    db_tareas::actualizar(c, &tarea)?;
+
+    insertar_notificacion_si_falta(
+        c,
+        &Notificacion {
+            id: format!("noti_edit_apr_{}_{}", tarea.id, ahora),
+            tipo: TipoNotificacion::EditadaAprobada,
+            para: normalizar_email(&tarea.creado_por),
+            titulo: "Tu tarea pendiente fue editada y aprobada".into(),
+            cuerpo: format!(
+                "\"{}\" ({}) fue editada y aprobada.",
+                tarea.titulo, tarea.id
+            ),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id),
+            accionable: false,
+        },
+    )
+}
+
+fn aplicar_advertir_tarea_pendiente(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadAdvertirTarea,
+    ahora: &str,
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    let mensaje = payload.mensaje.trim();
+    if mensaje.is_empty() {
+        return Err(Error::Validacion(
+            "Escribe un mensaje para advertir sobre la tarea".into(),
+        ));
+    }
+    let tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if !tarea.pendiente_aprobacion {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya fue aprobada",
+            tarea.id
+        )));
+    }
+    insertar_notificacion_si_falta(
+        c,
+        &Notificacion {
+            id: format!("noti_adv_{}_{}", tarea.id, ahora),
+            tipo: TipoNotificacion::Advertencia,
+            para: normalizar_email(&tarea.creado_por),
+            titulo: "Advertencia sobre tu tarea pendiente".into(),
+            cuerpo: format!("Sobre \"{}\" ({}): {mensaje}", tarea.titulo, tarea.id),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id),
+            accionable: false,
+        },
+    )
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -4379,5 +4660,119 @@ mod tests {
         if let Err(p) = resultado {
             std::panic::resume_unwind(p);
         }
+    }
+
+    #[test]
+    fn aprobar_editar_y_advertir_tareas_pendientes() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        for (i, titulo) in ["Pendiente 1", "Pendiente 2", "Pendiente 3"]
+            .into_iter()
+            .enumerate()
+        {
+            crear(
+                c,
+                &e.ops,
+                &autor_dev,
+                &datos_base(titulo),
+                &format!("2026-11-15T10:0{i}:00Z"),
+                HOY,
+            )
+            .unwrap();
+        }
+
+        // Desarrollador no puede aprobar, editar_y_aprobar ni advertir.
+        assert!(matches!(
+            aprobar_tarea(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(matches!(
+            advertir_pendiente(
+                c,
+                &e.ops,
+                &autor_dev,
+                "T-101",
+                "Falta info",
+                "2026-11-15T10:05:00Z"
+            )
+            .unwrap_err(),
+            Error::SinPermiso
+        ));
+
+        // Advertir deja pendiente_aprobacion = true y crea notificación #12 al creador.
+        advertir_pendiente(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            "Detalla mejor la meta",
+            "2026-11-15T10:06:00Z",
+        )
+        .unwrap();
+        assert!(db_tareas::obtener(c, "T-101").unwrap().pendiente_aprobacion);
+        assert!(notificaciones::de_usuario(c, DEV)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::Advertencia));
+
+        // Editar y aprobar cambia campos y aprueba en un solo evento + notificación #11.
+        let editada = editar_y_aprobar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            &CambiosTarea {
+                titulo: Some("Pendiente 1 corregida".into()),
+                ..Default::default()
+            },
+            "2026-11-15T10:07:00Z",
+        )
+        .unwrap();
+        assert_eq!(editada.titulo, "Pendiente 1 corregida");
+        assert!(!editada.pendiente_aprobacion);
+        assert!(notificaciones::de_usuario(c, DEV)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::EditadaAprobada));
+
+        // aprobar_tareas aprueba T-102 y T-103 en una operación sin tocar estado.
+        let lista = aprobar_tareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &["T-102".into(), "T-103".into()],
+            "2026-11-15T10:08:00Z",
+        )
+        .unwrap();
+        assert!(lista.iter().all(|t| !t.pendiente_aprobacion));
+
+        // Máquina B sincroniza y llega al mismo estado y notificaciones.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        assert!(
+            !db_tareas::obtener(e.db_b.conexion(), "T-101")
+                .unwrap()
+                .pendiente_aprobacion
+        );
+        assert!(
+            !db_tareas::obtener(e.db_b.conexion(), "T-103")
+                .unwrap()
+                .pendiente_aprobacion
+        );
+        assert_eq!(
+            notificaciones::de_usuario(e.db_b.conexion(), DEV)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 }

@@ -268,6 +268,22 @@ export const api = {
   reabrirTarea: (id: string, motivo: string, mockup: () => Tarea) =>
     llamar<Tarea>('reabrir_tarea', { id, motivo }, mockup),
 
+  /** Aprueba una tarea pendiente (Líder/Admin, #101). */
+  aprobarTarea: (id: string, mockup: () => Tarea) =>
+    llamar<Tarea>('aprobar_tarea', { id }, mockup),
+
+  /** Aprueba varias tareas pendientes en una operación (Líder/Admin, #101). */
+  aprobarTareas: (ids: string[], mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('aprobar_tareas', { ids }, mockup),
+
+  /** Edita y aprueba una tarea pendiente en un solo comando (Líder/Admin, #101). */
+  editarYAprobarTarea: (id: string, campos: CambiosEditarTarea, mockup: () => Tarea) =>
+    llamar<Tarea>('editar_y_aprobar_tarea', { id, campos }, mockup),
+
+  /** Envía una advertencia al creador de una tarea pendiente sin aprobarla (#101). */
+  advertirTareaPendiente: (id: string, mensaje: string, mockup: () => void) =>
+    llamar<void>('advertir_tarea_pendiente', { id, mensaje }, mockup),
+
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
