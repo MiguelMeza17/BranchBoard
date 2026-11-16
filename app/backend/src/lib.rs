@@ -37,7 +37,7 @@ use comandos::{
     acceso, actualizaciones, chat as comandos_chat, datos, documentos as comandos_documentos,
     eventos as comandos_eventos, identidad as comandos_identidad,
     notificaciones as comandos_notificaciones, sistema, sprints as comandos_sprints,
-    tareas as comandos_tareas, usuarios,
+    tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -167,6 +167,8 @@ pub fn run() {
             comandos_documentos::aprobar_documento,
             comandos_documentos::eliminar_documento,
             comandos_documentos::abrir_documento,
+            comandos_vistos::marcar_visto,
+            comandos_vistos::obtener_vistos,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");
