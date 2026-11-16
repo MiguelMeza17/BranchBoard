@@ -33,15 +33,32 @@ use comandos::{
     sistema, tareas as comandos_tareas, usuarios,
 };
 
+fn disparar_polling(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let estado = app.state::<estado::AppState>();
+        if let Ok(resumen) = comandos_eventos::revisar_actualizaciones_en(&estado, None) {
+            if resumen.hubo_cambios() {
+                let _ = app.emit(comandos_eventos::EVENTO_UNITY_ACTUALIZADO, &resumen);
+            }
+        }
+    });
+}
+
 /// Con una operación de `cm` corriendo, la ventana no se cierra: se cancela el
 /// cierre y se le avisa al frontend (ver "Bloquear el cierre" en BACKEND.md).
-fn bloquear_cierre_en_operacion(ventana: &tauri::Window, evento: &WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = evento {
-        let estado = ventana.state::<estado::AppState>();
-        if estado.hay_operacion_en_curso() {
-            api.prevent_close();
-            let _ = ventana.emit(sistema::EVENTO_CIERRE_BLOQUEADO, ());
+fn manejar_evento_ventana(ventana: &tauri::Window, evento: &WindowEvent) {
+    match evento {
+        WindowEvent::CloseRequested { api, .. } => {
+            let estado = ventana.state::<estado::AppState>();
+            if estado.hay_operacion_en_curso() {
+                api.prevent_close();
+                let _ = ventana.emit(sistema::EVENTO_CIERRE_BLOQUEADO, ());
+            }
         }
+        WindowEvent::Focused(true) => {
+            disparar_polling(ventana.app_handle().clone());
+        }
+        _ => {}
     }
 }
 
@@ -51,7 +68,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(estado::AppState::default())
-        .on_window_event(bloquear_cierre_en_operacion)
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                disparar_polling(handle.clone());
+            });
+            Ok(())
+        })
+        .on_window_event(manejar_evento_ventana)
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
             sistema::hay_operacion_en_curso,
@@ -64,6 +89,7 @@ pub fn run() {
             comandos_eventos::carpeta_compartida,
             comandos_eventos::configurar_carpeta_compartida,
             comandos_eventos::sincronizar_eventos,
+            comandos_eventos::revisar_actualizaciones,
             comandos_eventos::compactar_eventos,
             comandos_identidad::exportar_llave_firma,
             usuarios::listar_usuarios,
