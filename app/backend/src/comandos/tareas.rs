@@ -6,17 +6,18 @@ use std::path::Path;
 use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
+use crate::db::commits::Commit;
 use crate::db::ediciones::EdicionPendiente;
 use crate::db::tareas::Tarea;
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos;
-use crate::modelo::{ahora_iso, hoy_local, EstadoTarea};
+use crate::modelo::{ahora_iso, ahora_local_segundo, hoy_local, EstadoTarea, TipoTarea};
 use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
 use crate::tareas::{
-    self, AutorTarea, CambiosTarea, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
-    ResultadoCambioEstado, ResultadoProponerEdicion,
+    self, AutorTarea, CambiosTarea, DatosCheckin, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
+    PendientesRama, ResultadoCambioEstado, ResultadoProponerEdicion,
 };
 
 fn con_ops<T>(
@@ -506,4 +507,114 @@ pub fn eliminar_definitivamente_en(estado: &AppState, id: &str) -> Resultado<Vec
         }
     }
     Ok(purgadas)
+}
+
+/// Lista los cambios sin check-in del workspace (`cm status`) indicando si el workspace
+/// apunta a `rama` (guardia de rama, #105).
+#[tauri::command]
+pub fn cambios_pendientes(
+    estado: State<'_, AppState>,
+    rama: Option<String>,
+) -> Resultado<PendientesRama> {
+    cambios_pendientes_en(&estado, rama.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`cambios_pendientes`].
+pub fn cambios_pendientes_en(estado: &AppState, rama: Option<&str>) -> Resultado<PendientesRama> {
+    let _yo = estado.exigir_permiso("cambios_pendientes")?;
+    let workspace = estado.workspace_abierto()?;
+    let actual = crate::cm::lectura::rama_actual_workspace(estado, &workspace)?;
+    let en_rama_esperada = rama.map_or(true, |r| {
+        actual
+            .rama
+            .eq_ignore_ascii_case(r.trim().trim_end_matches('/'))
+    });
+    let archivos = if en_rama_esperada {
+        ramas::cambios_pendientes(estado, &workspace)?
+    } else {
+        Vec::new()
+    };
+    Ok(PendientesRama {
+        rama_actual: actual.rama,
+        en_rama_esperada,
+        archivos,
+    })
+}
+
+/// Cambia el workspace local hacia la rama asociada de `id` si no hay cambios sin check-in (#105).
+#[tauri::command]
+pub async fn cambiar_a_rama_tarea(estado: State<'_, AppState>, id: String) -> Resultado<String> {
+    cambiar_a_rama_tarea_en(&estado, &id)
+}
+
+/// Versión sin envoltorio Tauri de [`cambiar_a_rama_tarea`].
+pub fn cambiar_a_rama_tarea_en(estado: &AppState, id: &str) -> Resultado<String> {
+    let _yo = estado.exigir_permiso("cambiar_a_rama_tarea")?;
+    let workspace = estado.workspace_abierto()?;
+    let rama = estado.con_db(|db| tareas::rama_para_cambiar(db.conexion(), id))?;
+    let pendientes = ramas::cambios_pendientes(estado, &workspace)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in en esta rama. Haz check-in o deshazlos antes de cambiar de rama",
+            pendientes.len()
+        )));
+    }
+    ramas::cambiar_a_rama(estado, &workspace, &rama)?;
+    Ok(rama)
+}
+
+/// `hacer_checkin(rama, titulo, descripcion, tipo)`: ejecuta `cm checkin` en la rama
+/// de una tarea sin subtareas (con guardia de rama actual y responsable) y guarda el
+/// commit con `tipo` en SQLite + `ops/` (#105).
+#[tauri::command]
+pub async fn hacer_checkin(
+    estado: State<'_, AppState>,
+    rama: String,
+    titulo: String,
+    descripcion: String,
+    tipo: TipoTarea,
+) -> Resultado<Commit> {
+    hacer_checkin_en(&estado, &rama, &titulo, &descripcion, tipo)
+}
+
+/// Versión sin envoltorio Tauri de [`hacer_checkin`].
+pub fn hacer_checkin_en(
+    estado: &AppState,
+    rama: &str,
+    titulo: &str,
+    descripcion: &str,
+    tipo: TipoTarea,
+) -> Resultado<Commit> {
+    let yo = estado.exigir_permiso("hacer_checkin")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let tarea = estado.con_db(|db| tareas::tarea_para_checkin(db.conexion(), &yo.email, rama))?;
+    let rama_tarea = tarea
+        .rama_asociada
+        .as_deref()
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asociada".into()))?;
+    let comentario = tareas::armar_comentario_checkin(titulo, descripcion, tipo)?;
+
+    let cs = ramas::hacer_checkin_workspace(estado, &workspace, rama_tarea, &comentario)?;
+    estado.con_db(|db| {
+        tareas::registrar_checkin(
+            db.conexion(),
+            &ops,
+            &autor,
+            &DatosCheckin {
+                tarea_id: &tarea.id,
+                changeset: cs,
+                titulo,
+                descripcion,
+                tipo,
+            },
+            &ahora_iso(),
+            &ahora_local_segundo(),
+        )
+    })
 }

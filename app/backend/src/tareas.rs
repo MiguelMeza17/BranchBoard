@@ -45,6 +45,7 @@ pub const TIPOS: &[&str] = &[
     "rechazar_modificacion",
     "eliminar_tarea",
     "eliminar_definitivamente",
+    "hacer_checkin",
     "tarea_cerrada_por_deteccion",
 ];
 
@@ -269,6 +270,31 @@ pub struct PayloadEliminarTarea {
 pub struct PayloadTareaCerradaDeteccion {
     pub id: String,
     pub fecha_completada: String,
+}
+
+/// Datos para registrar un check-in ejecutado desde BranchBoard (#105).
+#[derive(Debug, Clone)]
+pub struct DatosCheckin<'a> {
+    pub tarea_id: &'a str,
+    pub changeset: i64,
+    pub titulo: &'a str,
+    pub descripcion: &'a str,
+    pub tipo: TipoTarea,
+}
+
+/// `payload` de `hacer_checkin` (#105).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadHacerCheckin {
+    pub commit: commits::Commit,
+    pub changeset: i64,
+}
+
+/// Respuesta de `cambios_pendientes` con guardia de rama del workspace (#105).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendientesRama {
+    pub rama_actual: String,
+    pub en_rama_esperada: bool,
+    pub archivos: Vec<String>,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -1371,6 +1397,128 @@ pub fn cerrar_por_deteccion(
     db_tareas::obtener(c, id)
 }
 
+/// Verifica que `rama` corresponda a una tarea elegible para `hacer_checkin`
+/// (existe, no eliminada ni terminada, sin subtareas activas y asignada al autor, #105).
+pub fn tarea_para_checkin(c: &Connection, autor_email: &str, rama: &str) -> Resultado<Tarea> {
+    let limpia = rama.trim().trim_end_matches('/');
+    if limpia.is_empty() {
+        return Err(Error::Validacion("Indica la rama de la tarea".into()));
+    }
+    let tarea = db_tareas::listar(c)?
+        .into_iter()
+        .find(|t| {
+            !t.eliminada
+                && t.rama_asociada
+                    .as_deref()
+                    .map(|r| r.trim_end_matches('/').eq_ignore_ascii_case(limpia))
+                    .unwrap_or(false)
+        })
+        .ok_or_else(|| {
+            Error::NoEncontrado(format!("No hay ninguna tarea activa en la rama {limpia}"))
+        })?;
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if !descendientes_activos(c, &tarea.id)?.is_empty() {
+        return Err(Error::Validacion(
+            "Esta rama tiene subtareas: no hagas check-in en el padre, crea una rama".into(),
+        ));
+    }
+    let autor = normalizar_email(autor_email);
+    let asignado = tarea.asignado_a.as_deref().map(normalizar_email);
+    if asignado.as_deref() != Some(autor.as_str()) {
+        return Err(Error::SinPermiso);
+    }
+    Ok(tarea)
+}
+
+/// Resuelve la rama asociada de `id` para cambiar el workspace desde la guardia (#105).
+pub fn rama_para_cambiar(c: &Connection, id: &str) -> Resultado<String> {
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    tarea
+        .rama_asociada
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asignada".into()))
+}
+
+/// Valida tipo y da formato `título\n\ndescripción` para `cm checkin` (#105).
+pub fn armar_comentario_checkin(
+    titulo: &str,
+    descripcion: &str,
+    tipo: TipoTarea,
+) -> Resultado<String> {
+    validar_tipo_creacion(tipo)?;
+    let titulo = titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion(
+            "El título del check-in es obligatorio".into(),
+        ));
+    }
+    let desc = descripcion.trim();
+    if desc.is_empty() {
+        Ok(titulo.to_string())
+    } else {
+        Ok(format!("{titulo}\n\n{desc}"))
+    }
+}
+
+/// Publica en `ops/` el check-in ejecutado desde BranchBoard conservando `tipo` (#105).
+pub fn registrar_checkin(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    datos: &DatosCheckin<'_>,
+    ahora: &str,
+    fecha_commit: &str,
+) -> Resultado<commits::Commit> {
+    let titulo = datos.titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion(
+            "El título del check-in es obligatorio".into(),
+        ));
+    }
+    validar_tipo_creacion(datos.tipo)?;
+    let tarea_id = datos.tarea_id.trim();
+    let commit = commits::Commit {
+        id: format!("C-{tarea_id}-{}", datos.changeset),
+        tarea_id: tarea_id.to_string(),
+        hash: datos.changeset.to_string(),
+        mensaje: titulo.to_string(),
+        descripcion: limpiar_opcional(Some(datos.descripcion.to_string())),
+        tipo: Some(datos.tipo),
+        autor: normalizar_email(autor.email),
+        fecha: fecha_commit.to_string(),
+    };
+    let payload = PayloadHacerCheckin {
+        commit: commit.clone(),
+        changeset: datos.changeset,
+    };
+    let mut ev = Evento::nuevo(
+        "hacer_checkin",
+        Some(tarea_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar hacer_checkin: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_hacer_checkin(tx, &payload))?;
+    Ok(commit)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -1629,6 +1777,11 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_eliminar_definitivamente(c, rol, &payload.id)?;
             Ok(())
+        }
+        "hacer_checkin" => {
+            let payload: PayloadHacerCheckin = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("hacer_checkin inválido: {e}")))?;
+            aplicar_hacer_checkin(c, &payload)
         }
         "tarea_cerrada_por_deteccion" => {
             let payload: PayloadTareaCerradaDeteccion =
@@ -2525,6 +2678,29 @@ fn aplicar_cerrar_por_deteccion(c: &Connection, id: &str, fecha_completada: &str
     tarea.modificada = false;
     db_tareas::actualizar(c, &tarea)?;
     recalcular_padres(c, padre)
+}
+
+fn aplicar_hacer_checkin(c: &Connection, payload: &PayloadHacerCheckin) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.commit.tarea_id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if let Some(tipo) = payload.commit.tipo {
+        validar_tipo_creacion(tipo)?;
+    }
+    commits::guardar(c, &payload.commit)?;
+    let visto = tarea
+        .ultimo_changeset_visto
+        .unwrap_or(0)
+        .max(payload.changeset);
+    if tarea.ultimo_changeset_visto != Some(visto) {
+        tarea.ultimo_changeset_visto = Some(visto);
+        db_tareas::actualizar(c, &tarea)?;
+    }
+    Ok(())
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -6651,6 +6827,258 @@ mod tests {
             assert_eq!(t3_final_b.titulo, "T3 aprobada");
             assert!(!t3_final_b.edicion_pendiente);
             assert!(ediciones::listar(env.db_b.conexion()).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn checkin_desde_branchboard_y_guardia_de_rama() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Padre 105".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::Audio,
+                    titulo: "Sub 105".into(),
+                    detalles: String::new(),
+                }],
+            },
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+
+        tomar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            |_| {
+                Ok(vec![
+                    (
+                        "T-101".into(),
+                        Rama {
+                            id: 1,
+                            name: "/main/dev/T-101-padre-105".into(),
+                            head_changeset: 10,
+                        },
+                    ),
+                    (
+                        "T-101-1".into(),
+                        Rama {
+                            id: 2,
+                            name: "/main/dev/T-101-padre-105/T-101-1-sub-105".into(),
+                            head_changeset: 11,
+                        },
+                    ),
+                ])
+            },
+            "2026-11-15T15:01:00Z",
+        )
+        .unwrap();
+
+        // No permite check-in si no es responsable, si es rama padre con subtareas ni tipo SinDefinir.
+        assert!(matches!(
+            tarea_para_checkin(c, DEV, "/main/dev/T-101-padre-105/T-101-1-sub-105").unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(tarea_para_checkin(c, LIDER, "/main/dev/T-101-padre-105").is_err());
+        assert!(armar_comentario_checkin("Titulo", "", TipoTarea::SinDefinir).is_err());
+        assert!(armar_comentario_checkin("   ", "Desc", TipoTarea::Audio).is_err());
+        assert_eq!(
+            armar_comentario_checkin("  Audio final ", " Con reverb ", TipoTarea::Audio).unwrap(),
+            "Audio final\n\nCon reverb"
+        );
+        assert_eq!(
+            rama_para_cambiar(c, "T-101-1").unwrap(),
+            "/main/dev/T-101-padre-105/T-101-1-sub-105"
+        );
+
+        let commit = registrar_checkin(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosCheckin {
+                tarea_id: "T-101-1",
+                changeset: 25,
+                titulo: "Audio final",
+                descripcion: "Con reverb",
+                tipo: TipoTarea::Audio,
+            },
+            "2026-11-15T15:02:00Z",
+            "2026-11-15T10:02:00",
+        )
+        .unwrap();
+        assert_eq!(commit.id, "C-T-101-1-25");
+        assert_eq!(commit.tipo, Some(TipoTarea::Audio));
+        assert_eq!(
+            db_tareas::obtener(c, "T-101-1")
+                .unwrap()
+                .ultimo_changeset_visto,
+            Some(25)
+        );
+
+        // Máquina B sincroniza vía ops/ y conserva tipo y ultimo_changeset_visto.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let cs_b = commits::de_tarea(e.db_b.conexion(), "T-101-1").unwrap();
+        assert_eq!(cs_b.len(), 1);
+        assert_eq!(cs_b[0].tipo, Some(TipoTarea::Audio));
+        assert_eq!(cs_b[0].descripcion.as_deref(), Some("Con reverb"));
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-101-1")
+                .unwrap()
+                .ultimo_changeset_visto,
+            Some(25)
+        );
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_hacer_checkin() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{
+            asignar_en, cambiar_a_rama_tarea_en, cambios_pendientes_en, hacer_checkin_en, tomar_en,
+        };
+
+        correr_entorno_real("105", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            let admin_email = env.admin_fila.email.clone();
+
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 105",
+                &["Sub checkin 105"],
+            );
+            let sub_id = grupo[1].id.clone();
+            let indep = env.crear_tarea(&admin_email, Rol::Administrador, "Otra rama 105");
+            let asg_indep = asignar_en(&env.estado_a, &indep.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_indep);
+
+            let tomadas = tomar_en(&env.estado_a, &sub_id).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+            let rama_sub = tomadas[1].rama_asociada.clone().unwrap();
+
+            // Guardia: otro usuario o rama padre con subtareas rechazan `hacer_checkin_en`.
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(hacer_checkin_en(
+                &env.estado_a,
+                &rama_sub,
+                "No soy dueño",
+                "",
+                TipoTarea::Scripting
+            )
+            .is_err());
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            assert!(hacer_checkin_en(
+                &env.estado_a,
+                &rama_padre,
+                "Padre",
+                "",
+                TipoTarea::Scripting
+            )
+            .is_err());
+
+            // Guardia de rama incorrecta: al volver a /main/dev, detecta rama incorrecta y bloquea check-in.
+            env.volver_a_dev();
+            let pend_fuera = cambios_pendientes_en(&env.estado_a, Some(&rama_sub)).unwrap();
+            assert_eq!(pend_fuera.rama_actual, "/main/dev");
+            assert!(!pend_fuera.en_rama_esperada);
+            assert!(pend_fuera.archivos.is_empty());
+            let err_rama =
+                hacer_checkin_en(&env.estado_a, &rama_sub, "En dev", "", TipoTarea::Scripting)
+                    .unwrap_err();
+            assert!(err_rama.to_string().contains("cambia de rama"));
+
+            // Ofrecer cambiar de rama: `cambiar_a_rama_tarea_en` devuelve el workspace a `rama_sub`.
+            let cambiada = cambiar_a_rama_tarea_en(&env.estado_a, &sub_id).unwrap();
+            assert_eq!(cambiada, rama_sub);
+
+            // Sin cambios pendientes rechaza `hacer_checkin_en`; agregando un archivo, `cm status` lo lista.
+            assert!(
+                hacer_checkin_en(&env.estado_a, &rama_sub, "Vacio", "", TipoTarea::Scripting)
+                    .is_err()
+            );
+            let archivo = env.ws_ruta.join("script-105.txt");
+            std::fs::write(&archivo, "contenido 105").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pend = cambios_pendientes_en(&env.estado_a, Some(&rama_sub)).unwrap();
+            assert!(pend.en_rama_esperada);
+            assert_eq!(pend.rama_actual, rama_sub);
+            assert!(pend.archivos.iter().any(|a| a.contains("script-105.txt")));
+            assert!(cambiar_a_rama_tarea_en(&env.estado_a, &indep.id).is_err());
+
+            // Check-in real desde BranchBoard con título, descripción y tipo `Audio`.
+            let commit = hacer_checkin_en(
+                &env.estado_a,
+                &rama_sub,
+                "Sistema de audio 105",
+                "Efectos base de combate",
+                TipoTarea::Audio,
+            )
+            .unwrap();
+            let cs: i64 = commit.hash.parse().unwrap();
+            assert!(cs > 0);
+            assert_eq!(commit.mensaje, "Sistema de audio 105");
+            assert_eq!(
+                commit.descripcion.as_deref(),
+                Some("Efectos base de combate")
+            );
+            assert_eq!(commit.tipo, Some(TipoTarea::Audio));
+
+            let pend_despues = cambios_pendientes_en(&env.estado_a, Some(&rama_sub)).unwrap();
+            assert!(pend_despues.archivos.is_empty());
+
+            // Releer con `revisar_actualizaciones_en` conserva `tipo` y no marca `modificada`.
+            let pol = revisar_actualizaciones_en(&env.estado_a, Some(&sub_id)).unwrap();
+            assert!(pol.tareas_modificadas.is_empty());
+            let cs_a = env
+                .estado_a
+                .con_db(|db| commits::de_tarea(db.conexion(), &sub_id))
+                .unwrap();
+            assert_eq!(cs_a.len(), 1);
+            assert_eq!(cs_a[0].tipo, Some(TipoTarea::Audio));
+
+            // Máquina B sincroniza vía OneDrive el Commit con su `tipo` y `ultimo_changeset_visto`.
+            env.sincronizar_b();
+            let cs_b = commits::de_tarea(env.db_b.conexion(), &sub_id).unwrap();
+            assert_eq!(cs_b.len(), 1);
+            assert_eq!(cs_b[0].hash, commit.hash);
+            assert_eq!(cs_b[0].tipo, Some(TipoTarea::Audio));
+            assert_eq!(
+                cs_b[0].descripcion.as_deref(),
+                Some("Efectos base de combate")
+            );
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &sub_id)
+                    .unwrap()
+                    .ultimo_changeset_visto,
+                Some(cs)
+            );
         });
     }
 }

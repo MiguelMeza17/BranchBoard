@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { EdicionPendiente, EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
+import type { Commit, EdicionPendiente, EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -335,6 +335,32 @@ export const api = {
       'revisar_actualizaciones',
       { tareaId: tareaId ?? null },
       () => ({ rama_actual: null, tareas_modificadas: [], tareas_cerradas: [] })
+    ),
+
+  /** Lista cambios sin check-in del workspace y valida la rama esperada (#105). */
+  cambiosPendientes: (rama?: string | null) =>
+    llamar<{ rama_actual: string; en_rama_esperada: boolean; archivos: string[] }>(
+      'cambios_pendientes',
+      { rama: rama ?? null },
+      () => ({ rama_actual: '/main/dev', en_rama_esperada: true, archivos: [] })
+    ),
+
+  /** Cambia el workspace local hacia la rama de `id` (#105). */
+  cambiarARamaTarea: (id: string) =>
+    llamar<string>('cambiar_a_rama_tarea', { id }, () => '/main/dev'),
+
+  /** Hace check-in en Unity VC desde BranchBoard con título, descripción y tipo (#105). */
+  hacerCheckin: (
+    rama: string,
+    titulo: string,
+    descripcion: string,
+    tipo: TipoTarea,
+    mockup?: () => Commit,
+  ) =>
+    llamar<Commit>(
+      'hacer_checkin',
+      { rama, titulo, descripcion, tipo },
+      mockup ?? (() => ({}) as Commit),
     ),
 
   /** Versión instalada de la app. */
