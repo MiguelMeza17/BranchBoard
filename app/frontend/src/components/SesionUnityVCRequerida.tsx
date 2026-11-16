@@ -15,6 +15,9 @@ export function SesionUnityVCRequerida() {
   const usuarios = useStore((s) => s.usuarios);
   const [login, setLogin] = useState(false);
   const setSesionUnityVC = useStore((s) => s.setSesionUnityVC);
+  const cmInstalado = useStore((s) => s.cmInstalado);
+  const cmInstalando = useStore((s) => s.cmInstalando);
+  const instalarCm = useStore((s) => s.instalarCm);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface">
@@ -37,7 +40,21 @@ export function SesionUnityVCRequerida() {
         </div>
 
         <div className="flex w-full flex-col gap-2 pt-1">
-          <button className="btn-primary btn-sm w-full" onClick={() => setLogin(true)}>
+          {!cmInstalado && (
+            <button
+              type="button"
+              className="btn-primary btn-sm w-full"
+              disabled={cmInstalando}
+              onClick={() => void instalarCm()}
+            >
+              {cmInstalando ? 'Instalando Unity Version Control…' : 'Instalar Unity Version Control'}
+            </button>
+          )}
+          <button
+            className={`${cmInstalado ? 'btn-primary' : 'btn-outline'} btn-sm w-full`}
+            disabled={!cmInstalado || cmInstalando}
+            onClick={() => setLogin(true)}
+          >
             Iniciar sesión con Unity VC
           </button>
         </div>

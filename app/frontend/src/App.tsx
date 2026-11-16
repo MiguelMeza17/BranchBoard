@@ -31,11 +31,13 @@ export function App() {
   const accesoCompletado = useStore((s) => s.accesoCompletado);
   const showToast = useStore((s) => s.showToast);
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
+  const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
 
-  // Al arrancar la app, consulta en segundo plano si Cloudflare WARP está instalado y conectado (#122).
+  // Al arrancar la app, consulta en segundo plano el estado de WARP (#122) y de `cm` (#123).
   useEffect(() => {
     void cargarEstadoWarp();
-  }, [cargarEstadoWarp]);
+    void cargarEstadoCm();
+  }, [cargarEstadoWarp, cargarEstadoCm]);
 
   // Con una operación de Unity VC en curso, el backend no deja cerrar la ventana; aquí se avisa por qué.
   useEffect(() => {

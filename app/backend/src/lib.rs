@@ -37,10 +37,11 @@ pub mod warp;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
-    acceso, actualizaciones, chat as comandos_chat, datos, documentos as comandos_documentos,
-    eventos as comandos_eventos, identidad as comandos_identidad,
-    notificaciones as comandos_notificaciones, sistema, sprints as comandos_sprints,
-    tareas as comandos_tareas, usuarios, vistos as comandos_vistos, warp as comandos_warp,
+    acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, datos,
+    documentos as comandos_documentos, eventos as comandos_eventos,
+    identidad as comandos_identidad, notificaciones as comandos_notificaciones, sistema,
+    sprints as comandos_sprints, tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
+    warp as comandos_warp,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -100,6 +101,8 @@ pub fn run() {
             comandos_warp::estado_warp,
             comandos_warp::alternar_warp,
             comandos_warp::instalar_warp,
+            comandos_cm::estado_cm,
+            comandos_cm::instalar_cm,
             acceso::entrar_a_proyecto,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,

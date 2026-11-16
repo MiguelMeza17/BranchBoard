@@ -99,7 +99,12 @@ impl Comando {
     pub fn ejecutar(&self, estado: &AppState) -> Resultado<Salida> {
         let _operacion = estado.iniciar_operacion();
 
-        let mut comando = Command::new(&self.programa);
+        let programa_real = if self.programa == "cm" {
+            crate::cm::instalacion::resolver_cm().unwrap_or_else(|| PathBuf::from("cm"))
+        } else {
+            PathBuf::from(&self.programa)
+        };
+        let mut comando = Command::new(&programa_real);
         comando
             .args(&self.argumentos)
             .stdin(Stdio::null())

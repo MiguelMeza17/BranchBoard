@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import type { WorkspaceUnityVC } from '../types';
-import { api, enTauri, mensajeDeError, type EntradaProyecto } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type EntradaProyecto } from '../lib/api';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { Modal } from './Modal';
@@ -26,6 +26,10 @@ export function AccesoProyecto() {
   const vpnInstalando = useStore((s) => s.vpnInstalando);
   const toggleVpn = useStore((s) => s.toggleVpn);
   const instalarWarp = useStore((s) => s.instalarWarp);
+  const cmInstalado = useStore((s) => s.cmInstalado);
+  const cmInstalando = useStore((s) => s.cmInstalando);
+  const instalarCm = useStore((s) => s.instalarCm);
+  const marcarCmNoInstalado = useStore((s) => s.marcarCmNoInstalado);
   const setEmail = useStore((s) => s.setEmail);
   const setRolActual = useStore((s) => s.setRolActual);
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
@@ -121,6 +125,9 @@ export function AccesoProyecto() {
     try {
       respuesta = await api.entrarAProyecto(ws.ruta, () => entradaMockup(ws));
     } catch (e) {
+      if (e instanceof ErrorBackend && e.codigo === 'cm_no_instalado') {
+        marcarCmNoInstalado();
+      }
       showToast(mensajeDeError(e), 'danger');
       return;
     }
@@ -200,6 +207,9 @@ export function AccesoProyecto() {
             vpnInstalando={vpnInstalando}
             onToggleVpn={() => void toggleVpn()}
             onInstalarWarp={() => void instalarWarp()}
+            cmInstalado={cmInstalado}
+            cmInstalando={cmInstalando}
+            onInstalarCm={() => void instalarCm()}
             onCrear={() => setCrear(true)}
             // Con sesión: tus proyectos de Unity VC. Sin Unity VC: buscar en tu equipo la carpeta de un
             // proyecto de BranchBoard que no está conectado a Unity VC.
@@ -210,6 +220,9 @@ export function AccesoProyecto() {
         {paso === 'workspaces' && (
           <PasoWorkspaces
             vpnOn={vpnOn}
+            cmInstalado={cmInstalado}
+            cmInstalando={cmInstalando}
+            onInstalarCm={() => void instalarCm()}
             workspaces={workspaces}
             onElegir={abrirWorkspace}
             onClonar={() => setPaso('clonar')}
@@ -501,6 +514,31 @@ function Aviso({ icono, tono, titulo, children }: { icono: string; tono: string;
   );
 }
 
+function AvisoInstalarCm({
+  instalando,
+  onInstalar,
+}: {
+  instalando: boolean;
+  onInstalar: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3">
+      <div className="text-sm font-medium text-text">Unity Version Control (cm) no está instalado</div>
+      <div className="text-xs text-muted">
+        Se necesita para iniciar sesión y sincronizar workspaces en este equipo (incluye Gluon para subtareas simples).
+      </div>
+      <button
+        type="button"
+        disabled={instalando}
+        onClick={onInstalar}
+        className="btn-primary btn-sm self-start"
+      >
+        {instalando ? 'Instalando Unity Version Control…' : 'Instalar Unity Version Control'}
+      </button>
+    </div>
+  );
+}
+
 function PasoInicio({
   sesion,
   onLogin,
@@ -512,6 +550,9 @@ function PasoInicio({
   vpnInstalando,
   onToggleVpn,
   onInstalarWarp,
+  cmInstalado,
+  cmInstalando,
+  onInstalarCm,
   onCrear,
   onIngresar,
 }: {
@@ -525,6 +566,9 @@ function PasoInicio({
   vpnInstalando: boolean;
   onToggleVpn: () => void;
   onInstalarWarp: () => void;
+  cmInstalado: boolean;
+  cmInstalando: boolean;
+  onInstalarCm: () => void;
   onCrear: () => void;
   onIngresar: () => void;
 }) {
@@ -570,6 +614,10 @@ function PasoInicio({
         </button>
       </div>
 
+      {!cmInstalado && !(sinUvcs && !sesion) && (
+        <AvisoInstalarCm instalando={cmInstalando} onInstalar={onInstalarCm} />
+      )}
+
       {/* Sesión de Unity VC: es la identidad en BranchBoard (no hay login propio). */}
       {sinUvcs && !sesion ? null : sesion ? (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-done/40 bg-done/10 px-4 py-3">
@@ -589,7 +637,8 @@ function PasoInicio({
       ) : (
         <button
           onClick={onLogin}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+          disabled={!cmInstalado || cmInstalando}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Iniciar sesión con Unity VC
         </button>
@@ -632,12 +681,18 @@ function PasoInicio({
 
 function PasoWorkspaces({
   vpnOn,
+  cmInstalado,
+  cmInstalando,
+  onInstalarCm,
   workspaces,
   onElegir,
   onClonar,
   onVaciar,
 }: {
   vpnOn: boolean;
+  cmInstalado: boolean;
+  cmInstalando: boolean;
+  onInstalarCm: () => void;
   workspaces: WorkspaceUnityVC[];
   onElegir: (ws: WorkspaceUnityVC) => void;
   onClonar: () => void;
@@ -651,6 +706,8 @@ function PasoWorkspaces({
           Detectados con <code className="font-mono text-xs">cm workspace list</code> en este equipo.
         </p>
       </div>
+
+      {!cmInstalado && <AvisoInstalarCm instalando={cmInstalando} onInstalar={onInstalarCm} />}
 
       {!vpnOn && (
         <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-muted">
