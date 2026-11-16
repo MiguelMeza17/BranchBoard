@@ -9,6 +9,7 @@
 //! - `servidor` — API REST del servidor de Unity VC (con PAT).
 //! - `eventos` — sincronización por `ops/`.
 //! - `identidad` — quién es el usuario, firmas y permisos.
+//! - `proyecto` — ajustes del proyecto entero: nombre, configuración e imagen.
 //! - `modelo` — tipos del dominio (roles, estados…), iguales a los del frontend.
 //! - `error` — error común `{ codigo, mensaje }`.
 //! - `estado` — estado compartido de la app.
@@ -27,6 +28,7 @@ pub mod identidad;
 pub mod instalacion;
 pub mod modelo;
 pub mod notificaciones;
+pub mod proyecto;
 pub mod ramas;
 pub mod servidor;
 pub mod sprints;
@@ -39,9 +41,9 @@ use tauri::{Emitter, Manager, WindowEvent};
 use comandos::{
     acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
-    identidad as comandos_identidad, notificaciones as comandos_notificaciones, sistema,
-    sprints as comandos_sprints, tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
-    warp as comandos_warp,
+    identidad as comandos_identidad, notificaciones as comandos_notificaciones,
+    proyecto as comandos_proyecto, sistema, sprints as comandos_sprints, tareas as comandos_tareas,
+    usuarios, vistos as comandos_vistos, warp as comandos_warp,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -186,6 +188,10 @@ pub fn run() {
             comandos_documentos::aprobar_documento,
             comandos_documentos::eliminar_documento,
             comandos_documentos::abrir_documento,
+            comandos_proyecto::obtener_configuracion_proyecto,
+            comandos_proyecto::renombrar_proyecto,
+            comandos_proyecto::actualizar_configuracion_proyecto,
+            comandos_proyecto::subir_imagen_proyecto,
             comandos_vistos::marcar_visto,
             comandos_vistos::obtener_vistos,
         ])

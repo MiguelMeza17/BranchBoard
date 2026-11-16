@@ -39,6 +39,8 @@ use crate::modelo::normalizar_email;
 pub const CARPETA_OPS: &str = "ops";
 /// Carpeta de documentos compartidos dentro de la carpeta compartida del proyecto (#120).
 pub const CARPETA_DOCUMENTOS: &str = "documentos";
+/// Carpeta de los archivos del proyecto entero (su imagen) dentro de la carpeta compartida (#127).
+pub const CARPETA_PROYECTO: &str = "proyecto";
 /// Tipos de evento que solo un Administrador (o un Líder certificado) puede
 /// emitir: llevan `firma_admin` y sin una firma válida se descartan (issue #93).
 /// `compactar_eventos` llega con el issue #94 y entra aquí desde ya.
@@ -146,6 +148,16 @@ pub fn carpeta_documentos(carpeta_proyecto: &Path) -> Resultado<PathBuf> {
         )
     })?;
     Ok(compartida.join(CARPETA_DOCUMENTOS))
+}
+
+/// `proyecto/` dentro de la carpeta compartida: ahí va la imagen del proyecto (#127).
+pub fn carpeta_imagen_proyecto(carpeta_proyecto: &Path) -> Resultado<PathBuf> {
+    let compartida = carpeta_compartida(carpeta_proyecto)?.ok_or_else(|| {
+        Error::Validacion(
+            "Configura la carpeta compartida del proyecto (Drive/OneDrive) antes de cambiar la imagen del proyecto".into(),
+        )
+    })?;
+    Ok(compartida.join(CARPETA_PROYECTO))
 }
 
 /// Aplica un cambio compartido y lo publica como evento, todo o nada:
