@@ -2,6 +2,8 @@
 //! panel la última vez que la persona lo abrió. Si la huella actual es otra, el
 //! menú enciende su punto de aviso.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::Resultado;
@@ -24,6 +26,21 @@ pub fn huella_vista(c: &Connection, usuario: &str, panel: &str) -> Resultado<Opt
         |f| f.get(0),
     )
     .optional()?)
+}
+
+/// Todas las huellas guardadas de `usuario`: `{ panel -> huella }`.
+pub fn listar_vistos(c: &Connection, usuario: &str) -> Resultado<BTreeMap<String, String>> {
+    let mut consulta =
+        c.prepare("SELECT panel, huella FROM paneles_vistos WHERE usuario = ?1 ORDER BY panel")?;
+    let filas = consulta.query_map([usuario], |f| {
+        Ok((f.get::<_, String>(0)?, f.get::<_, String>(1)?))
+    })?;
+    let mut mapa = BTreeMap::new();
+    for fila in filas {
+        let (panel, huella) = fila?;
+        mapa.insert(panel, huella);
+    }
+    Ok(mapa)
 }
 
 /// `true` si el panel tiene algo nuevo para la persona (la huella cambió o nunca entró).
@@ -63,5 +80,8 @@ mod tests {
             huella_vista(c, "zoe@virustf.dev", "usuarios").unwrap(),
             None
         );
+        let de_ana = listar_vistos(c, "ana@virustf.dev").unwrap();
+        assert_eq!(de_ana.get("usuarios").map(String::as_str), Some("h2"));
+        assert!(listar_vistos(c, "zoe@virustf.dev").unwrap().is_empty());
     }
 }

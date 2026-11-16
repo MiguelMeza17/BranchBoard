@@ -172,6 +172,7 @@ export type EntradaProyecto =
       rol_verificado: boolean;
       proyecto: string;
       configurado_ahora: boolean;
+      vistos?: Record<string, string>;
     }
   | { estado: 'pendiente' | 'no_registrado' | 'esperar_dueno'; email: string; proyecto: string };
 
@@ -635,6 +636,14 @@ export const api = {
   /** Abre un documento con la aplicación predeterminada del sistema en esta máquina (#120). */
   abrirDocumento: (id: string, mockup?: () => void) =>
     llamar<void>('abrir_documento', { id }, mockup ?? (() => undefined)),
+
+  /** Guarda la huella vista de un panel para este usuario en esta máquina (#121). */
+  marcarVisto: (panel: string, huella: string, mockup?: () => void) =>
+    llamar<void>('marcar_visto', { panel, huella }, mockup ?? (() => undefined)),
+
+  /** Devuelve las huellas vistas guardadas `{ panel: huella }` del usuario actual (#121). */
+  obtenerVistos: (mockup?: () => Record<string, string>) =>
+    llamar<Record<string, string>>('obtener_vistos', undefined, mockup ?? (() => ({}))),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),

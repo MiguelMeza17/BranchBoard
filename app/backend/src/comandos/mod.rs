@@ -13,3 +13,4 @@ pub mod sistema;
 pub mod sprints;
 pub mod tareas;
 pub mod usuarios;
+pub mod vistos;

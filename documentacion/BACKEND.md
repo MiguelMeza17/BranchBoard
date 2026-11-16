@@ -1069,7 +1069,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `listarDocumentos` / `subirDocumentos` / `aprobarDocumento` / `eliminarDocumento` / `abrirDocumento` | `listar_documentos` / `subir_documentos` / `aprobar_documento` / `eliminar_documento` / `abrir_documento` (local) | todos / todos / Líder/Admin / Líder/Admin / todos |
 | `enviarChat` / `crearGrupoChat` / `marcarChatLeido` / `eliminarChat` | `enviar_chat` / `crear_grupo_chat` / `marcar_chat_leido` (local) / `eliminar_chat` (local) | todos |
 | `marcarLeida` / `desmarcarLeida` / `marcarTodasLeidas` | igual (local) | todos |
-| `marcarVisto` | `marcar_visto` (local) | todos |
+| `marcarVisto` / `obtenerVistos` | `marcar_visto` / `obtener_vistos` (local) | todos |
 | `cerrarSesion` / `setSesionUnityVC` | `cerrar_sesion_unity_vc` / `iniciar_sesion_unity_vc` | todos |
 | `entrarAProyecto` / `irAClonar` / `cambiarDeProyecto` | `entrar_a_proyecto` / `clonar_proyecto` / (vuelve al acceso) | todos |
 | `crearProyectoNuevo` | `crear_proyecto_local` (sin Unity VC, pendiente de definir) | quien lo crea queda Administrador |
