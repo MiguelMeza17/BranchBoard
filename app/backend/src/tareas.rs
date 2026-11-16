@@ -46,6 +46,9 @@ pub const TIPOS: &[&str] = &[
     "eliminar_tarea",
     "eliminar_definitivamente",
     "hacer_checkin",
+    "crear_en_espera",
+    "quitar_en_espera",
+    "crear_rama_desde_espera",
     "tarea_cerrada_por_deteccion",
 ];
 
@@ -295,6 +298,30 @@ pub struct PendientesRama {
     pub rama_actual: String,
     pub en_rama_esperada: bool,
     pub archivos: Vec<String>,
+}
+
+/// Datos para convertir una subtarea "En espera" en subtarea con rama propia (#106).
+#[derive(Debug, Clone)]
+pub struct DatosRamaDesdeEspera<'a> {
+    pub espera_id: &'a str,
+    pub titulo: &'a str,
+    pub detalles: &'a str,
+    pub tipo: TipoTarea,
+    pub asignado_a: &'a str,
+    pub rama: &'a str,
+    pub ultimo_changeset_visto: i64,
+}
+
+/// `payload` de `crear_rama_desde_espera` (#106).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadCrearRamaDesdeEspera {
+    pub id: String,
+    pub titulo: String,
+    pub detalles: String,
+    pub tipo: TipoTarea,
+    pub asignado_a: String,
+    pub rama: String,
+    pub ultimo_changeset_visto: i64,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -1519,6 +1546,164 @@ pub fn registrar_checkin(
     Ok(commit)
 }
 
+/// Crea la subtarea comodín `"En espera"` (`SinDefinir`) bajo `padre_id` al detectar
+/// cambios sin check-in en una rama con subtareas (#106), publicándola en `ops/`.
+pub fn crear_en_espera(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    padre_id: &str,
+    cambios: usize,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<Tarea> {
+    let padre = db_tareas::obtener(c, padre_id.trim())?;
+    let email = normalizar_email(autor.email);
+    let id = db_tareas::siguiente_id(c, Some(&padre.id))?;
+    let mut espera = Tarea::nueva(&id, "En espera", TipoTarea::SinDefinir, &email, hoy);
+    espera.detalles = format!(
+        "{cambios} cambio(s) sin check-in hechos directamente en la rama de {}. Crea su rama para guardarlos.",
+        padre.id
+    );
+    espera.estado = EstadoTarea::EnProduccion;
+    espera.pendiente_aprobacion = false;
+    espera.asignado_a = Some(email.clone());
+    espera.tarea_padre_id = Some(padre.id);
+    espera.sprint_id = padre.sprint_id;
+    espera.backlog_id = padre.backlog_id;
+
+    let mut ev = Evento::nuevo(
+        "crear_en_espera",
+        Some(&espera.id),
+        &email,
+        serde_json::to_value(&espera)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar crear_en_espera: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_crear_en_espera(tx, &espera))?;
+    db_tareas::obtener(c, &espera.id)
+}
+
+/// Quita la subtarea temporal `"En espera"` cuando la rama padre vuelve a quedar limpia (#106).
+pub fn quitar_en_espera(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    espera_id: &str,
+    ahora: &str,
+) -> Resultado<()> {
+    let id = espera_id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "quitar_en_espera",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar quitar_en_espera: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_quitar_en_espera(tx, &payload.id))?;
+    Ok(())
+}
+
+/// Valida datos y permisos para convertir una subtarea `"En espera"` en subtarea
+/// normal con su propia rama (`crear_rama_desde_espera`, #106).
+/// Devuelve `(espera, rama_del_padre, asignado_final)`.
+pub fn preparar_rama_desde_espera(
+    c: &Connection,
+    autor_email: &str,
+    rol: Rol,
+    espera_id: &str,
+    titulo: &str,
+    tipo: TipoTarea,
+) -> Resultado<(Tarea, String, String)> {
+    validar_tipo_creacion(tipo)?;
+    if titulo.trim().is_empty() {
+        return Err(Error::Validacion(
+            "El título de la subtarea es obligatorio".into(),
+        ));
+    }
+    let espera = db_tareas::obtener(c, espera_id.trim())?;
+    if espera.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            espera.id
+        )));
+    }
+    if espera.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(format!(
+            "La tarea {} no está En espera",
+            espera.id
+        )));
+    }
+    let padre_id = espera
+        .tarea_padre_id
+        .as_deref()
+        .ok_or_else(|| Error::Validacion("La tarea En espera no tiene padre".into()))?;
+    let padre = db_tareas::obtener(c, padre_id)?;
+    if padre.eliminada || padre.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea padre {} ya está cerrada o en la Papelera",
+            padre.id
+        )));
+    }
+    let rama_padre = padre.rama_asociada.clone().ok_or_else(|| {
+        Error::Validacion(format!(
+            "La tarea padre {} no tiene rama asociada",
+            padre.id
+        ))
+    })?;
+
+    let yo = normalizar_email(autor_email);
+    let dueno = espera
+        .asignado_a
+        .as_deref()
+        .or(padre.asignado_a.as_deref())
+        .map(normalizar_email);
+    if !rol.es_lider_o_admin() {
+        if let Some(ref d) = dueno {
+            if d != &yo {
+                return Err(Error::SinPermiso);
+            }
+        }
+    }
+    Ok((espera, rama_padre, dueno.unwrap_or(yo)))
+}
+
+/// Convierte la subtarea `"En espera"` en subtarea normal ya apuntando a su nueva rama (#106).
+pub fn convertir_espera_en_subtarea(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    datos: &DatosRamaDesdeEspera<'_>,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let payload = PayloadCrearRamaDesdeEspera {
+        id: datos.espera_id.trim().to_string(),
+        titulo: datos.titulo.trim().to_string(),
+        detalles: datos.detalles.trim().to_string(),
+        tipo: datos.tipo,
+        asignado_a: normalizar_email(datos.asignado_a),
+        rama: validar_ruta_rama_tarea(datos.rama)?,
+        ultimo_changeset_visto: datos.ultimo_changeset_visto,
+    };
+    let mut ev = Evento::nuevo(
+        "crear_rama_desde_espera",
+        Some(&payload.id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar crear_rama_desde_espera: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_crear_rama_desde_espera(tx, &payload)
+    })?;
+    db_tareas::obtener(c, &payload.id)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -1782,6 +1967,23 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let payload: PayloadHacerCheckin = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("hacer_checkin inválido: {e}")))?;
             aplicar_hacer_checkin(c, &payload)
+        }
+        "crear_en_espera" => {
+            let tarea: Tarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("crear_en_espera inválido: {e}")))?;
+            aplicar_crear_en_espera(c, &tarea)
+        }
+        "quitar_en_espera" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("quitar_en_espera inválido: {e}")))?;
+            aplicar_quitar_en_espera(c, &payload.id)
+        }
+        "crear_rama_desde_espera" => {
+            let payload: PayloadCrearRamaDesdeEspera =
+                serde_json::from_value(evento.payload.clone()).map_err(|e| {
+                    Error::Validacion(format!("crear_rama_desde_espera inválido: {e}"))
+                })?;
+            aplicar_crear_rama_desde_espera(c, &payload)
         }
         "tarea_cerrada_por_deteccion" => {
             let payload: PayloadTareaCerradaDeteccion =
@@ -2079,9 +2281,23 @@ fn aplicar_cambiar_estado(
         payload.estado,
         EstadoTarea::EnRevision | EstadoTarea::Terminada
     ) {
+        if tarea.tipo == TipoTarea::SinDefinir {
+            return Err(Error::Validacion(
+                "La subtarea En espera aún no tiene rama propia; crea su rama primero".into(),
+            ));
+        }
         if tarea.pendiente_aprobacion {
             return Err(Error::Validacion(format!(
                 "La tarea {} sigue pendiente de aprobación",
+                tarea.id
+            )));
+        }
+        if descendientes
+            .iter()
+            .any(|h| h.tipo == TipoTarea::SinDefinir)
+        {
+            return Err(Error::Validacion(format!(
+                "La tarea {} tiene cambios En espera: crea una rama para ellos antes de enviarla a revisión",
                 tarea.id
             )));
         }
@@ -2701,6 +2917,88 @@ fn aplicar_hacer_checkin(c: &Connection, payload: &PayloadHacerCheckin) -> Resul
         db_tareas::actualizar(c, &tarea)?;
     }
     Ok(())
+}
+
+fn aplicar_crear_en_espera(c: &Connection, tarea: &Tarea) -> Resultado<()> {
+    if tarea.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(
+            "La subtarea En espera debe ser de tipo 'Sin definir'".into(),
+        ));
+    }
+    let padre_id = tarea
+        .tarea_padre_id
+        .as_deref()
+        .ok_or_else(|| Error::Validacion("La subtarea En espera requiere tarea_padre_id".into()))?;
+    let padre = db_tareas::obtener(c, padre_id)?;
+    if padre.eliminada || padre.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea padre {} ya está cerrada o en la Papelera",
+            padre.id
+        )));
+    }
+    if db_tareas::hijas(c, padre_id)?
+        .into_iter()
+        .any(|h| !h.eliminada && h.tipo == TipoTarea::SinDefinir)
+    {
+        return Ok(());
+    }
+    db_tareas::insertar(c, tarea)?;
+    recalcular_padres(c, Some(padre.id))
+}
+
+fn aplicar_quitar_en_espera(c: &Connection, id: &str) -> Resultado<()> {
+    let Some(tarea) = db_tareas::buscar(c, id)? else {
+        return Ok(());
+    };
+    if tarea.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya fue convertida en subtarea y no se puede quitar como En espera",
+            tarea.id
+        )));
+    }
+    let padre_id = tarea.tarea_padre_id.clone();
+    db_tareas::borrar_fila(c, &tarea.id)?;
+    recalcular_padres(c, padre_id)
+}
+
+fn aplicar_crear_rama_desde_espera(
+    c: &Connection,
+    payload: &PayloadCrearRamaDesdeEspera,
+) -> Resultado<()> {
+    validar_tipo_creacion(payload.tipo)?;
+    let titulo = payload.titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion(
+            "El título de la subtarea es obligatorio".into(),
+        ));
+    }
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(format!(
+            "La tarea {} no está En espera",
+            tarea.id
+        )));
+    }
+    let rama = validar_ruta_rama_tarea(&payload.rama)?;
+    let padre = tarea.tarea_padre_id.clone();
+
+    tarea.titulo = titulo.to_string();
+    tarea.detalles = payload.detalles.trim().to_string();
+    tarea.tipo = payload.tipo;
+    tarea.estado = EstadoTarea::EnProduccion;
+    tarea.pendiente_aprobacion = false;
+    tarea.asignado_a = Some(normalizar_email(&payload.asignado_a));
+    tarea.modo_trabajo = Some(MODO_RAMA.to_string());
+    tarea.rama_asociada = Some(rama);
+    tarea.ultimo_changeset_visto = Some(payload.ultimo_changeset_visto);
+    db_tareas::actualizar(c, &tarea)?;
+    recalcular_padres(c, padre)
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -7079,6 +7377,303 @@ mod tests {
                     .ultimo_changeset_visto,
                 Some(cs)
             );
+        });
+    }
+
+    #[test]
+    fn en_espera_bloquea_revision_y_se_convierte_en_subtarea() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Padre 106".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::Scripting,
+                    titulo: "Sub normal".into(),
+                    detalles: String::new(),
+                }],
+            },
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+        tomar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            |_| {
+                Ok(vec![
+                    (
+                        "T-101".into(),
+                        Rama {
+                            id: 1,
+                            name: "/main/dev/T-101-padre-106".into(),
+                            head_changeset: 10,
+                        },
+                    ),
+                    (
+                        "T-101-1".into(),
+                        Rama {
+                            id: 2,
+                            name: "/main/dev/T-101-padre-106/T-101-1-sub-normal".into(),
+                            head_changeset: 11,
+                        },
+                    ),
+                ])
+            },
+            "2026-11-15T15:01:00Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            EstadoTarea::EnRevision,
+            "2026-11-15T15:02:00Z",
+        )
+        .unwrap();
+
+        // Crear subtarea "En espera" en T-101: bloquea EnRevision en padre y en sí misma.
+        let esp = crear_en_espera(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            2,
+            "2026-11-15T15:03:00Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(esp.tipo, TipoTarea::SinDefinir);
+        assert_eq!(esp.estado, EstadoTarea::EnProduccion);
+        assert_eq!(
+            db_tareas::obtener(c, "T-101").unwrap().estado,
+            EstadoTarea::EnProduccion
+        );
+        assert!(cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            EstadoTarea::EnRevision,
+            "2026-11-15T15:04:00Z"
+        )
+        .is_err());
+        assert!(cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            &esp.id,
+            EstadoTarea::EnRevision,
+            "2026-11-15T15:04:00Z"
+        )
+        .is_err());
+
+        // Convertir "En espera" en subtarea con rama propia.
+        let conv = convertir_espera_en_subtarea(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosRamaDesdeEspera {
+                espera_id: &esp.id,
+                titulo: "Fix colision",
+                detalles: "Ajuste pendiente",
+                tipo: TipoTarea::Scripting,
+                asignado_a: LIDER,
+                rama: "/main/dev/T-101-padre-106/T-101-2-fix-colision",
+                ultimo_changeset_visto: 10,
+            },
+            "2026-11-15T15:05:00Z",
+        )
+        .unwrap();
+        assert_eq!(conv.tipo, TipoTarea::Scripting);
+        assert_eq!(conv.estado, EstadoTarea::EnProduccion);
+        assert_eq!(
+            conv.rama_asociada.as_deref(),
+            Some("/main/dev/T-101-padre-106/T-101-2-fix-colision")
+        );
+
+        // Segunda En espera -> quitar_en_espera la elimina limpiamente.
+        let esp2 = crear_en_espera(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            1,
+            "2026-11-15T15:06:00Z",
+            HOY,
+        )
+        .unwrap();
+        quitar_en_espera(c, &e.ops, &autor_lider, &esp2.id, "2026-11-15T15:07:00Z").unwrap();
+        assert!(db_tareas::buscar(c, &esp2.id).unwrap().is_none());
+
+        // Máquina B sincroniza vía ops/ y llega al mismo estado.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let conv_b = db_tareas::obtener(e.db_b.conexion(), &conv.id).unwrap();
+        assert_eq!(conv_b.tipo, TipoTarea::Scripting);
+        assert_eq!(conv_b.titulo, "Fix colision");
+        assert!(db_tareas::buscar(e.db_b.conexion(), &esp2.id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_subtarea_en_espera() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{
+            cambiar_estado_en, cambios_pendientes_en, crear_rama_desde_espera_en, hacer_checkin_en,
+            tomar_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("106", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 106",
+                &["Sub normal 106"],
+            );
+            let padre_id = grupo[0].id.clone();
+            let sub_id = grupo[1].id.clone();
+
+            let tomadas = tomar_en(&env.estado_a, &sub_id).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+
+            // Terminamos la subtarea normal para demostrar que solo "En espera" bloquea al padre.
+            env.volver_a_dev();
+            cambiar_estado_en(&env.estado_a, &sub_id, EstadoTarea::EnProduccion).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub_id, EstadoTarea::EnRevision).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub_id, EstadoTarea::Terminada).unwrap();
+
+            // 1) Trabajo sin check-in directo en la rama padre -> polling crea "En espera".
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let archivo = env.ws_ruta.join("directo-en-padre-106.txt");
+            std::fs::write(&archivo, "cambio directo 106").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pol1 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let espera_id = pol1.espera_creada.expect("debe crear subtarea En espera");
+            let esp_a = env
+                .estado_a
+                .con_db(|db| db_tareas::obtener(db.conexion(), &espera_id))
+                .unwrap();
+            assert_eq!(esp_a.tipo, TipoTarea::SinDefinir);
+            assert_eq!(esp_a.titulo, "En espera");
+            assert_eq!(esp_a.estado, EstadoTarea::EnProduccion);
+
+            // Bloqueos: en padre no se hace check-in ni pasa a revisión mientras exista En espera.
+            assert!(hacer_checkin_en(
+                &env.estado_a,
+                &rama_padre,
+                "Prohibido",
+                "",
+                TipoTarea::Scripting
+            )
+            .is_err());
+            assert!(cambiar_estado_en(&env.estado_a, &padre_id, EstadoTarea::EnRevision).is_err());
+            assert!(cambiar_estado_en(&env.estado_a, &espera_id, EstadoTarea::EnRevision).is_err());
+
+            env.sincronizar_b();
+            let esp_b = db_tareas::obtener(env.db_b.conexion(), &espera_id).unwrap();
+            assert_eq!(esp_b.tipo, TipoTarea::SinDefinir);
+
+            // 2) Crear rama desde En espera: crea rama hija y lleva el cambio pendiente con `--noinput`.
+            let convertida = crear_rama_desde_espera_en(
+                &env.estado_a,
+                &espera_id,
+                "Nueva sub UI 106",
+                "Movida desde rama padre",
+                TipoTarea::UiInterfaz,
+            )
+            .unwrap();
+            let rama_nueva = convertida.rama_asociada.clone().unwrap();
+            env.registrar_rama(&rama_nueva);
+            assert_eq!(convertida.tipo, TipoTarea::UiInterfaz);
+            assert_eq!(convertida.estado, EstadoTarea::EnProduccion);
+
+            let pend_hija = cambios_pendientes_en(&env.estado_a, Some(&rama_nueva)).unwrap();
+            assert!(pend_hija.en_rama_esperada);
+            assert!(
+                pend_hija
+                    .archivos
+                    .iter()
+                    .any(|a| a.contains("directo-en-padre-106.txt")),
+                "archivos pendientes en la hija: {:?}",
+                pend_hija.archivos
+            );
+
+            // Check-in real en la nueva hija + sync en B.
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_nueva,
+                "Commit movido desde espera",
+                "Guardado en su rama",
+                TipoTarea::UiInterfaz,
+            )
+            .unwrap();
+            env.sincronizar_b();
+            let conv_b = db_tareas::obtener(env.db_b.conexion(), &espera_id).unwrap();
+            assert_eq!(conv_b.tipo, TipoTarea::UiInterfaz);
+            assert_eq!(conv_b.rama_asociada.as_deref(), Some(rama_nueva.as_str()));
+
+            // 3) Guardia de rama al crear desde espera + retiro automático si la rama padre queda limpia.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let tmp_arch = env.ws_ruta.join("temporal-106.txt");
+            std::fs::write(&tmp_arch, "temp").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(tmp_arch.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pol2 = revisar_actualizaciones_en(&env.estado_a, Some(&padre_id)).unwrap();
+            let esp2_id = pol2.espera_creada.expect("debe crear segunda En espera");
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            env.volver_a_dev();
+            assert!(crear_rama_desde_espera_en(
+                &env.estado_a,
+                &esp2_id,
+                "Desde dev bloqueado",
+                "",
+                TipoTarea::Audio
+            )
+            .is_err());
+
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let pol3 = revisar_actualizaciones_en(&env.estado_a, Some(&padre_id)).unwrap();
+            assert_eq!(pol3.espera_quitada.as_deref(), Some(esp2_id.as_str()));
+            env.sincronizar_b();
+            assert!(db_tareas::buscar(env.db_b.conexion(), &esp2_id)
+                .unwrap()
+                .is_none());
         });
     }
 }

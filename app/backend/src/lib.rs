@@ -122,6 +122,7 @@ pub fn run() {
             comandos_tareas::cambios_pendientes,
             comandos_tareas::cambiar_a_rama_tarea,
             comandos_tareas::hacer_checkin,
+            comandos_tareas::crear_rama_desde_espera,
             comandos_tareas::volver_a_dev,
         ])
         .run(tauri::generate_context!())

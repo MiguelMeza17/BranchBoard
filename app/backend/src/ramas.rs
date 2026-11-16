@@ -263,6 +263,61 @@ pub fn cambiar_a_rama(estado: &AppState, carpeta: &Path, rama: &str) -> Resultad
     Ok(ahora)
 }
 
+/// Cambia el workspace local a `rama` llevándose los cambios sin check-in mediante
+/// `cm switch br:<rama> --noinput` (shelve temporal automático de Unity VC, #106).
+/// Re-agrega (`cm add`) los archivos nuevos que `cm switch --noinput` deja como privados al moverlos.
+pub fn cambiar_a_rama_llevando_cambios(
+    estado: &AppState,
+    carpeta: &Path,
+    rama: &str,
+) -> Resultado<EstadoWorkspace> {
+    let rama = rama.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Err(Error::Validacion(format!(
+            "Rama de tarea no válida: {rama}"
+        )));
+    }
+    let pendientes_antes: std::collections::HashSet<String> = cambios_pendientes(estado, carpeta)?
+        .into_iter()
+        .map(|p| normalizar_ruta_status(&p))
+        .collect();
+    Comando::cm()
+        .args(["switch", &format!("br:{rama}"), "--noinput"])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    let ahora = rama_actual_workspace(estado, carpeta)?;
+    if !ahora.rama.eq_ignore_ascii_case(rama) {
+        return Err(Error::Cm(format!(
+            "El workspace quedó en {} en vez de {rama}",
+            ahora.rama
+        )));
+    }
+    if !pendientes_antes.is_empty() {
+        let privados = Comando::cm()
+            .args(["status", "--private", "--short"])
+            .en(carpeta)
+            .exigir_exito(estado)?;
+        let mut a_reagregar: Vec<String> = interpretar_pendientes(&privados)
+            .into_iter()
+            .filter(|p| pendientes_antes.contains(&normalizar_ruta_status(p)))
+            .collect();
+        if !a_reagregar.is_empty() {
+            // Padres primero si se movió un directorio agregado junto con sus hijos.
+            a_reagregar.sort_by_key(|p| p.len());
+            Comando::cm()
+                .arg("add")
+                .args(&a_reagregar)
+                .en(carpeta)
+                .exigir_exito(estado)?;
+        }
+    }
+    Ok(ahora)
+}
+
+fn normalizar_ruta_status(ruta: &str) -> String {
+    ruta.trim().replace('\\', "/").to_lowercase()
+}
+
 /// Borra (cierra) una rama de tarea huérfana en Unity VC (`cm branch delete`).
 /// Nunca permite borrar `/main` ni `/main/dev`.
 pub fn borrar_rama(estado: &AppState, repo_cm: &str, rama: &str) -> Resultado<()> {
@@ -441,16 +496,15 @@ pub fn revertir_rama_a_base(
 }
 
 /// Archivos con cambios sin check-in en el workspace (agregados, modificados,
-/// borrados, movidos o desprotegidos), sin contar los privados.
+/// copiados/reemplazados por shelve, borrados, movidos o desprotegidos), sin contar los privados.
 pub fn cambios_pendientes(estado: &AppState, carpeta: &Path) -> Resultado<Vec<String>> {
     let texto = Comando::cm()
         .args([
             "status",
+            "--controlledchanged",
             "--changed",
-            "--added",
-            "--deleted",
-            "--moved",
-            "--checkout",
+            "--localdeleted",
+            "--localmoved",
             "--short",
         ])
         .en(carpeta)
