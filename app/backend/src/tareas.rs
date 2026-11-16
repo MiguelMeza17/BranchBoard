@@ -39,6 +39,10 @@ pub const TIPOS: &[&str] = &[
     "aprobar_tareas",
     "editar_y_aprobar_tarea",
     "advertir_tarea_pendiente",
+    "proponer_edicion",
+    "aprobar_modificacion",
+    "aprobar_modificaciones",
+    "rechazar_modificacion",
     "eliminar_tarea",
     "eliminar_definitivamente",
     "tarea_cerrada_por_deteccion",
@@ -232,6 +236,25 @@ pub struct PayloadAprobarTareas {
 pub struct PayloadAdvertirTarea {
     pub id: String,
     pub mensaje: String,
+}
+
+/// `payload` de `proponer_edicion` (#102).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadProponerEdicion {
+    pub id: String,
+    pub edicion_id: String,
+    pub titulo: String,
+    pub detalles: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motivo: Option<String>,
+    pub fecha: String,
+}
+
+/// Respuesta de `proponer_edicion` con la tarea ya actualizada y la fila pendiente (#102).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResultadoProponerEdicion {
+    pub tarea: Tarea,
+    pub edicion: ediciones::EdicionPendiente,
 }
 
 /// `payload` de `eliminar_tarea` (#103).
@@ -1095,6 +1118,136 @@ pub fn advertir_pendiente(
     Ok(())
 }
 
+/// Ediciones pendientes registradas en la base local (#102).
+pub fn listar_ediciones_pendientes(c: &Connection) -> Resultado<Vec<ediciones::EdicionPendiente>> {
+    ediciones::listar(c)
+}
+
+/// Cualquier rol edita título y/o detalles en `'por hacer'` (`proponer_edicion`, #102).
+/// Aplica de inmediato en `tareas`, suma si ya existía fila pendiente y notifica a Líderes/Admin.
+#[allow(clippy::too_many_arguments)]
+pub fn proponer_edicion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    titulo: &str,
+    detalles: &str,
+    motivo: Option<&str>,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<ResultadoProponerEdicion> {
+    let id = id.trim();
+    let payload = PayloadProponerEdicion {
+        id: id.to_string(),
+        edicion_id: format!("EP-{id}-{ahora}"),
+        titulo: titulo.to_string(),
+        detalles: detalles.to_string(),
+        motivo: limpiar_opcional(motivo.map(str::to_string)),
+        fecha: hoy.to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "proponer_edicion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar proponer_edicion: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_proponer_edicion(tx, &ev.usuario, &payload, ahora)
+    })?;
+    Ok(ResultadoProponerEdicion {
+        tarea: db_tareas::obtener(c, id)?,
+        edicion: ediciones::de_tarea(c, id)?
+            .ok_or_else(|| Error::Interno("No se encontró la edición pendiente guardada".into()))?,
+    })
+}
+
+/// Líder/Admin confirma la edición pendiente de `id` (`aprobar_modificacion`, #102).
+pub fn aprobar_modificacion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "aprobar_modificacion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar aprobar_modificacion: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_aprobar_modificaciones(tx, Some(autor.rol), std::slice::from_ref(&payload.id))
+    })?;
+    db_tareas::obtener(c, id)
+}
+
+/// Líder/Admin confirma varias ediciones pendientes en una operación (`aprobar_modificaciones`, #102).
+pub fn aprobar_modificaciones(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    ids: &[String],
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let limpias: Vec<String> = ids
+        .iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    if limpias.is_empty() {
+        return Err(Error::Validacion(
+            "Selecciona al menos una edición para aprobar".into(),
+        ));
+    }
+    let payload = PayloadAprobarTareas { ids: limpias };
+    let mut ev = Evento::nuevo(
+        "aprobar_modificaciones",
+        payload.ids.first().map(String::as_str),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar aprobar_modificaciones: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_aprobar_modificaciones(tx, Some(autor.rol), &payload.ids)
+    })?;
+    db_tareas::listar(c)
+}
+
+/// Líder/Admin rechaza la edición pendiente de `id` y restaura sus valores anteriores (#102).
+pub fn rechazar_modificacion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "rechazar_modificacion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar rechazar_modificacion: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_rechazar_modificacion(tx, Some(autor.rol), &payload.id)
+    })?;
+    db_tareas::obtener(c, id)
+}
+
 /// Envía una tarea a la Papelera con cascada sobre sus subtareas activas (#103).
 /// Solo Líder o Administrador. Limpia `pendiente_aprobacion` y ediciones pendientes,
 /// y emite notificación `tarea_eliminada` (#13) al creador de cada tarea afectada.
@@ -1437,6 +1590,29 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 })?;
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_advertir_tarea_pendiente(c, rol, &payload, &evento.timestamp)
+        }
+        "proponer_edicion" => {
+            let payload: PayloadProponerEdicion = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("proponer_edicion inválido: {e}")))?;
+            aplicar_proponer_edicion(c, &evento.usuario, &payload, &evento.timestamp)
+        }
+        "aprobar_modificacion" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("aprobar_modificacion inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_aprobar_modificaciones(c, rol, &[payload.id])
+        }
+        "aprobar_modificaciones" => {
+            let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("aprobar_modificaciones inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_aprobar_modificaciones(c, rol, &payload.ids)
+        }
+        "rechazar_modificacion" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("rechazar_modificacion inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_rechazar_modificacion(c, rol, &payload.id)
         }
         "eliminar_tarea" => {
             let payload: PayloadEliminarTarea = serde_json::from_value(evento.payload.clone())
@@ -2052,6 +2228,149 @@ fn aplicar_advertir_tarea_pendiente(
             accionable: false,
         },
     )
+}
+
+fn aplicar_proponer_edicion(
+    c: &Connection,
+    autor_email: &str,
+    payload: &PayloadProponerEdicion,
+    ahora: &str,
+) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede editar",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::PorHacer {
+        return Err(Error::Validacion(
+            "Solo se puede editar una tarea en 'Sin asignar' o 'Por hacer'".into(),
+        ));
+    }
+
+    let titulo = payload.titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion("El título es obligatorio".into()));
+    }
+    let detalles = payload.detalles.trim();
+
+    let mut nuevos = ediciones::Campos::new();
+    let mut anteriores = ediciones::Campos::new();
+    if titulo != tarea.titulo {
+        nuevos.insert("titulo".into(), titulo.to_string());
+        anteriores.insert("titulo".into(), tarea.titulo.clone());
+    }
+    if detalles != tarea.detalles {
+        nuevos.insert("detalles".into(), detalles.to_string());
+        anteriores.insert("detalles".into(), tarea.detalles.clone());
+    }
+    if nuevos.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios en título ni detalles".into(),
+        ));
+    }
+
+    let campos_cambiados: Vec<&str> = nuevos.keys().map(String::as_str).collect();
+    let resumen_campos = campos_cambiados.join(", ");
+    let creador = normalizar_email(autor_email);
+
+    ediciones::guardar_o_sumar(
+        c,
+        &ediciones::EdicionPendiente {
+            id: payload.edicion_id.clone(),
+            tarea_id: tarea.id.clone(),
+            campos_nuevos: nuevos,
+            campos_anteriores: anteriores,
+            motivo: limpiar_opcional(payload.motivo.clone()),
+            creado_por: creador.clone(),
+            fecha: payload.fecha.clone(),
+        },
+    )?;
+
+    tarea.titulo = titulo.to_string();
+    tarea.detalles = detalles.to_string();
+    db_tareas::actualizar(c, &tarea)?;
+
+    for u in usuarios::listar(c)? {
+        if u.rol.es_lider_o_admin() {
+            insertar_notificacion_si_falta(
+                c,
+                &Notificacion {
+                    id: format!("noti_ep_{}_{}_{}", tarea.id, u.email, ahora),
+                    tipo: TipoNotificacion::EdicionPendiente,
+                    para: u.email,
+                    titulo: "Hay una edición de tarea por aprobar".into(),
+                    cuerpo: format!(
+                        "\"{}\" ({}) fue editada por {} ({}).",
+                        tarea.titulo, tarea.id, creador, resumen_campos
+                    ),
+                    leida: false,
+                    fecha: ahora.to_string(),
+                    tarea_id: Some(tarea.id.clone()),
+                    accionable: true,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_aprobar_modificaciones(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    ids: &[String],
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    if ids.is_empty() {
+        return Err(Error::Validacion(
+            "Selecciona al menos una edición para aprobar".into(),
+        ));
+    }
+    for id in ids {
+        let tarea = db_tareas::obtener(c, id)?;
+        if tarea.eliminada {
+            return Err(Error::Validacion(format!(
+                "La tarea {} está en la Papelera",
+                tarea.id
+            )));
+        }
+        if ediciones::quitar(c, &tarea.id)?.is_none() {
+            return Err(Error::Validacion(format!(
+                "La tarea {} no tiene ediciones pendientes",
+                tarea.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_rechazar_modificacion(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    id: &str,
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    let mut tarea = db_tareas::obtener(c, id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    let edicion = ediciones::quitar(c, &tarea.id)?.ok_or_else(|| {
+        Error::Validacion(format!(
+            "La tarea {} no tiene ediciones pendientes",
+            tarea.id
+        ))
+    })?;
+    if let Some(prev_titulo) = edicion.campos_anteriores.get("titulo") {
+        tarea.titulo = prev_titulo.clone();
+    }
+    if let Some(prev_detalles) = edicion.campos_anteriores.get("detalles") {
+        tarea.detalles = prev_detalles.clone();
+    }
+    db_tareas::actualizar(c, &tarea)
 }
 
 fn recolectar_descendientes_activas(
@@ -6044,6 +6363,294 @@ mod tests {
                     .estado,
                 EstadoTarea::EnRevision
             );
+        });
+    }
+
+    #[test]
+    fn proponer_sumar_aprobar_y_rechazar_ediciones_pendientes() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        let mut d_vacio = datos_base("Original 102");
+        d_vacio.detalles = String::new();
+        crear(c, &e.ops, &autor_lider, &d_vacio, AHORA, HOY).unwrap();
+        crear(c, &e.ops, &autor_lider, &datos_base("En curso"), AHORA, HOY).unwrap();
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &datos_base("Aprobar lote A"),
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &datos_base("Aprobar lote B"),
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T15:01:00Z",
+        )
+        .unwrap();
+        assert!(proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102",
+            "No debe",
+            "",
+            None,
+            "2026-11-15T15:02:00Z",
+            HOY
+        )
+        .is_err());
+
+        // Primera edición sobre T-101 (detalles vacíos originalmente): aplica de inmediato y guarda lo anterior.
+        let r1 = proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            "Editada v1",
+            "Nuevos detalles",
+            Some("Clarificar alcance"),
+            "2026-11-15T15:03:00Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(r1.tarea.titulo, "Editada v1");
+        assert_eq!(r1.tarea.detalles, "Nuevos detalles");
+        assert!(r1.tarea.edicion_pendiente);
+        assert_eq!(r1.edicion.campos_anteriores["titulo"], "Original 102");
+        assert_eq!(r1.edicion.campos_anteriores["detalles"], "");
+
+        // Segunda edición se suma conservando el valor anterior original ("Original 102" y "").
+        let r2 = proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            "Editada v2",
+            "Nuevos detalles",
+            None,
+            "2026-11-15T15:04:00Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(r2.edicion.id, r1.edicion.id);
+        assert_eq!(listar_ediciones_pendientes(c).unwrap().len(), 1);
+        assert_eq!(r2.edicion.campos_anteriores["titulo"], "Original 102");
+        assert_eq!(r2.edicion.campos_nuevos["titulo"], "Editada v2");
+
+        // Desarrollador no puede aprobar ni rechazar.
+        assert!(matches!(
+            aprobar_modificacion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
+                .unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(matches!(
+            rechazar_modificacion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
+                .unwrap_err(),
+            Error::SinPermiso
+        ));
+
+        // Rechazar T-101 restaura título y detalles vacíos originales, y borra la fila pendiente.
+        let revertida =
+            rechazar_modificacion(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:06:00Z")
+                .unwrap();
+        assert_eq!(revertida.titulo, "Original 102");
+        assert_eq!(revertida.detalles, "");
+        assert!(!revertida.edicion_pendiente);
+
+        // T-103 y T-104 se proponen y se aprueban en lote.
+        proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-103",
+            "Lote A v1",
+            "",
+            None,
+            "2026-11-15T15:07:00Z",
+            HOY,
+        )
+        .unwrap();
+        proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-104",
+            "Lote B v1",
+            "Con detalle",
+            None,
+            "2026-11-15T15:08:00Z",
+            HOY,
+        )
+        .unwrap();
+        let tras_lote = aprobar_modificaciones(
+            c,
+            &e.ops,
+            &autor_lider,
+            &["T-103".into(), "T-104".into()],
+            "2026-11-15T15:09:00Z",
+        )
+        .unwrap();
+        assert!(tras_lote.iter().all(|t| !t.edicion_pendiente));
+        assert!(listar_ediciones_pendientes(c).unwrap().is_empty());
+
+        // Máquina B sincroniza vía ops/ y converge exactamente con A.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let t1_b = db_tareas::obtener(e.db_b.conexion(), "T-101").unwrap();
+        assert_eq!(t1_b.titulo, "Original 102");
+        assert_eq!(t1_b.detalles, "");
+        assert!(!t1_b.edicion_pendiente);
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-103")
+                .unwrap()
+                .titulo,
+            "Lote A v1"
+        );
+        assert!(listar_ediciones_pendientes(e.db_b.conexion())
+            .unwrap()
+            .is_empty());
+        assert!(notificaciones::de_usuario(e.db_b.conexion(), LIDER)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::EdicionPendiente && n.accionable));
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_ediciones_pendientes() {
+        use crate::comandos::tareas::{
+            aprobar_modificacion_en, aprobar_modificaciones_en, asignar_en, cambiar_estado_en,
+            listar_ediciones_pendientes_en, proponer_edicion_en, rechazar_modificacion_en,
+        };
+
+        correr_entorno_real("102", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            env.crear_usuario(LIDER, Rol::Lider);
+            let admin_email = env.admin_fila.email.clone();
+
+            let t1 = env.crear_tarea(&admin_email, Rol::Administrador, "Original 102");
+            let t2 = env.crear_tarea(&admin_email, Rol::Administrador, "En produccion 102");
+            let t3 = env.crear_tarea(&admin_email, Rol::Administrador, "Aprobar indiv 102");
+            let t4 = env.crear_tarea(&admin_email, Rol::Administrador, "Aprobar lote 102");
+
+            // T2 tomada (en Unity VC) y en producción: no acepta `proponer_edicion`.
+            let asg2 = asignar_en(&env.estado_a, &t2.id, DEV).unwrap();
+            env.registrar_ramas_de(&asg2);
+            cambiar_estado_en(&env.estado_a, &t2.id, EstadoTarea::EnProduccion).unwrap();
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(proponer_edicion_en(&env.estado_a, &t2.id, "No valida", "", None).is_err());
+
+            // 1) Primera edición por DEV sobre T1 (Sin asignar, detalles inicialmente vacíos "").
+            let r1 = proponer_edicion_en(
+                &env.estado_a,
+                &t1.id,
+                "Editada 102 v1",
+                "Detalles 102",
+                Some("Ajuste inicial"),
+            )
+            .unwrap();
+            assert!(r1.tarea.edicion_pendiente);
+            assert_eq!(r1.edicion.campos_anteriores["titulo"], "Original 102");
+            assert_eq!(r1.edicion.campos_anteriores["detalles"], "");
+
+            // Máquina B sincroniza edición pendiente inmediata y notificación accionable para Líder/Admin.
+            env.sincronizar_b();
+            let t1_b = db_tareas::obtener(env.db_b.conexion(), &t1.id).unwrap();
+            assert_eq!(t1_b.titulo, "Editada 102 v1");
+            assert!(t1_b.edicion_pendiente);
+            assert!(notificaciones::de_usuario(env.db_b.conexion(), LIDER)
+                .unwrap()
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::EdicionPendiente && n.accionable));
+
+            // 2) Segunda edición se suma conservando valores anteriores originales.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let r2 = proponer_edicion_en(
+                &env.estado_a,
+                &t1.id,
+                "Editada 102 v2",
+                "Detalles 102",
+                Some("Segundo ajuste"),
+            )
+            .unwrap();
+            assert_eq!(r2.edicion.id, r1.edicion.id);
+            assert_eq!(
+                listar_ediciones_pendientes_en(&env.estado_a).unwrap().len(),
+                1
+            );
+            assert_eq!(r2.edicion.campos_anteriores["titulo"], "Original 102");
+            assert_eq!(r2.edicion.campos_anteriores["detalles"], "");
+
+            // DEV no puede aprobar ni rechazar modificaciones.
+            assert!(aprobar_modificacion_en(&env.estado_a, &t1.id).is_err());
+            assert!(rechazar_modificacion_en(&env.estado_a, &t1.id).is_err());
+
+            // T3 (asignada en Por hacer) y T4 (Sin asignar) reciben ediciones pendientes.
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            let asg3 = asignar_en(&env.estado_a, &t3.id, DEV).unwrap();
+            env.registrar_ramas_de(&asg3);
+            env.estado_a.fijar_usuario(Some(DEV));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            proponer_edicion_en(&env.estado_a, &t3.id, "T3 aprobada", "Det T3", None).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            proponer_edicion_en(&env.estado_a, &t4.id, "T4 aprobada lote", "", None).unwrap();
+
+            // 3) Líder rechaza T1 (restaura título y detalles vacíos), aprueba T3 individual y T4 en lote.
+            env.estado_a.fijar_usuario(Some(LIDER));
+            let rev1 = rechazar_modificacion_en(&env.estado_a, &t1.id).unwrap();
+            assert_eq!(rev1.titulo, "Original 102");
+            assert_eq!(rev1.detalles, "");
+            assert!(!rev1.edicion_pendiente);
+
+            let apr3 = aprobar_modificacion_en(&env.estado_a, &t3.id).unwrap();
+            assert_eq!(apr3.titulo, "T3 aprobada");
+            assert!(!apr3.edicion_pendiente);
+
+            let lista_lote =
+                aprobar_modificaciones_en(&env.estado_a, std::slice::from_ref(&t4.id)).unwrap();
+            assert!(lista_lote
+                .iter()
+                .find(|t| t.id == t4.id)
+                .map(|t| !t.edicion_pendiente && t.titulo == "T4 aprobada lote")
+                .unwrap());
+            assert!(listar_ediciones_pendientes_en(&env.estado_a)
+                .unwrap()
+                .is_empty());
+
+            // 4) Máquina B sincroniza vía OneDrive el rechazo (restaurado) y aprobaciones.
+            env.sincronizar_b();
+            let t1_final_b = db_tareas::obtener(env.db_b.conexion(), &t1.id).unwrap();
+            assert_eq!(t1_final_b.titulo, "Original 102");
+            assert_eq!(t1_final_b.detalles, "");
+            assert!(!t1_final_b.edicion_pendiente);
+            let t3_final_b = db_tareas::obtener(env.db_b.conexion(), &t3.id).unwrap();
+            assert_eq!(t3_final_b.titulo, "T3 aprobada");
+            assert!(!t3_final_b.edicion_pendiente);
+            assert!(ediciones::listar(env.db_b.conexion()).unwrap().is_empty());
         });
     }
 }
