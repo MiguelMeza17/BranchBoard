@@ -1040,6 +1040,7 @@ mod tests {
                 archivos_tocados: Vec::new(),
                 quitado_en: None,
                 quitado_por: None,
+                changeset_merge: None,
             },
         )
         .unwrap();

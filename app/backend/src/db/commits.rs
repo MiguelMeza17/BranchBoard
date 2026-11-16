@@ -49,6 +49,9 @@ pub struct CambioPrestado {
     /// `None` = los cambios siguen en la rama.
     pub quitado_en: Option<String>,
     pub quitado_por: Option<String>,
+    /// Changeset creado en la rama destino al traer los cambios (#108).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changeset_merge: Option<i64>,
 }
 
 const COLUMNAS_COMMIT: &str = "id, tarea_id, hash, mensaje, descripcion, tipo, autor, fecha";
@@ -117,7 +120,7 @@ pub fn borrar_de_tarea(c: &Connection, tarea_id: &str) -> Resultado<usize> {
 }
 
 const COLUMNAS_PRESTAMO: &str =
-    "id, tarea_id, origen_id, hash, autor, fecha, archivos, archivos_tocados, quitado_en, quitado_por";
+    "id, tarea_id, origen_id, hash, autor, fecha, archivos, archivos_tocados, quitado_en, quitado_por, changeset_merge";
 
 fn lista_de_json(f: &Row<'_>, i: usize) -> rusqlite::Result<Vec<String>> {
     let texto: String = f.get(i)?;
@@ -142,6 +145,7 @@ fn prestamo_de_fila(f: &Row<'_>) -> rusqlite::Result<CambioPrestado> {
         archivos_tocados: lista_de_json(f, 7)?,
         quitado_en: f.get(8)?,
         quitado_por: f.get(9)?,
+        changeset_merge: f.get(10)?,
     })
 }
 
@@ -156,7 +160,7 @@ pub fn insertar_prestamo(c: &Connection, prestamo: &CambioPrestado) -> Resultado
     }
     c.execute(
         &format!(
-            "INSERT INTO cambios_prestados ({COLUMNAS_PRESTAMO}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            "INSERT INTO cambios_prestados ({COLUMNAS_PRESTAMO}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
         ),
         params![
             prestamo.id,
@@ -168,7 +172,8 @@ pub fn insertar_prestamo(c: &Connection, prestamo: &CambioPrestado) -> Resultado
             lista_a_json(&prestamo.archivos)?,
             lista_a_json(&prestamo.archivos_tocados)?,
             prestamo.quitado_en,
-            prestamo.quitado_por
+            prestamo.quitado_por,
+            prestamo.changeset_merge
         ],
     )?;
     Ok(())
@@ -185,6 +190,15 @@ pub fn buscar_prestamo(c: &Connection, id: &str) -> Resultado<Option<CambioPrest
 
 pub fn obtener_prestamo(c: &Connection, id: &str) -> Resultado<CambioPrestado> {
     buscar_prestamo(c, id)?.ok_or_else(|| Error::NoEncontrado(format!("el préstamo {id}")))
+}
+
+/// Todos los préstamos del proyecto (vigentes y devueltos), en orden (#108).
+pub fn todos_los_prestamos(c: &Connection) -> Resultado<Vec<CambioPrestado>> {
+    let mut consulta = c.prepare(&format!(
+        "SELECT {COLUMNAS_PRESTAMO} FROM cambios_prestados ORDER BY rowid"
+    ))?;
+    let filas = consulta.query_map([], prestamo_de_fila)?;
+    Ok(filas.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Todos los préstamos que recibió una tarea (vigentes y ya devueltos), en orden.
@@ -287,6 +301,7 @@ mod tests {
             archivos_tocados: vec![],
             quitado_en: None,
             quitado_por: None,
+            changeset_merge: Some(42),
         }
     }
 

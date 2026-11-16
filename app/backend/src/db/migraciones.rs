@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 6;
+pub const VERSION_ESQUEMA: u32 = 7;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -208,6 +208,8 @@ fn migraciones() -> Vec<String> {
             aplicado_en TEXT NOT NULL
         ) STRICT;"
             .to_string(),
+        // 7 — changeset del merge en `cambios_prestados` para merge sustractivo (issue #108).
+        "ALTER TABLE cambios_prestados ADD COLUMN changeset_merge INTEGER;".to_string(),
     ]
 }
 

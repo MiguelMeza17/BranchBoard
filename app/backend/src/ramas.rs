@@ -430,25 +430,10 @@ pub fn revertir_rama_a_base(
         )));
     }
 
-    let texto_cs = Comando::cm()
-        .args(["find", "changeset"])
-        .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
-        .args(["--format={changesetid} {parent}", "--nototal"])
-        .exigir_exito(estado)?;
-
-    let mut pares: Vec<(i64, i64)> = Vec::new();
-    for linea in texto_cs.lines() {
-        let mut partes = linea.split_whitespace();
-        if let (Some(a), Some(b)) = (partes.next(), partes.next()) {
-            if let (Ok(cs), Ok(parent)) = (a.parse::<i64>(), b.parse::<i64>()) {
-                pares.push((cs, parent));
-            }
-        }
-    }
+    let pares = changesets_de_rama_cm(estado, repo_cm, rama)?;
     if pares.is_empty() {
         return Ok(None);
     }
-    pares.sort_by_key(|(cs, _)| *cs);
     let cs_base = pares[0].1;
     let cabeza = pares.last().unwrap().0;
 
@@ -551,6 +536,291 @@ pub fn hacer_checkin_workspace(
         .exigir_exito(estado)?;
     let despues = rama_actual_workspace(estado, carpeta)?;
     Ok(despues.changeset.or(actual.changeset).unwrap_or(0))
+}
+
+/// Resultado de traer cambios prestados a una rama en Unity VC (#108).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResultadoMergePrestamo {
+    pub changeset: i64,
+    pub archivos: Vec<String>,
+}
+
+/// Lista `(changeset_id, parent)` de `rama` ordenados de menor a mayor en Unity VC.
+pub fn changesets_de_rama_cm(
+    estado: &AppState,
+    repo_cm: &str,
+    rama: &str,
+) -> Resultado<Vec<(i64, i64)>> {
+    let rama = rama.trim().trim_end_matches('/');
+    let texto_cs = Comando::cm()
+        .args(["find", "changeset"])
+        .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
+        .args(["--format={changesetid} {parent}", "--nototal"])
+        .exigir_exito(estado)?;
+
+    let mut pares: Vec<(i64, i64)> = Vec::new();
+    for linea in texto_cs.lines() {
+        let mut partes = linea.split_whitespace();
+        if let (Some(a), Some(b)) = (partes.next(), partes.next()) {
+            if let (Ok(cs), Ok(parent)) = (a.parse::<i64>(), b.parse::<i64>()) {
+                pares.push((cs, parent));
+            }
+        }
+    }
+    pares.sort_by_key(|(cs, _)| *cs);
+    Ok(pares)
+}
+
+fn exigir_workspace_limpio_en_rama(
+    estado: &AppState,
+    workspace: &Path,
+    rama_esperada: &str,
+    accion: &str,
+) -> Resultado<i64> {
+    let rama_esperada = rama_esperada.trim().trim_end_matches('/');
+    let actual = rama_actual_workspace(estado, workspace)?;
+    if !actual.rama.eq_ignore_ascii_case(rama_esperada) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero esta tarea es de la rama {rama_esperada} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+    let pendientes = cambios_pendientes(estado, workspace)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in en esta rama. Haz check-in antes de {accion}",
+            pendientes.len()
+        )));
+    }
+    Comando::cm()
+        .args(["update", "."])
+        .en(workspace)
+        .exigir_exito(estado)?;
+    let actualizado = rama_actual_workspace(estado, workspace)?;
+    Ok(actualizado.changeset.or(actual.changeset).unwrap_or(0))
+}
+
+fn parsear_archivos_diff(salida: &str) -> Vec<String> {
+    let mut archivos = std::collections::BTreeSet::new();
+    for linea in salida.lines() {
+        let limpia = linea.trim();
+        if limpia.is_empty() {
+            continue;
+        }
+        let ruta = match limpia.split_once('|') {
+            Some((tipo, p)) if tipo.trim().eq_ignore_ascii_case("D") => {
+                let _ = p;
+                continue;
+            }
+            Some((_, p)) => p,
+            None => limpia,
+        };
+        let norm = ruta
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+        if !norm.is_empty() {
+            archivos.insert(norm);
+        }
+    }
+    archivos.into_iter().collect()
+}
+
+fn tiene_conflicto_merge_preview(salida: &str) -> bool {
+    salida.lines().any(|linea| {
+        let l = linea.trim();
+        l.starts_with("FILE_CONFLICT")
+            || l.contains("_CONFLICT")
+            || l.to_lowercase().contains("conflicto")
+    })
+}
+
+/// Trae cambios de `rama_origen` (`Some(cs)` puntual o `None` todos) al workspace
+/// situado en `rama_destino` usando `cm merge --cherrypicking --merge` + `cm checkin --all` (#108).
+pub fn traer_cambios_workspace(
+    estado: &AppState,
+    workspace: &Path,
+    repo_cm: &str,
+    rama_destino: &str,
+    rama_origen: &str,
+    hash: Option<i64>,
+    comentario: &str,
+) -> Resultado<ResultadoMergePrestamo> {
+    validar_destino_checkin(rama_destino)?;
+    let pares = changesets_de_rama_cm(estado, repo_cm, rama_origen)?;
+    if pares.is_empty() {
+        return Err(Error::Validacion(
+            "La tarea origen todavía no tiene check-ins para traer".into(),
+        ));
+    }
+
+    let (cs_obj, cs_interval_origin) = match hash {
+        Some(cs) => {
+            if !pares.iter().any(|(id, _)| *id == cs) {
+                return Err(Error::NoEncontrado(format!(
+                    "el changeset cs:{cs} en la rama {rama_origen}"
+                )));
+            }
+            (cs, None)
+        }
+        None => {
+            let base = pares[0].1;
+            let cabeza = pares.last().unwrap().0;
+            (cabeza, (pares.len() > 1).then_some(base))
+        }
+    };
+
+    let cs_antes = exigir_workspace_limpio_en_rama(
+        estado,
+        workspace,
+        rama_destino,
+        "traer cambios de otra rama",
+    )?;
+
+    let mut args = vec![
+        "merge".to_string(),
+        format!("cs:{cs_obj}"),
+        "--cherrypicking".to_string(),
+    ];
+    if let Some(base) = cs_interval_origin {
+        args.push(format!("--interval-origin=cs:{base}"));
+    }
+    args.push("--merge".to_string());
+    args.push("--nointeractiveresolution".to_string());
+
+    if let Err(e) = Comando::cm().args(&args).en(workspace).exigir_exito(estado) {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(e);
+    }
+    if cambios_pendientes(estado, workspace)?.is_empty() {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(Error::Validacion(
+            "Los cambios elegidos ya estaban presentes o no producen diferencias en esta rama"
+                .into(),
+        ));
+    }
+    if let Err(e) = Comando::cm()
+        .args(["checkin", "--all", &format!("-c={comentario}")])
+        .en(workspace)
+        .exigir_exito(estado)
+    {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(e);
+    }
+
+    let cs_merge = rama_actual_workspace(estado, workspace)?
+        .changeset
+        .ok_or_else(|| Error::Interno("No se pudo leer el changeset del merge".into()))?;
+    let diff = Comando::cm()
+        .args([
+            "diff",
+            &format!("cs:{cs_antes}@{repo_cm}"),
+            &format!("cs:{cs_merge}@{repo_cm}"),
+            "--repositorypaths",
+            "--format={type}|{path}",
+        ])
+        .en(workspace)
+        .exigir_exito(estado)?;
+
+    Ok(ResultadoMergePrestamo {
+        changeset: cs_merge,
+        archivos: parsear_archivos_diff(&diff),
+    })
+}
+
+/// Devuelve en Unity VC un préstamo mediante merge sustractivo de `changeset_merge` (#108).
+/// Ejecuta primero la vista previa sin `--merge` para rechazar conflictos sin colgar `cm`.
+pub fn devolver_cambios_workspace(
+    estado: &AppState,
+    workspace: &Path,
+    rama_destino: &str,
+    changeset_merge: i64,
+    comentario: &str,
+) -> Resultado<i64> {
+    validar_destino_checkin(rama_destino)?;
+    let actual_cs = exigir_workspace_limpio_en_rama(
+        estado,
+        workspace,
+        rama_destino,
+        "devolver cambios prestados",
+    )?;
+
+    let preview = Comando::cm()
+        .args([
+            "merge",
+            &format!("cs:{changeset_merge}"),
+            "--subtractive",
+            "--machinereadable",
+        ])
+        .en(workspace)
+        .ejecutar(estado)?;
+    if tiene_conflicto_merge_preview(&preview.stdout)
+        || tiene_conflicto_merge_preview(&preview.stderr)
+    {
+        return Err(Error::Validacion(
+            "Hay conflictos al devolver estos cambios prestados; resuélvelos en Unity VC antes de continuar"
+                .into(),
+        ));
+    }
+    if !preview.exito() {
+        let detalle = if !preview.stderr.trim().is_empty() {
+            preview.stderr.trim().to_string()
+        } else {
+            preview.stdout.trim().to_string()
+        };
+        return Err(Error::Cm(detalle));
+    }
+
+    if let Err(e) = Comando::cm()
+        .args([
+            "merge",
+            &format!("cs:{changeset_merge}"),
+            "--subtractive",
+            "--merge",
+            "--nointeractiveresolution",
+        ])
+        .en(workspace)
+        .exigir_exito(estado)
+    {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(e);
+    }
+
+    if !cambios_pendientes(estado, workspace)?.is_empty() {
+        if let Err(e) = Comando::cm()
+            .args(["checkin", "--all", &format!("-c={comentario}")])
+            .en(workspace)
+            .exigir_exito(estado)
+        {
+            let _ = Comando::cm()
+                .args(["undo", "-r", "."])
+                .en(workspace)
+                .ejecutar(estado);
+            return Err(e);
+        }
+    } else {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+    }
+
+    Ok(rama_actual_workspace(estado, workspace)?
+        .changeset
+        .unwrap_or(actual_cs))
 }
 
 /// Comprueba si `rama` ya fue mergeada hacia `rama_padre` en Unity VC (`cm find merge`, #104).
@@ -961,5 +1231,24 @@ mod tests {
         assert!(!parsear_rama_cerrada(salida, "/main/dev"));
         assert!(parsear_rama_cerrada(salida, "/main/dev/T-101"));
         assert!(parsear_rama_cerrada("merge|br:/main/dev/\n", "/main/dev"));
+    }
+
+    #[test]
+    fn parsea_archivos_diff_y_detecta_conflictos_en_preview() {
+        let diff = "D|/Assets/Scripts\nF|/Assets/Scripts/Player.cs\nB|/Assets\\Models\\Hero.fbx\nF|/Assets/Scripts/Player.cs\n";
+        assert_eq!(
+            parsear_archivos_diff(diff),
+            vec![
+                "Assets/Models/Hero.fbx".to_string(),
+                "Assets/Scripts/Player.cs".to_string(),
+            ]
+        );
+        assert!(tiene_conflicto_merge_preview(
+            "FILE_CONFLICT /Assets/Player.cs 1 2 3 4"
+        ));
+        assert!(tiene_conflicto_merge_preview("EVILTWIN_CONFLICT /x"));
+        assert!(!tiene_conflicto_merge_preview(
+            "Borrado (Subtractive de 26)"
+        ));
     }
 }

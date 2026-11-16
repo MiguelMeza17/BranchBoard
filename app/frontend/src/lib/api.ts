@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { Commit, EdicionPendiente, EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
+import type { CambioTraido, Commit, EdicionPendiente, EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -387,6 +387,35 @@ export const api = {
       'crear_rama_desde_espera',
       { esperaId, titulo, detalles, tipo },
       mockup ?? (() => ({}) as Tarea),
+    ),
+
+  /** Lista los préstamos de una tarea o del proyecto completo (#108). */
+  listarCambiosPrestados: (tareaId?: string | null, mockup?: () => CambioTraido[]) =>
+    llamar<CambioTraido[]>(
+      'listar_cambios_prestados',
+      { tareaId: tareaId ?? null },
+      mockup ?? (() => []),
+    ),
+
+  /** Trae cambios prestados de otra tarea (todos o un commit puntual) mediante cherry-pick (#108). */
+  traerCambios: (
+    destinoId: string,
+    origenId: string,
+    hash?: string | null,
+    mockup?: () => CambioTraido,
+  ) =>
+    llamar<CambioTraido>(
+      'traer_cambios',
+      { destinoId, origenId, hash: hash ?? null },
+      mockup ?? (() => ({}) as CambioTraido),
+    ),
+
+  /** Devuelve un préstamo mediante merge sustractivo, conservando el historial (#108). */
+  devolverCambiosPrestados: (prestamoId: string, mockup?: () => CambioTraido) =>
+    llamar<CambioTraido>(
+      'devolver_cambios_prestados',
+      { prestamoId },
+      mockup ?? (() => ({}) as CambioTraido),
     ),
 
   /** Versión instalada de la app. */
