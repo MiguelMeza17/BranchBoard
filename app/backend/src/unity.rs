@@ -11,6 +11,7 @@ use crate::cm::lectura::{rama_actual_workspace, EstadoWorkspace};
 use crate::db::{commits, tareas as db_tareas, Db};
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
+use crate::modelo::TipoTarea;
 use crate::ramas;
 
 /// Ejecutable elegido para abrir el proyecto en Unity (#112).
@@ -195,6 +196,42 @@ fn parse_changeset_opcional(changeset: Option<&str>) -> Resultado<Option<i64>> {
     Ok(Some(num))
 }
 
+fn resolver_rama_tarea(c: &rusqlite::Connection, tarea: &db_tareas::Tarea) -> Resultado<String> {
+    if let Some(ref rama) = tarea.rama_asociada {
+        return Ok(rama.clone());
+    }
+    if tarea.tipo == TipoTarea::SinDefinir {
+        if let Some(ref padre_id) = tarea.tarea_padre_id {
+            if let Ok(padre) = db_tareas::obtener(c, padre_id) {
+                if let Some(rama_padre) = padre.rama_asociada {
+                    return Ok(rama_padre);
+                }
+            }
+        }
+    }
+    Err(Error::Validacion(format!(
+        "La tarea {} no tiene rama asociada",
+        tarea.id
+    )))
+}
+
+fn normalizar_estado_apertura(
+    mut estado_final: EstadoWorkspace,
+    rama_tarea: &str,
+    cs_solicitado: Option<i64>,
+) -> EstadoWorkspace {
+    if let Some(cs) = cs_solicitado {
+        if estado_final.rama.to_ascii_lowercase().starts_with("cs:") {
+            estado_final.rama = rama_tarea.to_string();
+        }
+        estado_final.changeset = Some(cs);
+    } else {
+        // Apertura por rama (head): no fija un changeset puntual en la UI.
+        estado_final.changeset = None;
+    }
+    estado_final
+}
+
 /// Valida tarea/rama/changeset, localiza Unity instalado y cambia el workspace a la rama
 /// o changeset solicitado sin lanzar aún la ventana GUI (#112).
 pub fn preparar_apertura(
@@ -220,9 +257,7 @@ pub fn preparar_apertura(
             tarea.id
         )));
     }
-    let rama_tarea = tarea.rama_asociada.as_deref().ok_or_else(|| {
-        Error::Validacion(format!("La tarea {} no tiene rama asociada", tarea.id))
-    })?;
+    let rama_tarea = resolver_rama_tarea(db.conexion(), &tarea)?;
     if !rama_tarea.eq_ignore_ascii_case(rama_limpia) {
         return Err(Error::Validacion(format!(
             "La rama {rama_limpia} no corresponde a la tarea {} ({rama_tarea})",
@@ -232,10 +267,9 @@ pub fn preparar_apertura(
     let cs_num = parse_changeset_opcional(changeset)?;
     if let Some(cs) = cs_num {
         let cs_txt = cs.to_string();
-        let existe_en_copia = commits::de_tarea(db.conexion(), &tarea.id)?
-            .iter()
-            .any(|c| c.hash == cs_txt);
-        if !commits::de_tarea(db.conexion(), &tarea.id)?.is_empty() && !existe_en_copia {
+        let de_la_tarea = commits::de_tarea(db.conexion(), &tarea.id)?;
+        let existe_en_copia = de_la_tarea.iter().any(|c| c.hash == cs_txt);
+        if !de_la_tarea.is_empty() && !existe_en_copia {
             return Err(Error::Validacion(format!(
                 "El changeset {cs} no pertenece a la tarea {}",
                 tarea.id
@@ -252,20 +286,16 @@ pub fn preparar_apertura(
         } else {
             ramas::cambiar_a_changeset(estado, workspace, cs)?
         }
-    } else if actual.rama.eq_ignore_ascii_case(rama_tarea) && actual.changeset.is_some() {
-        // Si estaba en la rama o en un changeset puntual y sin cambios pendientes, actualiza cabeza.
-        if ramas::cambios_pendientes(estado, workspace)?.is_empty() {
-            ramas::cambiar_a_rama(estado, workspace, rama_tarea)?
-        } else {
-            actual
-        }
-    } else if actual.rama.eq_ignore_ascii_case(rama_tarea) {
+    } else if actual.rama.eq_ignore_ascii_case(&rama_tarea) {
         actual
     } else {
-        ramas::cambiar_a_rama(estado, workspace, rama_tarea)?
+        ramas::cambiar_a_rama(estado, workspace, &rama_tarea)?
     };
 
-    Ok((lanzador, estado_final))
+    Ok((
+        lanzador,
+        normalizar_estado_apertura(estado_final, &rama_tarea, cs_num),
+    ))
 }
 
 /// Lanza Unity Editor o Unity Hub apuntando a `workspace` (#112).
@@ -387,6 +417,59 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn resuelve_rama_de_espera_y_normaliza_estado_de_apertura() {
+        let db = Db::en_memoria().unwrap();
+        let mut padre = db_tareas::Tarea::nueva(
+            "T-200",
+            "Padre",
+            TipoTarea::Scripting,
+            "admin@estudio.com",
+            "2026-11-16",
+        );
+        padre.rama_asociada = Some("/main/dev/T-200-padre".into());
+        db_tareas::insertar(db.conexion(), &padre).unwrap();
+
+        let mut espera = db_tareas::Tarea::nueva(
+            "T-200-1",
+            "En espera",
+            TipoTarea::SinDefinir,
+            "admin@estudio.com",
+            "2026-11-16",
+        );
+        espera.tarea_padre_id = Some("T-200".into());
+        db_tareas::insertar(db.conexion(), &espera).unwrap();
+
+        assert_eq!(
+            resolver_rama_tarea(db.conexion(), &espera).unwrap(),
+            "/main/dev/T-200-padre"
+        );
+
+        let por_rama = normalizar_estado_apertura(
+            EstadoWorkspace {
+                rama: "/main/dev/T-200-padre".into(),
+                repositorio: "repo@org@unity".into(),
+                changeset: Some(42),
+            },
+            "/main/dev/T-200-padre",
+            None,
+        );
+        assert_eq!(por_rama.rama, "/main/dev/T-200-padre");
+        assert_eq!(por_rama.changeset, None);
+
+        let por_cs = normalizar_estado_apertura(
+            EstadoWorkspace {
+                rama: "cs:41".into(),
+                repositorio: "repo@org@unity".into(),
+                changeset: Some(41),
+            },
+            "/main/dev/T-200-padre",
+            Some(41),
+        );
+        assert_eq!(por_cs.rama, "/main/dev/T-200-padre");
+        assert_eq!(por_cs.changeset, Some(41));
+    }
+
     /// **Prueba en el entorno real** (CLAUDE.md, issue #112): contra
     /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity`:
     /// 1. Entra al proyecto, crea una tarea, la toma (`tomar_en`), agrega dos check-ins
@@ -424,7 +507,7 @@ mod tests {
 
         Comando::cm()
             .args(["workspace", "create"])
-            .arg(format!("bb-prueba-112-{sufijo}"))
+            .arg(format!("bb-prueba-a2-112-{sufijo}"))
             .arg(&ruta_ws)
             .arg(format!("rep:{repo_cm}"))
             .exigir_exito(&estado)
@@ -448,7 +531,7 @@ mod tests {
                             rol: Rol::Administrador,
                         },
                         &DatosNuevaTarea {
-                            titulo: format!("Abrir Unity 112 {sufijo}"),
+                            titulo: format!("A2 Abrir Unity 112 {sufijo}"),
                             detalles: String::new(),
                             tipo: TipoTarea::Scripting,
                             tarea_padre_id: None,
@@ -506,11 +589,19 @@ mod tests {
             );
             assert!(Path::new(&res_rama.ejecutable).is_file());
             assert!(res_rama.rama_actual.eq_ignore_ascii_case(&rama));
+            assert_eq!(res_rama.changeset, None);
 
-            // 2. Abrir en changeset puntual -> workspace cambia exactamente a `cs_primero`.
+            // 2. Abrir en changeset puntual -> workspace cambia exactamente a `cs_primero`
+            //    y devuelve la rama real de la tarea (no "cs:<n>").
             let res_cs =
                 abrir_en_unity_preparar_en(&estado, &tarea.id, &rama, Some(&cs_primero)).unwrap();
             assert_eq!(res_cs.changeset, cs_primero.parse::<i64>().ok());
+            assert!(res_cs.rama_actual.eq_ignore_ascii_case(&rama));
+
+            // 3. Volver a abrir por rama desde el changeset puntual -> regresa a head.
+            let res_vuelta = abrir_en_unity_preparar_en(&estado, &tarea.id, &rama, None).unwrap();
+            assert!(res_vuelta.rama_actual.eq_ignore_ascii_case(&rama));
+            assert_eq!(res_vuelta.changeset, None);
 
             // Regresamos a dev antes de borrar el workspace y las ramas de prueba.
             ramas::cambiar_a_rama(&estado, ws.path(), ramas::RAMA_DEV).unwrap();
