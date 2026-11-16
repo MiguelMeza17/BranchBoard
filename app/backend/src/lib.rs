@@ -19,6 +19,7 @@ pub mod checkins;
 pub mod cm;
 pub mod comandos;
 pub mod db;
+pub mod documentos;
 pub mod error;
 pub mod estado;
 pub mod eventos;
@@ -33,9 +34,10 @@ pub mod tareas;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
-    acceso, actualizaciones, chat as comandos_chat, datos, eventos as comandos_eventos,
-    identidad as comandos_identidad, notificaciones as comandos_notificaciones, sistema,
-    sprints as comandos_sprints, tareas as comandos_tareas, usuarios,
+    acceso, actualizaciones, chat as comandos_chat, datos, documentos as comandos_documentos,
+    eventos as comandos_eventos, identidad as comandos_identidad,
+    notificaciones as comandos_notificaciones, sistema, sprints as comandos_sprints,
+    tareas as comandos_tareas, usuarios,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -160,6 +162,11 @@ pub fn run() {
             comandos_chat::crear_grupo_chat,
             comandos_chat::marcar_chat_leido,
             comandos_chat::eliminar_chat,
+            comandos_documentos::listar_documentos,
+            comandos_documentos::subir_documentos,
+            comandos_documentos::aprobar_documento,
+            comandos_documentos::eliminar_documento,
+            comandos_documentos::abrir_documento,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

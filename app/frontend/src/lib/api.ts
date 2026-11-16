@@ -14,6 +14,7 @@ import type {
   AvanceSprint,
   CambioTraido,
   Commit,
+  Documento,
   EdicionPendiente,
   EstadoTarea,
   GrupoChat,
@@ -614,6 +615,26 @@ export const api = {
   /** Oculta localmente una conversación dejando visibles futuros mensajes (#119). */
   eliminarChat: (conversacion: string, mockup?: () => void) =>
     llamar<void>('eliminar_chat', { conversacion }, mockup ?? (() => undefined)),
+
+  /** Documentos del proyecto en la carpeta compartida (#120). */
+  listarDocumentos: (mockup?: () => Documento[]) =>
+    llamar<Documento[]>('listar_documentos', undefined, mockup ?? (() => [])),
+
+  /** Sube archivos locales al proyecto (Líder/Admin publicado; resto pendiente, #120). */
+  subirDocumentos: (archivos: string[], mockup?: () => Documento[]) =>
+    llamar<Documento[]>('subir_documentos', { archivos }, mockup ?? (() => [])),
+
+  /** Aprueba un documento pendiente (solo Líder o Administrador, #120). */
+  aprobarDocumento: (id: string, mockup?: () => Documento) =>
+    llamar<Documento>('aprobar_documento', { id }, mockup ?? (() => ({}) as Documento)),
+
+  /** Elimina un documento del proyecto y su archivo compartido (Líder o Administrador, #120). */
+  eliminarDocumento: (id: string, mockup?: () => Documento) =>
+    llamar<Documento>('eliminar_documento', { id }, mockup ?? (() => ({}) as Documento)),
+
+  /** Abre un documento con la aplicación predeterminada del sistema en esta máquina (#120). */
+  abrirDocumento: (id: string, mockup?: () => void) =>
+    llamar<void>('abrir_documento', { id }, mockup ?? (() => undefined)),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),

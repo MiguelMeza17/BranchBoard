@@ -5,6 +5,7 @@ pub mod acceso;
 pub mod actualizaciones;
 pub mod chat;
 pub mod datos;
+pub mod documentos;
 pub mod eventos;
 pub mod identidad;
 pub mod notificaciones;
