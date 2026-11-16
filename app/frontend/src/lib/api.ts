@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import type { EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
+import type { EdicionPendiente, EstadoTarea, Rol, Tarea, TipoTarea } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -283,6 +283,36 @@ export const api = {
   /** Envía una advertencia al creador de una tarea pendiente sin aprobarla (#101). */
   advertirTareaPendiente: (id: string, mensaje: string, mockup: () => void) =>
     llamar<void>('advertir_tarea_pendiente', { id, mensaje }, mockup),
+
+  /** Lista las ediciones pendientes de aprobación (#102). */
+  listarEdicionesPendientes: (mockup: () => EdicionPendiente[]) =>
+    llamar<EdicionPendiente[]>('listar_ediciones_pendientes', undefined, mockup),
+
+  /** Propone una edición de título/detalles sobre una tarea en 'por hacer' (#102). */
+  proponerEdicion: (
+    id: string,
+    titulo: string,
+    detalles: string,
+    motivo?: string | null,
+    mockup?: () => { tarea: Tarea; edicion: EdicionPendiente },
+  ) =>
+    llamar<{ tarea: Tarea; edicion: EdicionPendiente }>(
+      'proponer_edicion',
+      { id, titulo, detalles, motivo: motivo ?? null },
+      mockup ?? (() => ({}) as { tarea: Tarea; edicion: EdicionPendiente }),
+    ),
+
+  /** Aprueba una edición pendiente manteniendo los nuevos valores (#102). */
+  aprobarModificacion: (id: string, mockup: () => Tarea) =>
+    llamar<Tarea>('aprobar_modificacion', { id }, mockup),
+
+  /** Aprueba varias ediciones pendientes en una operación (#102). */
+  aprobarModificaciones: (ids: string[], mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('aprobar_modificaciones', { ids }, mockup),
+
+  /** Rechaza una edición pendiente y restaura los valores anteriores (#102). */
+  rechazarModificacion: (id: string, mockup: () => Tarea) =>
+    llamar<Tarea>('rechazar_modificacion', { id }, mockup),
 
   /** Lista la Papelera ordenada de la eliminación más reciente a la más antigua (#103). */
   listarPapelera: (mockup: () => Tarea[]) =>

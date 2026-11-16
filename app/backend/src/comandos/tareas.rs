@@ -6,6 +6,7 @@ use std::path::Path;
 use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
+use crate::db::ediciones::EdicionPendiente;
 use crate::db::tareas::Tarea;
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
@@ -15,7 +16,7 @@ use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
 use crate::tareas::{
     self, AutorTarea, CambiosTarea, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
-    ResultadoCambioEstado,
+    ResultadoCambioEstado, ResultadoProponerEdicion,
 };
 
 fn con_ops<T>(
@@ -326,6 +327,97 @@ pub async fn advertir_tarea_pendiente(
 pub fn advertir_pendiente_en(estado: &AppState, id: &str, mensaje: &str) -> Resultado<()> {
     con_ops(estado, "advertir_tarea_pendiente", |c, ops, autor| {
         tareas::advertir_pendiente(c, ops, autor, id, mensaje, &ahora_iso())
+    })
+}
+
+/// Lista las ediciones pendientes de aprobación (#102).
+#[tauri::command]
+pub fn listar_ediciones_pendientes(
+    estado: State<'_, AppState>,
+) -> Resultado<Vec<EdicionPendiente>> {
+    listar_ediciones_pendientes_en(&estado)
+}
+
+/// Lo mismo que [`listar_ediciones_pendientes`], sin el envoltorio de Tauri.
+pub fn listar_ediciones_pendientes_en(estado: &AppState) -> Resultado<Vec<EdicionPendiente>> {
+    let _yo = estado.exigir_permiso("listar_ediciones_pendientes")?;
+    estado.con_db(|db| tareas::listar_ediciones_pendientes(db.conexion()))
+}
+
+/// `proponer_edicion(id, titulo, detalles, motivo?)`: cualquier rol edita título/detalles en `'por hacer'` (#102).
+#[tauri::command]
+pub async fn proponer_edicion(
+    estado: State<'_, AppState>,
+    id: String,
+    titulo: String,
+    detalles: String,
+    motivo: Option<String>,
+) -> Resultado<ResultadoProponerEdicion> {
+    proponer_edicion_en(&estado, &id, &titulo, &detalles, motivo.as_deref())
+}
+
+/// Lo mismo que [`proponer_edicion`], sin el envoltorio de Tauri.
+pub fn proponer_edicion_en(
+    estado: &AppState,
+    id: &str,
+    titulo: &str,
+    detalles: &str,
+    motivo: Option<&str>,
+) -> Resultado<ResultadoProponerEdicion> {
+    con_ops(estado, "proponer_edicion", |c, ops, autor| {
+        tareas::proponer_edicion(
+            c,
+            ops,
+            autor,
+            id,
+            titulo,
+            detalles,
+            motivo,
+            &ahora_iso(),
+            &hoy_local(),
+        )
+    })
+}
+
+/// `aprobar_modificacion(id)`: Líder/Admin confirma la edición pendiente (#102).
+#[tauri::command]
+pub async fn aprobar_modificacion(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    aprobar_modificacion_en(&estado, &id)
+}
+
+/// Lo mismo que [`aprobar_modificacion`], sin el envoltorio de Tauri.
+pub fn aprobar_modificacion_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    con_ops(estado, "aprobar_modificacion", |c, ops, autor| {
+        tareas::aprobar_modificacion(c, ops, autor, id, &ahora_iso())
+    })
+}
+
+/// `aprobar_modificaciones(ids)`: Líder/Admin confirma varias ediciones pendientes a la vez (#102).
+#[tauri::command]
+pub async fn aprobar_modificaciones(
+    estado: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Resultado<Vec<Tarea>> {
+    aprobar_modificaciones_en(&estado, &ids)
+}
+
+/// Lo mismo que [`aprobar_modificaciones`], sin el envoltorio de Tauri.
+pub fn aprobar_modificaciones_en(estado: &AppState, ids: &[String]) -> Resultado<Vec<Tarea>> {
+    con_ops(estado, "aprobar_modificaciones", |c, ops, autor| {
+        tareas::aprobar_modificaciones(c, ops, autor, ids, &ahora_iso())
+    })
+}
+
+/// `rechazar_modificacion(id)`: Líder/Admin rechaza la edición pendiente y restaura los valores anteriores (#102).
+#[tauri::command]
+pub async fn rechazar_modificacion(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    rechazar_modificacion_en(&estado, &id)
+}
+
+/// Lo mismo que [`rechazar_modificacion`], sin el envoltorio de Tauri.
+pub fn rechazar_modificacion_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    con_ops(estado, "rechazar_modificacion", |c, ops, autor| {
+        tareas::rechazar_modificacion(c, ops, autor, id, &ahora_iso())
     })
 }
 
