@@ -103,6 +103,12 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("marcar_todas_leidas", Acceso::Roles(TODOS)),
     ("enviar_mensaje", Acceso::Roles(TODOS)),
     ("solicitar_accion_bd", Acceso::Roles(LIDER_O_DESARROLLADOR)),
+    ("obtener_chat", Acceso::Roles(TODOS)),
+    ("conversaciones_sin_leer", Acceso::Roles(TODOS)),
+    ("enviar_chat", Acceso::Roles(TODOS)),
+    ("crear_grupo_chat", Acceso::Roles(TODOS)),
+    ("marcar_chat_leido", Acceso::Roles(TODOS)),
+    ("eliminar_chat", Acceso::Roles(TODOS)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.

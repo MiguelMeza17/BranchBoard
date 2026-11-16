@@ -4,6 +4,8 @@
 //! Una conversación es el grupo general (`grupo`), el id de un grupo creado por
 //! el equipo o, en un privado, el email de la otra persona.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
@@ -249,6 +251,61 @@ pub fn conversaciones_sin_leer(c: &Connection, yo: &str) -> Resultado<Vec<String
         }
     }
     Ok(visibles)
+}
+
+/// Conversaciones eliminadas por `yo` en esta máquina: `{ conversación -> desde }`.
+pub fn eliminados_de(c: &Connection, yo: &str) -> Resultado<BTreeMap<String, String>> {
+    let mut consulta =
+        c.prepare("SELECT conversacion, desde FROM chats_eliminados WHERE usuario = ?1")?;
+    let filas = consulta.query_map([yo], |f| {
+        Ok((f.get::<_, String>(0)?, f.get::<_, String>(1)?))
+    })?;
+    let mut mapa = BTreeMap::new();
+    for fila in filas {
+        let (conv, desde) = fila?;
+        mapa.insert(conv, desde);
+    }
+    Ok(mapa)
+}
+
+/// Todos los mensajes visibles para `yo` (general, sus grupos y sus privados),
+/// ocultando lo anterior a `chats_eliminados` y en orden cronológico (#119).
+pub fn listar_visibles(
+    c: &Connection,
+    yo: &str,
+    grupos_usuario: &[GrupoChat],
+) -> Resultado<Vec<Mensaje>> {
+    let eliminados = eliminados_de(c, yo)?;
+    let mut consulta = c.prepare(&format!(
+        "SELECT {COLUMNAS_MENSAJE} FROM mensajes_chat
+         WHERE de = ?1 OR para = ?1 OR para NOT LIKE '%@%'
+         ORDER BY fecha, rowid"
+    ))?;
+    let candidatos = consulta
+        .query_map([yo], mensaje_de_fila)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut visibles = Vec::new();
+    for m in candidatos {
+        let conv = if m.para == yo {
+            m.de.as_str()
+        } else {
+            m.para.as_str()
+        };
+        if !conv.contains('@')
+            && conv != GRUPO_GENERAL
+            && !grupos_usuario.iter().any(|g| g.id == conv)
+        {
+            continue;
+        }
+        if let Some(desde) = eliminados.get(conv) {
+            if m.fecha <= *desde {
+                continue;
+            }
+        }
+        visibles.push(m);
+    }
+    con_leidos(c, visibles)
 }
 
 #[cfg(test)]

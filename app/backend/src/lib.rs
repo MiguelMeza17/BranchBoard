@@ -14,6 +14,7 @@
 //! - `estado` — estado compartido de la app.
 
 pub mod avance;
+pub mod chat;
 pub mod checkins;
 pub mod cm;
 pub mod comandos;
@@ -32,9 +33,9 @@ pub mod tareas;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
-    acceso, actualizaciones, datos, eventos as comandos_eventos, identidad as comandos_identidad,
-    notificaciones as comandos_notificaciones, sistema, sprints as comandos_sprints,
-    tareas as comandos_tareas, usuarios,
+    acceso, actualizaciones, chat as comandos_chat, datos, eventos as comandos_eventos,
+    identidad as comandos_identidad, notificaciones as comandos_notificaciones, sistema,
+    sprints as comandos_sprints, tareas as comandos_tareas, usuarios,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -153,6 +154,12 @@ pub fn run() {
             comandos_notificaciones::marcar_todas_leidas,
             comandos_notificaciones::enviar_mensaje,
             comandos_notificaciones::solicitar_accion_bd,
+            comandos_chat::obtener_chat,
+            comandos_chat::conversaciones_sin_leer,
+            comandos_chat::enviar_chat,
+            comandos_chat::crear_grupo_chat,
+            comandos_chat::marcar_chat_leido,
+            comandos_chat::eliminar_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");
