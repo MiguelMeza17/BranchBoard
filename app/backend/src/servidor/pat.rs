@@ -177,9 +177,20 @@ fn crear_pat(estado: &AppState, org_cm: &str) -> Resultado<Pat> {
         .arg("--format={id}")
         .ejecutar(estado)?;
     let id = interpretar_id(&salida.stdout).filter(|_| salida.exito()).ok_or_else(|| {
-        Error::Cm(
-            "No se pudo crear el token de acceso de Unity VC. Si no eres el dueño de la organización, puede que su Administrador tenga que permitirlo (cm accesstoken admin allowlist)".into(),
-        )
+        let crudo = if !salida.stderr.trim().is_empty() {
+            salida.stderr.trim()
+        } else {
+            salida.stdout.trim()
+        };
+        let detalle: String = crudo.chars().take(160).collect();
+        let sufijo = if detalle.is_empty() {
+            String::new()
+        } else {
+            format!(" ({detalle})")
+        };
+        Error::Cm(format!(
+            "No se pudo crear el token de acceso de Unity VC{sufijo}. Si no eres el dueño de la organización, puede que su Administrador tenga que permitirlo (cm accesstoken admin allowlist)"
+        ))
     })?;
 
     let revelado = Comando::cm()
@@ -200,12 +211,65 @@ fn crear_pat(estado: &AppState, org_cm: &str) -> Resultado<Pat> {
 }
 
 /// Revoca sin fallar: si no se puede, el PAT igual queda fuera del llavero.
-fn revocar_pat(estado: &AppState, org_cm: &str, id: &str) {
+pub fn revocar_pat(estado: &AppState, org_cm: &str, id: &str) {
     let _ = Comando::cm()
         .args(["accesstoken", "revoke"])
         .arg(id)
         .arg(org_cm)
         .ejecutar(estado);
+}
+
+/// Revoca y elimina del llavero los PATs guardados de `email` para `organizaciones` (#124).
+pub fn borrar_y_revocar_pats_usuario(
+    estado: &AppState,
+    llavero: &dyn Llavero,
+    email: &str,
+    organizaciones: &[String],
+) -> Resultado<usize> {
+    borrar_y_revocar_con(llavero, email, organizaciones, |org_cm, id| {
+        revocar_pat(estado, org_cm, id)
+    })
+}
+
+fn borrar_y_revocar_con(
+    llavero: &dyn Llavero,
+    email: &str,
+    organizaciones: &[String],
+    revocar: impl Fn(&str, &str),
+) -> Resultado<usize> {
+    let mut vistas: Vec<String> = Vec::new();
+    let mut limpiados = 0usize;
+    for org in organizaciones {
+        let limpia = nombre_organizacion(org);
+        if limpia.is_empty() || vistas.iter().any(|v| v.eq_ignore_ascii_case(limpia)) {
+            continue;
+        }
+        vistas.push(limpia.to_string());
+        let cuenta = cuenta_llavero(email, limpia);
+        if let Some(guardado) = llavero.leer(&cuenta)? {
+            llavero.borrar(&cuenta)?;
+            if let Ok(pat) = serde_json::from_str::<Pat>(&guardado) {
+                let org_cm = format!("{limpia}@unity");
+                revocar(&org_cm, &pat.id);
+            }
+            limpiados += 1;
+        }
+    }
+    Ok(limpiados)
+}
+
+/// Descarta el PAT previo (revocándolo si es posible) y crea + valida uno nuevo (#124).
+pub fn renovar_pat_forzado(
+    estado: &AppState,
+    llavero: &dyn Llavero,
+    email: &str,
+    org: &str,
+) -> Resultado<ClienteServidor> {
+    let limpia = nombre_organizacion(org);
+    if !limpia.is_empty() {
+        let _ = borrar_y_revocar_pats_usuario(estado, llavero, email, &[limpia.to_string()]);
+    }
+    conectar(estado, llavero, email, org)
 }
 
 fn descripcion_pat() -> String {

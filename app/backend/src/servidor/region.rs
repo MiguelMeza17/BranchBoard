@@ -25,6 +25,38 @@ pub fn url_api(org: &str) -> Resultado<String> {
     Ok(armar_url_api(&base, org))
 }
 
+/// Lista las organizaciones presentes en `%LOCALAPPDATA%\plastic4\cloudregions.conf` (#124).
+pub fn organizaciones_en_cloudregions() -> Vec<String> {
+    let Some(ruta) = ruta_cloudregions() else {
+        return Vec::new();
+    };
+    let Ok(texto) = std::fs::read_to_string(&ruta) else {
+        return Vec::new();
+    };
+    interpretar_organizaciones(&texto)
+}
+
+fn interpretar_organizaciones(texto: &str) -> Vec<String> {
+    let mut orgs = Vec::new();
+    for linea in texto
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with("//") && !l.is_empty())
+    {
+        for par in linea.split_whitespace() {
+            if let Some(("organization", valor)) = par.split_once('=') {
+                let nombre = nombre_organizacion(valor);
+                if !nombre.is_empty()
+                    && !orgs.iter().any(|o: &String| o.eq_ignore_ascii_case(nombre))
+                {
+                    orgs.push(nombre.to_string());
+                }
+            }
+        }
+    }
+    orgs
+}
+
 fn armar_url_api(base: &str, org: &str) -> String {
     format!(
         "{}/api/v1/organizations/{}",
@@ -119,6 +151,14 @@ organization=otra@cloud server=x:8787 version=2 encrypted=False webserver=http:/
         assert_eq!(
             armar_url_api("https://x.com:7178/", "MiguelM17@unity"),
             "https://x.com:7178/api/v1/organizations/MiguelM17"
+        );
+    }
+
+    #[test]
+    fn extrae_organizaciones_sin_repetir() {
+        assert_eq!(
+            interpretar_organizaciones(EJEMPLO),
+            vec!["MiguelM17".to_string(), "otra".to_string()]
         );
     }
 }

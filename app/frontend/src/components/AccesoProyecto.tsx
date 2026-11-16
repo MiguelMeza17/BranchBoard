@@ -30,6 +30,8 @@ export function AccesoProyecto() {
   const cmInstalando = useStore((s) => s.cmInstalando);
   const instalarCm = useStore((s) => s.instalarCm);
   const marcarCmNoInstalado = useStore((s) => s.marcarCmNoInstalado);
+  const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
+  const [errorAcceso, setErrorAcceso] = useState<string | null>(null);
   const setEmail = useStore((s) => s.setEmail);
   const setRolActual = useStore((s) => s.setRolActual);
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
@@ -121,6 +123,7 @@ export function AccesoProyecto() {
 
   const abrirWorkspace = async (ws: WorkspaceUnityVC) => {
     setElegido(ws);
+    setErrorAcceso(null);
     let respuesta: EntradaProyecto;
     try {
       respuesta = await api.entrarAProyecto(ws.ruta, () => entradaMockup(ws));
@@ -128,7 +131,9 @@ export function AccesoProyecto() {
       if (e instanceof ErrorBackend && e.codigo === 'cm_no_instalado') {
         marcarCmNoInstalado();
       }
-      showToast(mensajeDeError(e), 'danger');
+      const msg = mensajeDeError(e);
+      setErrorAcceso(msg);
+      showToast(msg, 'danger');
       return;
     }
     setCorreo(respuesta.email);
@@ -223,6 +228,12 @@ export function AccesoProyecto() {
             cmInstalado={cmInstalado}
             cmInstalando={cmInstalando}
             onInstalarCm={() => void instalarCm()}
+            errorAcceso={errorAcceso}
+            onReconectar={() =>
+              reconectarUnityVc().then((ok) => {
+                if (ok) setErrorAcceso(null);
+              })
+            }
             workspaces={workspaces}
             onElegir={abrirWorkspace}
             onClonar={() => setPaso('clonar')}
@@ -401,6 +412,7 @@ export function AccesoProyecto() {
         open={login}
         onClose={() => setLogin(false)}
         correoDemo={correo}
+        forzarNueva={Boolean(sesion)}
         onSesionIniciada={(c) => {
           setLogin(false);
           setSesion(c);
@@ -684,6 +696,8 @@ function PasoWorkspaces({
   cmInstalado,
   cmInstalando,
   onInstalarCm,
+  errorAcceso,
+  onReconectar,
   workspaces,
   onElegir,
   onClonar,
@@ -693,11 +707,15 @@ function PasoWorkspaces({
   cmInstalado: boolean;
   cmInstalando: boolean;
   onInstalarCm: () => void;
+  errorAcceso: string | null;
+  onReconectar: () => Promise<void> | void;
   workspaces: WorkspaceUnityVC[];
   onElegir: (ws: WorkspaceUnityVC) => void;
   onClonar: () => void;
   onVaciar: () => void;
 }) {
+  const [reconectando, setReconectando] = useState(false);
+
   return (
     <>
       <div>
@@ -708,6 +726,23 @@ function PasoWorkspaces({
       </div>
 
       {!cmInstalado && <AvisoInstalarCm instalando={cmInstalando} onInstalar={onInstalarCm} />}
+
+      {errorAcceso && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <span className="min-w-0">{errorAcceso}</span>
+          <button
+            type="button"
+            disabled={reconectando || !cmInstalado}
+            onClick={() => {
+              setReconectando(true);
+              Promise.resolve(onReconectar()).finally(() => setReconectando(false));
+            }}
+            className="btn-outline btn-sm shrink-0"
+          >
+            {reconectando ? 'Reconectando…' : 'Reconectar'}
+          </button>
+        </div>
+      )}
 
       {!vpnOn && (
         <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-muted">

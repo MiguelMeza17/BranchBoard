@@ -175,6 +175,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
   const entrarAProyecto = useStore((s) => s.entrarAProyecto);
   const cerrarSesion = useStore((s) => s.cerrarSesion);
+  const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
   const workspaces = useStore((s) => s.workspaces);
   const [confirmarCerrarSesion, setConfirmarCerrarSesion] = useState(false);
   // "Nuevo proyecto": traer uno local de Unity VC que aún no usa BranchBoard, o crear uno nuevo.
@@ -385,6 +386,16 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text transition hover:bg-surface-3"
               onClick={() => {
                 setMenuProyecto(false);
+                void reconectarUnityVc();
+              }}
+            >
+              Reconectar con Unity VC
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
                 setConfirmarCerrarSesion(true);
               }}
             >
@@ -567,7 +578,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="btn-danger btn-sm"
               onClick={() => {
                 setConfirmarCerrarSesion(false);
-                cerrarSesion();
+                void cerrarSesion();
               }}
             >
               Cerrar sesión

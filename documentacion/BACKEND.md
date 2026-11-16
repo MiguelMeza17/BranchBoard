@@ -424,8 +424,8 @@ Prueba en el entorno real: `BB_PRUEBA_ORG=<org> BB_PRUEBA_REPO=<Proyecto/Repo> c
 
 **Nuevo (2026-11-07)**. Lo que el frontend ya muestra en la [Pantalla inicial](./FRONTEND.md#autenticación--acceso-al-proyecto) y en el menú del proyecto (clic en el logo):
 
-- **"Iniciar sesión con Unity VC"**: si no hay sesión (`cm whoami` falla), la app abre el inicio de sesión **oficial de Unity en el navegador** (SSO); BranchBoard nunca ve ni guarda la contraseña. Al volver, se vuelve a correr `cm whoami`. Comando `iniciar_sesion_unity_vc()` (invoca el login de `cm`; comando exacto pendiente de verificar).
-- **"Cerrar sesión"** (menú del proyecto): cierra la sesión de Unity VC en esa máquina (`cerrar_sesion_unity_vc()`); la app queda en "No se detectó una sesión de Unity VC" y al volver a entrar pasa otra vez por el acceso al proyecto.
+- **"Iniciar sesión con Unity VC"**: si no hay sesión (`cm whoami` falla), la app abre el inicio de sesión **oficial de Unity en el navegador** vía `plastic.exe --configure` (SSO); BranchBoard nunca ve ni guarda la contraseña. Al volver, se vuelve a correr `cm whoami`. (**Implementado #124** en `app/backend/src/cm/sesion.rs` y `comandos/cm.rs`: `sesion_unity_vc()`, `iniciar_sesion_unity_vc(forzar?)`, `reconectar_unity_vc(org?)`, `cerrar_sesion_unity_vc()`.)
+- **"Cerrar sesión"** (menú del proyecto): revoca los PAT de BranchBoard en Unity VC (`cm accesstoken revoke`), los borra del llavero, limpia `tokens.conf` / `cloudedition.token` / `<SecurityConfig>` en `plastic4` y cierra el proyecto en memoria (`cerrar_sesion_unity_vc()`); la app queda en "No se detectó una sesión de Unity VC" y al volver a entrar pasa otra vez por el acceso al proyecto.
 - **"Tus proyectos"**: los workspaces locales que ya usan BranchBoard (`cm workspace list` + si tienen datos de BranchBoard); elegir uno entra a ese proyecto (`entrar_a_proyecto`).
 - **"Cargar proyecto"**: lista los repositorios del servidor de Unity VC a los que la persona tiene acceso y que todavía no están en ese equipo (`listar_proyectos_servidor()`, vía `cm repo list`), con la etiqueta "Con tareas" si ya usan BranchBoard. Elegir uno lleva a [Clonar proyecto](#clonar-proyecto-in-app).
 - **"Nuevo proyecto"**: (a) **traer** un proyecto de Unity VC que ya está en el equipo pero nunca se configuró con BranchBoard (se configura como dice [Identidad](#identidad-de-usuario)), o (b) **crear** uno nuevo: se crea su repositorio y su workspace en Unity VC (`crear_proyecto(nombre, carpeta)`, comandos `cm repo create` + `cm workspace create`) y quien lo crea queda como Administrador.
@@ -1070,7 +1070,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `enviarChat` / `crearGrupoChat` / `marcarChatLeido` / `eliminarChat` | `enviar_chat` / `crear_grupo_chat` / `marcar_chat_leido` (local) / `eliminar_chat` (local) | todos |
 | `marcarLeida` / `desmarcarLeida` / `marcarTodasLeidas` | igual (local) | todos |
 | `marcarVisto` / `obtenerVistos` | `marcar_visto` / `obtener_vistos` (local) | todos |
-| `cerrarSesion` / `setSesionUnityVC` | `cerrar_sesion_unity_vc` / `iniciar_sesion_unity_vc` | todos |
+| `cerrarSesion` / `setSesionUnityVC` / Reconectar | `cerrar_sesion_unity_vc` / `iniciar_sesion_unity_vc` / `sesion_unity_vc` / `reconectar_unity_vc` | todos |
 | `entrarAProyecto` / `irAClonar` / `cambiarDeProyecto` | `entrar_a_proyecto` / `clonar_proyecto` / (vuelve al acceso) | todos |
 | `crearProyectoNuevo` | `crear_proyecto_local` (sin Unity VC, pendiente de definir) | quien lo crea queda Administrador |
 | `toggleVpn` | `estado_warp` / `alternar_warp` / `instalar_warp` | todos |
