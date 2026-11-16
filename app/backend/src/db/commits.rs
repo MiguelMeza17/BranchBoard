@@ -108,6 +108,15 @@ pub fn de_tarea(c: &Connection, tarea_id: &str) -> Resultado<Vec<Commit>> {
     Ok(filas.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Todos los check-ins cacheados en SQLite, ordenados del más antiguo al más reciente (#112).
+pub fn listar_todos(c: &Connection) -> Resultado<Vec<Commit>> {
+    let mut consulta = c.prepare(&format!(
+        "SELECT {COLUMNAS_COMMIT} FROM commits ORDER BY rowid"
+    ))?;
+    let filas = consulta.query_map([], commit_de_fila)?;
+    Ok(filas.collect::<rusqlite::Result<_>>()?)
+}
+
 pub fn buscar(c: &Connection, id: &str) -> Resultado<Option<Commit>> {
     Ok(c.query_row(
         &format!("SELECT {COLUMNAS_COMMIT} FROM commits WHERE id = ?1"),

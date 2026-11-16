@@ -30,6 +30,7 @@ pub mod ramas;
 pub mod servidor;
 pub mod sprints;
 pub mod tareas;
+pub mod unity;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
@@ -141,6 +142,8 @@ pub fn run() {
             comandos_tareas::devolver_cambios_prestados,
             comandos_tareas::eliminar_cambios_ajenos,
             comandos_tareas::volver_a_dev,
+            comandos_tareas::listar_commits,
+            comandos_tareas::abrir_en_unity,
             comandos_sprints::listar_sprints,
             comandos_sprints::crear_sprint,
             comandos_sprints::asignar_tarea_a_sprint,

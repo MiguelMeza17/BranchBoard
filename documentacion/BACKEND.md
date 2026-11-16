@@ -1060,7 +1060,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `hacerCheckin` / `crearRamaDesdeEspera` | `hacer_checkin` / `crear_rama_desde_espera` | responsable de la rama |
 | `traerCambios` / `quitarCambiosTraidos` / `eliminarCambiosAjenos` | `traer_cambios` / `devolver_cambios_prestados` / `eliminar_cambios_ajenos` | ver [Cambios prestados](#cambios-prestados-traer-cambios) |
 | `recibirEntrante` | `unir_cambios_entrantes` (local) | quien tiene el workspace |
-| `abrirEnUnity` | `abrir_en_unity` (local) | roles con workspace |
+| `abrirEnUnity` | `abrir_en_unity` (local) / `listar_commits` (local) | todos con workspace |
 | `crearSprint` / `cerrarSprint` | `crear_sprint` / `cerrar_sprint` | Líder/Admin / solo Administrador |
 | `asignarTareaASprint` / `asignarTareaABacklog` / `asignarBacklogASprint` | `asignar_tarea_a_sprint` / `asignar_tarea_a_backlog` / `asignar_backlog_a_sprint` | Líder/Admin |
 | `crearUsuario` / `cambiarRol` / `eliminarUsuario` / `confirmarUsuario` | `crear_usuario` / `cambiar_rol` / `eliminar_usuario` / `confirmar_usuario` | ver [Comandos de usuarios](#comandos-de-usuarios-y-ajustes) |

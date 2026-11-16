@@ -282,6 +282,10 @@ interface State {
   cargarTareas: () => Promise<void>;
   /** Recarga la lista de sprints y sus reportes desde el backend (`listar_sprints`, #113, #114). */
   cargarSprints: () => Promise<void>;
+  /** Recarga los check-ins cacheados en SQLite (`listar_commits`, #112). */
+  cargarCommits: () => Promise<void>;
+  /** Consulta la rama real del workspace en Unity VC (`cambios_pendientes`, #112). */
+  refrescarRamaWorkspace: () => Promise<void>;
 
   // datos
   usuarios: Usuario[];
@@ -493,6 +497,24 @@ export const useStore = create<State>((set, get) => {
       set({ sprints: lista });
     } catch (e) {
       get().showToast(mensajeDeError(e), 'danger');
+    }
+  },
+  cargarCommits: async () => {
+    try {
+      const lista = await api.listarCommits(null, () => get().commits);
+      set({ commits: lista });
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
+  },
+  refrescarRamaWorkspace: async () => {
+    if (!enTauri()) return;
+    try {
+      const res = await api.cambiosPendientes(null);
+      const limpia = res.rama_actual === '/main/dev' || res.rama_actual === '/main' ? null : res.rama_actual;
+      set({ ramaWorkspace: limpia });
+    } catch {
+      // Si no hay workspace local configurado aún (p. ej. rol no técnico), queda en null.
     }
   },
 
@@ -712,6 +734,18 @@ export const useStore = create<State>((set, get) => {
   },
   abrirEnUnity: (tareaId, rama, hash) => {
     const destino = hash ? `${rama} @ ${hash}` : rama;
+    if (enTauri()) {
+      void api
+        .abrirEnUnity(tareaId, rama, hash ?? null)
+        .then((res) => {
+          const limpia = res.rama_actual === '/main/dev' || res.rama_actual === '/main' ? null : res.rama_actual;
+          const visible = limpia && res.changeset ? `${limpia} @ ${res.changeset}` : limpia;
+          set({ ramaWorkspace: visible });
+          get().showToast(`Abriendo Unity en ${visible ?? destino} (${tareaId})…`, 'info');
+        })
+        .catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     const antes = get().ramaWorkspace;
     set({ ramaWorkspace: destino });
     get().showToast(
