@@ -17,7 +17,7 @@ use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
 use crate::tareas::{
     self, AutorTarea, CambiosTarea, DatosCheckin, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
-    PendientesRama, ResultadoCambioEstado, ResultadoProponerEdicion,
+    DatosRamaDesdeEspera, PendientesRama, ResultadoCambioEstado, ResultadoProponerEdicion,
 };
 
 fn con_ops<T>(
@@ -615,6 +615,86 @@ pub fn hacer_checkin_en(
             },
             &ahora_iso(),
             &ahora_local_segundo(),
+        )
+    })
+}
+
+/// `crear_rama_desde_espera(espera_id, titulo, detalles, tipo)`: convierte una
+/// subtarea `"En espera"` en subtarea normal, crea su rama desde la cabeza del padre
+/// y mueve el workspace + los cambios pendientes hacia ella con `cm switch --noinput` (#106).
+#[tauri::command]
+pub async fn crear_rama_desde_espera(
+    estado: State<'_, AppState>,
+    espera_id: String,
+    titulo: String,
+    detalles: String,
+    tipo: TipoTarea,
+) -> Resultado<Tarea> {
+    crear_rama_desde_espera_en(&estado, &espera_id, &titulo, &detalles, tipo)
+}
+
+/// Versión sin envoltorio Tauri de [`crear_rama_desde_espera`].
+pub fn crear_rama_desde_espera_en(
+    estado: &AppState,
+    espera_id: &str,
+    titulo: &str,
+    detalles: &str,
+    tipo: TipoTarea,
+) -> Resultado<Tarea> {
+    let yo = estado.exigir_permiso("crear_rama_desde_espera")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (espera, rama_padre, asignado) = estado.con_db(|db| {
+        tareas::preparar_rama_desde_espera(
+            db.conexion(),
+            &yo.email,
+            yo.rol,
+            espera_id,
+            titulo,
+            tipo,
+        )
+    })?;
+
+    let actual = crate::cm::lectura::rama_actual_workspace(estado, &workspace)?;
+    if !actual.rama.eq_ignore_ascii_case(&rama_padre) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero los cambios en espera son de la rama {rama_padre} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+
+    let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
+    let rama_hija = ramas::crear_rama_tarea(
+        &cliente,
+        &repo.repo,
+        Some(&rama_padre),
+        &espera.id,
+        titulo.trim(),
+    )?;
+
+    ramas::cambiar_a_rama_llevando_cambios(estado, &workspace, &rama_hija.name)?;
+
+    estado.con_db(|db| {
+        tareas::convertir_espera_en_subtarea(
+            db.conexion(),
+            &ops,
+            &autor,
+            &DatosRamaDesdeEspera {
+                espera_id: &espera.id,
+                titulo,
+                detalles,
+                tipo,
+                asignado_a: &asignado,
+                rama: &rama_hija.name,
+                ultimo_changeset_visto: rama_hija.head_changeset,
+            },
+            &ahora_iso(),
         )
     })
 }

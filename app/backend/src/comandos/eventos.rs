@@ -13,7 +13,7 @@ use crate::error::{Error, Resultado};
 use crate::estado::{llave_publica_del_proyecto, AppState};
 use crate::eventos::{self, ResumenCompactacion, ResumenSincronizacion};
 use crate::identidad::equipo::Firmante;
-use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol};
+use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol, TipoTarea};
 use crate::ramas::{self, RAMA_DEV};
 use crate::servidor::{conectar, Changeset, LlaveroSistema};
 use crate::tareas::{self, AutorTarea, InfoDobleToma};
@@ -133,12 +133,14 @@ pub fn compactar_eventos(
 /// Evento Tauri emitido al detectar cambios nuevos o cierres en Unity VC (#104).
 pub const EVENTO_UNITY_ACTUALIZADO: &str = "unity-vc-actualizado";
 
-/// Resumen de una revisión en Unity VC (#104).
+/// Resumen de una revisión en Unity VC (#104, #106).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ResumenPolling {
     pub rama_actual: Option<String>,
     pub tareas_modificadas: Vec<String>,
     pub tareas_cerradas: Vec<String>,
+    pub espera_creada: Option<String>,
+    pub espera_quitada: Option<String>,
 }
 
 impl ResumenPolling {
@@ -146,11 +148,13 @@ impl ResumenPolling {
         self.rama_actual.is_some()
             || !self.tareas_modificadas.is_empty()
             || !self.tareas_cerradas.is_empty()
+            || self.espera_creada.is_some()
+            || self.espera_quitada.is_some()
     }
 }
 
 /// Revisa las ramas activas en Unity VC, detecta check-ins nuevos (`modificada`),
-/// cierres por merge (`tarea_cerrada_por_deteccion`) y la rama actual del workspace (#104).
+/// cierres por merge (`tarea_cerrada_por_deteccion`), la subtarea `"En espera"` y la rama actual (#104, #106).
 #[tauri::command]
 pub async fn revisar_actualizaciones(
     estado: State<'_, AppState>,
@@ -171,9 +175,18 @@ pub fn revisar_actualizaciones_en(
     };
 
     let mut resumen = ResumenPolling::default();
-    if let Ok(ws) = estado.workspace_abierto() {
-        resumen.rama_actual = rama_actual_workspace(estado, &ws).ok().map(|w| w.rama);
+    let ws_abierto = estado.workspace_abierto().ok();
+    if let Some(ref ws) = ws_abierto {
+        resumen.rama_actual = rama_actual_workspace(estado, ws).ok().map(|w| w.rama);
     }
+    let pendientes_ws = if resumen.rama_actual.is_some() {
+        ws_abierto
+            .as_deref()
+            .and_then(|ws| ramas::cambios_pendientes(estado, ws).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let Ok(repo) = estado.repo_abierto() else {
         return Ok(resumen);
@@ -212,26 +225,23 @@ pub fn revisar_actualizaciones_en(
         Ok(lista)
     })?;
 
-    if candidatas.is_empty() {
-        return Ok(resumen);
-    }
-
     // 2. Consultas de red / `cm` fuera del lock de SQLite.
-    let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
-    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
     let mut resultados: Vec<(String, Option<i64>, Vec<Changeset>, bool)> =
         Vec::with_capacity(candidatas.len());
-
-    for (id, rama, ultimo_cs, rama_padre) in candidatas {
-        let changesets = cliente
-            .changesets_de_rama(&repo.repo, &rama)?
-            .unwrap_or_default();
-        let cerrada =
-            ramas::rama_cerrada_hacia_padre(estado, &repo_cm, &rama, &rama_padre).unwrap_or(false);
-        resultados.push((id, ultimo_cs, changesets, cerrada));
+    if !candidatas.is_empty() {
+        let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
+        let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+        for (id, rama, ultimo_cs, rama_padre) in candidatas {
+            let changesets = cliente
+                .changesets_de_rama(&repo.repo, &rama)?
+                .unwrap_or_default();
+            let cerrada = ramas::rama_cerrada_hacia_padre(estado, &repo_cm, &rama, &rama_padre)
+                .unwrap_or(false);
+            resultados.push((id, ultimo_cs, changesets, cerrada));
+        }
     }
 
-    // 3. Aplicar resultados en SQLite (y `ops/` si se cerró alguna rama).
+    // 3. Aplicar resultados en SQLite (y `ops/` si se cerró alguna rama o hay cambios En espera).
     let ops = carpeta_abierta(estado)
         .ok()
         .and_then(|carpeta| eventos::carpeta_ops(&carpeta).ok());
@@ -241,6 +251,7 @@ pub fn revisar_actualizaciones_en(
     };
     let ahora = ahora_iso();
     let hoy = hoy_local();
+    let yo_email = normalizar_email(&yo.email);
 
     estado.con_db(|db| {
         for (id, ultimo_cs, changesets, cerrada) in resultados {
@@ -271,6 +282,64 @@ pub fn revisar_actualizaciones_en(
                 }
             }
         }
+
+        if let Some(ref rama_ws) = resumen.rama_actual {
+            let todas_ahora = db_tareas::listar(db.conexion())?;
+            if let Some(padre) = todas_ahora.iter().find(|t| {
+                !t.eliminada
+                    && t.estado != EstadoTarea::Terminada
+                    && filtro.map_or(true, |f| f == t.id)
+                    && t.rama_asociada
+                        .as_deref()
+                        .map(|r| r.eq_ignore_ascii_case(rama_ws))
+                        .unwrap_or(false)
+            }) {
+                let hijas_padre: Vec<&db_tareas::Tarea> = todas_ahora
+                    .iter()
+                    .filter(|h| {
+                        !h.eliminada && h.tarea_padre_id.as_deref() == Some(padre.id.as_str())
+                    })
+                    .collect();
+                let tiene_normales = hijas_padre.iter().any(|h| h.tipo != TipoTarea::SinDefinir);
+                let espera_existente = hijas_padre
+                    .iter()
+                    .copied()
+                    .find(|h| h.tipo == TipoTarea::SinDefinir);
+
+                if tiene_normales {
+                    if let Some(ref carpeta_ops) = ops {
+                        if !pendientes_ws.is_empty() && espera_existente.is_none() {
+                            let creada = tareas::crear_en_espera(
+                                db.conexion(),
+                                carpeta_ops,
+                                &autor,
+                                &padre.id,
+                                pendientes_ws.len(),
+                                &ahora,
+                                &hoy,
+                            )?;
+                            resumen.espera_creada = Some(creada.id);
+                        } else if pendientes_ws.is_empty() {
+                            if let Some(esp) = espera_existente {
+                                let mia = esp.asignado_a.as_deref() == Some(yo_email.as_str())
+                                    || esp.creado_por == yo_email;
+                                if mia {
+                                    tareas::quitar_en_espera(
+                                        db.conexion(),
+                                        carpeta_ops,
+                                        &autor,
+                                        &esp.id,
+                                        &ahora,
+                                    )?;
+                                    resumen.espera_quitada = Some(esp.id.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     })?;
 

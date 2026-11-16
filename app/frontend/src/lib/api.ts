@@ -329,12 +329,24 @@ export const api = {
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
 
-  /** Revisa ramas activas y rama del workspace en Unity VC (#104). */
+  /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106). */
   revisarActualizaciones: (tareaId?: string) =>
-    llamar<{ rama_actual: string | null; tareas_modificadas: string[]; tareas_cerradas: string[] }>(
+    llamar<{
+      rama_actual: string | null;
+      tareas_modificadas: string[];
+      tareas_cerradas: string[];
+      espera_creada?: string | null;
+      espera_quitada?: string | null;
+    }>(
       'revisar_actualizaciones',
       { tareaId: tareaId ?? null },
-      () => ({ rama_actual: null, tareas_modificadas: [], tareas_cerradas: [] })
+      () => ({
+        rama_actual: null,
+        tareas_modificadas: [],
+        tareas_cerradas: [],
+        espera_creada: null,
+        espera_quitada: null,
+      })
     ),
 
   /** Lista cambios sin check-in del workspace y valida la rama esperada (#105). */
@@ -361,6 +373,20 @@ export const api = {
       'hacer_checkin',
       { rama, titulo, descripcion, tipo },
       mockup ?? (() => ({}) as Commit),
+    ),
+
+  /** Convierte la subtarea "En espera" en subtarea normal llevándose los cambios a su rama nueva (#106). */
+  crearRamaDesdeEspera: (
+    esperaId: string,
+    titulo: string,
+    detalles: string,
+    tipo: TipoTarea,
+    mockup?: () => Tarea,
+  ) =>
+    llamar<Tarea>(
+      'crear_rama_desde_espera',
+      { esperaId, titulo, detalles, tipo },
+      mockup ?? (() => ({}) as Tarea),
     ),
 
   /** Versión instalada de la app. */
