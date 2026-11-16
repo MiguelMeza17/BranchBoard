@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { PageHeader, EmptyState } from '../components/primitives';
@@ -16,6 +16,14 @@ export function Planificacion() {
   const navigate = useNavigate();
   const user = useStore((s) => s.currentUser());
   const sprints = useStore((s) => s.sprints);
+  const cargarSprints = useStore((s) => s.cargarSprints);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const versionDatos = useStore((s) => s.versionDatos);
+  // Al abrir la pantalla o cuando llegan cambios del equipo, trae sprints y tareas del backend.
+  useEffect(() => {
+    void cargarSprints();
+    void cargarTareas();
+  }, [cargarSprints, cargarTareas, versionDatos]);
   const tareas = useStore((s) => s.tareas);
   const cerrarSprint = useStore((s) => s.cerrarSprint);
   const [crear, setCrear] = useState<'sprint' | 'backlog' | null>(null);
