@@ -6,7 +6,7 @@ use std::path::Path;
 use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
-use crate::db::commits::Commit;
+use crate::db::commits::{CambioPrestado, Commit};
 use crate::db::ediciones::EdicionPendiente;
 use crate::db::tareas::Tarea;
 use crate::error::{Error, Resultado};
@@ -17,7 +17,8 @@ use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
 use crate::tareas::{
     self, AutorTarea, CambiosTarea, DatosCheckin, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
-    DatosRamaDesdeEspera, PendientesRama, ResultadoCambioEstado, ResultadoProponerEdicion,
+    DatosRamaDesdeEspera, DatosTraerCambios, PendientesRama, ResultadoCambioEstado,
+    ResultadoProponerEdicion,
 };
 
 fn con_ops<T>(
@@ -696,5 +697,133 @@ pub fn crear_rama_desde_espera_en(
             },
             &ahora_iso(),
         )
+    })
+}
+
+/// Lista los cambios prestados de `tarea_id`, o todos los del proyecto si es `None` (#108).
+#[tauri::command]
+pub fn listar_cambios_prestados(
+    estado: State<'_, AppState>,
+    tarea_id: Option<String>,
+) -> Resultado<Vec<CambioPrestado>> {
+    listar_cambios_prestados_en(&estado, tarea_id.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`listar_cambios_prestados`].
+pub fn listar_cambios_prestados_en(
+    estado: &AppState,
+    tarea_id: Option<&str>,
+) -> Resultado<Vec<CambioPrestado>> {
+    let _yo = estado.exigir_permiso("listar_cambios_prestados")?;
+    estado.con_db(|db| tareas::listar_cambios_prestados(db.conexion(), tarea_id))
+}
+
+/// `traer_cambios(destino_id, origen_id, hash?)`: trae trabajo prestado desde `origen_id`
+/// (`None` = todos sus commits, `Some(cs)` = puntual) mediante `cm merge --cherrypicking`,
+/// guarda el changeset del merge y los archivos que llegaron y lo publica en `ops/` (#108).
+#[tauri::command]
+pub async fn traer_cambios(
+    estado: State<'_, AppState>,
+    destino_id: String,
+    origen_id: String,
+    hash: Option<String>,
+) -> Resultado<CambioPrestado> {
+    traer_cambios_en(&estado, &destino_id, &origen_id, hash.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`traer_cambios`].
+pub fn traer_cambios_en(
+    estado: &AppState,
+    destino_id: &str,
+    origen_id: &str,
+    hash: Option<&str>,
+) -> Resultado<CambioPrestado> {
+    let yo = estado.exigir_permiso("traer_cambios")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (info, cs_puntual) = estado.con_db(|db| {
+        tareas::preparar_traer_cambios(db.conexion(), &autor, destino_id, origen_id, hash)
+    })?;
+
+    let comentario = match cs_puntual {
+        Some(cs) => format!(
+            "Préstamo de {} (cs:{cs}) hacia {}",
+            info.origen_id, info.destino_id
+        ),
+        None => format!(
+            "Préstamo de {} (todos) hacia {}",
+            info.origen_id, info.destino_id
+        ),
+    };
+    let resultado = ramas::traer_cambios_workspace(
+        estado,
+        &workspace,
+        &repo_cm,
+        &info.rama_destino,
+        &info.rama_origen,
+        cs_puntual,
+        &comentario,
+    )?;
+
+    let hash_str = cs_puntual.map(|n| n.to_string());
+    estado.con_db(|db| {
+        tareas::registrar_traer_cambios(
+            db.conexion(),
+            &ops,
+            &autor,
+            &DatosTraerCambios {
+                destino_id: &info.destino_id,
+                origen_id: &info.origen_id,
+                hash: hash_str.as_deref(),
+                changeset_merge: resultado.changeset,
+                archivos: resultado.archivos,
+            },
+            &ahora_iso(),
+        )
+    })
+}
+
+/// `devolver_cambios_prestados(prestamo_id)`: ejecuta un merge sustractivo en Unity VC
+/// sobre el `changeset_merge` guardado y marca el préstamo como devuelto (conservándolo
+/// como historial en `cambios_prestados`, #108).
+#[tauri::command]
+pub async fn devolver_cambios_prestados(
+    estado: State<'_, AppState>,
+    prestamo_id: String,
+) -> Resultado<CambioPrestado> {
+    devolver_cambios_prestados_en(&estado, &prestamo_id)
+}
+
+/// Versión sin envoltorio Tauri de [`devolver_cambios_prestados`].
+pub fn devolver_cambios_prestados_en(
+    estado: &AppState,
+    prestamo_id: &str,
+) -> Resultado<CambioPrestado> {
+    let yo = estado.exigir_permiso("devolver_cambios_prestados")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (prestamo, rama_destino, cs_merge) = estado
+        .con_db(|db| tareas::preparar_devolver_cambios(db.conexion(), &autor, prestamo_id))?;
+
+    let comentario = format!(
+        "Devuelve préstamo {} de {} (cs:{cs_merge})",
+        prestamo.id, prestamo.origen_id
+    );
+    ramas::devolver_cambios_workspace(estado, &workspace, &rama_destino, cs_merge, &comentario)?;
+
+    estado.con_db(|db| {
+        tareas::registrar_devolver_cambios(db.conexion(), &ops, &autor, &prestamo.id, &ahora_iso())
     })
 }

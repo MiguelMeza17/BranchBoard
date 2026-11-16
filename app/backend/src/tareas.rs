@@ -49,6 +49,8 @@ pub const TIPOS: &[&str] = &[
     "crear_en_espera",
     "quitar_en_espera",
     "crear_rama_desde_espera",
+    "traer_cambios",
+    "devolver_cambios_prestados",
     "tarea_cerrada_por_deteccion",
 ];
 
@@ -322,6 +324,41 @@ pub struct PayloadCrearRamaDesdeEspera {
     pub asignado_a: String,
     pub rama: String,
     pub ultimo_changeset_visto: i64,
+}
+
+/// Ramas resueltas al validar un préstamo `traer_cambios` (#108).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DestinoYOrigenPrestamo {
+    pub destino_id: String,
+    pub origen_id: String,
+    pub rama_destino: String,
+    pub rama_origen: String,
+}
+
+/// Datos para registrar un préstamo `traer_cambios` en `ops/` (#108).
+#[derive(Debug, Clone)]
+pub struct DatosTraerCambios<'a> {
+    pub destino_id: &'a str,
+    pub origen_id: &'a str,
+    pub hash: Option<&'a str>,
+    pub changeset_merge: i64,
+    pub archivos: Vec<String>,
+}
+
+/// `payload` de `traer_cambios` (#108).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadTraerCambios {
+    pub prestamo: commits::CambioPrestado,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultimo_changeset_visto: Option<i64>,
+}
+
+/// `payload` de `devolver_cambios_prestados` (#108).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadDevolverCambios {
+    pub prestamo_id: String,
+    pub quitado_en: String,
+    pub quitado_por: String,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -1704,6 +1741,309 @@ pub fn convertir_espera_en_subtarea(
     db_tareas::obtener(c, &payload.id)
 }
 
+/// Lista los cambios prestados de una tarea o de todo el proyecto si `tarea_id` es `None` (#108).
+pub fn listar_cambios_prestados(
+    c: &Connection,
+    tarea_id: Option<&str>,
+) -> Resultado<Vec<commits::CambioPrestado>> {
+    match tarea_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => commits::prestamos_de_tarea(c, id),
+        None => commits::todos_los_prestamos(c),
+    }
+}
+
+fn parsear_changeset_hash(hash: Option<&str>) -> Resultado<Option<i64>> {
+    let Some(limpio) = hash.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let sin_prefijo = limpio
+        .strip_prefix("cs:")
+        .or_else(|| limpio.strip_prefix("CS:"))
+        .unwrap_or(limpio)
+        .trim();
+    let cs = sin_prefijo
+        .parse::<i64>()
+        .map_err(|_| Error::Validacion("El changeset indicado no es válido".into()))?;
+    if cs <= 0 {
+        return Err(Error::Validacion(
+            "El changeset indicado no es válido".into(),
+        ));
+    }
+    Ok(Some(cs))
+}
+
+/// Valida si `autor` puede traer cambios desde `origen_id` (`hash` opcional) hacia
+/// `destino_id` según las reglas de estado, rol y rama (#108).
+pub fn preparar_traer_cambios(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    destino_id: &str,
+    origen_id: &str,
+    hash: Option<&str>,
+) -> Resultado<(DestinoYOrigenPrestamo, Option<i64>)> {
+    let destino_id = destino_id.trim();
+    let origen_id = origen_id.trim();
+    if destino_id.is_empty() || origen_id.is_empty() {
+        return Err(Error::Validacion(
+            "Debes indicar la tarea destino y la tarea origen".into(),
+        ));
+    }
+    if destino_id == origen_id {
+        return Err(Error::Validacion(
+            "Una tarea no puede traer cambios de sí misma".into(),
+        ));
+    }
+    let cs_puntual = parsear_changeset_hash(hash)?;
+
+    let destino = db_tareas::obtener(c, destino_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.tipo == TipoTarea::SinDefinir {
+        return Err(Error::Validacion(
+            "No se puede traer cambios: esta tarea todavía tiene cambios sin guardar (sin check-in)"
+                .into(),
+        ));
+    }
+    match destino.estado {
+        EstadoTarea::PorHacer => {
+            if destino.asignado_a.is_none() || destino.rama_asociada.is_none() {
+                return Err(Error::Validacion(
+                    "Solo se pueden traer cambios a una tarea en 'por hacer' que ya tenga rama"
+                        .into(),
+                ));
+            }
+        }
+        EstadoTarea::EnProduccion => {}
+        EstadoTarea::EnRevision => {
+            if !autor.rol.es_lider_o_admin() {
+                return Err(Error::SinPermiso);
+            }
+        }
+        EstadoTarea::Terminada => {
+            return Err(Error::Validacion(
+                "No se pueden traer cambios a una tarea terminada".into(),
+            ));
+        }
+    }
+    let rama_destino = destino
+        .rama_asociada
+        .as_deref()
+        .map(validar_ruta_rama_tarea)
+        .transpose()?
+        .ok_or_else(|| Error::Validacion("La tarea destino no tiene rama asignada".into()))?;
+
+    let origen = db_tareas::obtener(c, origen_id)?;
+    if origen.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea origen {} está en la Papelera",
+            origen.id
+        )));
+    }
+    if origen.tipo == TipoTarea::SinDefinir {
+        return Err(Error::Validacion(
+            "No se pueden traer cambios desde una subtarea En espera sin guardar".into(),
+        ));
+    }
+    let rama_origen = origen
+        .rama_asociada
+        .as_deref()
+        .map(validar_ruta_rama_tarea)
+        .transpose()?
+        .ok_or_else(|| Error::Validacion("La tarea origen no tiene rama asignada".into()))?;
+
+    match origen.estado {
+        EstadoTarea::Terminada => {
+            if origen.tarea_padre_id.as_deref() == Some(destino.id.as_str()) {
+                return Err(Error::Validacion(format!(
+                    "Los cambios de {} ya entraron a esta rama; usa Unir cambios entrantes",
+                    origen.id
+                )));
+            }
+        }
+        EstadoTarea::EnRevision => {}
+        EstadoTarea::EnProduccion => {
+            if commits::de_tarea(c, &origen.id)?.is_empty() {
+                return Err(Error::Validacion(
+                    "La tarea origen en producción todavía no tiene check-ins para traer".into(),
+                ));
+            }
+        }
+        EstadoTarea::PorHacer => {
+            return Err(Error::Validacion(
+                "Solo se pueden traer cambios de tareas terminadas, en revisión o en producción con check-ins"
+                    .into(),
+            ));
+        }
+    }
+
+    let hash_str = cs_puntual.map(|n| n.to_string());
+    if commits::prestamos_vigentes(c, &destino.id)?
+        .into_iter()
+        .any(|p| p.origen_id == origen.id && p.hash == hash_str)
+    {
+        return Err(Error::Validacion(
+            "Esos cambios ya están vigentes como préstamo en esta tarea".into(),
+        ));
+    }
+
+    Ok((
+        DestinoYOrigenPrestamo {
+            destino_id: destino.id,
+            origen_id: origen.id,
+            rama_destino,
+            rama_origen,
+        },
+        cs_puntual,
+    ))
+}
+
+/// Publica en `ops/` el préstamo ejecutado en Unity VC (`traer_cambios`, #108).
+pub fn registrar_traer_cambios(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    datos: &DatosTraerCambios<'_>,
+    ahora: &str,
+) -> Resultado<commits::CambioPrestado> {
+    let destino_id = datos.destino_id.trim();
+    let origen_id = datos.origen_id.trim();
+    let hash_normalizado = parsear_changeset_hash(datos.hash)?.map(|n| n.to_string());
+    let prestamo = commits::CambioPrestado {
+        id: format!("CT-{destino_id}-{}", datos.changeset_merge),
+        tarea_id: destino_id.to_string(),
+        origen_id: origen_id.to_string(),
+        hash: hash_normalizado,
+        autor: normalizar_email(autor.email),
+        fecha: ahora.to_string(),
+        archivos: datos.archivos.clone(),
+        archivos_tocados: Vec::new(),
+        quitado_en: None,
+        quitado_por: None,
+        changeset_merge: Some(datos.changeset_merge),
+    };
+    let payload = PayloadTraerCambios {
+        prestamo: prestamo.clone(),
+        ultimo_changeset_visto: Some(datos.changeset_merge),
+    };
+    let mut ev = Evento::nuevo(
+        "traer_cambios",
+        Some(destino_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar traer_cambios: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_traer_cambios(tx, &payload))?;
+    Ok(prestamo)
+}
+
+/// Valida si `autor` puede devolver un préstamo vigente mediante merge sustractivo (#108).
+/// Devuelve `(prestamo, rama_destino, cs_merge)`.
+pub fn preparar_devolver_cambios(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+) -> Resultado<(commits::CambioPrestado, String, i64)> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    if prestamo.quitado_en.is_some() {
+        return Err(Error::Validacion(
+            "Esos cambios ya se habían devuelto".into(),
+        ));
+    }
+    if !prestamo.archivos_tocados.is_empty() {
+        return Err(Error::Validacion(
+            "Se modificaron archivos prestados; elimina primero los cambios ajenos antes de devolver el préstamo"
+                .into(),
+        ));
+    }
+    let cs_merge = prestamo.changeset_merge.ok_or_else(|| {
+        Error::Validacion(
+            "El préstamo no tiene changeset de merge registrado para devolver en Unity VC".into(),
+        )
+    })?;
+    let destino = db_tareas::obtener(c, &prestamo.tarea_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            destino.id
+        )));
+    }
+
+    let actor = normalizar_email(autor.email);
+    let es_dueno_destino = destino
+        .asignado_a
+        .as_deref()
+        .map(normalizar_email)
+        .as_deref()
+        == Some(actor.as_str());
+    let es_dueno_padre = destino
+        .tarea_padre_id
+        .as_deref()
+        .and_then(|pid| db_tareas::buscar(c, pid).ok().flatten())
+        .and_then(|p| p.asignado_a)
+        .map(|e| normalizar_email(&e) == actor)
+        .unwrap_or(false);
+
+    let permitido = match destino.estado {
+        EstadoTarea::EnRevision => autor.rol.es_lider_o_admin() || es_dueno_padre,
+        EstadoTarea::PorHacer | EstadoTarea::EnProduccion => {
+            es_dueno_destino || autor.rol.es_lider_o_admin()
+        }
+        EstadoTarea::Terminada => false,
+    };
+    if !permitido {
+        return Err(Error::SinPermiso);
+    }
+
+    let rama_destino = destino
+        .rama_asociada
+        .as_deref()
+        .map(validar_ruta_rama_tarea)
+        .transpose()?
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asociada".into()))?;
+    Ok((prestamo, rama_destino, cs_merge))
+}
+
+/// Marca como devuelto en SQLite y publica `devolver_cambios_prestados` en `ops/`
+/// conservando la fila como historial (`quitado_en`, `quitado_por`, #108).
+pub fn registrar_devolver_cambios(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+    ahora: &str,
+) -> Resultado<commits::CambioPrestado> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    let payload = PayloadDevolverCambios {
+        prestamo_id: prestamo.id.clone(),
+        quitado_en: ahora.to_string(),
+        quitado_por: normalizar_email(autor.email),
+    };
+    let mut ev = Evento::nuevo(
+        "devolver_cambios_prestados",
+        Some(&prestamo.tarea_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar devolver_cambios_prestados: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_devolver_cambios(tx, &payload))?;
+    commits::obtener_prestamo(c, &prestamo.id)
+}
+
 fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
@@ -1984,6 +2324,18 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                     Error::Validacion(format!("crear_rama_desde_espera inválido: {e}"))
                 })?;
             aplicar_crear_rama_desde_espera(c, &payload)
+        }
+        "traer_cambios" => {
+            let payload: PayloadTraerCambios = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("traer_cambios inválido: {e}")))?;
+            aplicar_traer_cambios(c, &payload)
+        }
+        "devolver_cambios_prestados" => {
+            let payload: PayloadDevolverCambios = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| {
+                    Error::Validacion(format!("devolver_cambios_prestados inválido: {e}"))
+                })?;
+            aplicar_devolver_cambios(c, &payload)
         }
         "tarea_cerrada_por_deteccion" => {
             let payload: PayloadTareaCerradaDeteccion =
@@ -2999,6 +3351,41 @@ fn aplicar_crear_rama_desde_espera(
     tarea.ultimo_changeset_visto = Some(payload.ultimo_changeset_visto);
     db_tareas::actualizar(c, &tarea)?;
     recalcular_padres(c, padre)
+}
+
+fn aplicar_traer_cambios(c: &Connection, payload: &PayloadTraerCambios) -> Resultado<()> {
+    let mut destino = db_tareas::obtener(c, &payload.prestamo.tarea_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            destino.id
+        )));
+    }
+    let _origen = db_tareas::obtener(c, &payload.prestamo.origen_id)?;
+    commits::insertar_prestamo(c, &payload.prestamo)?;
+    if let Some(cs) = payload.ultimo_changeset_visto {
+        let visto = destino.ultimo_changeset_visto.unwrap_or(0).max(cs);
+        if destino.ultimo_changeset_visto != Some(visto) {
+            destino.ultimo_changeset_visto = Some(visto);
+            db_tareas::actualizar(c, &destino)?;
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_devolver_cambios(c: &Connection, payload: &PayloadDevolverCambios) -> Resultado<()> {
+    commits::quitar_prestamo(
+        c,
+        &payload.prestamo_id,
+        &payload.quitado_por,
+        &payload.quitado_en,
+    )
 }
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
@@ -5520,6 +5907,7 @@ mod tests {
                             archivos_tocados: vec![],
                             quitado_en: None,
                             quitado_por: None,
+                            changeset_merge: None,
                         },
                     )
                 })
@@ -5712,6 +6100,7 @@ mod tests {
                 archivos_tocados: vec![],
                 quitado_en: None,
                 quitado_por: None,
+                changeset_merge: None,
             },
         )
         .unwrap();
@@ -5897,6 +6286,7 @@ mod tests {
                 archivos_tocados: vec![],
                 quitado_en: None,
                 quitado_por: None,
+                changeset_merge: None,
             },
         )
         .unwrap();
@@ -6050,6 +6440,7 @@ mod tests {
                             archivos_tocados: vec![],
                             quitado_en: None,
                             quitado_por: None,
+                            changeset_merge: None,
                         },
                     )
                 })
@@ -7247,6 +7638,155 @@ mod tests {
     }
 
     #[test]
+    fn traer_y_devolver_cambios_reglas_y_viajan_por_ops() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        for titulo in ["Origen prestamo", "Destino prestamo", "Sin rama"] {
+            crear(c, &e.ops, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
+        }
+        // T-101 = origen; T-102 = destino; T-103 = sin rama.
+        let mut con_rama = vec![
+            ("T-101", "/main/dev/T-101-origen"),
+            ("T-102", "/main/dev/T-102-destino"),
+        ];
+        for (id, rama) in con_rama.drain(..) {
+            tomar(
+                c,
+                &e.ops,
+                &autor_dev,
+                id,
+                |_| {
+                    Ok(vec![(
+                        id.into(),
+                        Rama {
+                            id: 1,
+                            name: rama.into(),
+                            head_changeset: 5,
+                        },
+                    )])
+                },
+                AHORA,
+            )
+            .unwrap();
+        }
+
+        // Origen en producción sin commits y origen en 'por hacer' se rechazan.
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).is_err());
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-102", None).is_err());
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-103", "T-101", None).is_err());
+
+        // Origen pasa a producción con commit 12; destino sigue en 'por hacer' (ya tomada) -> permitido.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            EstadoTarea::EnProduccion,
+            AHORA,
+        )
+        .unwrap();
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).is_err());
+        commits::guardar(
+            c,
+            &commits::Commit {
+                id: "C-1".into(),
+                tarea_id: "T-101".into(),
+                hash: "12".into(),
+                mensaje: "Base 101".into(),
+                descripcion: None,
+                tipo: Some(TipoTarea::Scripting),
+                autor: DEV.into(),
+                fecha: HOY.into(),
+            },
+        )
+        .unwrap();
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", Some("abc")).is_err());
+
+        let (info, cs) =
+            preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", Some("cs:12")).unwrap();
+        assert_eq!(info.rama_destino, "/main/dev/T-102-destino");
+        assert_eq!(info.rama_origen, "/main/dev/T-101-origen");
+        assert_eq!(cs, Some(12));
+
+        // En EnRevision solo Líder/Admin pueden traer cambios.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102",
+            EstadoTarea::EnRevision,
+            AHORA,
+        )
+        .unwrap();
+        assert!(matches!(
+            preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(preparar_traer_cambios(c, &autor_lider, "T-102", "T-101", None).is_ok());
+
+        // Registrar préstamo viaja por ops/ guardando changeset_merge y archivos.
+        let p = registrar_traer_cambios(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosTraerCambios {
+                destino_id: "T-102",
+                origen_id: "T-101",
+                hash: Some("12"),
+                changeset_merge: 30,
+                archivos: vec!["Assets/Combate.cs".into()],
+            },
+            "2026-11-15T16:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(p.changeset_merge, Some(30));
+        assert_eq!(p.archivos, vec!["Assets/Combate.cs".to_string()]);
+        assert_eq!(
+            db_tareas::obtener(c, "T-102")
+                .unwrap()
+                .ultimo_changeset_visto,
+            Some(30)
+        );
+        // No permite repetir exactamente el mismo préstamo vigente.
+        assert!(preparar_traer_cambios(c, &autor_lider, "T-102", "T-101", Some("12")).is_err());
+
+        // Desarrollador no puede devolver en EnRevision; si hay archivos_tocados también bloquea.
+        assert!(matches!(
+            preparar_devolver_cambios(c, &autor_dev, &p.id).unwrap_err(),
+            Error::SinPermiso
+        ));
+        commits::marcar_tocados(c, &p.id, &["Assets/Combate.cs".into()]).unwrap();
+        assert!(preparar_devolver_cambios(c, &autor_lider, &p.id).is_err());
+        commits::marcar_tocados(c, &p.id, &[]).unwrap();
+        assert!(preparar_devolver_cambios(c, &autor_lider, &p.id).is_ok());
+
+        e.sincronizar_b();
+        let pb = listar_cambios_prestados(e.db_b.conexion(), Some("T-102")).unwrap();
+        assert_eq!(pb.len(), 1);
+        assert_eq!(pb[0].changeset_merge, Some(30));
+
+        let devuelto =
+            registrar_devolver_cambios(c, &e.ops, &autor_lider, &p.id, "2026-11-15T16:05:00Z")
+                .unwrap();
+        assert_eq!(devuelto.quitado_por.as_deref(), Some(LIDER));
+        assert!(commits::prestamos_vigentes(c, "T-102").unwrap().is_empty());
+
+        e.sincronizar_b();
+        let hist_b = listar_cambios_prestados(e.db_b.conexion(), None).unwrap();
+        assert_eq!(hist_b.len(), 1);
+        assert!(hist_b[0].quitado_en.is_some());
+    }
+
+    #[test]
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_hacer_checkin() {
         use crate::cm::Comando;
@@ -7674,6 +8214,217 @@ mod tests {
             assert!(db_tareas::buscar(env.db_b.conexion(), &esp2_id)
                 .unwrap()
                 .is_none());
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambios_prestados() {
+        use crate::cm::Comando;
+        use crate::comandos::tareas::{
+            asignar_en, cambiar_estado_en, devolver_cambios_prestados_en, hacer_checkin_en,
+            listar_cambios_prestados_en, tomar_en, traer_cambios_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("108", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let origen = env.crear_tarea(&admin_email, Rol::Administrador, "Origen prestamo 108");
+            let destino = env.crear_tarea(&admin_email, Rol::Administrador, "Destino prestamo 108");
+
+            // Registrar destino después de origen: la limpieza borra primero destino (quita los merge links).
+            let asg_origen = asignar_en(&env.estado_a, &origen.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_origen);
+            let rama_origen = asg_origen[0].rama_asociada.clone().unwrap();
+
+            let tom_destino = tomar_en(&env.estado_a, &destino.id).unwrap();
+            env.registrar_ramas_de(&tom_destino);
+            let rama_destino = tom_destino[0].rama_asociada.clone().unwrap();
+
+            // Trabajo en origen: dos commits reales en Unity VC.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_origen).unwrap();
+            let arch1 = env.ws_ruta.join("prestamo-uno-108.txt");
+            std::fs::write(&arch1, "uno 108").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(arch1.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let commit1 = hacer_checkin_en(
+                &env.estado_a,
+                &rama_origen,
+                "Primer avance 108",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            let arch2 = env.ws_ruta.join("prestamo-dos-108.txt");
+            let arch3 = env.ws_ruta.join("prestamo-tres-108.txt");
+            std::fs::write(&arch2, "dos 108").unwrap();
+            std::fs::write(&arch3, "tres 108").unwrap();
+            Comando::cm()
+                .arg("add")
+                .args([
+                    arch2.to_string_lossy().as_ref(),
+                    arch3.to_string_lossy().as_ref(),
+                ])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_origen,
+                "Segundo avance 108",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            // Trabajo propio en destino + pruebas de guardia de rama y "check-in primero".
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let propio = env.ws_ruta.join("propio-108.txt");
+            std::fs::write(&propio, "propio 108").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(propio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_destino,
+                "Propio destino 108",
+                "",
+                TipoTarea::UiInterfaz,
+            )
+            .unwrap();
+
+            // Mientras origen esté en 'por hacer' se rechaza aunque ya tenga check-ins.
+            assert!(
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash),)
+                    .is_err()
+            );
+
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::EnProduccion).unwrap();
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnProduccion).unwrap();
+
+            // Cambio pendiente en EnProduccion debe bloquear traer_cambios hasta hacer check-in o limpiar.
+            let sucio = env.ws_ruta.join("sucio-108.txt");
+            std::fs::write(&sucio, "sin checkin").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(sucio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let err_sucio =
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash))
+                    .unwrap_err();
+            assert!(err_sucio.to_string().contains("check-in"), "{err_sucio}");
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            let _ = std::fs::remove_file(&sucio);
+
+            // Con el workspace fuera de rama_destino, la guardia de rama también bloquea.
+            env.volver_a_dev();
+            let err_rama =
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash))
+                    .unwrap_err();
+            assert!(
+                err_rama.to_string().contains("cambia de rama"),
+                "{err_rama}"
+            );
+
+            // 1) Préstamo de un commit puntual (`commit1`) en EnProduccion + devolución sustractiva.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let p1 = traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash))
+                .unwrap();
+            assert!(p1.changeset_merge.is_some());
+            assert_eq!(p1.hash.as_deref(), Some(commit1.hash.as_str()));
+            assert!(p1
+                .archivos
+                .iter()
+                .any(|a| a.contains("prestamo-uno-108.txt")));
+            assert!(!p1
+                .archivos
+                .iter()
+                .any(|a| a.contains("prestamo-dos-108.txt")));
+            assert!(env.ws_ruta.join("prestamo-uno-108.txt").exists());
+            assert!(!env.ws_ruta.join("prestamo-dos-108.txt").exists());
+            assert!(
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash),)
+                    .is_err()
+            );
+            assert!(cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).is_err());
+
+            env.sincronizar_b();
+            let p1_b = listar_cambios_prestados_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert_eq!(p1_b.len(), 1);
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &destino.id)
+                    .unwrap()
+                    .id,
+                destino.id
+            );
+            assert_eq!(
+                commits::obtener_prestamo(env.db_b.conexion(), &p1.id).unwrap(),
+                p1
+            );
+
+            let p1_dev = devolver_cambios_prestados_en(&env.estado_a, &p1.id).unwrap();
+            assert!(p1_dev.quitado_en.is_some());
+            assert!(p1_dev.quitado_por.is_some());
+            assert!(!env.ws_ruta.join("prestamo-uno-108.txt").exists());
+            assert!(env.ws_ruta.join("propio-108.txt").exists());
+            env.sincronizar_b();
+            assert!(commits::obtener_prestamo(env.db_b.conexion(), &p1.id)
+                .unwrap()
+                .quitado_en
+                .is_some());
+
+            // 2) Con destino en EnRevision y origen en Terminada: traer TODOS los cambios (intervalo) y devolver.
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::EnRevision).unwrap();
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::Terminada).unwrap();
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnRevision).unwrap();
+
+            let p2 = traer_cambios_en(&env.estado_a, &destino.id, &origen.id, None).unwrap();
+            assert!(p2.hash.is_none());
+            assert!(p2.changeset_merge.is_some());
+            for nombre in [
+                "prestamo-uno-108.txt",
+                "prestamo-dos-108.txt",
+                "prestamo-tres-108.txt",
+            ] {
+                assert!(
+                    p2.archivos.iter().any(|a| a.contains(nombre)),
+                    "falta {nombre} en {:?}",
+                    p2.archivos
+                );
+                assert!(env.ws_ruta.join(nombre).exists(), "debe existir {nombre}");
+            }
+
+            // Sigue bloqueando Terminada hasta devolverlo; tras devolver conserva historial y desbloquea.
+            assert!(cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).is_err());
+            let p2_dev = devolver_cambios_prestados_en(&env.estado_a, &p2.id).unwrap();
+            assert!(p2_dev.quitado_en.is_some());
+            for nombre in [
+                "prestamo-uno-108.txt",
+                "prestamo-dos-108.txt",
+                "prestamo-tres-108.txt",
+            ] {
+                assert!(
+                    !env.ws_ruta.join(nombre).exists(),
+                    "debió revertirse {nombre}"
+                );
+            }
+            assert!(env.ws_ruta.join("propio-108.txt").exists());
+
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap();
+            env.sincronizar_b();
+            let hist_b = commits::prestamos_de_tarea(env.db_b.conexion(), &destino.id).unwrap();
+            assert_eq!(hist_b.len(), 2);
+            assert!(hist_b.iter().all(|x| x.quitado_en.is_some()));
         });
     }
 }
