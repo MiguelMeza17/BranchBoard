@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as fx from '../data/fixtures';
-import { api, enTauri, ErrorBackend, mensajeDeError } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type ProyectoServidor } from '../lib/api';
 import { esTareaEnEspera } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
@@ -269,9 +269,13 @@ interface State {
   /** Workspaces de Unity VC en esta máquina (`cm workspace list`). */
   workspaces: WorkspaceUnityVC[];
   setWorkspaces: (ws: WorkspaceUnityVC[]) => void;
+  /** Repositorios del servidor de Unity VC (`cm repo list`, #125). */
+  proyectosServidor: ProyectoServidor[];
   /** Proyecto del servidor que se eligió para clonar (lleva al acceso, paso "Clonar"). */
   proyectoAClonar: string | null;
-  irAClonar: (nombre: string) => void;
+  proyectoRepoAClonar: string | null;
+  irAClonar: (nombre: string, repo?: string | null) => void;
+  cargarWorkspacesYProyectos: () => Promise<void>;
   entrarAProyecto: (nombre: string) => void;
   /**
    * Mockup de la carpeta compartida (Drive/OneDrive) de cada proyecto en esta máquina, por nombre del
@@ -493,7 +497,9 @@ export const useStore = create<State>((set, get) => {
   accesoIrAWorkspaces: false,
   sesionUnityVC: null,
   workspaces: [...fx.workspaces],
+  proyectosServidor: fx.proyectosServidor.map((p) => ({ ...p, org: 'MIGUELMEZA' })),
   proyectoAClonar: null,
+  proyectoRepoAClonar: null,
   // El proyecto de ejemplo ya tiene carpeta; uno recién configurado la pide al entrar.
   carpetasCompartidas: { [fx.PROYECTO_NOMBRE]: `C:\\Users\\ana\\OneDrive\\${fx.PROYECTO_NOMBRE}` },
   setCarpetaCompartida: (proyecto, ruta) =>
@@ -852,7 +858,8 @@ export const useStore = create<State>((set, get) => {
     }
   },
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),
-  setAccesoCompletado: (v) => set({ accesoCompletado: v, accesoIrAWorkspaces: false, proyectoAClonar: null }),
+  setAccesoCompletado: (v) =>
+    set({ accesoCompletado: v, accesoIrAWorkspaces: false, proyectoAClonar: null, proyectoRepoAClonar: null }),
   cambiarDeProyecto: () => set({ accesoCompletado: false, accesoIrAWorkspaces: true }),
   cerrarSesion: async () => {
     if (!enTauri()) {
@@ -873,6 +880,7 @@ export const useStore = create<State>((set, get) => {
       const s = await api.sesionUnityVc();
       if (s.activa && s.email) {
         set({ cmInstalado: true, cmSesionActiva: true, sesionUnityVC: s.email, currentEmail: s.email });
+        void get().cargarWorkspacesYProyectos();
       } else {
         set({ cmSesionActiva: false, sesionUnityVC: null, accesoCompletado: false });
       }
@@ -949,9 +957,32 @@ export const useStore = create<State>((set, get) => {
     get().showToast(`Proyecto ${proyecto} creado — eres su Administrador`);
   },
   setWorkspaces: (ws) => set({ workspaces: ws }),
-  irAClonar: (nombre) => set({ accesoCompletado: false, accesoIrAWorkspaces: false, proyectoAClonar: nombre }),
+  cargarWorkspacesYProyectos: async () => {
+    if (!enTauri()) return;
+    const [locales, servidor] = await Promise.allSettled([
+      api.listarWorkspacesLocales(),
+      api.listarProyectosServidor(),
+    ]);
+    set((s) => ({
+      workspaces: locales.status === 'fulfilled' ? locales.value : s.workspaces,
+      proyectosServidor: servidor.status === 'fulfilled' ? servidor.value : s.proyectosServidor,
+    }));
+  },
+  irAClonar: (nombre, repo = null) =>
+    set({
+      accesoCompletado: false,
+      accesoIrAWorkspaces: false,
+      proyectoAClonar: nombre,
+      proyectoRepoAClonar: repo,
+    }),
   entrarAProyecto: (nombre) =>
-    set({ proyectoActual: nombre, accesoCompletado: true, accesoIrAWorkspaces: false, proyectoAClonar: null }),
+    set({
+      proyectoActual: nombre,
+      accesoCompletado: true,
+      accesoIrAWorkspaces: false,
+      proyectoAClonar: null,
+      proyectoRepoAClonar: null,
+    }),
   showToast: (msg, tone = 'ok') => {
     const id = Date.now();
     set({ toast: { id, msg, tone } });

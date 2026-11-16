@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import type { WorkspaceUnityVC } from '../types';
-import { api, enTauri, ErrorBackend, mensajeDeError, type EntradaProyecto } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type EntradaProyecto, type ProyectoServidor } from '../lib/api';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { Modal } from './Modal';
@@ -41,11 +41,21 @@ export function AccesoProyecto() {
   // Desde "Cambiar de proyecto" se llega directo a la lista de workspaces.
   // Proyecto del servidor elegido para clonar (desde el menú de BranchBoard), si lo hay.
   const proyectoAClonar = useStore((s) => s.proyectoAClonar);
+  const proyectoRepoAClonar = useStore((s) => s.proyectoRepoAClonar);
+  const proyectosServidor = useStore((s) => s.proyectosServidor);
+  const cargarWorkspacesYProyectos = useStore((s) => s.cargarWorkspacesYProyectos);
   const [paso, setPaso] = useState<Paso>(
     useStore.getState().proyectoAClonar ? 'clonar' : useStore.getState().accesoIrAWorkspaces ? 'workspaces' : 'inicio'
   );
   const workspaces = useStore((s) => s.workspaces);
   const setWorkspaces = useStore((s) => s.setWorkspaces);
+
+  useEffect(() => {
+    if (!enTauri()) return;
+    if (paso === 'workspaces' || paso === 'clonar') {
+      void cargarWorkspacesYProyectos();
+    }
+  }, [paso, cargarWorkspacesYProyectos]);
   const [elegido, setElegido] = useState<WorkspaceUnityVC | null>(null);
   // Simula el correo que devuelve `cm whoami` — de ahí sale cuál de los casos aplica.
   const [correo, setCorreo] = useState(useStore.getState().sesionUnityVC ?? usuarios[0].email);
@@ -244,6 +254,8 @@ export function AccesoProyecto() {
         {paso === 'clonar' && (
           <PasoClonar
             nombre={proyectoAClonar ?? fx.PROYECTO_NOMBRE}
+            repoInicial={proyectoRepoAClonar}
+            proyectosServidor={proyectosServidor}
             onListo={(ws) => {
               setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
               showToast(`Workspace ${ws.nombre} clonado en ${ws.ruta}`);
@@ -754,12 +766,21 @@ function PasoWorkspaces({
         <div className="flex flex-col gap-2">
           {workspaces.map((ws) => (
             <button
-              key={ws.repo}
+              key={ws.ruta}
               onClick={() => onElegir(ws)}
               className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition hover:border-primary"
             >
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-text">{ws.nombre}</div>
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-text">{ws.nombre}</span>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                      ws.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
+                    }`}
+                  >
+                    {ws.tiene_db_branchboard ? 'Con datos' : 'Sin configurar'}
+                  </span>
+                </div>
                 <div className="truncate font-mono text-[11px] text-faint">
                   {ws.repo} · {ws.ruta}
                 </div>
@@ -767,9 +788,11 @@ function PasoWorkspaces({
               <span className="text-faint">→</span>
             </button>
           ))}
-          <button className="btn-ghost btn-sm self-start text-faint" onClick={onVaciar}>
-            Demo: simular que no hay workspaces
-          </button>
+          {!enTauri() && (
+            <button className="btn-ghost btn-sm self-start text-faint" onClick={onVaciar}>
+              Demo: simular que no hay workspaces
+            </button>
+          )}
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-4 py-6 text-center">
@@ -787,14 +810,34 @@ function PasoWorkspaces({
   );
 }
 
-function PasoClonar({ nombre, onListo }: { nombre: string; onListo: (ws: WorkspaceUnityVC) => void }) {
-  const [carpeta, setCarpeta] = useState('D:\\Unity');
+function PasoClonar({
+  nombre,
+  repoInicial,
+  proyectosServidor,
+  onListo,
+}: {
+  nombre: string;
+  repoInicial: string | null;
+  proyectosServidor: ProyectoServidor[];
+  onListo: (ws: WorkspaceUnityVC) => void;
+}) {
+  const esTauri = enTauri();
+  const [repoElegido, setRepoElegido] = useState(repoInicial ?? proyectosServidor[0]?.repo ?? '');
+  const [carpeta, setCarpeta] = useState(esTauri ? '' : 'D:\\Unity');
   const [progreso, setProgreso] = useState<number | null>(null);
+  const [estadoProgreso, setEstadoProgreso] = useState('Descargando archivos…');
+  const [errorClon, setErrorClon] = useState<string | null>(null);
   const terminado = useRef(false);
 
-  // Simula `cm workspace create` + checkout con progreso.
   useEffect(() => {
-    if (progreso === null || terminado.current) return;
+    if (!repoElegido && proyectosServidor.length > 0) {
+      setRepoElegido(repoInicial ?? proyectosServidor[0].repo);
+    }
+  }, [repoElegido, repoInicial, proyectosServidor]);
+
+  // Mockup en navegador: simula `cm workspace create` + checkout con progreso.
+  useEffect(() => {
+    if (esTauri || progreso === null || terminado.current) return;
     if (progreso >= 100) {
       terminado.current = true;
       const delServidor = fx.proyectosServidor.find((p) => p.nombre === nombre);
@@ -808,7 +851,31 @@ function PasoClonar({ nombre, onListo }: { nombre: string; onListo: (ws: Workspa
     }
     const t = setTimeout(() => setProgreso((p) => Math.min(100, (p ?? 0) + 8)), 120);
     return () => clearTimeout(t);
-  }, [progreso, carpeta, onListo, nombre]);
+  }, [esTauri, progreso, carpeta, onListo, nombre]);
+
+  const proyectoVisible =
+    proyectosServidor.find((p) => p.repo === repoElegido)?.nombre ?? nombre;
+
+  const iniciarClonReal = async () => {
+    if (!repoElegido || !carpeta.trim()) return;
+    setErrorClon(null);
+    setProgreso(5);
+    setEstadoProgreso('Preparando workspace…');
+    const dejar = await api.alProgresoClonado((ev) => {
+      setProgreso(ev.porcentaje);
+      setEstadoProgreso(ev.mensaje);
+    });
+    try {
+      const ws = await api.clonarProyecto(repoElegido, carpeta.trim());
+      setProgreso(100);
+      onListo(ws);
+    } catch (e) {
+      setErrorClon(mensajeDeError(e));
+      setProgreso(null);
+    } finally {
+      dejar();
+    }
+  };
 
   return (
     <>
@@ -819,20 +886,60 @@ function PasoClonar({ nombre, onListo }: { nombre: string; onListo: (ws: Workspa
           descarga el proyecto ahí.
         </p>
       </div>
+      {esTauri && (
+        <div>
+          <label className="label">Proyecto en Unity VC</label>
+          {proyectosServidor.length > 0 ? (
+            <select
+              className="input"
+              value={repoElegido}
+              disabled={progreso !== null}
+              onChange={(e) => setRepoElegido(e.target.value)}
+            >
+              {proyectosServidor.map((p) => (
+                <option key={p.repo} value={p.repo}>
+                  {p.nombre} ({p.repo}) — {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-xs text-muted">No se encontraron repositorios accesibles en Unity VC Cloud.</p>
+          )}
+        </div>
+      )}
       <div>
         <label className="label">Carpeta de destino</label>
-        <SelectorCarpeta value={carpeta} onChange={setCarpeta} disabled={progreso !== null} />
+        <SelectorCarpeta
+          value={carpeta}
+          onChange={(v) => {
+            setCarpeta(v);
+            setErrorClon(null);
+          }}
+          disabled={progreso !== null}
+          placeholder="Carpeta donde se guardará el proyecto"
+        />
       </div>
+      {errorClon && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          {errorClon}
+        </div>
+      )}
       {progreso === null ? (
-        <button className="btn-primary w-full" disabled={!carpeta.trim()} onClick={() => setProgreso(0)}>
-          Clonar {nombre}
+        <button
+          className="btn-primary w-full"
+          disabled={!carpeta.trim() || (esTauri && !repoElegido)}
+          onClick={() => (esTauri ? void iniciarClonReal() : setProgreso(0))}
+        >
+          Clonar {proyectoVisible}
         </button>
       ) : (
         <div className="flex flex-col gap-1.5">
           <div className="h-2 w-full overflow-hidden rounded-full bg-surface-3">
             <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progreso}%` }} />
           </div>
-          <span className="text-xs text-muted">Descargando archivos… {progreso}%</span>
+          <span className="truncate text-xs text-muted">
+            {estadoProgreso} {progreso}%
+          </span>
         </div>
       )}
     </>
