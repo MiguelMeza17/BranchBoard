@@ -74,6 +74,11 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("eliminar_tarea", Acceso::Roles(LIDER_O_ADMIN)),
     ("eliminar_definitivamente", Acceso::Roles(LIDER_O_ADMIN)),
     ("volver_a_dev", Acceso::Roles(TODOS)),
+    // Revisión (issue #107). `autorizar_merge` y `rechazar_revision` los puede usar
+    // también quien tiene a cargo la tarea padre de una subtarea; `tareas` lo revisa.
+    ("asignar_revision", Acceso::Roles(LIDER_O_ADMIN)),
+    ("autorizar_merge", Acceso::Roles(TODOS)),
+    ("rechazar_revision", Acceso::Roles(TODOS)),
 ];
 
 /// Quién puede usar `comando`; `None` si no está en la tabla.

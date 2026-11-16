@@ -168,11 +168,17 @@ fn asegurar_pat(
     }
 }
 
-/// `cm accesstoken create "BranchBoard (<máquina>)" <org>@unity --format={id}` + `reveal`.
+/// Tiempo de vida del PAT. `cm accesstoken create` lo exige (comprobado
+/// 2026-11-15 con el cliente 11.0.16: sin él responde la ayuda del comando y
+/// no crea nada). Al vencer, la API responde 401 y [`conectar`] crea otro solo.
+const VIDA_PAT: &str = "4w";
+
+/// `cm accesstoken create "BranchBoard (<máquina>)" 4w <org>@unity --format={id}` + `reveal`.
 fn crear_pat(estado: &AppState, org_cm: &str) -> Resultado<Pat> {
     let salida = Comando::cm()
         .args(["accesstoken", "create"])
         .arg(descripcion_pat())
+        .arg(VIDA_PAT)
         .arg(org_cm)
         .arg("--format={id}")
         .ejecutar(estado)?;

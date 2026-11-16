@@ -52,26 +52,50 @@ fn sin_region() -> Error {
 }
 
 /// El `webserver` de la línea de `org`, si existe y es `https://`.
+///
+/// **Corregido (2026-11-15, #107)**: en una máquina que entró a la organización
+/// por Unity ID, el cliente anota la línea con el **id numérico** de la
+/// organización (`organization=4673426565751@cloud …`) y no con su nombre, así
+/// que por nombre no aparece. Si ninguna línea coincide y todas las que hay
+/// apuntan al mismo `webserver` (una sola región), se usa ese: la API acepta el
+/// nombre de la organización en la URL igual (probado con `GET …/repos`).
 fn interpretar_regiones(texto: &str, org: &str) -> Option<String> {
     let buscada = nombre_organizacion(org).to_lowercase();
-    texto
+    // (organización, webserver si es https)
+    let lineas: Vec<(String, Option<String>)> = texto
         .lines()
         .map(str::trim)
         .filter(|l| !l.starts_with("//") && !l.is_empty())
-        .find_map(|linea| {
-            let mut organizacion = None;
+        .map(|linea| {
+            let mut organizacion = "";
             let mut webserver = None;
             for par in linea.split_whitespace() {
                 match par.split_once('=') {
-                    Some(("organization", v)) => organizacion = Some(v),
-                    Some(("webserver", v)) => webserver = Some(v),
+                    Some(("organization", v)) => organizacion = v,
+                    Some(("webserver", v)) => webserver = Some(v.trim_end_matches('/')),
                     _ => {}
                 }
             }
-            let coincide = nombre_organizacion(organizacion?).to_lowercase() == buscada;
-            let web = webserver?.trim_end_matches('/');
-            (coincide && web.starts_with("https://")).then(|| web.to_string())
+            (
+                nombre_organizacion(organizacion).to_lowercase(),
+                webserver
+                    .filter(|w| w.starts_with("https://"))
+                    .map(str::to_string),
+            )
         })
+        .collect();
+    // Por nombre: lo que diga su línea (aunque sea nada, si no es https).
+    if let Some((_, web)) = lineas.iter().find(|(o, _)| *o == buscada) {
+        return web.clone();
+    }
+    // Sin línea por nombre: la única región https que haya.
+    let mut distintos: Vec<&str> = lineas.iter().filter_map(|(_, w)| w.as_deref()).collect();
+    distintos.sort_unstable();
+    distintos.dedup();
+    match distintos.as_slice() {
+        [unico] => Some((*unico).to_string()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -101,17 +125,43 @@ organization=otra@cloud server=x:8787 version=2 encrypted=False webserver=http:/
     #[test]
     fn ignora_comentarios_otras_organizaciones_y_http() {
         assert_eq!(
-            interpretar_regiones(EJEMPLO, "codice"),
-            None,
-            "solo estaba comentada"
+            interpretar_regiones(EJEMPLO, "codice").as_deref(),
+            Some("https://prd-azure-eastus-01-cloud.plasticscm.com:7178"),
+            "su línea está comentada: no cuenta por nombre, pero hay una sola región"
         );
         assert_eq!(
             interpretar_regiones(EJEMPLO, "otra"),
             None,
             "sin https no se usa"
         );
-        assert_eq!(interpretar_regiones(EJEMPLO, "nadie"), None);
+        assert_eq!(
+            interpretar_regiones(EJEMPLO, "nadie").as_deref(),
+            Some("https://prd-azure-eastus-01-cloud.plasticscm.com:7178"),
+            "una sola región https: se usa aunque la organización no esté por nombre"
+        );
         assert_eq!(interpretar_regiones("", "MiguelM17"), None);
+    }
+
+    #[test]
+    fn sin_la_organizacion_por_nombre_usa_la_unica_region_o_nada() {
+        // Así queda el archivo en una máquina que entró por Unity ID (2026-11-15): solo el id.
+        let por_id = "organization=4673426565751@cloud server=prd-azure-eastus-01-cloud.plasticscm.com:8787 version=2 encrypted=False webserver=https://prd-azure-eastus-01-cloud.plasticscm.com:7178\n";
+        assert_eq!(
+            interpretar_regiones(por_id, "MiguelM17@unity").as_deref(),
+            Some("https://prd-azure-eastus-01-cloud.plasticscm.com:7178")
+        );
+        // Dos regiones distintas: no se adivina.
+        let dos = "organization=1@cloud webserver=https://a:7178\norganization=2@cloud webserver=https://b:7178\n";
+        assert_eq!(interpretar_regiones(dos, "MiguelM17"), None);
+        assert_eq!(
+            interpretar_regiones(dos, "2").as_deref(),
+            Some("https://b:7178")
+        );
+        // Solo http: tampoco.
+        assert_eq!(
+            interpretar_regiones("organization=1@cloud webserver=http://a:7178\n", "x"),
+            None
+        );
     }
 
     #[test]

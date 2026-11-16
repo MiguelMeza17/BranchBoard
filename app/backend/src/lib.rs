@@ -115,6 +115,9 @@ pub fn run() {
             comandos_tareas::eliminar_tarea,
             comandos_tareas::eliminar_definitivamente,
             comandos_tareas::volver_a_dev,
+            comandos_tareas::asignar_revision,
+            comandos_tareas::autorizar_merge,
+            comandos_tareas::rechazar_revision,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar BranchBoard");

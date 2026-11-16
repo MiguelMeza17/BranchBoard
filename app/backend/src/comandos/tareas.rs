@@ -14,8 +14,8 @@ use crate::modelo::{ahora_iso, hoy_local, EstadoTarea};
 use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
 use crate::tareas::{
-    self, AutorTarea, CambiosTarea, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
-    ResultadoCambioEstado,
+    self, AutorTarea, CambiosTarea, ConflictoMerge, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
+    ResultadoAutorizacion, ResultadoCambioEstado,
 };
 
 fn con_ops<T>(
@@ -414,4 +414,136 @@ pub fn eliminar_definitivamente_en(estado: &AppState, id: &str) -> Resultado<Vec
         }
     }
     Ok(purgadas)
+}
+
+/// `asignar_revision(id, email)`: elige el revisor de una tarea en revisión (#107).
+/// Líder/Admin mientras no tenga revisor; solo el Administrador si ya tiene.
+#[tauri::command]
+pub async fn asignar_revision(
+    estado: State<'_, AppState>,
+    id: String,
+    email: String,
+) -> Resultado<Tarea> {
+    asignar_revision_en(&estado, &id, &email)
+}
+
+/// Lo mismo que [`asignar_revision`], sin el envoltorio de Tauri.
+pub fn asignar_revision_en(estado: &AppState, id: &str, email: &str) -> Resultado<Tarea> {
+    con_ops(estado, "asignar_revision", |c, ops, autor| {
+        tareas::asignar_revision(c, ops, autor, id, email, &ahora_iso())
+    })
+}
+
+/// `autorizar_merge(id)`: merge del lado del servidor (API REST, `mergeto`) de la
+/// rama de la tarea hacia `/main/dev` (tarea general) o hacia la rama de su tarea
+/// padre (subtarea), sin tocar el workspace de quien autoriza (#107).
+///
+/// Primero valida en SQLite (revisión, subtareas terminadas, sin préstamos), después
+/// pide el reporte (`mergeto/report`): si hay archivos en conflicto no se intenta el
+/// merge y la tarea no cambia (`conflicto` en la respuesta). Si el servidor lo
+/// hace (`OK`, o `MergeNotNeeded` porque ya se conectó a mano), la tarea pasa a
+/// `terminada` y el evento `autorizar_merge` viaja por `ops/`.
+#[tauri::command]
+pub async fn autorizar_merge(
+    estado: State<'_, AppState>,
+    id: String,
+) -> Resultado<ResultadoAutorizacion> {
+    autorizar_merge_en(&estado, &id)
+}
+
+/// Lo mismo que [`autorizar_merge`], sin el envoltorio de Tauri (para pruebas en
+/// el entorno real).
+pub fn autorizar_merge_en(estado: &AppState, id: &str) -> Resultado<ResultadoAutorizacion> {
+    let yo = estado.exigir_permiso("autorizar_merge")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let repo = estado.repo_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let plan = estado.con_db(|db| tareas::plan_de_autorizacion(db.conexion(), &autor, id))?;
+
+    let _guarda = estado.iniciar_operacion();
+    let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
+    let reporte = cliente.reporte_merge(&repo.repo, &plan.origen, &plan.destino)?;
+    let archivos = reporte.archivos_en_conflicto();
+    if !archivos.is_empty() {
+        return Ok(ResultadoAutorizacion {
+            tareas: estado.con_db(|db| tareas::listar(db.conexion()))?,
+            conflicto: Some(ConflictoMerge {
+                origen: plan.origen,
+                destino: plan.destino,
+                archivos,
+                mensaje: "Unity VC no puede unir estos archivos solo. Resuélvelo desde un workspace (Merge from) y vuelve a autorizar, o rechaza la revisión para que lo corrija el responsable".into(),
+            }),
+        });
+    }
+
+    let changeset = if reporte.nada_que_mergear() {
+        None
+    } else {
+        let comentario = format!(
+            "{}: {} (merge autorizado desde BranchBoard)",
+            plan.tarea.id, plan.tarea.titulo
+        );
+        let resultado = cliente.merge_a(&repo.repo, &plan.origen, &plan.destino, &comentario)?;
+        if resultado.hubo_conflicto() {
+            return Ok(ResultadoAutorizacion {
+                tareas: estado.con_db(|db| tareas::listar(db.conexion()))?,
+                conflicto: Some(ConflictoMerge {
+                    origen: plan.origen,
+                    destino: plan.destino,
+                    archivos: Vec::new(),
+                    mensaje: resultado.message.unwrap_or_else(|| {
+                        "El servidor de Unity VC no pudo hacer el merge por conflictos".into()
+                    }),
+                }),
+            });
+        }
+        if resultado.nada_que_mergear() {
+            None
+        } else if resultado.fue_ok() {
+            Some(resultado.changeset_number)
+        } else {
+            return Err(Error::ServidorUnityVc(format!(
+                "El merge respondió '{}'",
+                resultado.status
+            )));
+        }
+    };
+
+    let tareas = estado.con_db(|db| {
+        tareas::registrar_merge_autorizado(
+            db.conexion(),
+            &ops,
+            &autor,
+            id,
+            &plan.destino,
+            changeset,
+            &ahora_iso(),
+        )
+    })?;
+    Ok(ResultadoAutorizacion {
+        tareas,
+        conflicto: None,
+    })
+}
+
+/// `rechazar_revision(id, motivo)`: la tarea y sus subtareas vuelven a producción,
+/// queda `motivo_rechazo` y se notifica al responsable (#107).
+#[tauri::command]
+pub async fn rechazar_revision(
+    estado: State<'_, AppState>,
+    id: String,
+    motivo: String,
+) -> Resultado<Vec<Tarea>> {
+    rechazar_revision_en(&estado, &id, &motivo)
+}
+
+/// Lo mismo que [`rechazar_revision`], sin el envoltorio de Tauri.
+pub fn rechazar_revision_en(estado: &AppState, id: &str, motivo: &str) -> Resultado<Vec<Tarea>> {
+    con_ops(estado, "rechazar_revision", |c, ops, autor| {
+        tareas::rechazar_revision(c, ops, autor, id, motivo, &ahora_iso())
+    })
 }

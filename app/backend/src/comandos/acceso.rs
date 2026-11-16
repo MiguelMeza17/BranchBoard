@@ -37,6 +37,28 @@ fn carpeta_datos(app: &AppHandle) -> Resultado<PathBuf> {
 
 /// Lo mismo que el comando, sin Tauri (para la prueba en el entorno real).
 pub fn entrar_en(estado: &AppState, datos: &Path, workspace: &Path) -> Resultado<Entrada> {
+    entrar_con(estado, datos, workspace, es_dueno_del_repo)
+}
+
+/// Como [`entrar_en`], pero sin preguntarle a la API quién es el dueño: quien
+/// entra configura el proyecto como Administrador si todavía no tiene datos.
+/// Solo para las pruebas en el entorno real (#107): así las puede correr
+/// cualquiera de los dos desarrolladores, no solo el dueño de la organización.
+/// El dueño de verdad se prueba aparte en `entorno_real_entrar_a_proyecto`.
+pub fn entrar_como_dueno_en(
+    estado: &AppState,
+    datos: &Path,
+    workspace: &Path,
+) -> Resultado<Entrada> {
+    entrar_con(estado, datos, workspace, |_, _, _| Ok(true))
+}
+
+fn entrar_con(
+    estado: &AppState,
+    datos: &Path,
+    workspace: &Path,
+    es_dueno: impl FnOnce(&AppState, &RepoUnityVc, &str) -> Resultado<bool>,
+) -> Resultado<Entrada> {
     estado.cerrar_proyecto();
     let email = whoami(estado)?;
     estado.fijar_usuario(Some(&email));
@@ -47,7 +69,7 @@ pub fn entrar_en(estado: &AppState, datos: &Path, workspace: &Path) -> Resultado
         datos,
         &repo,
         &email,
-        || es_dueno_del_repo(estado, &repo, &email),
+        || es_dueno(estado, &repo, &email),
         &ahora_iso(),
         &hoy_local(),
     )?;
