@@ -233,6 +233,9 @@ interface State {
   // sesión simulada
   currentEmail: string;
   vpnOn: boolean;
+  vpnInstalado: boolean;
+  vpnCargando: boolean;
+  vpnInstalando: boolean;
   // Simula el resultado de `cm whoami` al arrancar — en false, la app muestra la
   // pantalla de "no hay sesión de Unity VC" en vez de los tableros (ver FRONTEND.md,
   // "Autenticación / acceso al proyecto"). Toggle de demo en el Topbar.
@@ -367,7 +370,9 @@ interface State {
   // acciones de sesión
   setEmail: (email: string) => void;
   setRolActual: (rol: Rol) => void; // cambia el rol del usuario activo (simulación)
-  toggleVpn: () => void;
+  cargarEstadoWarp: () => Promise<void>;
+  toggleVpn: () => Promise<void>;
+  instalarWarp: () => Promise<void>;
   toggleCmSesion: () => void;
   setAccesoCompletado: (v: boolean) => void;
   showToast: (msg: string, tone?: 'ok' | 'info' | 'danger') => void;
@@ -470,6 +475,9 @@ export const useStore = create<State>((set, get) => {
   return {
   currentEmail: fx.usuarios[0].email,
   vpnOn: true,
+  vpnInstalado: true,
+  vpnCargando: false,
+  vpnInstalando: false,
   cmSesionActiva: true,
   accesoCompletado: false,
   proyectoActual: fx.PROYECTO_NOMBRE,
@@ -761,7 +769,52 @@ export const useStore = create<State>((set, get) => {
     set((s) => ({
       usuarios: s.usuarios.map((u) => (u.email === s.currentEmail ? { ...u, rol } : u)),
     })),
-  toggleVpn: () => set((s) => ({ vpnOn: !s.vpnOn })),
+  cargarEstadoWarp: async () => {
+    if (!enTauri()) return;
+    try {
+      const estado = await api.estadoWarp();
+      set({ vpnInstalado: estado.instalado, vpnOn: estado.conectado });
+    } catch {
+      // Si la consulta falla al arrancar, no bloquea el resto de la pantalla inicial.
+    }
+  },
+  toggleVpn: async () => {
+    if (!enTauri()) {
+      set((s) => ({ vpnOn: !s.vpnOn }));
+      return;
+    }
+    if (get().vpnCargando || get().vpnInstalando) return;
+    set({ vpnCargando: true });
+    try {
+      const estado = await api.alternarWarp();
+      set({ vpnInstalado: estado.instalado, vpnOn: estado.conectado, vpnCargando: false });
+    } catch (e) {
+      set({ vpnCargando: false });
+      get().showToast(mensajeDeError(e), 'danger');
+      void get().cargarEstadoWarp();
+    }
+  },
+  instalarWarp: async () => {
+    if (!enTauri()) {
+      get().showToast('En la app de escritorio se instalará Cloudflare WARP con winget.', 'info');
+      return;
+    }
+    if (get().vpnInstalando) return;
+    set({ vpnInstalando: true });
+    try {
+      const res = await api.instalarWarp();
+      set({
+        vpnInstalado: res.estado.instalado,
+        vpnOn: res.estado.conectado,
+        vpnInstalando: false,
+      });
+      get().showToast(res.mensaje, res.instalado_ahora ? 'ok' : 'info');
+    } catch (e) {
+      set({ vpnInstalando: false });
+      get().showToast(mensajeDeError(e), 'danger');
+      void get().cargarEstadoWarp();
+    }
+  },
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),
   setAccesoCompletado: (v) => set({ accesoCompletado: v, accesoIrAWorkspaces: false, proyectoAClonar: null }),
   cambiarDeProyecto: () => set({ accesoCompletado: false, accesoIrAWorkspaces: true }),

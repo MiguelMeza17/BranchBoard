@@ -21,7 +21,11 @@ type EntradaDentro = Extract<EntradaProyecto, { estado: 'dentro' }>;
 export function AccesoProyecto() {
   const usuarios = useStore((s) => s.usuarios);
   const vpnOn = useStore((s) => s.vpnOn);
+  const vpnInstalado = useStore((s) => s.vpnInstalado);
+  const vpnCargando = useStore((s) => s.vpnCargando);
+  const vpnInstalando = useStore((s) => s.vpnInstalando);
   const toggleVpn = useStore((s) => s.toggleVpn);
+  const instalarWarp = useStore((s) => s.instalarWarp);
   const setEmail = useStore((s) => s.setEmail);
   const setRolActual = useStore((s) => s.setRolActual);
   const setAccesoCompletado = useStore((s) => s.setAccesoCompletado);
@@ -191,7 +195,11 @@ export function AccesoProyecto() {
             sinUvcs={sinUvcs}
             onSinUvcs={() => setSinUvcs(true)}
             vpnOn={vpnOn}
-            onToggleVpn={toggleVpn}
+            vpnInstalado={vpnInstalado}
+            vpnCargando={vpnCargando}
+            vpnInstalando={vpnInstalando}
+            onToggleVpn={() => void toggleVpn()}
+            onInstalarWarp={() => void instalarWarp()}
             onCrear={() => setCrear(true)}
             // Con sesión: tus proyectos de Unity VC. Sin Unity VC: buscar en tu equipo la carpeta de un
             // proyecto de BranchBoard que no está conectado a Unity VC.
@@ -499,7 +507,11 @@ function PasoInicio({
   sinUvcs,
   onSinUvcs,
   vpnOn,
+  vpnInstalado,
+  vpnCargando,
+  vpnInstalando,
   onToggleVpn,
+  onInstalarWarp,
   onCrear,
   onIngresar,
 }: {
@@ -508,36 +520,55 @@ function PasoInicio({
   sinUvcs: boolean;
   onSinUvcs: () => void;
   vpnOn: boolean;
+  vpnInstalado: boolean;
+  vpnCargando: boolean;
+  vpnInstalando: boolean;
   onToggleVpn: () => void;
+  onInstalarWarp: () => void;
   onCrear: () => void;
   onIngresar: () => void;
 }) {
   return (
     <>
       {/* Primero la VPN: sin ella, en algunas redes Unity VC no conecta (ni para iniciar sesión). */}
-      <button
-        onClick={onToggleVpn}
-        className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition hover:border-border-strong"
-        title="Conexión VPN (Cloudflare WARP)"
-      >
-        <div>
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition">
+        <div className="min-w-0">
           <div className="text-sm font-medium text-text">Conexión VPN (Cloudflare WARP)</div>
           <div className="text-xs text-muted">
-            En redes como la de la universidad, Unity VC no conecta sin la VPN activa.
+            {!vpnInstalado
+              ? 'Cloudflare WARP no está instalado en este equipo.'
+              : vpnCargando
+                ? 'Actualizando conexión VPN…'
+                : 'En redes como la de la universidad, Unity VC no conecta sin la VPN activa.'}
           </div>
+          {!vpnInstalado && (
+            <button
+              type="button"
+              onClick={onInstalarWarp}
+              disabled={vpnInstalando}
+              className="mt-1 text-xs font-medium text-primary underline hover:opacity-80 disabled:opacity-60"
+            >
+              {vpnInstalando ? 'Instalando Cloudflare WARP…' : 'Instalar Cloudflare WARP'}
+            </button>
+          )}
         </div>
-        <span
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-            vpnOn ? 'bg-done' : 'bg-faint'
+        <button
+          type="button"
+          onClick={onToggleVpn}
+          disabled={!vpnInstalado || vpnCargando || vpnInstalando}
+          title={vpnInstalado ? 'Conexión VPN (Cloudflare WARP)' : 'Cloudflare WARP no está instalado'}
+          aria-label="Conexión VPN (Cloudflare WARP)"
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            vpnInstalado && vpnOn ? 'bg-done' : 'bg-faint'
           }`}
         >
           <span
             className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              vpnOn ? 'translate-x-4' : 'translate-x-0.5'
+              vpnInstalado && vpnOn ? 'translate-x-4' : 'translate-x-0.5'
             }`}
           />
-        </span>
-      </button>
+        </button>
+      </div>
 
       {/* Sesión de Unity VC: es la identidad en BranchBoard (no hay login propio). */}
       {sinUvcs && !sesion ? null : sesion ? (

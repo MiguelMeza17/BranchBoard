@@ -24,6 +24,7 @@ pub mod error;
 pub mod estado;
 pub mod eventos;
 pub mod identidad;
+pub mod instalacion;
 pub mod modelo;
 pub mod notificaciones;
 pub mod ramas;
@@ -31,6 +32,7 @@ pub mod servidor;
 pub mod sprints;
 pub mod tareas;
 pub mod unity;
+pub mod warp;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
@@ -38,7 +40,7 @@ use comandos::{
     acceso, actualizaciones, chat as comandos_chat, datos, documentos as comandos_documentos,
     eventos as comandos_eventos, identidad as comandos_identidad,
     notificaciones as comandos_notificaciones, sistema, sprints as comandos_sprints,
-    tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
+    tareas as comandos_tareas, usuarios, vistos as comandos_vistos, warp as comandos_warp,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -95,6 +97,9 @@ pub fn run() {
             sistema::ping,
             sistema::hay_operacion_en_curso,
             sistema::elegir_carpeta,
+            comandos_warp::estado_warp,
+            comandos_warp::alternar_warp,
+            comandos_warp::instalar_warp,
             acceso::entrar_a_proyecto,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,

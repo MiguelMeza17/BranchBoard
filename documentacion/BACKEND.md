@@ -563,7 +563,7 @@ Se agrega un **switch de encender/apagar WARP desde la pantalla inicial** de Bra
 - Internamente invoca `warp-cli status`, `warp-cli connect`, `warp-cli disconnect` como subproceso — mismo patrón que la integración con `cm`.
 - **Detección de instalación**: si `warp-cli` no existe en la ruta esperada (Windows: `C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe`), el switch se muestra deshabilitado, y junto a él aparece un texto pequeño **"Instalar Cloudflare WARP"**.
   - Comando Tauri nuevo: `instalar_warp()` → corre `winget install --id Cloudflare.Warp -e --accept-package-agreements --accept-source-agreements` como subproceso (probado en la práctica, funciona). Al terminar, se vuelve a llamar `estado_warp()` para refrescar el switch.
-  - **Fallback si falla o `winget` no está disponible**: el mismo texto abre en el navegador la página oficial de descarga (`https://1.1.1.1/download`) usando el plugin `shell.open` de Tauri, para que el usuario lo instale manualmente.
+  - **Fallback si falla o `winget` no está disponible**: el mismo texto abre en el navegador la página oficial de descarga (`https://1.1.1.1/download`) desde el backend en Rust, para que el usuario lo instale manualmente. (**Implementado #122** en `app/backend/src/warp.rs`, `instalacion.rs` y `comandos/warp.rs`.)
   - Nota de UX: `winget install` puede disparar un prompt de UAC de Windows (permiso de administrador) porque instala un servicio a nivel de sistema — el frontend debe mostrar un estado de "instalando..." mientras esto ocurre, ya que puede tardar y depende de que el usuario acepte el prompt.
   - Es una acción explícita del usuario (clic en "Instalar"), nunca automática al abrir la app.
 - El estado (conectado/desconectado) se puede consultar cuando se quiera, no requiere que el servicio `CloudflareWARP` esté haciendo nada especial — confirmado en pruebas reales que el túnel sigue activo aunque se cierre la ventana de la app de WARP, porque lo mantiene un servicio de Windows en segundo plano.
@@ -1073,7 +1073,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `cerrarSesion` / `setSesionUnityVC` | `cerrar_sesion_unity_vc` / `iniciar_sesion_unity_vc` | todos |
 | `entrarAProyecto` / `irAClonar` / `cambiarDeProyecto` | `entrar_a_proyecto` / `clonar_proyecto` / (vuelve al acceso) | todos |
 | `crearProyectoNuevo` | `crear_proyecto_local` (sin Unity VC, pendiente de definir) | quien lo crea queda Administrador |
-| `toggleVpn` | `alternar_warp` | todos |
+| `toggleVpn` | `estado_warp` / `alternar_warp` / `instalar_warp` | todos |
 | Ajustes → "Actualizar versión" (`lib/api.ts`) | `buscar_actualizacion` / `instalar_actualizacion` (locales) | todos |
 | Ajustes → "Carpeta compartida" (`lib/api.ts`) | `carpeta_compartida` / `configurar_carpeta_compartida` (locales) / `compactar_eventos` | todos / todos / Administrador |
 
