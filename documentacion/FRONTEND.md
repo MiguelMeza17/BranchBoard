@@ -29,6 +29,8 @@
 
 ## Navegación general
 
+**Datos de ejemplo solo en el navegador (2026-11-16)**: el proyecto inventado «VirusTF» del mockup (sus usuarios, tareas, sprints, chat, documentos…) se carga únicamente al abrir el frontend en el navegador (`npm run dev`). En la app de escritorio el store arranca vacío y cada pantalla lee del backend, para que lo de ejemplo nunca se mezcle con el proyecto real; tampoco sale el pie «Mockup UI · datos en memoria». Bajo el logo del menú lateral va el **nombre del proyecto** (el del repositorio, ej. `BranchBoard-Pruebas`), no el del workspace local por el que se entró. Pendientes (tareas, ediciones y documentos), Papelera, Planificación y Reportes vuelven a pedir sus datos al abrirse y cuando llegan cambios del equipo.
+
 Menú lateral fijo, visible siempre una vez dentro de un proyecto, con ícono + etiqueta corta por pantalla. **Actualizado (2026-11-07)**: agrupado en secciones (título pequeño en mayúsculas), en este orden:
 
 ```

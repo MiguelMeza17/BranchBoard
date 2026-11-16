@@ -9314,4 +9314,144 @@ mod tests {
             let _ = std::fs::remove_file(&arch_mio);
         });
     }
+
+    /// **Máquina B para la comprobación en pantalla** (CLAUDE.md, "Comprobación en
+    /// pantalla"). La app de escritorio (máquina A, Administrador) ya entró a
+    /// `BranchBoard-Pruebas`, eligió la carpeta compartida y creó al Desarrollador
+    /// `BB_UI_DEV`. Esta prueba hace de otra máquina sobre la misma carpeta:
+    ///
+    /// - `BB_UI_ACCION=sembrar`: el Desarrollador crea 3 tareas (quedan pendientes
+    ///   de aprobación) y propone una edición sobre cada tarea cuyo título empiece
+    ///   por `A1 editable UI` (creadas antes por el Administrador en la app).
+    /// - `BB_UI_ACCION=comprobar`: reconstruye la máquina B desde `ops/` e imprime
+    ///   cómo quedó cada tarea y qué notificaciones recibió el Desarrollador, para
+    ///   compararlo con lo que se hizo con clics en la app.
+    ///
+    /// `BB_UI_PROYECTO_LOCAL` es la carpeta del proyecto en la app
+    /// (`%LocalAppData%\BranchBoard\proyectos\<proyecto>`); de ahí solo se leen la
+    /// llave pública y la fila del Administrador.
+    #[test]
+    #[ignore = "acompaña a la app abierta: correr a mano con BB_UI_PROYECTO_LOCAL, BB_UI_CARPETA_COMPARTIDA y BB_UI_ACCION"]
+    fn entorno_real_ui_maquina_b() {
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+        use crate::identidad::llaves::leer_llave_publica_admin;
+
+        let local_a = PathBuf::from(
+            std::env::var("BB_UI_PROYECTO_LOCAL").expect("falta BB_UI_PROYECTO_LOCAL"),
+        );
+        let compartida =
+            std::env::var("BB_UI_CARPETA_COMPARTIDA").expect("falta BB_UI_CARPETA_COMPARTIDA");
+        let accion = std::env::var("BB_UI_ACCION").expect("falta BB_UI_ACCION");
+        let dev = std::env::var("BB_UI_DEV").unwrap_or_else(|_| DEV.to_string());
+
+        let publica = leer_llave_publica_admin(&local_a)
+            .unwrap()
+            .expect("la app todavía no configuró el proyecto");
+        let admin_fila = {
+            let db_a = Db::abrir(&local_a).unwrap();
+            usuarios::listar(db_a.conexion())
+                .unwrap()
+                .into_iter()
+                .find(|u| u.rol == Rol::Administrador)
+                .expect("sin Administrador en la base de la app")
+        };
+
+        let maquina_b = tempfile::tempdir().unwrap();
+        let local_b = maquina_b
+            .path()
+            .join("proyectos")
+            .join(local_a.file_name().unwrap());
+        configurar_carpeta_compartida(&local_b, &compartida, false).unwrap();
+        fijar_llave_publica_admin(&local_b, &publica).unwrap();
+        let ops_b = carpeta_ops(&local_b).unwrap();
+        let db_b = Db::abrir(&local_b).unwrap();
+        usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+        let sincronizar_b = || {
+            let ahora = Utc::now() + chrono::Duration::minutes(5);
+            let sync = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
+            sync
+        };
+        println!("máquina B sincronizó: {:?}", sincronizar_b());
+
+        let rol_dev = verificar_usuarios(&publica, usuarios::listar(db_b.conexion()).unwrap())
+            .into_iter()
+            .find(|u| u.usuario.email == dev)
+            .and_then(|u| u.rol_efectivo);
+        assert_eq!(
+            rol_dev,
+            Some(Rol::Desarrollador),
+            "el Administrador debe crear antes al Desarrollador desde la app"
+        );
+
+        match accion.as_str() {
+            "sembrar" => {
+                let autor = AutorTarea {
+                    email: &dev,
+                    rol: Rol::Desarrollador,
+                };
+                for n in 1..=3 {
+                    let t = crear(
+                        db_b.conexion(),
+                        &ops_b,
+                        &autor,
+                        &DatosNuevaTarea {
+                            titulo: format!("A1 pendiente UI {n}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
+                    )
+                    .unwrap();
+                    assert!(t.pendiente_aprobacion);
+                    println!("sembrada {} «{}» (pendiente de aprobación)", t.id, t.titulo);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                let editables: Vec<Tarea> = db_tareas::listar(db_b.conexion())
+                    .unwrap()
+                    .into_iter()
+                    .filter(|t| t.titulo.starts_with("A1 editable UI"))
+                    .collect();
+                for t in editables {
+                    let r = proponer_edicion(
+                        db_b.conexion(),
+                        &ops_b,
+                        &autor,
+                        &t.id,
+                        &format!("{} (editada por B)", t.titulo),
+                        "Detalle propuesto desde la máquina B",
+                        Some("Comprobación en pantalla"),
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
+                    )
+                    .unwrap();
+                    assert!(r.tarea.edicion_pendiente);
+                    println!("edición propuesta sobre {} → «{}»", t.id, r.tarea.titulo);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+            "comprobar" => {
+                for t in db_tareas::listar(db_b.conexion()).unwrap() {
+                    println!(
+                        "{} | «{}» | estado={:?} | pendiente={} | edicion_pendiente={} | eliminada={} | sprint={:?}",
+                        t.id, t.titulo, t.estado, t.pendiente_aprobacion, t.edicion_pendiente, t.eliminada, t.sprint_id
+                    );
+                }
+                for n in notificaciones::de_usuario(db_b.conexion(), &dev).unwrap() {
+                    println!("notificación al Desarrollador: {:?}", n.tipo);
+                }
+            }
+            otra => panic!("BB_UI_ACCION desconocida: {otra}"),
+        }
+    }
 }

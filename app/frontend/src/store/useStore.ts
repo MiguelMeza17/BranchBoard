@@ -17,10 +17,44 @@ import type {
   WorkspaceUnityVC,
 } from '../types';
 import { CHAT_GRUPO } from '../types';
-import * as fx from '../data/fixtures';
+import * as ejemplo from '../data/fixtures';
 import { api, enTauri, ErrorBackend, mensajeDeError, type ProyectoServidor, type ResumenPolling } from '../lib/api';
 import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
+
+// Datos de ejemplo del mockup (el proyecto «VirusTF» inventado, sus usuarios, tareas, chat…): solo en el
+// navegador. En la app de escritorio el store arranca vacío y cada pantalla lee del backend, para que
+// lo de ejemplo nunca se mezcle con el proyecto real.
+const fx: typeof ejemplo = enTauri()
+  ? {
+      ...ejemplo,
+      workspaces: [],
+      proyectosServidor: [],
+      usuarios: [],
+      sprints: [],
+      tareas: [],
+      cambiosSinCheckin: {},
+      entrantesSinRecibir: [],
+      cambiosTraidos: [],
+      commits: [],
+      edicionesPendientes: [],
+      gruposChat: [],
+      mensajes: [],
+      documentos: [],
+      backups: [],
+      notificaciones: [],
+    }
+  : ejemplo;
+/** Quien aún no entró a ningún proyecto (app de escritorio antes de `entrar_a_proyecto`): sin permisos. */
+const USUARIO_SIN_SESION: Usuario = {
+  email: '',
+  nombre: '',
+  apellido: '',
+  rol: 'Colaborador externo',
+  fecha_alta: '',
+  firma: null,
+  firmado_en: null,
+};
 
 let idSeq = 1000;
 const nextId = () => `T-${++idSeq}`;
@@ -264,6 +298,8 @@ interface State {
   accesoCompletado: boolean;
   /** Proyecto (workspace de Unity VC) en el que se entró. */
   proyectoActual: string;
+  /** Workspace de Unity VC abierto (varios workspaces pueden ser del mismo proyecto). */
+  workspaceActual: string | null;
   /** "Cambiar de proyecto": vuelve al acceso directo a la lista de workspaces (sin la pantalla inicial). */
   accesoIrAWorkspaces: boolean;
   cambiarDeProyecto: () => void;
@@ -293,7 +329,8 @@ interface State {
   proyectoRepoAClonar: string | null;
   irAClonar: (nombre: string, repo?: string | null) => void;
   cargarWorkspacesYProyectos: () => Promise<void>;
-  entrarAProyecto: (nombre: string) => void;
+  /** `workspace`: el workspace de Unity VC por el que se entró, si su nombre no es el del proyecto. */
+  entrarAProyecto: (nombre: string, workspace?: string) => void;
   /**
    * Mockup de la carpeta compartida (Drive/OneDrive) de cada proyecto en esta máquina, por nombre del
    * proyecto. En la app real la guarda el backend (`configurar_carpeta_compartida`).
@@ -338,6 +375,8 @@ interface State {
   /** Documentos del proyecto (apartado con el nombre del proyecto). */
   documentos: Documento[];
   subirDocumentos: (archivos: File[]) => void;
+  /** Trae los documentos del proyecto desde el backend (#120); en el navegador no cambia nada. */
+  cargarDocumentos: () => Promise<void>;
   eliminarDocumento: (id: string) => void;
   /** Visto bueno de un Líder/Administrador a un documento pendiente. */
   aprobarDocumento: (id: string) => void;
@@ -503,7 +542,7 @@ export const useStore = create<State>((set, get) => {
     normalizarJerarquiaEstados(tareas, new Set(get().commits.map((c) => c.tarea_id)));
 
   return {
-  currentEmail: fx.usuarios[0].email,
+  currentEmail: fx.usuarios[0]?.email ?? '',
   vpnOn: true,
   vpnInstalado: true,
   vpnCargando: false,
@@ -512,7 +551,8 @@ export const useStore = create<State>((set, get) => {
   cmInstalando: false,
   cmSesionActiva: true,
   accesoCompletado: false,
-  proyectoActual: fx.PROYECTO_NOMBRE,
+  proyectoActual: enTauri() ? '' : fx.PROYECTO_NOMBRE,
+  workspaceActual: enTauri() ? null : fx.PROYECTO_NOMBRE,
   accesoIrAWorkspaces: false,
   sesionUnityVC: null,
   workspaces: [...fx.workspaces],
@@ -520,7 +560,7 @@ export const useStore = create<State>((set, get) => {
   proyectoAClonar: null,
   proyectoRepoAClonar: null,
   // El proyecto de ejemplo ya tiene carpeta; uno recién configurado la pide al entrar.
-  carpetasCompartidas: { [fx.PROYECTO_NOMBRE]: `C:\\Users\\ana\\OneDrive\\${fx.PROYECTO_NOMBRE}` },
+  carpetasCompartidas: (enTauri() ? {} : { [fx.PROYECTO_NOMBRE]: `C:\\Users\\ana\\OneDrive\\${fx.PROYECTO_NOMBRE}` }) as Record<string, string>,
   setCarpetaCompartida: (proyecto, ruta) =>
     set((s) => ({ carpetasCompartidas: { ...s.carpetasCompartidas, [proyecto]: ruta } })),
   versionDatos: 0,
@@ -666,19 +706,55 @@ export const useStore = create<State>((set, get) => {
     const que = nuevos.length === 1 ? nuevos[0].nombre : `${nuevos.length} documentos`;
     s.showToast(nuevos[0].pendiente ? `${que}: pendiente del visto bueno de un Líder o Administrador` : `${que} subido`);
   },
+  cargarDocumentos: async () => {
+    if (!enTauri()) return;
+    try {
+      set({ documentos: await api.listarDocumentos() });
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
+  },
   eliminarDocumento: (id) => {
+    if (enTauri()) {
+      void (async () => {
+        try {
+          await api.eliminarDocumento(id);
+          await get().cargarDocumentos();
+          get().showToast('Documento eliminado', 'danger');
+        } catch (e) {
+          get().showToast(mensajeDeError(e), 'danger');
+        }
+      })();
+      return;
+    }
     const d = get().documentos.find((x) => x.id === id);
     if (d?.url) URL.revokeObjectURL(d.url);
     set((s) => ({ documentos: s.documentos.filter((x) => x.id !== id) }));
     get().showToast('Documento eliminado', 'danger');
   },
   aprobarDocumento: (id) => {
+    if (enTauri()) {
+      void (async () => {
+        try {
+          await api.aprobarDocumento(id);
+          await get().cargarDocumentos();
+          get().showToast('Documento aprobado');
+        } catch (e) {
+          get().showToast(mensajeDeError(e), 'danger');
+        }
+      })();
+      return;
+    }
     set((s) => ({ documentos: s.documentos.map((d) => (d.id === id ? { ...d, pendiente: false } : d)) }));
     get().showToast('Documento aprobado');
   },
   abrirDocumento: (id) => {
     const d = get().documentos.find((x) => x.id === id);
     if (!d) return;
+    if (enTauri()) {
+      void api.abrirDocumento(id).catch((e) => get().showToast(mensajeDeError(e), 'danger'));
+      return;
+    }
     // Los subidos en esta sesión tienen su archivo; los de ejemplo no (en la app real se abren desde la carpeta del proyecto).
     if (d.url) window.open(d.url, '_blank', 'noopener');
     else get().showToast(`Abriendo ${d.nombre}…`, 'info');
@@ -996,6 +1072,7 @@ export const useStore = create<State>((set, get) => {
       chatsEliminados: {},
       ramaWorkspace: null,
       proyectoActual: proyecto,
+      workspaceActual: proyecto,
       accesoCompletado: true,
       accesoIrAWorkspaces: false,
       proyectoAClonar: null,
@@ -1027,9 +1104,10 @@ export const useStore = create<State>((set, get) => {
       proyectoAClonar: nombre,
       proyectoRepoAClonar: repo,
     }),
-  entrarAProyecto: (nombre) => {
+  entrarAProyecto: (nombre, workspace) => {
     set({
       proyectoActual: nombre,
+      workspaceActual: workspace ?? nombre,
       accesoCompletado: true,
       accesoIrAWorkspaces: false,
       proyectoAClonar: null,
@@ -1063,7 +1141,7 @@ export const useStore = create<State>((set, get) => {
   currentUser: () => {
     const s = get();
     const email = s.currentEmail.toLowerCase();
-    return s.usuarios.find((u) => u.email.toLowerCase() === email) ?? s.usuarios[0];
+    return s.usuarios.find((u) => u.email.toLowerCase() === email) ?? s.usuarios[0] ?? USUARIO_SIN_SESION;
   },
 
   puedeAvanzar: (id, estado) => {
@@ -1835,6 +1913,7 @@ export const useStore = create<State>((set, get) => {
     }
     set({
       proyectoActual: nuevo,
+      workspaceActual: s.workspaceActual === anterior ? nuevo : s.workspaceActual,
       workspaces: s.workspaces.map((w) => (w.nombre === anterior ? { ...w, nombre: nuevo } : w)),
     });
     s.showToast(`Proyecto renombrado a ${nuevo}`);

@@ -58,7 +58,7 @@ export function AccesoProyecto() {
   }, [paso, cargarWorkspacesYProyectos]);
   const [elegido, setElegido] = useState<WorkspaceUnityVC | null>(null);
   // Simula el correo que devuelve `cm whoami` — de ahí sale cuál de los casos aplica.
-  const [correo, setCorreo] = useState(useStore.getState().sesionUnityVC ?? usuarios[0].email);
+  const [correo, setCorreo] = useState(useStore.getState().sesionUnityVC ?? usuarios[0]?.email ?? '');
 
   // Sesión de Unity VC: hasta iniciarla no se puede entrar a un proyecto. Al iniciarla, su correo es
   // lo que devuelve `cm whoami`. Se guarda en el store: no se pide otra vez al cambiar de proyecto.
@@ -179,7 +179,8 @@ export function AccesoProyecto() {
     }
     setEmail(entrada.email);
     setRolActual(entrada.rol);
-    entrarAProyecto(ws.nombre);
+    // Lo que se muestra es el proyecto (el repositorio), no el nombre del workspace local.
+    entrarAProyecto(entrada.proyecto, ws.nombre);
     showToast(
       entrada.configurado_ahora
         ? `${entrada.proyecto} configurado con BranchBoard — eres su Administrador`
