@@ -32,12 +32,14 @@ export function App() {
   const showToast = useStore((s) => s.showToast);
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
   const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
+  const cargarSesionUnityVc = useStore((s) => s.cargarSesionUnityVc);
 
-  // Al arrancar la app, consulta en segundo plano el estado de WARP (#122) y de `cm` (#123).
+  // Al arrancar la app, consulta en segundo plano WARP (#122), `cm` (#123) y sesión (#124).
   useEffect(() => {
     void cargarEstadoWarp();
     void cargarEstadoCm();
-  }, [cargarEstadoWarp, cargarEstadoCm]);
+    void cargarSesionUnityVc();
+  }, [cargarEstadoWarp, cargarEstadoCm, cargarSesionUnityVc]);
 
   // Con una operación de Unity VC en curso, el backend no deja cerrar la ventana; aquí se avisa por qué.
   useEffect(() => {

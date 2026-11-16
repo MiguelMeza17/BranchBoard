@@ -8,7 +8,6 @@ import { Icono } from './Icono';
 // no tiene login propio, la identidad depende de que Unity Version Control ya
 // tenga una sesión iniciada en la máquina.
 export function SesionUnityVCRequerida() {
-  const toggleCmSesion = useStore((s) => s.toggleCmSesion);
   const showToast = useStore((s) => s.showToast);
   const currentEmail = useStore((s) => s.currentEmail);
   const setEmail = useStore((s) => s.setEmail);
@@ -18,6 +17,8 @@ export function SesionUnityVCRequerida() {
   const cmInstalado = useStore((s) => s.cmInstalado);
   const cmInstalando = useStore((s) => s.cmInstalando);
   const instalarCm = useStore((s) => s.instalarCm);
+  const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
+  const [reconectando, setReconectando] = useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface">
@@ -52,10 +53,21 @@ export function SesionUnityVCRequerida() {
           )}
           <button
             className={`${cmInstalado ? 'btn-primary' : 'btn-outline'} btn-sm w-full`}
-            disabled={!cmInstalado || cmInstalando}
+            disabled={!cmInstalado || cmInstalando || reconectando}
             onClick={() => setLogin(true)}
           >
             Iniciar sesión con Unity VC
+          </button>
+          <button
+            type="button"
+            className="btn-ghost btn-sm w-full"
+            disabled={!cmInstalado || cmInstalando || reconectando}
+            onClick={() => {
+              setReconectando(true);
+              void reconectarUnityVc().finally(() => setReconectando(false));
+            }}
+          >
+            {reconectando ? 'Reconectando…' : 'Reconectar'}
           </button>
         </div>
       </div>
@@ -67,7 +79,7 @@ export function SesionUnityVCRequerida() {
           setLogin(false);
           if (usuarios.some((u) => u.email === c)) setEmail(c);
           setSesionUnityVC(c);
-          toggleCmSesion();
+          useStore.setState({ cmSesionActiva: true });
           showToast(`Sesión de Unity VC iniciada como ${c}`);
         }}
       />

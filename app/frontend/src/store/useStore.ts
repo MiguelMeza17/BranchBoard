@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as fx from '../data/fixtures';
-import { api, enTauri, mensajeDeError } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError } from '../lib/api';
 import { esTareaEnEspera } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
@@ -255,7 +255,9 @@ interface State {
    * (`cm whoami`). Cerrarla deja la app en "No se detectó una sesión de Unity VC" y, al volver a
    * iniciarla, se pasa otra vez por el acceso al proyecto.
    */
-  cerrarSesion: () => void;
+  cerrarSesion: () => Promise<void> | void;
+  cargarSesionUnityVc: () => Promise<void>;
+  reconectarUnityVc: (org?: string) => Promise<boolean>;
   /** Correo con el que se inició sesión en Unity VC desde BranchBoard (null = todavía no). */
   sesionUnityVC: string | null;
   setSesionUnityVC: (correo: string | null) => void;
@@ -852,8 +854,56 @@ export const useStore = create<State>((set, get) => {
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),
   setAccesoCompletado: (v) => set({ accesoCompletado: v, accesoIrAWorkspaces: false, proyectoAClonar: null }),
   cambiarDeProyecto: () => set({ accesoCompletado: false, accesoIrAWorkspaces: true }),
-  cerrarSesion: () =>
-    set({ cmSesionActiva: false, accesoCompletado: false, accesoIrAWorkspaces: false, sesionUnityVC: null }),
+  cerrarSesion: async () => {
+    if (!enTauri()) {
+      set({ cmSesionActiva: false, accesoCompletado: false, accesoIrAWorkspaces: false, sesionUnityVC: null });
+      return;
+    }
+    try {
+      await api.cerrarSesionUnityVc();
+      set({ cmSesionActiva: false, accesoCompletado: false, accesoIrAWorkspaces: false, sesionUnityVC: null });
+      get().showToast('Sesión de Unity VC cerrada', 'info');
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
+  },
+  cargarSesionUnityVc: async () => {
+    if (!enTauri()) return;
+    try {
+      const s = await api.sesionUnityVc();
+      if (s.activa && s.email) {
+        set({ cmInstalado: true, cmSesionActiva: true, sesionUnityVC: s.email, currentEmail: s.email });
+      } else {
+        set({ cmSesionActiva: false, sesionUnityVC: null, accesoCompletado: false });
+      }
+    } catch (e) {
+      if (e instanceof ErrorBackend && e.codigo === 'cm_no_instalado') {
+        set({ cmInstalado: false, cmSesionActiva: false, sesionUnityVC: null, accesoCompletado: false });
+      } else if (e instanceof ErrorBackend && e.codigo === 'sin_sesion_unity_vc') {
+        set({ cmSesionActiva: false, sesionUnityVC: null, accesoCompletado: false });
+      }
+    }
+  },
+  reconectarUnityVc: async (org) => {
+    if (!enTauri()) {
+      get().showToast('Conexión con Unity VC verificada (mockup).', 'ok');
+      return true;
+    }
+    try {
+      const res = await api.reconectarUnityVc(org);
+      set({
+        cmInstalado: true,
+        cmSesionActiva: true,
+        sesionUnityVC: res.email,
+        currentEmail: res.email,
+      });
+      get().showToast(res.mensaje, 'ok');
+      return true;
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+      return false;
+    }
+  },
   setSesionUnityVC: (correo) => set({ sesionUnityVC: correo }),
   crearProyectoNuevo: ({ proyecto, nombre, correo }) => {
     const [primero, ...resto] = nombre.trim().split(/\s+/);

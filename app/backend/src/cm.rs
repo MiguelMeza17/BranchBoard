@@ -3,5 +3,6 @@
 pub mod ejecutor;
 pub mod instalacion;
 pub mod lectura;
+pub mod sesion;
 
 pub use ejecutor::{Comando, Salida};

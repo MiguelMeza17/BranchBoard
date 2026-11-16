@@ -216,6 +216,21 @@ export interface ResultadoInstalacionCm {
   mensaje: string;
 }
 
+/** Estado actual de la sesión de Unity Version Control (`cm whoami`, #124). */
+export interface EstadoSesionUnityVc {
+  activa: boolean;
+  email: string | null;
+  abrio_asistente: boolean;
+}
+
+/** Resultado del comando `reconectar_unity_vc` (#124). */
+export interface ResultadoReconexionUnityVc {
+  email: string;
+  reconectado: boolean;
+  abrio_asistente: boolean;
+  mensaje: string;
+}
+
 // ───────── Comandos ─────────
 
 export const api = {
@@ -783,6 +798,40 @@ export const api = {
           mensaje: 'Unity Version Control (cm) ya está instalado.',
         })),
     ),
+
+  /** Consulta `cm whoami` sin abrir el asistente gráfico (#124). */
+  sesionUnityVc: (mockup?: () => EstadoSesionUnityVc) =>
+    llamar<EstadoSesionUnityVc>(
+      'sesion_unity_vc',
+      undefined,
+      mockup ?? (() => ({ activa: true, email: null, abrio_asistente: false })),
+    ),
+
+  /** Lanza `plastic.exe --configure` si falta sesión (o si `forzar`) y relee `cm whoami` (#124). */
+  iniciarSesionUnityVc: (forzar = false, mockup?: () => EstadoSesionUnityVc) =>
+    llamar<EstadoSesionUnityVc>(
+      'iniciar_sesion_unity_vc',
+      { forzar },
+      mockup ?? (() => ({ activa: true, email: null, abrio_asistente: false })),
+    ),
+
+  /** Reintenta sesión/PAT y, si falla, abre `plastic.exe --configure` para crear un PAT nuevo (#124). */
+  reconectarUnityVc: (org?: string | null, mockup?: () => ResultadoReconexionUnityVc) =>
+    llamar<ResultadoReconexionUnityVc>(
+      'reconectar_unity_vc',
+      { org: org ?? null },
+      mockup ??
+        (() => ({
+          email: '',
+          reconectado: true,
+          abrio_asistente: false,
+          mensaje: 'Conexión con Unity VC verificada.',
+        })),
+    ),
+
+  /** Revoca los PAT de BranchBoard en Unity VC, limpia credenciales locales y cierra el proyecto (#124). */
+  cerrarSesionUnityVc: (mockup?: () => number) =>
+    llamar<number>('cerrar_sesion_unity_vc', undefined, mockup ?? (() => 0)),
 
   /** Versión instalada de la app. */
   versionActual: async (): Promise<string> => (enTauri() ? getVersion() : VERSION_MOCKUP),

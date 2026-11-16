@@ -1,21 +1,20 @@
 import { useEffect, useState } from 'react';
+import { api, enTauri, mensajeDeError } from '../lib/api';
 import { Modal } from './Modal';
 import { Icono } from './Icono';
 
 // "Iniciar sesión con Unity VC". BranchBoard no tiene login propio: la identidad es la sesión de
-// Unity Version Control (`cm whoami`). Esta ventana solo inicia esa sesión, igual que el cliente de
-// Unity VC: con la cuenta de Unity o con correo. En los dos casos el inicio de sesión se completa en
-// el navegador, en la página oficial de Unity; BranchBoard nunca ve ni guarda la contraseña.
-// No se elige servidor ni proyecto: la sesión es de tu cuenta, y al iniciarla se listan todos los
-// proyectos que tienes en Unity VC. En el mockup se simula: tras un momento "esperando al
-// navegador", la sesión queda iniciada.
-type Paso = 'elegir' | 'correo' | 'esperando';
+// Unity Version Control (`cm whoami`). En escritorio llama a `iniciar_sesion_unity_vc` (que abre
+// `plastic.exe --configure` para autenticación oficial SSO en navegador); BranchBoard nunca ve ni
+// guarda la contraseña. En navegador (mockup) simula el flujo.
+type Paso = 'elegir' | 'correo' | 'esperando' | 'tauri-listo' | 'tauri-error';
 
 export function LoginUnityVCModal({
   open,
   onClose,
   onSesionIniciada,
   correoDemo,
+  forzarNueva = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -23,30 +22,68 @@ export function LoginUnityVCModal({
   onSesionIniciada: (correo: string) => void;
   /** Mockup: correo con el que "entra" la opción de cuenta de Unity. */
   correoDemo: string;
+  /** Si es `true` ("Cambiar de cuenta"), abre `plastic --configure` aunque ya exista sesión. */
+  forzarNueva?: boolean;
 }) {
   const [paso, setPaso] = useState<Paso>('elegir');
   const [correo, setCorreo] = useState('');
   const [resultado, setResultado] = useState('');
+  const [errorReal, setErrorReal] = useState<string | null>(null);
+  const esTauri = enTauri();
 
   useEffect(() => {
     if (open) {
-      setPaso('elegir');
+      setPaso(esTauri ? 'tauri-listo' : 'elegir');
       setCorreo('');
+      setErrorReal(null);
     }
-  }, [open]);
+  }, [open, esTauri]);
 
-  // Simula la espera mientras la persona completa el inicio de sesión en el navegador.
+  // En navegador (mockup): simula la espera mientras se completa el inicio de sesión.
   useEffect(() => {
-    if (paso !== 'esperando') return;
+    if (esTauri || paso !== 'esperando') return;
     const t = setTimeout(() => onSesionIniciada(resultado), 1400);
     return () => clearTimeout(t);
-  }, [paso, resultado, onSesionIniciada]);
+  }, [esTauri, paso, resultado, onSesionIniciada]);
 
   const esperar = (c: string) => {
     setResultado(c);
     setPaso('esperando');
   };
   const correoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo.trim());
+
+  const iniciarReal = async (forzar: boolean) => {
+    setErrorReal(null);
+    setPaso('esperando');
+    try {
+      const res = await api.iniciarSesionUnityVc(forzar);
+      if (res.activa && res.email) {
+        onSesionIniciada(res.email);
+      } else {
+        setErrorReal('No se detectó una sesión iniciada en Unity VC. Completa el asistente e intenta verificar.');
+        setPaso('tauri-error');
+      }
+    } catch (e) {
+      setErrorReal(mensajeDeError(e));
+      setPaso('tauri-error');
+    }
+  };
+
+  const verificarAhoraReal = async () => {
+    setErrorReal(null);
+    try {
+      const res = await api.sesionUnityVc();
+      if (res.activa && res.email) {
+        onSesionIniciada(res.email);
+      } else {
+        setErrorReal('Unity VC todavía no reporta una sesión activa (`cm whoami`).');
+        setPaso('tauri-error');
+      }
+    } catch (e) {
+      setErrorReal(mensajeDeError(e));
+      setPaso('tauri-error');
+    }
+  };
 
   return (
     <Modal
@@ -57,7 +94,54 @@ export function LoginUnityVCModal({
       size="sm"
     >
       <div className="space-y-4 text-sm">
-        {paso === 'elegir' && (
+        {esTauri && paso === 'tauri-listo' && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted">
+              Se abrirá el asistente oficial de Unity Version Control (<code className="font-mono">plastic --configure</code>)
+              para iniciar sesión en tu navegador. BranchBoard nunca ve ni guarda tu contraseña.
+            </p>
+            <button
+              type="button"
+              className="btn-primary w-full"
+              onClick={() => void iniciarReal(forzarNueva)}
+            >
+              Abrir inicio de sesión de Unity VC
+            </button>
+            <button
+              type="button"
+              className="btn-ghost btn-sm w-full"
+              onClick={() => void verificarAhoraReal()}
+            >
+              Ya inicié sesión, verificar con cm whoami
+            </button>
+          </div>
+        )}
+
+        {esTauri && paso === 'tauri-error' && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+              {errorReal ?? 'No se pudo completar el inicio de sesión.'}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-primary btn-sm flex-1"
+                onClick={() => void iniciarReal(true)}
+              >
+                Reintentar inicio de sesión
+              </button>
+              <button
+                type="button"
+                className="btn-outline btn-sm"
+                onClick={() => void verificarAhoraReal()}
+              >
+                Verificar ahora
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!esTauri && paso === 'elegir' && (
           <div className="space-y-2">
             <button
               type="button"
@@ -76,7 +160,7 @@ export function LoginUnityVCModal({
           </div>
         )}
 
-        {paso === 'correo' && (
+        {!esTauri && paso === 'correo' && (
           <div className="space-y-2">
             <label className="block">
               <span className="mb-1 block text-xs text-faint">Correo</span>
@@ -113,6 +197,15 @@ export function LoginUnityVCModal({
             <span className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-primary" />
             <p className="text-text">Completa el inicio de sesión en tu navegador…</p>
             <p className="text-[11px] text-faint">BranchBoard sigue en cuanto Unity VC confirme la sesión.</p>
+            {esTauri && (
+              <button
+                type="button"
+                className="btn-outline btn-sm mt-2"
+                onClick={() => void verificarAhoraReal()}
+              >
+                Ya terminé, verificar sesión
+              </button>
+            )}
           </div>
         )}
       </div>
