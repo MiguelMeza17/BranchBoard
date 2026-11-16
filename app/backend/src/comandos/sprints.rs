@@ -2,6 +2,7 @@
 
 use tauri::State;
 
+use crate::avance::{self, AvanceBacklog, AvanceSprint};
 use crate::comandos::datos::carpeta_abierta;
 use crate::db::sprints::Sprint;
 use crate::db::tareas::Tarea;
@@ -212,5 +213,61 @@ pub fn cerrar_sprint_en(estado: &AppState, sprint_id: &str) -> Resultado<Sprint>
             &ahora_iso(),
             &hoy_local(),
         )
+    })
+}
+
+fn calcular_avance<T>(
+    estado: &AppState,
+    permiso: &str,
+    calcular: impl FnOnce(&rusqlite::Connection, &str) -> Resultado<T>,
+) -> Resultado<T> {
+    let yo = estado.exigir_permiso(permiso)?;
+    let _ = evaluar_cierres_en(estado, &yo.email)?;
+    let hoy = hoy_local();
+    estado.con_db(|db| calcular(db.conexion(), &hoy))
+}
+
+/// Datos para la gráfica de Avance de un sprint (`con_fecha = true`, #115).
+#[tauri::command]
+pub fn datos_avance_sprint(
+    estado: State<'_, AppState>,
+    sprint_id: String,
+) -> Resultado<AvanceSprint> {
+    datos_avance_sprint_en(&estado, &sprint_id)
+}
+
+/// Versión sin envoltorio Tauri de [`datos_avance_sprint`].
+pub fn datos_avance_sprint_en(estado: &AppState, sprint_id: &str) -> Resultado<AvanceSprint> {
+    calcular_avance(estado, "datos_avance_sprint", |c, hoy| {
+        avance::datos_sprint(c, sprint_id, hoy)
+    })
+}
+
+/// Datos para la gráfica de Avance de un backlog (`con_fecha = false`, #115).
+#[tauri::command]
+pub fn datos_avance_backlog(
+    estado: State<'_, AppState>,
+    backlog_id: String,
+) -> Resultado<AvanceBacklog> {
+    datos_avance_backlog_en(&estado, &backlog_id)
+}
+
+/// Versión sin envoltorio Tauri de [`datos_avance_backlog`].
+pub fn datos_avance_backlog_en(estado: &AppState, backlog_id: &str) -> Resultado<AvanceBacklog> {
+    calcular_avance(estado, "datos_avance_backlog", |c, hoy| {
+        avance::datos_backlog(c, backlog_id, hoy)
+    })
+}
+
+/// Datos para la gráfica General de Avance (todas las tareas en algún sprint o backlog, #115).
+#[tauri::command]
+pub fn datos_avance_general(estado: State<'_, AppState>) -> Resultado<AvanceBacklog> {
+    datos_avance_general_en(&estado)
+}
+
+/// Versión sin envoltorio Tauri de [`datos_avance_general`].
+pub fn datos_avance_general_en(estado: &AppState) -> Resultado<AvanceBacklog> {
+    calcular_avance(estado, "datos_avance_general", |c, hoy| {
+        avance::datos_general(c, hoy)
     })
 }
