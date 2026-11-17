@@ -106,6 +106,11 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("devolver_cambios_prestados", Acceso::Roles(TODOS)),
     ("eliminar_cambios_ajenos", Acceso::Roles(TODOS)),
     ("volver_a_dev", Acceso::Roles(TODOS)),
+    // Revisión (issue #107). `autorizar_merge` y `rechazar_revision` los puede usar
+    // también quien tiene a cargo la tarea padre de una subtarea; `tareas` lo revisa.
+    ("asignar_revision", Acceso::Roles(LIDER_O_ADMIN)),
+    ("autorizar_merge", Acceso::Roles(TODOS)),
+    ("rechazar_revision", Acceso::Roles(TODOS)),
     ("listar_commits", Acceso::Roles(TODOS)),
     ("abrir_en_unity", Acceso::Roles(TODOS)),
     ("listar_sprints", Acceso::Roles(TODOS)),

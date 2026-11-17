@@ -87,12 +87,10 @@ pub fn instalar_cm(estado: &AppState) -> Resultado<ResultadoInstalacionCm> {
         });
     }
 
-    let resultado = instalacion::instalar_con_winget(
-        estado,
-        ID_PAQUETE_UVCS,
-        URL_DESCARGA_UVCS,
-        || resolver_cm().is_some(),
-    )?;
+    let resultado =
+        instalacion::instalar_con_winget(estado, ID_PAQUETE_UVCS, URL_DESCARGA_UVCS, || {
+            resolver_cm().is_some()
+        })?;
     let actual = estado_cm();
 
     match resultado {
@@ -157,7 +155,10 @@ mod tests {
         let estado = AppState::default();
 
         let actual = estado_cm();
-        assert!(actual.instalado, "cm.exe debe estar instalado en este equipo");
+        assert!(
+            actual.instalado,
+            "cm.exe debe estar instalado en este equipo"
+        );
         let ruta = actual.ruta.as_deref().unwrap();
         assert!(PathBuf::from(ruta).is_file(), "no existe {ruta}");
 

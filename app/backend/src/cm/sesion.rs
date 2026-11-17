@@ -113,7 +113,10 @@ pub fn sesion_unity_vc(estado: &AppState) -> Resultado<EstadoSesionUnityVc> {
 
 /// Abre el inicio de sesión oficial de Unity Version Control (`plastic --configure`),
 /// sin pedir ni recibir contraseñas en BranchBoard, y vuelve a correr `cm whoami` (#124).
-pub fn iniciar_sesion_unity_vc(estado: &AppState, forzar_nueva: bool) -> Resultado<EstadoSesionUnityVc> {
+pub fn iniciar_sesion_unity_vc(
+    estado: &AppState,
+    forzar_nueva: bool,
+) -> Resultado<EstadoSesionUnityVc> {
     if !crate::cm::instalacion::estado_cm().instalado {
         return Err(Error::CmNoInstalado);
     }
@@ -493,14 +496,21 @@ mod tests {
         let llavero = LlaveroMemoria::default();
         let cuenta = pat::cuenta_llavero("ana@equipo.dev", "OrgPrueba");
         llavero
-            .guardar(&cuenta, r#"{"id":"11111111-1111-1111-1111-111111111111","token":"secret"}"#)
+            .guardar(
+                &cuenta,
+                r#"{"id":"11111111-1111-1111-1111-111111111111","token":"secret"}"#,
+            )
             .unwrap();
         let plastic_dir = tempfile::tempdir().unwrap();
         std::fs::write(plastic_dir.path().join("tokens.conf"), "tok").unwrap();
 
-        let revocados =
-            cerrar_sesion_en(&estado, &llavero, Some(plastic_dir.path()), Some("OrgPrueba"))
-                .unwrap();
+        let revocados = cerrar_sesion_en(
+            &estado,
+            &llavero,
+            Some(plastic_dir.path()),
+            Some("OrgPrueba"),
+        )
+        .unwrap();
 
         assert_eq!(revocados, 1);
         assert_eq!(llavero.leer(&cuenta).unwrap(), None);

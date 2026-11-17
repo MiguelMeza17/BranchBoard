@@ -51,9 +51,9 @@ pub fn validar_url_https(url: &str) -> Resultado<()> {
     }
     let sin_esquema = &url["https://".len()..];
     if sin_esquema.is_empty()
-        || url
-            .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '&' | '|' | ';' | '"' | '\''))
+        || url.chars().any(|c| {
+            c.is_control() || c.is_whitespace() || matches!(c, '&' | '|' | ';' | '"' | '\'')
+        })
     {
         return Err(Error::Validacion("La URL de descarga no es válida.".into()));
     }

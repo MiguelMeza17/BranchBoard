@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { puedeAutorizarRevisionGrande } from '../lib/permisos';
 import { PageHeader, TipoBadge, Avatar, EmptyState, ReadOnlyTag } from '../components/primitives';
@@ -11,6 +11,9 @@ import { coincidePalabra, palabraCambios, tipoMeta } from '../lib/ui';
 import { Icono, IconoEnLinea } from '../components/Icono';
 
 export function Revision() {
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const versionDatos = useStore((s) => s.versionDatos);
+  useEffect(() => { void cargarTareas(); }, [cargarTareas, versionDatos]);
   const user = useStore((s) => s.currentUser());
   const tareas = useStore((s) => s.tareas);
   const usuarios = useStore((s) => s.usuarios);
@@ -192,7 +195,7 @@ export function Revision() {
           tarea={asignando}
           lideres={lideres}
           onClose={() => setAsignando(null)}
-          onConfirm={(email) => { asignarRevision(asignando.id, email); setAsignando(null); }}
+          onConfirm={(email) => { void asignarRevision(asignando.id, email).then((ok) => { if (ok) setAsignando(null); }); }}
         />
       )}
 
@@ -217,7 +220,7 @@ export function Revision() {
       <ConfirmLock
         open={!!rechazar}
         onClose={() => setRechazar(null)}
-        onConfirm={(motivo) => { if (rechazar) rechazarRevision(rechazar.id, motivo ?? ''); setRechazar(null); }}
+        onConfirm={(motivo) => { if (rechazar) void rechazarRevision(rechazar.id, motivo ?? '').then((ok) => { if (ok) setRechazar(null); }); }}
         title="Rechazar revisión"
         tone="danger"
         palabra="rechazar"

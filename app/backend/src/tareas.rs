@@ -54,6 +54,9 @@ pub const TIPOS: &[&str] = &[
     "devolver_cambios_prestados",
     "eliminar_cambios_ajenos",
     "tarea_cerrada_por_deteccion",
+    "asignar_revision",
+    "autorizar_merge",
+    "rechazar_revision",
 ];
 
 /// Máximo de ancestros que puede tener una tarea en `tareas`:
@@ -210,6 +213,9 @@ pub struct PayloadDesasignarTarea {
 pub struct PayloadCambiarEstado {
     pub id: String,
     pub estado: EstadoTarea,
+    /// Día local de quien termina la tarea; se conserva igual al reproducir el evento.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fecha_completada: Option<String>,
 }
 
 /// Respuesta de [`cambiar_estado`] (#99): tareas actualizadas y posibles
@@ -382,6 +388,60 @@ pub struct AlertaRamaAjena {
     pub tarea_sugerida_id: Option<String>,
     pub archivos: Vec<String>,
     pub mensaje: String,
+}
+
+/// `payload` de `asignar_revision` (#107).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadAsignarRevision {
+    pub id: String,
+    pub revisor: String,
+}
+
+/// `payload` de `autorizar_merge` (#107): el merge ya se hizo en el servidor
+/// (changeset `changeset` en `destino`; `None` si la rama ya estaba conectada).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadAutorizarMerge {
+    pub id: String,
+    pub destino: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changeset: Option<i64>,
+    pub fecha_completada: String,
+}
+
+/// `payload` de `rechazar_revision` (#107).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadRechazarRevision {
+    pub id: String,
+    pub motivo: String,
+}
+
+/// Lo que hay que mergear al autorizar una tarea (#107), ya validado y antes
+/// de tocar el servidor: su rama y la rama destino (`/main/dev` para una tarea
+/// general, la rama del padre para una subtarea).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanMerge {
+    pub tarea: Tarea,
+    pub origen: String,
+    pub destino: String,
+    /// Líder/Administrador sobre su propia tarea, sin pasar por revisión.
+    pub merge_directo: bool,
+}
+
+/// Merge que el servidor no pudo hacer solo (#107): la tarea no cambia y el
+/// frontend muestra la alerta con estos archivos.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConflictoMerge {
+    pub origen: String,
+    pub destino: String,
+    pub archivos: Vec<String>,
+    pub mensaje: String,
+}
+
+/// Respuesta de `autorizar_merge` (#107).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResultadoAutorizacion {
+    pub tareas: Vec<Tarea>,
+    pub conflicto: Option<ConflictoMerge>,
 }
 
 /// Información de una colisión de doble toma (#97) entre dos eventos `tomar_tarea`.
@@ -1020,6 +1080,8 @@ pub fn cambiar_estado(
     let payload = PayloadCambiarEstado {
         id: id.to_string(),
         estado,
+        fecha_completada: (estado == EstadoTarea::Terminada)
+            .then(|| fecha_de_iso_en_zona(ahora, &chrono::Local)),
     };
     let mut ev = Evento::nuevo(
         "cambiar_estado",
@@ -2344,6 +2406,215 @@ pub fn evaluar_alerta_rama_ajena(
     })
 }
 
+/// Elige el revisor de una tarea en revisión (`asignar_revision`, #107): Líder o
+/// Administrador mientras no tenga revisor; solo el Administrador si ya tiene.
+/// Notifica al revisor (`revision_asignada`, #6).
+pub fn asignar_revision(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    revisor: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadAsignarRevision {
+        id: id.to_string(),
+        revisor: normalizar_email(revisor),
+    };
+    let mut ev = Evento::nuevo(
+        "asignar_revision",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar asignar_revision: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_asignar_revision(tx, Some(autor.rol), &payload, ahora)
+    })?;
+    db_tareas::obtener(c, id)
+}
+
+/// Valida que `autor` pueda autorizar el merge de `id` y dice qué rama va hacia
+/// cuál (#107), **antes de tocar el servidor**: tarea en revisión (o en
+/// producción si es un Líder/Administrador sobre su propia tarea), aprobada,
+/// con rama, con todas sus subtareas terminadas y sin cambios prestados sin
+/// devolver. El destino es la rama del padre, o `/main/dev` si no tiene.
+pub fn plan_de_autorizacion(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    id: &str,
+) -> Resultado<PlanMerge> {
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.pendiente_aprobacion {
+        return Err(Error::Validacion(format!(
+            "La tarea {} sigue pendiente de aprobación",
+            tarea.id
+        )));
+    }
+    exigir_revisor(c, autor.email, Some(autor.rol), &tarea)?;
+
+    let es_suya = tarea.asignado_a.as_deref() == Some(normalizar_email(autor.email).as_str());
+    let merge_directo =
+        tarea.estado == EstadoTarea::EnProduccion && es_suya && autor.rol.es_lider_o_admin();
+    match tarea.estado {
+        EstadoTarea::EnRevision => {}
+        EstadoTarea::EnProduccion if merge_directo => {}
+        EstadoTarea::Terminada => {
+            return Err(Error::Validacion(format!(
+                "La tarea {} ya está terminada",
+                tarea.id
+            )))
+        }
+        _ => {
+            return Err(Error::Validacion(format!(
+                "La tarea {} no está en revisión (está en '{}')",
+                tarea.id,
+                tarea.estado.como_texto()
+            )))
+        }
+    }
+
+    let descendientes = descendientes_activos(c, &tarea.id)?;
+    let abiertas: Vec<&str> = descendientes
+        .iter()
+        .filter(|h| h.estado != EstadoTarea::Terminada)
+        .map(|h| h.id.as_str())
+        .collect();
+    if !abiertas.is_empty() {
+        return Err(Error::Validacion(format!(
+            "No se puede mergear {}: todavía tiene subtareas sin terminar: {}",
+            tarea.id,
+            abiertas.join(", ")
+        )));
+    }
+    let mut ids_subarbol = vec![tarea.id.clone()];
+    ids_subarbol.extend(descendientes.iter().map(|d| d.id.clone()));
+    let prestamos = prestamos_vigentes_origenes(c, &ids_subarbol)?;
+    if !prestamos.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Antes de mergear {}, devuelve los cambios prestados de {}",
+            tarea.id,
+            prestamos.join(", ")
+        )));
+    }
+
+    let origen = tarea.rama_asociada.clone().ok_or_else(|| {
+        Error::Validacion(format!(
+            "La tarea {} no tiene rama en Unity VC; no hay nada que mergear",
+            tarea.id
+        ))
+    })?;
+    let destino = match &tarea.tarea_padre_id {
+        Some(pid) => db_tareas::obtener(c, pid)?.rama_asociada.ok_or_else(|| {
+            Error::Validacion(format!(
+                "La tarea padre {pid} no tiene rama en Unity VC; no se puede mergear {} hacia ella",
+                tarea.id
+            ))
+        })?,
+        None => crate::ramas::RAMA_DEV.to_string(),
+    };
+    Ok(PlanMerge {
+        tarea,
+        origen,
+        destino,
+        merge_directo,
+    })
+}
+
+/// Deja `id` como `terminada` después de un merge hecho en el servidor
+/// (`autorizar_merge`, #107), emitiendo el evento en `ops/`.
+pub fn registrar_merge_autorizado(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    destino: &str,
+    changeset: Option<i64>,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let id = id.trim();
+    let payload = PayloadAutorizarMerge {
+        id: id.to_string(),
+        destino: destino.to_string(),
+        changeset,
+        fecha_completada: fecha_de_iso_en_zona(ahora, &chrono::Local),
+    };
+    let mut ev = Evento::nuevo(
+        "autorizar_merge",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar autorizar_merge: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_autorizar_merge(tx, autor.email, Some(autor.rol), &payload)
+    })?;
+    db_tareas::listar(c)
+}
+
+/// Rechaza una revisión (`rechazar_revision`, #107): la tarea y sus subtareas
+/// vuelven a `'en producción'`, queda `motivo_rechazo` y se notifica al
+/// responsable (`tarea_rechazada`, #2). Sigue en la misma rama.
+pub fn rechazar_revision(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    motivo: &str,
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let id = id.trim();
+    let payload = PayloadRechazarRevision {
+        id: id.to_string(),
+        motivo: motivo.trim().to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "rechazar_revision",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar rechazar_revision: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_rechazar_revision(tx, autor.email, Some(autor.rol), &payload, ahora)
+    })?;
+    db_tareas::listar(c)
+}
+
+/// Quién puede autorizar o rechazar la revisión de `tarea` (#107): un Líder o
+/// Administrador y, si es una subtarea, quien tiene a cargo su tarea padre.
+/// Sin rol conocido (evento de otra máquina sin firma) se deja pasar.
+fn exigir_revisor(
+    c: &Connection,
+    autor_email: &str,
+    rol_conocido: Option<Rol>,
+    tarea: &Tarea,
+) -> Resultado<()> {
+    let Some(rol) = rol_conocido else {
+        return Ok(());
+    };
+    if rol.es_lider_o_admin() {
+        return Ok(());
+    }
+    if let Some(pid) = &tarea.tarea_padre_id {
+        let padre = db_tareas::obtener(c, pid)?;
+        if padre.asignado_a.as_deref() == Some(normalizar_email(autor_email).as_str()) {
+            return Ok(());
+        }
+    }
+    Err(Error::SinPermiso)
+}
+
 fn aplicar_crear_tarea(
     c: &Connection,
     tarea: &Tarea,
@@ -2680,6 +2951,25 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 })?;
             aplicar_cerrar_por_deteccion(c, &payload.id, &payload.fecha_completada)
         }
+        "asignar_revision" => {
+            let payload: PayloadAsignarRevision = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("asignar_revision inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_asignar_revision(c, rol, &payload, &evento.timestamp)
+        }
+        "autorizar_merge" => {
+            let payload: PayloadAutorizarMerge = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("autorizar_merge inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_autorizar_merge(c, &evento.usuario, rol, &payload)
+        }
+        "rechazar_revision" => {
+            let payload: PayloadRechazarRevision =
+                serde_json::from_value(evento.payload.clone())
+                    .map_err(|e| Error::Validacion(format!("rechazar_revision inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_rechazar_revision(c, &evento.usuario, rol, &payload, &evento.timestamp)
+        }
         otro => Err(Error::Validacion(format!(
             "tipo de evento de tarea no soportado: {otro}"
         ))),
@@ -2941,6 +3231,12 @@ fn fecha_corta_de_iso(ahora: &str) -> String {
     ahora.get(..10).unwrap_or(ahora).to_string()
 }
 
+fn fecha_de_iso_en_zona(ahora: &str, zona: &impl chrono::TimeZone) -> String {
+    chrono::DateTime::parse_from_rfc3339(ahora)
+        .map(|fecha| fecha.with_timezone(zona).date_naive().to_string())
+        .unwrap_or_else(|_| fecha_corta_de_iso(ahora))
+}
+
 fn aplicar_cambiar_estado(
     c: &Connection,
     autor_email: &str,
@@ -3065,7 +3361,13 @@ fn aplicar_cambiar_estado(
         tarea.actividad_desde = Some(ahora.to_string());
     }
     if payload.estado == EstadoTarea::Terminada {
-        tarea.fecha_completada = Some(fecha_corta_de_iso(ahora));
+        // Los eventos anteriores a #107 conservan su interpretación original UTC.
+        tarea.fecha_completada = Some(
+            payload
+                .fecha_completada
+                .clone()
+                .unwrap_or_else(|| fecha_corta_de_iso(ahora)),
+        );
     }
     db_tareas::actualizar(c, &tarea)?;
 
@@ -3758,6 +4060,153 @@ fn aplicar_eliminar_cambios_ajenos(
             tarea.ultimo_changeset_visto = Some(visto);
             db_tareas::actualizar(c, &tarea)?;
         }
+    }
+    Ok(())
+}
+
+fn aplicar_asignar_revision(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadAsignarRevision,
+    ahora: &str,
+) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::EnRevision {
+        return Err(Error::Validacion(format!(
+            "Solo se elige revisor de una tarea en revisión ({} está en '{}')",
+            tarea.id,
+            tarea.estado.como_texto()
+        )));
+    }
+    let revisor = normalizar_email(&payload.revisor);
+    let es_revisor_valido = usuarios::listar(c)?
+        .into_iter()
+        .any(|u| u.email == revisor && u.rol.es_lider_o_admin());
+    if !es_revisor_valido {
+        return Err(Error::Validacion(format!(
+            "{revisor} no es Líder ni Administrador del proyecto"
+        )));
+    }
+    if let Some(rol) = rol_conocido {
+        if !rol.es_lider_o_admin() {
+            return Err(Error::SinPermiso);
+        }
+        if tarea.lider_revision_asignado.is_some() && rol != Rol::Administrador {
+            return Err(Error::Validacion(format!(
+                "La tarea {} ya tiene revisor; solo el Administrador puede cambiarlo",
+                tarea.id
+            )));
+        }
+    }
+    if tarea.lider_revision_asignado.as_deref() == Some(revisor.as_str()) {
+        return Ok(());
+    }
+    tarea.lider_revision_asignado = Some(revisor.clone());
+    db_tareas::actualizar(c, &tarea)?;
+    emitir_si_falta(
+        c,
+        &Notificacion {
+            id: format!("noti_revasig_{}_{}_{}", tarea.id, revisor, ahora),
+            tipo: TipoNotificacion::RevisionAsignada,
+            para: revisor,
+            titulo: "Se te asignó revisar una tarea".into(),
+            cuerpo: format!("Se te asignó revisar \"{}\" ({}).", tarea.titulo, tarea.id),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id.clone()),
+            accionable: false,
+        },
+    )
+}
+
+fn aplicar_autorizar_merge(
+    c: &Connection,
+    autor_email: &str,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadAutorizarMerge,
+) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Ok(());
+    }
+    exigir_revisor(c, autor_email, rol_conocido, &tarea)?;
+    let padre = tarea.tarea_padre_id.clone();
+    tarea.estado = EstadoTarea::Terminada;
+    tarea.fecha_completada = Some(payload.fecha_completada.clone());
+    tarea.modificada = false;
+    db_tareas::actualizar(c, &tarea)?;
+    recalcular_padres(c, padre)
+}
+
+fn aplicar_rechazar_revision(
+    c: &Connection,
+    autor_email: &str,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadRechazarRevision,
+    ahora: &str,
+) -> Resultado<()> {
+    let motivo = payload.motivo.trim();
+    if motivo.is_empty() {
+        return Err(Error::Validacion("Escribe el motivo del rechazo".into()));
+    }
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::EnRevision {
+        return Err(Error::Validacion(format!(
+            "Solo se rechaza una tarea en revisión ({} está en '{}')",
+            tarea.id,
+            tarea.estado.como_texto()
+        )));
+    }
+    exigir_revisor(c, autor_email, rol_conocido, &tarea)?;
+
+    let padre = tarea.tarea_padre_id.clone();
+    tarea.estado = EstadoTarea::EnProduccion;
+    tarea.motivo_rechazo = Some(motivo.to_string());
+    db_tareas::actualizar(c, &tarea)?;
+    for mut sub in descendientes_activos(c, &tarea.id)? {
+        if sub.estado != EstadoTarea::EnProduccion {
+            sub.estado = EstadoTarea::EnProduccion;
+            db_tareas::actualizar(c, &sub)?;
+        }
+    }
+    recalcular_padres(c, padre)?;
+
+    if let Some(responsable) = tarea.asignado_a.clone() {
+        emitir_si_falta(
+            c,
+            &Notificacion {
+                id: format!("noti_rechazo_{}_{}", tarea.id, ahora),
+                tipo: TipoNotificacion::TareaRechazada,
+                para: responsable,
+                titulo: "Tu tarea fue rechazada en revisión".into(),
+                cuerpo: format!(
+                    "\"{}\" ({}) volvió a producción. Motivo: {motivo}",
+                    tarea.titulo, tarea.id
+                ),
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(tarea.id.clone()),
+                accionable: false,
+            },
+        )?;
     }
     Ok(())
 }
@@ -4888,7 +5337,7 @@ mod tests {
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_crear_editar_y_listar_tareas_por_ops() {
         use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::estado::{llave_publica_del_proyecto, AppState};
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
@@ -4919,7 +5368,7 @@ mod tests {
 
         let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // Máquina A entra de verdad a BranchBoard-Pruebas como Administrador dueño del repo.
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            entrar_como_dueno_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
             let local_a = carpeta_abierta(&estado_a).unwrap();
             let local_b = maquina_b
                 .path()
@@ -5103,7 +5552,7 @@ mod tests {
     fn entorno_real_tomar_tarea_crea_rama_cambia_workspace_y_sincroniza() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::tareas::tomar_en;
         use crate::estado::{llave_publica_del_proyecto, AppState};
@@ -5136,7 +5585,7 @@ mod tests {
             .unwrap();
 
         let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            entrar_como_dueno_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
             let local_a = carpeta_abierta(&estado_a).unwrap();
             let local_b = maquina_b
                 .path()
@@ -5265,7 +5714,7 @@ mod tests {
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_doble_toma_resuelve_sin_y_con_changesets() {
         use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
+        use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::eventos::revisar_y_cerrar_rama_perdedor;
         use crate::estado::{llave_publica_del_proyecto, AppState};
@@ -5300,7 +5749,7 @@ mod tests {
             .unwrap();
 
         let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
+            entrar_como_dueno_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
             let local_a = carpeta_abierta(&estado_a).unwrap();
             let local_b = maquina_b
                 .path()
@@ -5831,7 +6280,7 @@ mod tests {
     impl EntornoRealPrueba {
         fn nuevo(etiqueta: &str) -> Self {
             use crate::cm::Comando;
-            use crate::comandos::acceso::entrar_en;
+            use crate::comandos::acceso::entrar_como_dueno_en;
             use crate::comandos::datos::carpeta_abierta;
             use crate::estado::{llave_publica_del_proyecto, AppState};
             use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
@@ -5861,7 +6310,7 @@ mod tests {
                 .exigir_exito(&estado_a)
                 .unwrap();
 
-            if let Err(err) = entrar_en(&estado_a, datos_a.path(), &ws_ruta) {
+            if let Err(err) = entrar_como_dueno_en(&estado_a, datos_a.path(), &ws_ruta) {
                 let _ = Comando::cm()
                     .args(["workspace", "delete"])
                     .arg(ws_ruta.to_string_lossy().as_ref())
@@ -9453,5 +9902,619 @@ mod tests {
             }
             otra => panic!("BB_UI_ACCION desconocida: {otra}"),
         }
+    }
+    #[test]
+    fn fecha_de_finalizacion_conserva_el_dia_del_emisor_y_compatibilidad() {
+        let colombia = chrono::FixedOffset::west_opt(5 * 3600).unwrap();
+        let ahora = "2026-11-17T01:00:00.000Z";
+        assert_eq!(fecha_de_iso_en_zona(ahora, &colombia), "2026-11-16");
+        assert_eq!(fecha_de_iso_en_zona(ahora, &chrono::Utc), "2026-11-17");
+        let anterior: PayloadCambiarEstado = serde_json::from_value(serde_json::json!({
+            "id": "T-101", "estado": "terminada"
+        }))
+        .unwrap();
+        assert_eq!(anterior.fecha_completada, None);
+
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let admin = AutorTarea {
+            email: ADMIN,
+            rol: Rol::Administrador,
+        };
+        let tarea = crear(
+            c,
+            &e.ops,
+            &admin,
+            &datos_base("Fecha local"),
+            "2026-11-17T00:59:00.000Z",
+            "2026-11-16",
+        )
+        .unwrap();
+        let nuevo = PayloadCambiarEstado {
+            id: tarea.id.clone(),
+            estado: EstadoTarea::Terminada,
+            fecha_completada: Some(fecha_de_iso_en_zona(ahora, &colombia)),
+        };
+        let mut evento = Evento::nuevo(
+            "cambiar_estado",
+            Some(&tarea.id),
+            ADMIN,
+            serde_json::to_value(&nuevo).unwrap(),
+        );
+        evento.timestamp = ahora.into();
+        eventos::publicar(c, &e.ops, &evento, |tx| {
+            aplicar_cambiar_estado(tx, ADMIN, Some(Rol::Administrador), &nuevo, ahora).map(|_| ())
+        })
+        .unwrap();
+        assert_eq!(
+            db_tareas::obtener(c, &tarea.id)
+                .unwrap()
+                .fecha_completada
+                .as_deref(),
+            Some("2026-11-16")
+        );
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), &tarea.id)
+                .unwrap()
+                .fecha_completada
+                .as_deref(),
+            Some("2026-11-16")
+        );
+    }
+
+    #[test]
+    fn revision_elige_revisor_valida_autorizacion_rechaza_y_sincroniza() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let admin = AutorTarea {
+            email: ADMIN,
+            rol: Rol::Administrador,
+        };
+        let lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let tester = AutorTarea {
+            email: TESTER,
+            rol: Rol::Tester,
+        };
+
+        // T-101 (Líder) con T-101-1 y T-101-2; T-102 individual (Líder).
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Sistema".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![
+                    DatosSubtareaNueva {
+                        tipo: TipoTarea::UiInterfaz,
+                        titulo: "Botones".into(),
+                        detalles: String::new(),
+                    },
+                    DatosSubtareaNueva {
+                        tipo: TipoTarea::Audio,
+                        titulo: "Click".into(),
+                        detalles: String::new(),
+                    },
+                ],
+            },
+            "2026-11-15T16:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
+        crear(
+            c,
+            &e.ops,
+            &lider,
+            &datos_base("Individual"),
+            "2026-11-15T16:00:02.000Z",
+            HOY,
+        )
+        .unwrap();
+
+        // Dev toma T-101-1 y la manda a revisión: T-101 hereda a dev como responsable.
+        tomar(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-1",
+            simular_ramas_cadena,
+            "2026-11-15T16:00:03.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-1",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T16:00:04.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-1",
+            EstadoTarea::EnRevision,
+            "2026-11-15T16:00:05.000Z",
+        )
+        .unwrap();
+        assert_eq!(
+            db_tareas::obtener(c, "T-101")
+                .unwrap()
+                .asignado_a
+                .as_deref(),
+            Some(DEV)
+        );
+
+        // 1. Elegir revisor: solo Líder/Admin, solo a un Líder/Admin, solo en revisión;
+        //    con revisor puesto, solo el Administrador lo cambia.
+        let err = asignar_revision(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-1",
+            LIDER,
+            "2026-11-15T16:00:06.000Z",
+        )
+        .unwrap_err();
+        assert_eq!(err.codigo(), "sin_permiso");
+        let err = asignar_revision(
+            c,
+            &e.ops,
+            &lider,
+            "T-101-1",
+            TESTER,
+            "2026-11-15T16:00:07.000Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no es Líder ni Administrador"));
+        let err = asignar_revision(
+            c,
+            &e.ops,
+            &lider,
+            "T-101-2",
+            LIDER,
+            "2026-11-15T16:00:08.000Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("en revisión"));
+        let t = asignar_revision(
+            c,
+            &e.ops,
+            &lider,
+            "T-101-1",
+            " Lider@VirusTF.dev ",
+            "2026-11-15T16:00:09.000Z",
+        )
+        .unwrap();
+        assert_eq!(t.lider_revision_asignado.as_deref(), Some(LIDER));
+        assert!(notificaciones::de_usuario(c, LIDER)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::RevisionAsignada
+                && n.tarea_id.as_deref() == Some("T-101-1")));
+        let err = asignar_revision(
+            c,
+            &e.ops,
+            &lider,
+            "T-101-1",
+            ADMIN,
+            "2026-11-15T16:00:10.000Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("solo el Administrador"));
+        let t = asignar_revision(
+            c,
+            &e.ops,
+            &admin,
+            "T-101-1",
+            ADMIN,
+            "2026-11-15T16:00:11.000Z",
+        )
+        .unwrap();
+        assert_eq!(t.lider_revision_asignado.as_deref(), Some(ADMIN));
+
+        // 2. Plan de autorización, sin tocar el servidor.
+        //    Tester no tiene a cargo la tarea padre: sin permiso. Dev sí (subtarea → rama del padre).
+        assert_eq!(
+            plan_de_autorizacion(c, &tester, "T-101-1")
+                .unwrap_err()
+                .codigo(),
+            "sin_permiso"
+        );
+        let plan = plan_de_autorizacion(c, &dev, "T-101-1").unwrap();
+        let rama_padre = db_tareas::obtener(c, "T-101")
+            .unwrap()
+            .rama_asociada
+            .unwrap();
+        assert_eq!(plan.origen, "/main/dev/T-101-sistema/T-101-1-botones");
+        assert_eq!(plan.destino, rama_padre);
+        assert!(!plan.merge_directo);
+        //    T-101 no está en revisión y T-102 no tiene rama.
+        let err = plan_de_autorizacion(c, &lider, "T-101").unwrap_err();
+        assert!(err.to_string().contains("no está en revisión"));
+        let err = plan_de_autorizacion(c, &lider, "T-102").unwrap_err();
+        assert!(err.to_string().contains("no está en revisión"));
+        //    Líder sobre su propia tarea en producción: merge directo hacia /main/dev.
+        tomar(
+            c,
+            &e.ops,
+            &lider,
+            "T-102",
+            simular_ramas_cadena,
+            "2026-11-15T16:00:12.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &lider,
+            "T-102",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T16:00:13.000Z",
+        )
+        .unwrap();
+        let plan = plan_de_autorizacion(c, &lider, "T-102").unwrap();
+        assert!(plan.merge_directo);
+        assert_eq!(plan.destino, "/main/dev");
+        assert_eq!(plan.origen, "/main/dev/T-102-individual");
+        //    El Administrador no puede saltarse la revisión de una tarea ajena.
+        let err = plan_de_autorizacion(c, &admin, "T-102").unwrap_err();
+        assert!(err.to_string().contains("no está en revisión"));
+        //    Préstamo vigente bloquea el merge.
+        commits::insertar_prestamo(
+            c,
+            &commits::CambioPrestado {
+                id: "p7".into(),
+                tarea_id: "T-101-1".into(),
+                origen_id: "T-102".into(),
+                hash: None,
+                autor: DEV.into(),
+                fecha: HOY.into(),
+                archivos: vec!["Assets/a.cs".into()],
+                archivos_tocados: vec![],
+                quitado_en: None,
+                quitado_por: None,
+                changeset_merge: None,
+                changeset_limpio: None,
+            },
+        )
+        .unwrap();
+        let err = plan_de_autorizacion(c, &admin, "T-101-1").unwrap_err();
+        assert!(err.to_string().contains("cambios prestados de T-102"));
+        commits::quitar_prestamo(c, "p7", DEV, HOY).unwrap();
+
+        // 3. Merge hecho: T-101-1 termina y T-101 se recalcula (T-101-2 sigue por hacer).
+        let tareas = registrar_merge_autorizado(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-1",
+            &rama_padre,
+            Some(70),
+            "2026-11-15T16:00:14.000Z",
+        )
+        .unwrap();
+        let sub1 = tareas.iter().find(|t| t.id == "T-101-1").unwrap();
+        assert_eq!(sub1.estado, EstadoTarea::Terminada);
+        assert_eq!(sub1.fecha_completada.as_deref(), Some("2026-11-15"));
+        assert_eq!(
+            tareas.iter().find(|t| t.id == "T-101").unwrap().estado,
+            EstadoTarea::EnProduccion
+        );
+        let err = plan_de_autorizacion(c, &lider, "T-101-1").unwrap_err();
+        assert!(err.to_string().contains("ya está terminada"));
+
+        // 4. Rechazar: motivo obligatorio, solo en revisión, permisos; vuelve a producción con
+        //    motivo y notifica al responsable.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &lider,
+            "T-102",
+            EstadoTarea::EnRevision,
+            "2026-11-15T16:00:15.000Z",
+        )
+        .unwrap();
+        assert_eq!(
+            rechazar_revision(c, &e.ops, &dev, "T-102", "x", "2026-11-15T16:00:16.000Z")
+                .unwrap_err()
+                .codigo(),
+            "sin_permiso"
+        );
+        let err = rechazar_revision(c, &e.ops, &lider, "T-102", "  ", "2026-11-15T16:00:17.000Z")
+            .unwrap_err();
+        assert!(err.to_string().contains("motivo"));
+        let err = rechazar_revision(
+            c,
+            &e.ops,
+            &lider,
+            "T-101-1",
+            "ya terminó",
+            "2026-11-15T16:00:18.000Z",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("en revisión"));
+        let tareas = rechazar_revision(
+            c,
+            &e.ops,
+            &admin,
+            "T-102",
+            "Falta pulir",
+            "2026-11-15T16:00:19.000Z",
+        )
+        .unwrap();
+        let t102 = tareas.iter().find(|t| t.id == "T-102").unwrap();
+        assert_eq!(t102.estado, EstadoTarea::EnProduccion);
+        assert_eq!(t102.motivo_rechazo.as_deref(), Some("Falta pulir"));
+        assert!(notificaciones::de_usuario(c, LIDER)
+            .unwrap()
+            .iter()
+            .any(
+                |n| n.tipo == TipoNotificacion::TareaRechazada && n.cuerpo.contains("Falta pulir")
+            ));
+
+        //    Rechazar una tarea general baja todo su subárbol (también la subtarea ya terminada).
+        tomar(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-2",
+            simular_ramas_cadena,
+            "2026-11-15T16:00:20.000Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-2",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T16:00:21.000Z",
+        )
+        .unwrap();
+        let r = cambiar_estado(
+            c,
+            &e.ops,
+            &dev,
+            "T-101-2",
+            EstadoTarea::EnRevision,
+            "2026-11-15T16:00:22.000Z",
+        )
+        .unwrap();
+        assert_eq!(
+            r.tareas.iter().find(|t| t.id == "T-101").unwrap().estado,
+            EstadoTarea::EnRevision
+        );
+        let tareas = rechazar_revision(
+            c,
+            &e.ops,
+            &lider,
+            "T-101",
+            "Rehacer",
+            "2026-11-15T16:00:23.000Z",
+        )
+        .unwrap();
+        assert!(tareas
+            .iter()
+            .filter(|t| t.id.starts_with("T-101"))
+            .all(|t| t.estado == EstadoTarea::EnProduccion));
+        assert!(notificaciones::de_usuario(c, DEV)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::TareaRechazada && n.cuerpo.contains("Rehacer")));
+
+        // 5. Máquina B reproduce todo y queda igual (estados, revisor, motivos, notificaciones).
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        for id in ["T-101", "T-101-1", "T-101-2", "T-102"] {
+            let a = db_tareas::obtener(c, id).unwrap();
+            let b = db_tareas::obtener(e.db_b.conexion(), id).unwrap();
+            assert_eq!(a, b, "{id} distinta en B");
+        }
+        let en_b = notificaciones::de_usuario(e.db_b.conexion(), LIDER).unwrap();
+        assert!(en_b
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::RevisionAsignada));
+        assert!(en_b
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::TareaRechazada));
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_revision_autorizar_merge_y_rechazar() {
+        use crate::cm::lectura::rama_actual_workspace;
+        use crate::cm::Comando;
+        use crate::comandos::tareas::{
+            asignar_revision_en, autorizar_merge_en, cambiar_estado_en, rechazar_revision_en,
+            tomar_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("107", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 107",
+                &["Sub A 107", "Sub B 107"],
+            );
+            let padre_id = grupo[0].id.clone();
+            let sub_a = grupo[1].id.clone();
+            let sub_b = grupo[2].id.clone();
+            let general = env
+                .crear_tarea(&admin_email, Rol::Administrador, "General 107")
+                .id;
+
+            // 1) Tareas pequeñas: Sub A con un check-in real va a revisión, se elige revisor y
+            //    se autoriza: merge por la API hacia la rama del padre, sin tocar el workspace.
+            let tomadas = tomar_en(&env.estado_a, &sub_a).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+            let rama_a = tomadas[1].rama_asociada.clone().unwrap();
+            env.commit_real("a107.txt", "trabajo de A", "Sub A 107: archivo");
+            cambiar_estado_en(&env.estado_a, &sub_a, EstadoTarea::EnRevision).unwrap();
+
+            let con_revisor = asignar_revision_en(&env.estado_a, &sub_a, &admin_email).unwrap();
+            assert_eq!(
+                con_revisor.lider_revision_asignado.as_deref(),
+                Some(admin_email.as_str())
+            );
+
+            let r = autorizar_merge_en(&env.estado_a, &sub_a).unwrap();
+            assert!(r.conflicto.is_none(), "{:?}", r.conflicto);
+            let sub_a_final = r.tareas.iter().find(|t| t.id == sub_a).unwrap();
+            assert_eq!(sub_a_final.estado, EstadoTarea::Terminada);
+            assert!(sub_a_final.fecha_completada.is_some());
+            let link = Comando::cm()
+                .args(["find", "merge"])
+                .arg(format!(
+                    "where srcbranch='br:{rama_a}' on repository '{}'",
+                    env.repo_cm
+                ))
+                .args(["--format={type} {dstbranch}", "--nototal"])
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            assert!(
+                link.contains(&format!("merge br:{rama_padre}")),
+                "sin merge link: {link}"
+            );
+            assert_eq!(
+                rama_actual_workspace(&env.estado_a, &env.ws_ruta)
+                    .unwrap()
+                    .rama,
+                rama_a,
+                "el merge fue del lado del servidor: el workspace no se movió"
+            );
+            assert!(autorizar_merge_en(&env.estado_a, &sub_a)
+                .unwrap_err()
+                .to_string()
+                .contains("ya está terminada"));
+
+            // 2) Conflicto: Sub B y la rama del padre cambian el mismo archivo. El reporte lo
+            //    detecta, no se intenta el merge y la tarea sigue en revisión.
+            let tomadas_b = tomar_en(&env.estado_a, &sub_b).unwrap();
+            env.registrar_ramas_de(&tomadas_b);
+            env.commit_real("a107.txt", "version de B", "Sub B 107: cambia a107");
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            env.commit_real("a107.txt", "version del padre", "Padre 107: cambia a107");
+            cambiar_estado_en(&env.estado_a, &sub_b, EstadoTarea::EnRevision).unwrap();
+
+            let r = autorizar_merge_en(&env.estado_a, &sub_b).unwrap();
+            let conflicto = r.conflicto.expect("debía haber conflicto");
+            assert_eq!(conflicto.archivos, vec!["/a107.txt".to_string()]);
+            assert_eq!(conflicto.destino, rama_padre);
+            assert_eq!(
+                r.tareas.iter().find(|t| t.id == sub_b).unwrap().estado,
+                EstadoTarea::EnRevision
+            );
+
+            //    Se manda a corregir: rechazar con motivo → en producción + notificación.
+            let tareas = rechazar_revision_en(
+                &env.estado_a,
+                &sub_b,
+                "fallo el merge por conflicto en a107.txt",
+            )
+            .unwrap();
+            let sub_b_final = tareas.iter().find(|t| t.id == sub_b).unwrap();
+            assert_eq!(sub_b_final.estado, EstadoTarea::EnProduccion);
+            assert!(sub_b_final
+                .motivo_rechazo
+                .as_deref()
+                .unwrap()
+                .contains("conflicto"));
+            //    Un Desarrollador que no tiene a cargo el padre no puede autorizar.
+            let dev = AutorTarea {
+                email: DEV,
+                rol: Rol::Desarrollador,
+            };
+            env.estado_a
+                .con_db(|db| {
+                    assert_eq!(
+                        plan_de_autorizacion(db.conexion(), &dev, &sub_b)
+                            .unwrap_err()
+                            .codigo(),
+                        "sin_permiso"
+                    );
+                    Ok(())
+                })
+                .unwrap();
+
+            // 3) Tareas grandes, merge directo: el Administrador trabaja su propia tarea
+            //    general en producción y la autoriza sin pasar por revisión → merge a /main/dev.
+            let tomada = tomar_en(&env.estado_a, &general).unwrap();
+            env.registrar_ramas_de(&tomada);
+            env.commit_real("g107.txt", "general", "General 107: archivo");
+            cambiar_estado_en(&env.estado_a, &general, EstadoTarea::EnProduccion).unwrap();
+            let r = autorizar_merge_en(&env.estado_a, &general).unwrap();
+            assert!(r.conflicto.is_none(), "{:?}", r.conflicto);
+            assert_eq!(
+                r.tareas.iter().find(|t| t.id == general).unwrap().estado,
+                EstadoTarea::Terminada
+            );
+            let en_dev = Comando::cm()
+                .args(["find", "changeset"])
+                .arg(format!(
+                    "where branch='/main/dev' on repository '{}'",
+                    env.repo_cm
+                ))
+                .args(["--format={changesetid} {comment}", "--nototal"])
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let ultimo = en_dev
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap()
+                .to_string();
+            assert!(ultimo.contains("General 107"), "{ultimo}");
+            //    Se borra ese changeset de /main/dev para dejar el repo como estaba (se puede
+            //    porque el workspace sigue en la rama de la tarea, no en /main/dev).
+            let cs = ultimo.split_whitespace().next().unwrap();
+            Comando::cm()
+                .args(["changeset", "delete"])
+                .arg(format!("cs:{cs}@{}", env.repo_cm))
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            // 4) Máquina B sincroniza por OneDrive y queda igual.
+            env.sincronizar_b();
+            for id in [&padre_id, &sub_a, &sub_b, &general] {
+                let a = env
+                    .estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), id))
+                    .unwrap();
+                let b = db_tareas::obtener(env.db_b.conexion(), id).unwrap();
+                assert_eq!(a.estado, b.estado, "{id}");
+                assert_eq!(a.motivo_rechazo, b.motivo_rechazo, "{id}");
+                assert_eq!(a.lider_revision_asignado, b.lider_revision_asignado, "{id}");
+            }
+            let en_b = notificaciones::de_usuario(env.db_b.conexion(), &admin_email).unwrap();
+            assert!(en_b
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::RevisionAsignada));
+            assert!(en_b
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::TareaRechazada));
+        });
     }
 }

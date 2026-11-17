@@ -95,7 +95,10 @@ fn candidatos_windows() -> Vec<PathBuf> {
     let mut rutas = vec![PathBuf::from(
         r"C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe",
     )];
-    if let Some(pf) = instalacion::desde_env("ProgramFiles", &["Cloudflare", "Cloudflare WARP", "warp-cli.exe"]) {
+    if let Some(pf) = instalacion::desde_env(
+        "ProgramFiles",
+        &["Cloudflare", "Cloudflare WARP", "warp-cli.exe"],
+    ) {
         if !rutas.contains(&pf) {
             rutas.push(pf);
         }
@@ -126,9 +129,7 @@ fn clasificar_estado(texto: &str, detalle: Option<String>) -> EstadoWarp {
         (EstadoConexionWarp::Conectado, true, false)
     } else if normalizado == "connecting" || normalizado.contains("statusupdate:connecting") {
         (EstadoConexionWarp::Conectando, false, true)
-    } else if normalizado == "disconnected"
-        || normalizado.contains("statusupdate:disconnected")
-    {
+    } else if normalizado == "disconnected" || normalizado.contains("statusupdate:disconnected") {
         (EstadoConexionWarp::Desconectado, false, false)
     } else if normalizado.contains("registrationmissing") {
         (EstadoConexionWarp::SinRegistro, false, false)
@@ -301,12 +302,10 @@ pub fn instalar_warp(estado: &AppState) -> Resultado<ResultadoInstalacionWarp> {
         });
     }
 
-    let resultado = instalacion::instalar_con_winget(
-        estado,
-        ID_PAQUETE_WARP,
-        URL_DESCARGA_WARP,
-        || resolver_warp_cli().is_some(),
-    )?;
+    let resultado =
+        instalacion::instalar_con_winget(estado, ID_PAQUETE_WARP, URL_DESCARGA_WARP, || {
+            resolver_warp_cli().is_some()
+        })?;
     let actual = estado_warp(estado)?;
 
     match resultado {
@@ -331,8 +330,10 @@ mod tests {
 
     #[test]
     fn interpreta_json_de_warp_cli() {
-        let conectado =
-            interpretar_estado_warp("{\n  \"status\": \"Connected\",\n  \"reason\": \"NetworkHealthy\"\n}", "");
+        let conectado = interpretar_estado_warp(
+            "{\n  \"status\": \"Connected\",\n  \"reason\": \"NetworkHealthy\"\n}",
+            "",
+        );
         assert!(conectado.instalado);
         assert!(conectado.conectado);
         assert!(!conectado.conectando);
