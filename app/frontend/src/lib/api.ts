@@ -1085,6 +1085,18 @@ export const api = {
         })),
     ),
 
+  /**
+   * Abre en el navegador la página de proyectos de la organización en el Unity Cloud Dashboard,
+   * para crear ahí un proyecto padre nuevo (`cm` no puede, #205). Responde la URL abierta. En el
+   * navegador abre la portada del Dashboard en otra pestaña.
+   */
+  abrirUnityCloud: (org?: string) =>
+    llamar<string>('abrir_unity_cloud', { org: org ?? null }, () => {
+      const url = 'https://cloud.unity.com/home';
+      window.open(url, '_blank', 'noopener');
+      return url;
+    }),
+
   /** Escucha el progreso incremental del clonado (`clonado-progreso`, #125). */
   alProgresoClonado: (fn: (p: ProgresoClonado) => void): Promise<() => void> =>
     enTauri()
