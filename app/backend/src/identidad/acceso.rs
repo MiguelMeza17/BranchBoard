@@ -12,13 +12,14 @@
 //! existan los eventos de `ops/` (#91 a #93), "tener datos" es tener ahí la base y
 //! la llave pública del Administrador.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Serialize;
 
 use crate::db::configuracion::{self, CLAVE_NOMBRE_PROYECTO};
 use crate::db::usuarios::{self, nombre_desde_email, Usuario};
-use crate::db::{carpeta_proyecto, Db, NOMBRE_DB};
+use crate::db::{carpeta_proyecto, vistos, Db, NOMBRE_DB};
 use crate::error::{Error, Resultado};
 use crate::identidad::firmas::{self, verificar_usuarios, Verificacion};
 use crate::identidad::llaves;
@@ -73,6 +74,8 @@ pub enum Entrada {
         rol_verificado: bool,
         proyecto: String,
         configurado_ahora: bool,
+        #[serde(default)]
+        vistos: BTreeMap<String, String>,
     },
     /// Registrado, pero el Administrador todavía no confirma su rol.
     Pendiente { email: String, proyecto: String },
@@ -114,6 +117,7 @@ pub fn entrar(
                 rol_verificado: true,
                 proyecto,
                 configurado_ahora: true,
+                vistos: BTreeMap::new(),
             },
             Some(db),
         ));
@@ -123,6 +127,7 @@ pub fn entrar(
     let fila = verificar_usuarios(&publica, usuarios::listar(db.conexion())?)
         .into_iter()
         .find(|u| u.usuario.email == email);
+    let vistos_usuario = vistos::listar_vistos(db.conexion(), &email)?;
     let entrada = match fila {
         None => Entrada::NoRegistrado { email, proyecto },
         Some(v) => match v.rol_efectivo {
@@ -133,6 +138,7 @@ pub fn entrar(
                 rol_verificado: v.verificacion == Verificacion::Verificado,
                 proyecto,
                 configurado_ahora: false,
+                vistos: vistos_usuario,
             },
         },
     };
@@ -269,6 +275,7 @@ mod tests {
                 rol_verificado: true,
                 proyecto: "BranchBoard-Pruebas".into(),
                 configurado_ahora: true,
+                vistos: BTreeMap::new(),
             }
         );
         let db = db.unwrap();

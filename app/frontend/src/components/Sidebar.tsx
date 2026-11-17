@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Modal } from './Modal';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
+import { api, enTauri, mensajeDeError } from '../lib/api';
 import * as fx from '../data/fixtures';
 import { Icono } from './Icono';
 import logoB from '../assets/logo-b.png';
@@ -175,7 +176,11 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
   const entrarAProyecto = useStore((s) => s.entrarAProyecto);
   const cerrarSesion = useStore((s) => s.cerrarSesion);
+  const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
   const workspaces = useStore((s) => s.workspaces);
+  const proyectosServidor = useStore((s) => s.proyectosServidor);
+  const cargarWorkspacesYProyectos = useStore((s) => s.cargarWorkspacesYProyectos);
+  const setEmail = useStore((s) => s.setEmail);
   const [confirmarCerrarSesion, setConfirmarCerrarSesion] = useState(false);
   // "Nuevo proyecto": traer uno local de Unity VC que aún no usa BranchBoard, o crear uno nuevo.
   const [nuevoProyecto, setNuevoProyecto] = useState(false);
@@ -183,7 +188,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   // clona; si ya usa BranchBoard, llegan también sus tareas.
   const [cargarProyecto, setCargarProyecto] = useState(false);
   const irAClonar = useStore((s) => s.irAClonar);
-  const delServidorSinClonar = fx.proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
+  const delServidorSinClonar = proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
   const sinBranchBoard = workspaces.filter((w) => !w.tiene_db_branchboard);
   const setWorkspaces = useStore((s) => s.setWorkspaces);
   const setRolActual = useStore((s) => s.setRolActual);
@@ -194,6 +199,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
     setNombreNuevo('');
   };
   const proyectoActual = useStore((s) => s.proyectoActual);
+  const workspaceActual = useStore((s) => s.workspaceActual);
   const showToast = useStore((s) => s.showToast);
   const [menuProyecto, setMenuProyecto] = useState(false);
   const [confirmarSalir, setConfirmarSalir] = useState(false);
@@ -290,7 +296,13 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
         <div className="flex items-center">
         <button
           type="button"
-          onClick={() => setMenuProyecto((v) => !v)}
+          onClick={() =>
+            setMenuProyecto((v) => {
+              const abrir = !v;
+              if (abrir && enTauri()) void cargarWorkspacesYProyectos();
+              return abrir;
+            })
+          }
           title="Tus proyectos o salir"
           aria-expanded={menuProyecto}
           className={`flex min-w-0 items-center gap-2.5 rounded-xl py-1.5 text-left transition ${
@@ -336,7 +348,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
             {workspaces
               .filter((ws) => ws.tiene_db_branchboard)
               .map((ws) => {
-                const actual = ws.nombre === proyectoActual;
+                const actual = ws.nombre === workspaceActual;
                 return (
                   <button
                     key={ws.repo}
@@ -345,10 +357,42 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                     className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition ${
                       actual ? 'cursor-default bg-primary-soft text-text' : 'text-text hover:bg-surface-3'
                     }`}
-                    onClick={() => {
+                    onClick={async () => {
                       setMenuProyecto(false);
-                      entrarAProyecto(ws.nombre);
-                      showToast(`Cambiaste al proyecto ${ws.nombre}`);
+                      if (!enTauri()) {
+                        entrarAProyecto(ws.nombre);
+                        showToast(`Cambiaste al proyecto ${ws.nombre}`);
+                        return;
+                      }
+                      try {
+                        const res = await api.entrarAProyecto(ws.ruta, () => ({
+                          estado: 'dentro',
+                          email: yoEmail,
+                          rol: 'Administrador',
+                          rol_verificado: true,
+                          proyecto: ws.nombre,
+                          configurado_ahora: false,
+                        }));
+                        if (res.estado !== 'dentro') {
+                          cambiarDeProyecto();
+                          showToast(`Revisa el acceso para ${ws.nombre}`, 'info');
+                          return;
+                        }
+                        const carpeta = await api.carpetaCompartida(
+                          () => useStore.getState().carpetasCompartidas[ws.nombre] ?? null
+                        );
+                        if (!carpeta) {
+                          cambiarDeProyecto();
+                          showToast(`Configura la carpeta compartida para ${ws.nombre}`, 'info');
+                          return;
+                        }
+                        setEmail(res.email);
+                        setRolActual(res.rol);
+                        entrarAProyecto(res.proyecto, ws.nombre);
+                        showToast(`Cambiaste al proyecto ${res.proyecto}`);
+                      } catch (e) {
+                        showToast(mensajeDeError(e), 'danger');
+                      }
                     }}
                   >
                     <span className="min-w-0 flex-1">
@@ -364,6 +408,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
               onClick={() => {
                 setMenuProyecto(false);
+                if (enTauri()) void cargarWorkspacesYProyectos();
                 setCargarProyecto(true);
               }}
             >
@@ -380,6 +425,16 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               <Icono nombre="mas" className="h-4 w-4" /> Nuevo proyecto
             </button>
             <div className="my-1 border-t border-border" />
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                void reconectarUnityVc();
+              }}
+            >
+              Reconectar con Unity VC
+            </button>
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text transition hover:bg-surface-3"
@@ -429,7 +484,8 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
       {/* Papelera y Ajustes, abajo y separados del resto. */}
       <div className={`space-y-0.5 border-t border-border py-2 ${colapsado ? 'px-2' : 'px-3'}`}>{ABAJO.map(renderItem)}</div>
 
-      {!colapsado && (
+      {!colapsado && !enTauri() && (
+        // Solo en el navegador: en la app de escritorio los datos son los del proyecto.
         <div className="border-t border-border px-4 py-3 text-[11px] text-faint">
           Mockup UI · datos en memoria
         </div>
@@ -453,7 +509,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                 onClick={() => {
                   setCargarProyecto(false);
                   // Va al acceso, paso "Clonar": se elige la carpeta y se descarga el workspace.
-                  irAClonar(p.nombre);
+                  irAClonar(p.nombre, p.repo);
                 }}
               >
                 <span className="min-w-0 flex-1">
@@ -567,7 +623,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="btn-danger btn-sm"
               onClick={() => {
                 setConfirmarCerrarSesion(false);
-                cerrarSesion();
+                void cerrarSesion();
               }}
             >
               Cerrar sesión

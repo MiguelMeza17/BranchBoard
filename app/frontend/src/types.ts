@@ -247,3 +247,50 @@ export interface Backup {
   /** Si se guardó al restaurar otra copia: de qué copia se cambió. */
   nota?: string;
 }
+
+export interface ProyeccionSprint {
+  pendiente: number;
+  intercepto: number;
+  dia_cierre_x: number | null;
+  fecha_cierre_estimada: string | null;
+  a_tiempo: boolean;
+  tiene_avance: boolean;
+}
+
+export interface AvanceSprint {
+  sprint_id: string;
+  nombre: string;
+  cerrado: boolean;
+  por_empezar: boolean;
+  total_tareas: number;
+  terminadas: number;
+  restantes_actuales: number;
+  dias: string[];
+  restantes_por_dia: number[];
+  linea_ideal: number[];
+  proyeccion: ProyeccionSprint | null;
+}
+
+export interface RitmoBacklog {
+  entraron_4_semanas: number;
+  salieron_4_semanas: number;
+  entran_por_semana: number;
+  salen_por_semana: number;
+  creciendo: boolean;
+}
+
+export interface AvanceBacklog {
+  id: string;
+  nombre: string;
+  es_general: boolean;
+  total_tareas: number;
+  terminadas: number;
+  restantes_actuales: number;
+  terminado: boolean;
+  fecha_ultimo_cierre: string | null;
+  dias: string[];
+  restantes_por_dia: number[];
+  ritmo: RitmoBacklog;
+  dias_faltan_estimados: number | null;
+  fecha_cierre_estimada: string | null;
+}

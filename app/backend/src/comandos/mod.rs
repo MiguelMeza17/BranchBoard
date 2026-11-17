@@ -3,9 +3,17 @@
 
 pub mod acceso;
 pub mod actualizaciones;
+pub mod chat;
+pub mod cm;
 pub mod datos;
+pub mod documentos;
 pub mod eventos;
 pub mod identidad;
+pub mod notificaciones;
+pub mod proyecto;
 pub mod sistema;
+pub mod sprints;
 pub mod tareas;
 pub mod usuarios;
+pub mod vistos;
+pub mod warp;

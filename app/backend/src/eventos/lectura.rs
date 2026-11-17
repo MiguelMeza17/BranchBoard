@@ -27,9 +27,14 @@ use serde::Serialize;
 
 use super::snapshot::{self, es_snapshot};
 use super::{marcar_aplicado, ya_aplicado, Evento};
+use crate::chat;
+use crate::documentos;
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo;
 use crate::modelo::Rol;
+use crate::notificaciones;
+use crate::proyecto;
+use crate::sprints;
 use crate::tareas::{self, InfoDobleToma};
 
 /// Cuánto puede adelantarse el reloj de otra máquina antes de desconfiar.
@@ -298,6 +303,41 @@ pub fn aplicar_evento(
         }
         None if tareas::TIPOS.contains(&evento.tipo.as_str()) => {
             match tareas::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if sprints::TIPOS.contains(&evento.tipo.as_str()) => {
+            match sprints::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if notificaciones::TIPOS.contains(&evento.tipo.as_str()) => {
+            match notificaciones::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if chat::TIPOS.contains(&evento.tipo.as_str()) => {
+            match chat::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if documentos::TIPOS.contains(&evento.tipo.as_str()) => {
+            match documentos::aplicar_evento(c, publica_admin, None, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
+        None if proyecto::TIPOS.contains(&evento.tipo.as_str()) => {
+            match proyecto::aplicar_evento(c, publica_admin, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),
                 Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
                 Err(e) => Err(e),

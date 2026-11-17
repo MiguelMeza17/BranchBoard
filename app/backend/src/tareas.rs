@@ -14,13 +14,14 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::db::commits;
 use crate::db::ediciones;
-use crate::db::notificaciones::{self, Notificacion};
+use crate::db::notificaciones::Notificacion;
 use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
+use crate::notificaciones::{emitir_a_roles_si_falta, emitir_si_falta};
 use crate::ramas::TareaDeCadena;
 use crate::servidor::Rama;
 
@@ -39,8 +40,19 @@ pub const TIPOS: &[&str] = &[
     "aprobar_tareas",
     "editar_y_aprobar_tarea",
     "advertir_tarea_pendiente",
+    "proponer_edicion",
+    "aprobar_modificacion",
+    "aprobar_modificaciones",
+    "rechazar_modificacion",
     "eliminar_tarea",
     "eliminar_definitivamente",
+    "hacer_checkin",
+    "crear_en_espera",
+    "quitar_en_espera",
+    "crear_rama_desde_espera",
+    "traer_cambios",
+    "devolver_cambios_prestados",
+    "eliminar_cambios_ajenos",
     "tarea_cerrada_por_deteccion",
     "asignar_revision",
     "autorizar_merge",
@@ -237,6 +249,25 @@ pub struct PayloadAdvertirTarea {
     pub mensaje: String,
 }
 
+/// `payload` de `proponer_edicion` (#102).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadProponerEdicion {
+    pub id: String,
+    pub edicion_id: String,
+    pub titulo: String,
+    pub detalles: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motivo: Option<String>,
+    pub fecha: String,
+}
+
+/// Respuesta de `proponer_edicion` con la tarea ya actualizada y la fila pendiente (#102).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResultadoProponerEdicion {
+    pub tarea: Tarea,
+    pub edicion: ediciones::EdicionPendiente,
+}
+
 /// `payload` de `eliminar_tarea` (#103).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PayloadEliminarTarea {
@@ -249,6 +280,111 @@ pub struct PayloadEliminarTarea {
 pub struct PayloadTareaCerradaDeteccion {
     pub id: String,
     pub fecha_completada: String,
+}
+
+/// Datos para registrar un check-in ejecutado desde BranchBoard (#105).
+#[derive(Debug, Clone)]
+pub struct DatosCheckin<'a> {
+    pub tarea_id: &'a str,
+    pub changeset: i64,
+    pub titulo: &'a str,
+    pub descripcion: &'a str,
+    pub tipo: TipoTarea,
+}
+
+/// `payload` de `hacer_checkin` (#105).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadHacerCheckin {
+    pub commit: commits::Commit,
+    pub changeset: i64,
+}
+
+/// Respuesta de `cambios_pendientes` con guardia de rama del workspace (#105).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendientesRama {
+    pub rama_actual: String,
+    pub en_rama_esperada: bool,
+    pub archivos: Vec<String>,
+}
+
+/// Datos para convertir una subtarea "En espera" en subtarea con rama propia (#106).
+#[derive(Debug, Clone)]
+pub struct DatosRamaDesdeEspera<'a> {
+    pub espera_id: &'a str,
+    pub titulo: &'a str,
+    pub detalles: &'a str,
+    pub tipo: TipoTarea,
+    pub asignado_a: &'a str,
+    pub rama: &'a str,
+    pub ultimo_changeset_visto: i64,
+}
+
+/// `payload` de `crear_rama_desde_espera` (#106).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadCrearRamaDesdeEspera {
+    pub id: String,
+    pub titulo: String,
+    pub detalles: String,
+    pub tipo: TipoTarea,
+    pub asignado_a: String,
+    pub rama: String,
+    pub ultimo_changeset_visto: i64,
+}
+
+/// Ramas resueltas al validar un préstamo `traer_cambios` (#108).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DestinoYOrigenPrestamo {
+    pub destino_id: String,
+    pub origen_id: String,
+    pub rama_destino: String,
+    pub rama_origen: String,
+}
+
+/// Datos para registrar un préstamo `traer_cambios` en `ops/` (#108).
+#[derive(Debug, Clone)]
+pub struct DatosTraerCambios<'a> {
+    pub destino_id: &'a str,
+    pub origen_id: &'a str,
+    pub hash: Option<&'a str>,
+    pub changeset_merge: i64,
+    pub archivos: Vec<String>,
+}
+
+/// `payload` de `traer_cambios` (#108).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadTraerCambios {
+    pub prestamo: commits::CambioPrestado,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ultimo_changeset_visto: Option<i64>,
+}
+
+/// `payload` de `devolver_cambios_prestados` (#108).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadDevolverCambios {
+    pub prestamo_id: String,
+    pub quitado_en: String,
+    pub quitado_por: String,
+}
+
+/// `payload` de `eliminar_cambios_ajenos` (#109).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadEliminarCambiosAjenos {
+    pub prestamo_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changeset_limpio: Option<i64>,
+}
+
+/// Alerta en pantalla cuando el workspace está en `main`, `dev` o una rama que no
+/// pertenece al usuario y tiene cambios significativos (#111). Solo avisa; nunca deshace.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AlertaRamaAjena {
+    pub rama_actual: String,
+    pub tarea_ajena_id: Option<String>,
+    pub dueno_rama: Option<String>,
+    pub rama_sugerida: Option<String>,
+    pub tarea_sugerida_id: Option<String>,
+    pub archivos: Vec<String>,
+    pub mensaje: String,
 }
 
 /// `payload` de `asignar_revision` (#107).
@@ -428,7 +564,9 @@ pub fn crear(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| aplicar_crear_tarea(tx, &nueva))?;
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_crear_tarea(tx, &nueva, ahora, true)
+    })?;
     db_tareas::obtener(c, &nueva.id)
 }
 
@@ -505,7 +643,7 @@ pub fn crear_con_subtareas(
     ev.timestamp = ahora.to_string();
 
     eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_crear_tarea_con_subtareas(tx, &payload)
+        aplicar_crear_tarea_con_subtareas(tx, &payload, ahora)
     })?;
 
     let mut creadas = Vec::with_capacity(1 + subtareas.len());
@@ -699,7 +837,7 @@ pub fn registrar_toma(
     ev.timestamp = ahora.to_string();
 
     eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_tomar_tarea(tx, autor.email, Some(autor.rol), &payload)
+        aplicar_tomar_tarea(tx, autor.email, Some(autor.rol), &payload, ahora)
     })?;
 
     cadena
@@ -899,16 +1037,29 @@ pub fn desasignar(
     db_tareas::obtener(c, &tarea.id)
 }
 
-fn prestamos_vigentes_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+fn origenes_prestamos_filtrados(
+    c: &Connection,
+    ids: &[String],
+    solo_tocados: bool,
+) -> Resultado<Vec<String>> {
     let mut origenes = Vec::new();
     for tid in ids {
         for p in commits::prestamos_vigentes(c, tid)? {
-            if !origenes.contains(&p.origen_id) {
+            if (!solo_tocados || !p.archivos_tocados.is_empty()) && !origenes.contains(&p.origen_id)
+            {
                 origenes.push(p.origen_id);
             }
         }
     }
     Ok(origenes)
+}
+
+fn prestamos_vigentes_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+    origenes_prestamos_filtrados(c, ids, false)
+}
+
+fn prestamos_con_tocados_origenes(c: &Connection, ids: &[String]) -> Resultado<Vec<String>> {
+    origenes_prestamos_filtrados(c, ids, true)
 }
 
 /// Cambia el estado de la tarea `id` (`cambiar_estado`, #99) aplicando todas las
@@ -1152,6 +1303,136 @@ pub fn advertir_pendiente(
     Ok(())
 }
 
+/// Ediciones pendientes registradas en la base local (#102).
+pub fn listar_ediciones_pendientes(c: &Connection) -> Resultado<Vec<ediciones::EdicionPendiente>> {
+    ediciones::listar(c)
+}
+
+/// Cualquier rol edita título y/o detalles en `'por hacer'` (`proponer_edicion`, #102).
+/// Aplica de inmediato en `tareas`, suma si ya existía fila pendiente y notifica a Líderes/Admin.
+#[allow(clippy::too_many_arguments)]
+pub fn proponer_edicion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    titulo: &str,
+    detalles: &str,
+    motivo: Option<&str>,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<ResultadoProponerEdicion> {
+    let id = id.trim();
+    let payload = PayloadProponerEdicion {
+        id: id.to_string(),
+        edicion_id: format!("EP-{id}-{ahora}"),
+        titulo: titulo.to_string(),
+        detalles: detalles.to_string(),
+        motivo: limpiar_opcional(motivo.map(str::to_string)),
+        fecha: hoy.to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        "proponer_edicion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar proponer_edicion: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_proponer_edicion(tx, &ev.usuario, &payload, ahora)
+    })?;
+    Ok(ResultadoProponerEdicion {
+        tarea: db_tareas::obtener(c, id)?,
+        edicion: ediciones::de_tarea(c, id)?
+            .ok_or_else(|| Error::Interno("No se encontró la edición pendiente guardada".into()))?,
+    })
+}
+
+/// Líder/Admin confirma la edición pendiente de `id` (`aprobar_modificacion`, #102).
+pub fn aprobar_modificacion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "aprobar_modificacion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar aprobar_modificacion: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_aprobar_modificaciones(tx, Some(autor.rol), std::slice::from_ref(&payload.id))
+    })?;
+    db_tareas::obtener(c, id)
+}
+
+/// Líder/Admin confirma varias ediciones pendientes en una operación (`aprobar_modificaciones`, #102).
+pub fn aprobar_modificaciones(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    ids: &[String],
+    ahora: &str,
+) -> Resultado<Vec<Tarea>> {
+    let limpias: Vec<String> = ids
+        .iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    if limpias.is_empty() {
+        return Err(Error::Validacion(
+            "Selecciona al menos una edición para aprobar".into(),
+        ));
+    }
+    let payload = PayloadAprobarTareas { ids: limpias };
+    let mut ev = Evento::nuevo(
+        "aprobar_modificaciones",
+        payload.ids.first().map(String::as_str),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar aprobar_modificaciones: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_aprobar_modificaciones(tx, Some(autor.rol), &payload.ids)
+    })?;
+    db_tareas::listar(c)
+}
+
+/// Líder/Admin rechaza la edición pendiente de `id` y restaura sus valores anteriores (#102).
+pub fn rechazar_modificacion(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let id = id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "rechazar_modificacion",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!("no se pudo serializar rechazar_modificacion: {e}"))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_rechazar_modificacion(tx, Some(autor.rol), &payload.id)
+    })?;
+    db_tareas::obtener(c, id)
+}
+
 /// Envía una tarea a la Papelera con cascada sobre sus subtareas activas (#103).
 /// Solo Líder o Administrador. Limpia `pendiente_aprobacion` y ediciones pendientes,
 /// y emite notificación `tarea_eliminada` (#13) al creador de cada tarea afectada.
@@ -1273,6 +1554,851 @@ pub fn cerrar_por_deteccion(
         aplicar_cerrar_por_deteccion(tx, id, fecha_completada)
     })?;
     db_tareas::obtener(c, id)
+}
+
+/// Verifica que `rama` corresponda a una tarea elegible para `hacer_checkin`
+/// (existe, no eliminada ni terminada, sin subtareas activas y asignada al autor, #105).
+pub fn tarea_para_checkin(c: &Connection, autor_email: &str, rama: &str) -> Resultado<Tarea> {
+    let limpia = rama.trim().trim_end_matches('/');
+    if limpia.is_empty() {
+        return Err(Error::Validacion("Indica la rama de la tarea".into()));
+    }
+    let tarea = db_tareas::listar(c)?
+        .into_iter()
+        .find(|t| {
+            !t.eliminada
+                && t.rama_asociada
+                    .as_deref()
+                    .map(|r| r.trim_end_matches('/').eq_ignore_ascii_case(limpia))
+                    .unwrap_or(false)
+        })
+        .ok_or_else(|| {
+            Error::NoEncontrado(format!("No hay ninguna tarea activa en la rama {limpia}"))
+        })?;
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if !descendientes_activos(c, &tarea.id)?.is_empty() {
+        return Err(Error::Validacion(
+            "Esta rama tiene subtareas: no hagas check-in en el padre, crea una rama".into(),
+        ));
+    }
+    let autor = normalizar_email(autor_email);
+    let asignado = tarea.asignado_a.as_deref().map(normalizar_email);
+    if asignado.as_deref() != Some(autor.as_str()) {
+        return Err(Error::SinPermiso);
+    }
+    Ok(tarea)
+}
+
+/// Resuelve la rama asociada de `id` para cambiar el workspace desde la guardia (#105).
+pub fn rama_para_cambiar(c: &Connection, id: &str) -> Resultado<String> {
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    tarea
+        .rama_asociada
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asignada".into()))
+}
+
+/// Valida tipo y da formato `título\n\ndescripción` para `cm checkin` (#105).
+pub fn armar_comentario_checkin(
+    titulo: &str,
+    descripcion: &str,
+    tipo: TipoTarea,
+) -> Resultado<String> {
+    validar_tipo_creacion(tipo)?;
+    let titulo = titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion(
+            "El título del check-in es obligatorio".into(),
+        ));
+    }
+    let desc = descripcion.trim();
+    if desc.is_empty() {
+        Ok(titulo.to_string())
+    } else {
+        Ok(format!("{titulo}\n\n{desc}"))
+    }
+}
+
+/// Publica en `ops/` el check-in ejecutado desde BranchBoard conservando `tipo` (#105).
+pub fn registrar_checkin(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    datos: &DatosCheckin<'_>,
+    ahora: &str,
+    fecha_commit: &str,
+) -> Resultado<commits::Commit> {
+    let titulo = datos.titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion(
+            "El título del check-in es obligatorio".into(),
+        ));
+    }
+    validar_tipo_creacion(datos.tipo)?;
+    let tarea_id = datos.tarea_id.trim();
+    let commit = commits::Commit {
+        id: format!("C-{tarea_id}-{}", datos.changeset),
+        tarea_id: tarea_id.to_string(),
+        hash: datos.changeset.to_string(),
+        mensaje: titulo.to_string(),
+        descripcion: limpiar_opcional(Some(datos.descripcion.to_string())),
+        tipo: Some(datos.tipo),
+        autor: normalizar_email(autor.email),
+        fecha: fecha_commit.to_string(),
+    };
+    let payload = PayloadHacerCheckin {
+        commit: commit.clone(),
+        changeset: datos.changeset,
+    };
+    let mut ev = Evento::nuevo(
+        "hacer_checkin",
+        Some(tarea_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar hacer_checkin: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_hacer_checkin(tx, &payload))?;
+    Ok(commit)
+}
+
+/// Crea la subtarea comodín `"En espera"` (`SinDefinir`) bajo `padre_id` al detectar
+/// cambios sin check-in en una rama con subtareas (#106), publicándola en `ops/`.
+pub fn crear_en_espera(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    padre_id: &str,
+    cambios: usize,
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<Tarea> {
+    let padre = db_tareas::obtener(c, padre_id.trim())?;
+    let email = normalizar_email(autor.email);
+    let id = db_tareas::siguiente_id(c, Some(&padre.id))?;
+    let mut espera = Tarea::nueva(&id, "En espera", TipoTarea::SinDefinir, &email, hoy);
+    espera.detalles = format!(
+        "{cambios} cambio(s) sin check-in hechos directamente en la rama de {}. Crea su rama para guardarlos.",
+        padre.id
+    );
+    espera.estado = EstadoTarea::EnProduccion;
+    espera.pendiente_aprobacion = false;
+    espera.asignado_a = Some(email.clone());
+    espera.tarea_padre_id = Some(padre.id);
+    espera.sprint_id = padre.sprint_id;
+    espera.backlog_id = padre.backlog_id;
+
+    let mut ev = Evento::nuevo(
+        "crear_en_espera",
+        Some(&espera.id),
+        &email,
+        serde_json::to_value(&espera)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar crear_en_espera: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_crear_en_espera(tx, &espera))?;
+    db_tareas::obtener(c, &espera.id)
+}
+
+/// Quita la subtarea temporal `"En espera"` cuando la rama padre vuelve a quedar limpia (#106).
+pub fn quitar_en_espera(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    espera_id: &str,
+    ahora: &str,
+) -> Resultado<()> {
+    let id = espera_id.trim();
+    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let mut ev = Evento::nuevo(
+        "quitar_en_espera",
+        Some(id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar quitar_en_espera: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_quitar_en_espera(tx, &payload.id))?;
+    Ok(())
+}
+
+/// Valida datos y permisos para convertir una subtarea `"En espera"` en subtarea
+/// normal con su propia rama (`crear_rama_desde_espera`, #106).
+/// Devuelve `(espera, rama_del_padre, asignado_final)`.
+pub fn preparar_rama_desde_espera(
+    c: &Connection,
+    autor_email: &str,
+    rol: Rol,
+    espera_id: &str,
+    titulo: &str,
+    tipo: TipoTarea,
+) -> Resultado<(Tarea, String, String)> {
+    validar_tipo_creacion(tipo)?;
+    if titulo.trim().is_empty() {
+        return Err(Error::Validacion(
+            "El título de la subtarea es obligatorio".into(),
+        ));
+    }
+    let espera = db_tareas::obtener(c, espera_id.trim())?;
+    if espera.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            espera.id
+        )));
+    }
+    if espera.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(format!(
+            "La tarea {} no está En espera",
+            espera.id
+        )));
+    }
+    let padre_id = espera
+        .tarea_padre_id
+        .as_deref()
+        .ok_or_else(|| Error::Validacion("La tarea En espera no tiene padre".into()))?;
+    let padre = db_tareas::obtener(c, padre_id)?;
+    if padre.eliminada || padre.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea padre {} ya está cerrada o en la Papelera",
+            padre.id
+        )));
+    }
+    let rama_padre = padre.rama_asociada.clone().ok_or_else(|| {
+        Error::Validacion(format!(
+            "La tarea padre {} no tiene rama asociada",
+            padre.id
+        ))
+    })?;
+
+    let yo = normalizar_email(autor_email);
+    let dueno = espera
+        .asignado_a
+        .as_deref()
+        .or(padre.asignado_a.as_deref())
+        .map(normalizar_email);
+    if !rol.es_lider_o_admin() {
+        if let Some(ref d) = dueno {
+            if d != &yo {
+                return Err(Error::SinPermiso);
+            }
+        }
+    }
+    Ok((espera, rama_padre, dueno.unwrap_or(yo)))
+}
+
+/// Convierte la subtarea `"En espera"` en subtarea normal ya apuntando a su nueva rama (#106).
+pub fn convertir_espera_en_subtarea(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    datos: &DatosRamaDesdeEspera<'_>,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    let payload = PayloadCrearRamaDesdeEspera {
+        id: datos.espera_id.trim().to_string(),
+        titulo: datos.titulo.trim().to_string(),
+        detalles: datos.detalles.trim().to_string(),
+        tipo: datos.tipo,
+        asignado_a: normalizar_email(datos.asignado_a),
+        rama: validar_ruta_rama_tarea(datos.rama)?,
+        ultimo_changeset_visto: datos.ultimo_changeset_visto,
+    };
+    let mut ev = Evento::nuevo(
+        "crear_rama_desde_espera",
+        Some(&payload.id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar crear_rama_desde_espera: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_crear_rama_desde_espera(tx, &payload, ahora)
+    })?;
+    db_tareas::obtener(c, &payload.id)
+}
+
+/// Lista los cambios prestados de una tarea o de todo el proyecto si `tarea_id` es `None` (#108).
+pub fn listar_cambios_prestados(
+    c: &Connection,
+    tarea_id: Option<&str>,
+) -> Resultado<Vec<commits::CambioPrestado>> {
+    match tarea_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => commits::prestamos_de_tarea(c, id),
+        None => commits::todos_los_prestamos(c),
+    }
+}
+
+fn parsear_changeset_hash(hash: Option<&str>) -> Resultado<Option<i64>> {
+    let Some(limpio) = hash.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let sin_prefijo = limpio
+        .strip_prefix("cs:")
+        .or_else(|| limpio.strip_prefix("CS:"))
+        .unwrap_or(limpio)
+        .trim();
+    let cs = sin_prefijo
+        .parse::<i64>()
+        .map_err(|_| Error::Validacion("El changeset indicado no es válido".into()))?;
+    if cs <= 0 {
+        return Err(Error::Validacion(
+            "El changeset indicado no es válido".into(),
+        ));
+    }
+    Ok(Some(cs))
+}
+
+/// Valida si `autor` puede traer cambios desde `origen_id` (`hash` opcional) hacia
+/// `destino_id` según las reglas de estado, rol y rama (#108).
+pub fn preparar_traer_cambios(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    destino_id: &str,
+    origen_id: &str,
+    hash: Option<&str>,
+) -> Resultado<(DestinoYOrigenPrestamo, Option<i64>)> {
+    let destino_id = destino_id.trim();
+    let origen_id = origen_id.trim();
+    if destino_id.is_empty() || origen_id.is_empty() {
+        return Err(Error::Validacion(
+            "Debes indicar la tarea destino y la tarea origen".into(),
+        ));
+    }
+    if destino_id == origen_id {
+        return Err(Error::Validacion(
+            "Una tarea no puede traer cambios de sí misma".into(),
+        ));
+    }
+    let cs_puntual = parsear_changeset_hash(hash)?;
+
+    let destino = db_tareas::obtener(c, destino_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.tipo == TipoTarea::SinDefinir {
+        return Err(Error::Validacion(
+            "No se puede traer cambios: esta tarea todavía tiene cambios sin guardar (sin check-in)"
+                .into(),
+        ));
+    }
+    match destino.estado {
+        EstadoTarea::PorHacer => {
+            if destino.asignado_a.is_none() || destino.rama_asociada.is_none() {
+                return Err(Error::Validacion(
+                    "Solo se pueden traer cambios a una tarea en 'por hacer' que ya tenga rama"
+                        .into(),
+                ));
+            }
+        }
+        EstadoTarea::EnProduccion => {}
+        EstadoTarea::EnRevision => {
+            if !autor.rol.es_lider_o_admin() {
+                return Err(Error::SinPermiso);
+            }
+        }
+        EstadoTarea::Terminada => {
+            return Err(Error::Validacion(
+                "No se pueden traer cambios a una tarea terminada".into(),
+            ));
+        }
+    }
+    let rama_destino = destino
+        .rama_asociada
+        .as_deref()
+        .map(validar_ruta_rama_tarea)
+        .transpose()?
+        .ok_or_else(|| Error::Validacion("La tarea destino no tiene rama asignada".into()))?;
+
+    let origen = db_tareas::obtener(c, origen_id)?;
+    if origen.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea origen {} está en la Papelera",
+            origen.id
+        )));
+    }
+    if origen.tipo == TipoTarea::SinDefinir {
+        return Err(Error::Validacion(
+            "No se pueden traer cambios desde una subtarea En espera sin guardar".into(),
+        ));
+    }
+    let rama_origen = origen
+        .rama_asociada
+        .as_deref()
+        .map(validar_ruta_rama_tarea)
+        .transpose()?
+        .ok_or_else(|| Error::Validacion("La tarea origen no tiene rama asignada".into()))?;
+
+    match origen.estado {
+        EstadoTarea::Terminada => {
+            if origen.tarea_padre_id.as_deref() == Some(destino.id.as_str()) {
+                return Err(Error::Validacion(format!(
+                    "Los cambios de {} ya entraron a esta rama; usa Unir cambios entrantes",
+                    origen.id
+                )));
+            }
+        }
+        EstadoTarea::EnRevision => {}
+        EstadoTarea::EnProduccion => {
+            if commits::de_tarea(c, &origen.id)?.is_empty() {
+                return Err(Error::Validacion(
+                    "La tarea origen en producción todavía no tiene check-ins para traer".into(),
+                ));
+            }
+        }
+        EstadoTarea::PorHacer => {
+            return Err(Error::Validacion(
+                "Solo se pueden traer cambios de tareas terminadas, en revisión o en producción con check-ins"
+                    .into(),
+            ));
+        }
+    }
+
+    let hash_str = cs_puntual.map(|n| n.to_string());
+    if commits::prestamos_vigentes(c, &destino.id)?
+        .into_iter()
+        .any(|p| p.origen_id == origen.id && p.hash == hash_str)
+    {
+        return Err(Error::Validacion(
+            "Esos cambios ya están vigentes como préstamo en esta tarea".into(),
+        ));
+    }
+
+    Ok((
+        DestinoYOrigenPrestamo {
+            destino_id: destino.id,
+            origen_id: origen.id,
+            rama_destino,
+            rama_origen,
+        },
+        cs_puntual,
+    ))
+}
+
+/// Publica en `ops/` el préstamo ejecutado en Unity VC (`traer_cambios`, #108).
+pub fn registrar_traer_cambios(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    datos: &DatosTraerCambios<'_>,
+    ahora: &str,
+) -> Resultado<commits::CambioPrestado> {
+    let destino_id = datos.destino_id.trim();
+    let origen_id = datos.origen_id.trim();
+    let hash_normalizado = parsear_changeset_hash(datos.hash)?.map(|n| n.to_string());
+    let prestamo = commits::CambioPrestado {
+        id: format!("CT-{destino_id}-{}", datos.changeset_merge),
+        tarea_id: destino_id.to_string(),
+        origen_id: origen_id.to_string(),
+        hash: hash_normalizado,
+        autor: normalizar_email(autor.email),
+        fecha: ahora.to_string(),
+        archivos: datos.archivos.clone(),
+        archivos_tocados: Vec::new(),
+        quitado_en: None,
+        quitado_por: None,
+        changeset_merge: Some(datos.changeset_merge),
+        changeset_limpio: None,
+    };
+    let payload = PayloadTraerCambios {
+        prestamo: prestamo.clone(),
+        ultimo_changeset_visto: Some(datos.changeset_merge),
+    };
+    let mut ev = Evento::nuevo(
+        "traer_cambios",
+        Some(destino_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar traer_cambios: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_traer_cambios(tx, &payload))?;
+    Ok(prestamo)
+}
+
+/// Valida si `autor` puede devolver un préstamo vigente mediante merge sustractivo (#108).
+/// Devuelve `(prestamo, rama_destino, cs_merge)`.
+pub fn preparar_devolver_cambios(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+) -> Resultado<(commits::CambioPrestado, String, i64)> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    if prestamo.quitado_en.is_some() {
+        return Err(Error::Validacion(
+            "Esos cambios ya se habían devuelto".into(),
+        ));
+    }
+    if !prestamo.archivos_tocados.is_empty() {
+        return Err(Error::Validacion(
+            "Se modificaron archivos prestados; elimina primero los cambios ajenos antes de devolver el préstamo"
+                .into(),
+        ));
+    }
+    let cs_merge = prestamo.changeset_merge.ok_or_else(|| {
+        Error::Validacion(
+            "El préstamo no tiene changeset de merge registrado para devolver en Unity VC".into(),
+        )
+    })?;
+    let rama_destino = validar_destino_para_prestamo(c, autor, &prestamo.tarea_id)?;
+    Ok((prestamo, rama_destino, cs_merge))
+}
+
+fn puede_operar_prestamo(c: &Connection, autor: &AutorTarea<'_>, destino: &Tarea) -> bool {
+    let actor = normalizar_email(autor.email);
+    let es_dueno_destino = destino
+        .asignado_a
+        .as_deref()
+        .map(normalizar_email)
+        .as_deref()
+        == Some(actor.as_str());
+    let es_dueno_padre = destino
+        .tarea_padre_id
+        .as_deref()
+        .and_then(|pid| db_tareas::buscar(c, pid).ok().flatten())
+        .and_then(|p| p.asignado_a)
+        .map(|e| normalizar_email(&e) == actor)
+        .unwrap_or(false);
+
+    match destino.estado {
+        EstadoTarea::EnRevision => autor.rol.es_lider_o_admin() || es_dueno_padre,
+        EstadoTarea::PorHacer | EstadoTarea::EnProduccion => {
+            es_dueno_destino || autor.rol.es_lider_o_admin()
+        }
+        EstadoTarea::Terminada => false,
+    }
+}
+
+fn validar_destino_para_prestamo(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    tarea_id: &str,
+) -> Resultado<String> {
+    let destino = db_tareas::obtener(c, tarea_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            destino.id
+        )));
+    }
+    if !puede_operar_prestamo(c, autor, &destino) {
+        return Err(Error::SinPermiso);
+    }
+    destino
+        .rama_asociada
+        .as_deref()
+        .map(validar_ruta_rama_tarea)
+        .transpose()?
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asociada".into()))
+}
+
+/// Normaliza y cruza rutas de cambios (pendientes o de un `cm diff`) contra la
+/// lista de archivos prestados, devolviendo sus nombres canónicos ordenados (#109).
+pub fn cruzar_archivos_tocados(
+    archivos_prestados: &[String],
+    candidatos_rutas: &[String],
+) -> Vec<String> {
+    let normalizar = |r: &str| {
+        r.trim()
+            .trim_matches('"')
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_lowercase()
+    };
+    let mut por_norm: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for a in archivos_prestados {
+        let norm = normalizar(a);
+        if !norm.is_empty() {
+            por_norm.entry(norm).or_insert_with(|| a.clone());
+        }
+    }
+    let mut tocados = std::collections::BTreeSet::new();
+    for c in candidatos_rutas {
+        let norm = normalizar(c);
+        if let Some(canon) = por_norm.get(&norm) {
+            tocados.insert(canon.clone());
+        }
+    }
+    tocados.into_iter().collect()
+}
+
+/// Actualiza `archivos_tocados` de los préstamos vigentes de `tarea_id` (#109)
+/// cruzando cambios pendientes del workspace (si está en la rama) y diffs de
+/// check-ins posteriores al merge/última limpieza. Devuelve `true` si cambió algo.
+pub fn actualizar_tocados_de_prestamos(
+    c: &Connection,
+    tarea_id: &str,
+    rutas_pendientes_en_rama: Option<&[String]>,
+    diffs_commits: &[(i64, Vec<String>)],
+) -> Resultado<bool> {
+    let prestamos = commits::prestamos_vigentes(c, tarea_id)?;
+    let mut hubo_cambios = false;
+    for p in prestamos {
+        let piso = p
+            .changeset_limpio
+            .into_iter()
+            .chain(p.changeset_merge)
+            .max()
+            .unwrap_or(0);
+
+        let mut candidatos: Vec<String> = Vec::new();
+        for (cs, rutas) in diffs_commits {
+            if *cs > piso {
+                candidatos.extend(rutas.iter().cloned());
+            }
+        }
+        if let Some(pendientes) = rutas_pendientes_en_rama {
+            candidatos.extend(pendientes.iter().cloned());
+        }
+
+        let mut nuevos = cruzar_archivos_tocados(&p.archivos, &candidatos);
+        if rutas_pendientes_en_rama.is_none() && !p.archivos_tocados.is_empty() {
+            let mut conjunto: std::collections::BTreeSet<String> =
+                p.archivos_tocados.iter().cloned().collect();
+            conjunto.extend(nuevos);
+            nuevos = conjunto.into_iter().collect();
+        }
+
+        if nuevos != p.archivos_tocados {
+            commits::marcar_tocados(c, &p.id, &nuevos)?;
+            hubo_cambios = true;
+        }
+    }
+    Ok(hubo_cambios)
+}
+
+/// Valida si `autor` puede eliminar cambios ajenos modificados en `prestamo_id` (#109).
+/// Devuelve `(prestamo, rama_destino, cs_merge)`.
+pub fn preparar_eliminar_cambios_ajenos(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+) -> Resultado<(commits::CambioPrestado, String, i64)> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    if prestamo.quitado_en.is_some() {
+        return Err(Error::Validacion(
+            "Esos cambios ya se habían devuelto".into(),
+        ));
+    }
+    if prestamo.archivos_tocados.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios ajenos tocados que eliminar en este préstamo".into(),
+        ));
+    }
+    let cs_merge = prestamo.changeset_merge.ok_or_else(|| {
+        Error::Validacion("El préstamo no tiene changeset de merge registrado".into())
+    })?;
+    let rama_destino = validar_destino_para_prestamo(c, autor, &prestamo.tarea_id)?;
+    Ok((prestamo, rama_destino, cs_merge))
+}
+
+/// Limpia `archivos_tocados`, registra `changeset_limpio` y publica el evento
+/// `eliminar_cambios_ajenos` en `ops/` (#109).
+pub fn registrar_eliminar_cambios_ajenos(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+    changeset_limpio: Option<i64>,
+    ahora: &str,
+) -> Resultado<commits::CambioPrestado> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    let payload = PayloadEliminarCambiosAjenos {
+        prestamo_id: prestamo.id.clone(),
+        changeset_limpio,
+    };
+    let mut ev = Evento::nuevo(
+        "eliminar_cambios_ajenos",
+        Some(&prestamo.tarea_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar eliminar_cambios_ajenos: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| {
+        aplicar_eliminar_cambios_ajenos(tx, &payload)
+    })?;
+    commits::obtener_prestamo(c, &prestamo.id)
+}
+
+/// Marca como devuelto en SQLite y publica `devolver_cambios_prestados` en `ops/`
+/// conservando la fila como historial (`quitado_en`, `quitado_por`, #108).
+pub fn registrar_devolver_cambios(
+    c: &Connection,
+    ops: &Path,
+    autor: &AutorTarea<'_>,
+    prestamo_id: &str,
+    ahora: &str,
+) -> Resultado<commits::CambioPrestado> {
+    let prestamo = commits::obtener_prestamo(c, prestamo_id.trim())?;
+    let payload = PayloadDevolverCambios {
+        prestamo_id: prestamo.id.clone(),
+        quitado_en: ahora.to_string(),
+        quitado_por: normalizar_email(autor.email),
+    };
+    let mut ev = Evento::nuevo(
+        "devolver_cambios_prestados",
+        Some(&prestamo.tarea_id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload).map_err(|e| {
+            Error::Interno(format!(
+                "no se pudo serializar devolver_cambios_prestados: {e}"
+            ))
+        })?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, ops, &ev, |tx| aplicar_devolver_cambios(tx, &payload))?;
+    commits::obtener_prestamo(c, &prestamo.id)
+}
+
+/// Filtra cambios menores automáticos de Unity (ej. `.meta`) para no disparar
+/// falsas alertas al detectar ediciones en una rama ajena (#111).
+pub fn cambios_significativos(rutas: &[String]) -> Vec<String> {
+    let mut significativos = std::collections::BTreeSet::new();
+    for r in rutas {
+        let limpia = r
+            .trim()
+            .trim_matches('"')
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+        if !limpia.is_empty() && !limpia.to_ascii_lowercase().ends_with(".meta") {
+            significativos.insert(limpia);
+        }
+    }
+    significativos.into_iter().collect()
+}
+
+/// Evalúa si el workspace actual apunta a `main`, `dev` o una rama que no es de las
+/// tareas asignadas al usuario y registra cambios significativos sin check-in o un
+/// check-in reciente del propio usuario (#111). No modifica ni deshace nada.
+pub fn evaluar_alerta_rama_ajena(
+    todas: &[Tarea],
+    usuario_email: &str,
+    rama_actual: &str,
+    pendientes_ws: &[String],
+    commits_recientes_propios: &[String],
+) -> Option<AlertaRamaAjena> {
+    let rama = rama_actual.trim().trim_end_matches('/');
+    if rama.is_empty() {
+        return None;
+    }
+    let yo = normalizar_email(usuario_email);
+    if yo.is_empty() {
+        return None;
+    }
+
+    let mut candidatos = Vec::with_capacity(pendientes_ws.len() + commits_recientes_propios.len());
+    candidatos.extend(pendientes_ws.iter().cloned());
+    candidatos.extend(commits_recientes_propios.iter().cloned());
+    let archivos = cambios_significativos(&candidatos);
+    if archivos.is_empty() {
+        return None;
+    }
+
+    let activa_en_rama = todas.iter().find(|t| {
+        !t.eliminada
+            && t.rama_asociada
+                .as_deref()
+                .map(|r| r.trim().trim_end_matches('/').eq_ignore_ascii_case(rama))
+                .unwrap_or(false)
+    });
+
+    if let Some(t) = activa_en_rama {
+        if t.estado != EstadoTarea::Terminada {
+            let es_mia =
+                t.asignado_a.as_deref().map(normalizar_email).as_deref() == Some(yo.as_str());
+            if es_mia {
+                return None;
+            }
+            // Si es rama padre contenedora sin asignar donde el usuario trabaja una subtarea
+            // y son solo cambios locales sin check-in, el flujo "En espera" (#106) los recoge.
+            if t.asignado_a.is_none() && commits_recientes_propios.is_empty() {
+                let tiene_subtarea_mia = todas.iter().any(|h| {
+                    !h.eliminada
+                        && h.tarea_padre_id.as_deref() == Some(t.id.as_str())
+                        && h.tipo != TipoTarea::SinDefinir
+                        && h.asignado_a.as_deref().map(normalizar_email).as_deref()
+                            == Some(yo.as_str())
+                });
+                if tiene_subtarea_mia {
+                    return None;
+                }
+            }
+        }
+    }
+
+    let sugerida = [
+        EstadoTarea::EnProduccion,
+        EstadoTarea::PorHacer,
+        EstadoTarea::EnRevision,
+    ]
+    .into_iter()
+    .find_map(|est| {
+        todas.iter().find(|t| {
+            !t.eliminada
+                && t.estado == est
+                && t.rama_asociada.is_some()
+                && t.asignado_a.as_deref().map(normalizar_email).as_deref() == Some(yo.as_str())
+        })
+    });
+
+    let rama_sugerida = sugerida.and_then(|t| t.rama_asociada.clone());
+    let tarea_sugerida_id = sugerida.map(|t| t.id.clone());
+    let tarea_ajena_id = activa_en_rama.map(|t| t.id.clone());
+    let dueno_rama = activa_en_rama.and_then(|t| t.asignado_a.clone());
+
+    let donde = match tarea_ajena_id {
+        Some(ref tid) => format!("la rama de la tarea {tid}, que no te pertenece"),
+        None => format!("{rama}, que no pertenece a ninguna de tus tareas"),
+    };
+    let recomendacion = match rama_sugerida {
+        Some(ref r) => format!(" Cambia a tu rama asignada {r} antes de continuar."),
+        None => String::new(),
+    };
+    let mensaje = format!("Estás haciendo cambios en {donde}.{recomendacion}");
+
+    Some(AlertaRamaAjena {
+        rama_actual: rama.to_string(),
+        tarea_ajena_id,
+        dueno_rama,
+        rama_sugerida,
+        tarea_sugerida_id,
+        archivos,
+        mensaje,
+    })
 }
 
 /// Elige el revisor de una tarea en revisión (`asignar_revision`, #107): Líder o
@@ -1484,7 +2610,12 @@ fn exigir_revisor(
     Err(Error::SinPermiso)
 }
 
-fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
+fn aplicar_crear_tarea(
+    c: &Connection,
+    tarea: &Tarea,
+    ahora: &str,
+    notificar_pendiente: bool,
+) -> Resultado<()> {
     validar_tipo_creacion(tarea.tipo)?;
     if tarea.estado != EstadoTarea::PorHacer {
         return Err(Error::Validacion(
@@ -1494,14 +2625,34 @@ fn aplicar_crear_tarea(c: &Connection, tarea: &Tarea) -> Resultado<()> {
     if let Some(ref pid) = tarea.tarea_padre_id {
         validar_padre(c, pid)?;
     }
-    db_tareas::insertar(c, tarea)
+    db_tareas::insertar(c, tarea)?;
+    if notificar_pendiente && tarea.pendiente_aprobacion {
+        emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+            Notificacion {
+                id: format!("noti_apr_pend_{}_{}_{}", tarea.id, correo, ahora),
+                tipo: TipoNotificacion::AprobacionTarea,
+                para: correo.to_string(),
+                titulo: "Tarea pendiente de aprobación".into(),
+                cuerpo: format!(
+                    "\"{}\" ({}) fue creada por {} y espera tu aprobación.",
+                    tarea.titulo, tarea.id, tarea.creado_por
+                ),
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(tarea.id.clone()),
+                accionable: true,
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn aplicar_crear_tarea_con_subtareas(
     c: &Connection,
     payload: &PayloadTareaConSubtareas,
+    ahora: &str,
 ) -> Resultado<()> {
-    aplicar_crear_tarea(c, &payload.tarea)?;
+    aplicar_crear_tarea(c, &payload.tarea, ahora, true)?;
     for st in &payload.subtareas {
         if st.tarea_padre_id.as_deref() != Some(payload.tarea.id.as_str()) {
             return Err(Error::Validacion(format!(
@@ -1509,13 +2660,17 @@ fn aplicar_crear_tarea_con_subtareas(
                 st.id, payload.tarea.id
             )));
         }
-        aplicar_crear_tarea(c, st)?;
+        aplicar_crear_tarea(c, st, ahora, false)?;
     }
     Ok(())
 }
 
 /// Resuelve el rol verificado de `email` en la tabla `usuarios`, si existe.
-fn rol_verificado_de(c: &Connection, publica_admin: &str, email: &str) -> Resultado<Option<Rol>> {
+pub(crate) fn rol_verificado_de(
+    c: &Connection,
+    publica_admin: &str,
+    email: &str,
+) -> Resultado<Option<Rol>> {
     let email = normalizar_email(email);
     if publica_admin.is_empty() {
         return Ok(usuarios::buscar(c, &email)?.map(|u| u.rol));
@@ -1616,7 +2771,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             if let Some(rol) = rol_verificado_de(c, publica_admin, &evento.usuario)? {
                 tarea.pendiente_aprobacion = !rol.es_lider_o_admin();
             }
-            aplicar_crear_tarea(c, &tarea)
+            aplicar_crear_tarea(c, &tarea, &evento.timestamp, true)
         }
         "crear_tarea_con_subtareas" => {
             let mut payload: PayloadTareaConSubtareas =
@@ -1635,7 +2790,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                     st.pendiente_aprobacion = !r.es_lider_o_admin();
                 }
             }
-            aplicar_crear_tarea_con_subtareas(c, &payload)
+            aplicar_crear_tarea_con_subtareas(c, &payload, &evento.timestamp)
         }
         "editar_tarea" => {
             let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
@@ -1647,7 +2802,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("tomar_tarea inválido: {e}")))?;
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
-            aplicar_tomar_tarea(c, &evento.usuario, rol, &payload)
+            aplicar_tomar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         "asignar_tarea" => {
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
@@ -1704,6 +2859,29 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_advertir_tarea_pendiente(c, rol, &payload, &evento.timestamp)
         }
+        "proponer_edicion" => {
+            let payload: PayloadProponerEdicion = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("proponer_edicion inválido: {e}")))?;
+            aplicar_proponer_edicion(c, &evento.usuario, &payload, &evento.timestamp)
+        }
+        "aprobar_modificacion" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("aprobar_modificacion inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_aprobar_modificaciones(c, rol, &[payload.id])
+        }
+        "aprobar_modificaciones" => {
+            let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("aprobar_modificaciones inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_aprobar_modificaciones(c, rol, &payload.ids)
+        }
+        "rechazar_modificacion" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("rechazar_modificacion inválido: {e}")))?;
+            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            aplicar_rechazar_modificacion(c, rol, &payload.id)
+        }
         "eliminar_tarea" => {
             let payload: PayloadEliminarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("eliminar_tarea inválido: {e}")))?;
@@ -1719,6 +2897,47 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
             aplicar_eliminar_definitivamente(c, rol, &payload.id)?;
             Ok(())
+        }
+        "hacer_checkin" => {
+            let payload: PayloadHacerCheckin = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("hacer_checkin inválido: {e}")))?;
+            aplicar_hacer_checkin(c, &payload)
+        }
+        "crear_en_espera" => {
+            let tarea: Tarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("crear_en_espera inválido: {e}")))?;
+            aplicar_crear_en_espera(c, &tarea)
+        }
+        "quitar_en_espera" => {
+            let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("quitar_en_espera inválido: {e}")))?;
+            aplicar_quitar_en_espera(c, &payload.id)
+        }
+        "crear_rama_desde_espera" => {
+            let payload: PayloadCrearRamaDesdeEspera =
+                serde_json::from_value(evento.payload.clone()).map_err(|e| {
+                    Error::Validacion(format!("crear_rama_desde_espera inválido: {e}"))
+                })?;
+            aplicar_crear_rama_desde_espera(c, &payload, &evento.timestamp)
+        }
+        "traer_cambios" => {
+            let payload: PayloadTraerCambios = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| Error::Validacion(format!("traer_cambios inválido: {e}")))?;
+            aplicar_traer_cambios(c, &payload)
+        }
+        "devolver_cambios_prestados" => {
+            let payload: PayloadDevolverCambios = serde_json::from_value(evento.payload.clone())
+                .map_err(|e| {
+                    Error::Validacion(format!("devolver_cambios_prestados inválido: {e}"))
+                })?;
+            aplicar_devolver_cambios(c, &payload)
+        }
+        "eliminar_cambios_ajenos" => {
+            let payload: PayloadEliminarCambiosAjenos =
+                serde_json::from_value(evento.payload.clone()).map_err(|e| {
+                    Error::Validacion(format!("eliminar_cambios_ajenos inválido: {e}"))
+                })?;
+            aplicar_eliminar_cambios_ajenos(c, &payload)
         }
         "tarea_cerrada_por_deteccion" => {
             let payload: PayloadTareaCerradaDeteccion =
@@ -1791,6 +3010,7 @@ fn aplicar_tomar_tarea(
     autor_email: &str,
     rol_conocido: Option<Rol>,
     payload: &PayloadTomarTarea,
+    ahora: &str,
 ) -> Resultado<()> {
     let autor = normalizar_email(autor_email);
     if normalizar_email(&payload.asignado_a) != autor {
@@ -1824,6 +3044,7 @@ fn aplicar_tomar_tarea(
     tarea.asignado_a = Some(autor);
     tarea.modo_trabajo = Some(MODO_RAMA.to_string());
     tarea.rama_asociada = Some(rama);
+    tarea.actividad_desde = Some(ahora.to_string());
     if tarea.ultimo_changeset_visto.is_none() {
         tarea.ultimo_changeset_visto = payload.ultimo_changeset_visto;
     }
@@ -1876,6 +3097,7 @@ fn aplicar_asignar_tarea(
     aplicar_ramas_ancestros(c, &payload.ramas_ancestros)?;
 
     tarea.asignado_a = Some(dest.clone());
+    tarea.actividad_desde = Some(ahora.to_string());
     if tarea.rama_asociada.is_none() {
         tarea.rama_asociada = Some(rama);
         tarea.modo_trabajo = Some(MODO_RAMA.to_string());
@@ -1885,7 +3107,7 @@ fn aplicar_asignar_tarea(
     }
     db_tareas::actualizar(c, &tarea)?;
 
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_asignar_{}_{}_{}", tarea.id, dest, ahora),
@@ -1933,11 +3155,13 @@ fn aplicar_desasignar_tarea(c: &Connection, payload: &PayloadDesasignarTarea) ->
 
     tarea.asignado_a = None;
     tarea.estado = EstadoTarea::PorHacer;
+    tarea.actividad_desde = None;
     db_tareas::actualizar(c, &tarea)?;
 
     for mut sub in descendientes {
         sub.asignado_a = None;
         sub.estado = EstadoTarea::PorHacer;
+        sub.actividad_desde = None;
         db_tareas::actualizar(c, &sub)?;
     }
     recalcular_padres(c, tarea.tarea_padre_id)?;
@@ -2035,9 +3259,23 @@ fn aplicar_cambiar_estado(
         payload.estado,
         EstadoTarea::EnRevision | EstadoTarea::Terminada
     ) {
+        if tarea.tipo == TipoTarea::SinDefinir {
+            return Err(Error::Validacion(
+                "La subtarea En espera aún no tiene rama propia; crea su rama primero".into(),
+            ));
+        }
         if tarea.pendiente_aprobacion {
             return Err(Error::Validacion(format!(
                 "La tarea {} sigue pendiente de aprobación",
+                tarea.id
+            )));
+        }
+        if descendientes
+            .iter()
+            .any(|h| h.tipo == TipoTarea::SinDefinir)
+        {
+            return Err(Error::Validacion(format!(
+                "La tarea {} tiene cambios En espera: crea una rama para ellos antes de enviarla a revisión",
                 tarea.id
             )));
         }
@@ -2058,6 +3296,16 @@ fn aplicar_cambiar_estado(
                 tarea.id,
                 abiertas.join(", ")
             )));
+        }
+        if payload.estado == EstadoTarea::Terminada {
+            let tocados = prestamos_con_tocados_origenes(c, &ids_subarbol)?;
+            if !tocados.is_empty() {
+                return Err(Error::Validacion(format!(
+                    "Se tocaron cambios ajenos prestados de {}: elimínalos antes de terminar {}",
+                    tocados.join(", "),
+                    tarea.id
+                )));
+            }
         }
         let prestamos = prestamos_vigentes_origenes(c, &ids_subarbol)?;
         if payload.estado == EstadoTarea::Terminada && !prestamos.is_empty() {
@@ -2094,6 +3342,13 @@ fn aplicar_cambiar_estado(
             .or(Some(autor.clone()));
     }
     tarea.estado = payload.estado;
+    if matches!(
+        payload.estado,
+        EstadoTarea::PorHacer | EstadoTarea::EnProduccion
+    ) && anterior_estado != payload.estado
+    {
+        tarea.actividad_desde = Some(ahora.to_string());
+    }
     if payload.estado == EstadoTarea::Terminada {
         tarea.fecha_completada = Some(fecha_corta_de_iso(ahora));
     }
@@ -2104,6 +3359,13 @@ fn aplicar_cambiar_estado(
             if payload.estado != EstadoTarea::PorHacer && sub.asignado_a.is_none() {
                 sub.asignado_a = Some(autor.clone());
             }
+            if matches!(
+                payload.estado,
+                EstadoTarea::PorHacer | EstadoTarea::EnProduccion
+            ) && sub.estado != payload.estado
+            {
+                sub.actividad_desde = Some(ahora.to_string());
+            }
             sub.estado = payload.estado;
             db_tareas::actualizar(c, &sub)?;
         }
@@ -2112,24 +3374,19 @@ fn aplicar_cambiar_estado(
     recalcular_padres(c, tarea.tarea_padre_id)?;
 
     if anterior_estado != EstadoTarea::EnRevision && payload.estado == EstadoTarea::EnRevision {
-        for u in usuarios::listar(c)? {
-            if u.rol.es_lider_o_admin() {
-                insertar_notificacion_si_falta(
-                    c,
-                    &Notificacion {
-                        id: format!("noti_rev_{}_{}_{}", tarea.id, u.email, ahora),
-                        tipo: TipoNotificacion::TareaARevision,
-                        para: u.email,
-                        titulo: "Una tarea pasó a revisión".into(),
-                        cuerpo: format!("\"{}\" ({}) pasó a revisión.", tarea.titulo, tarea.id),
-                        leida: false,
-                        fecha: ahora.to_string(),
-                        tarea_id: Some(tarea.id.clone()),
-                        accionable: false,
-                    },
-                )?;
+        emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+            Notificacion {
+                id: format!("noti_rev_{}_{}_{}", tarea.id, correo, ahora),
+                tipo: TipoNotificacion::TareaARevision,
+                para: correo.to_string(),
+                titulo: "Una tarea pasó a revisión".into(),
+                cuerpo: format!("\"{}\" ({}) pasó a revisión.", tarea.titulo, tarea.id),
+                leida: false,
+                fecha: ahora.to_string(),
+                tarea_id: Some(tarea.id.clone()),
+                accionable: false,
             }
-        }
+        })?;
     }
 
     Ok(aviso_prestamos)
@@ -2209,27 +3466,19 @@ fn aplicar_reabrir_tarea(
     db_tareas::actualizar(c, &tarea)?;
     recalcular_padres(c, tarea.tarea_padre_id.clone())?;
 
-    for u in usuarios::listar(c)? {
-        if u.rol.es_lider_o_admin() {
-            insertar_notificacion_si_falta(
-                c,
-                &Notificacion {
-                    id: format!(
-                        "noti_reabrir_{}_{}_{}",
-                        tarea.id, tarea.reaperturas, u.email
-                    ),
-                    tipo: TipoNotificacion::TareaReabierta,
-                    para: u.email,
-                    titulo: "Tarea reabierta".into(),
-                    cuerpo: format!("{} ({}/3): {motivo}", tarea.id, tarea.reaperturas),
-                    leida: false,
-                    fecha: ahora.to_string(),
-                    tarea_id: Some(tarea.id.clone()),
-                    accionable: false,
-                },
-            )?;
+    emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+        Notificacion {
+            id: format!("noti_reabrir_{}_{}_{}", tarea.id, tarea.reaperturas, correo),
+            tipo: TipoNotificacion::TareaReabierta,
+            para: correo.to_string(),
+            titulo: "Tarea reabierta".into(),
+            cuerpo: format!("{} ({}/3): {motivo}", tarea.id, tarea.reaperturas),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id.clone()),
+            accionable: false,
         }
-    }
+    })?;
     Ok(())
 }
 
@@ -2278,7 +3527,7 @@ fn aplicar_editar_y_aprobar_tarea(
     tarea.pendiente_aprobacion = false;
     db_tareas::actualizar(c, &tarea)?;
 
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_edit_apr_{}_{}", tarea.id, ahora),
@@ -2323,7 +3572,7 @@ fn aplicar_advertir_tarea_pendiente(
             tarea.id
         )));
     }
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_adv_{}_{}", tarea.id, ahora),
@@ -2337,6 +3586,144 @@ fn aplicar_advertir_tarea_pendiente(
             accionable: false,
         },
     )
+}
+
+fn aplicar_proponer_edicion(
+    c: &Connection,
+    autor_email: &str,
+    payload: &PayloadProponerEdicion,
+    ahora: &str,
+) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera y no se puede editar",
+            tarea.id
+        )));
+    }
+    if tarea.estado != EstadoTarea::PorHacer {
+        return Err(Error::Validacion(
+            "Solo se puede editar una tarea en 'Sin asignar' o 'Por hacer'".into(),
+        ));
+    }
+
+    let titulo = payload.titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion("El título es obligatorio".into()));
+    }
+    let detalles = payload.detalles.trim();
+
+    let mut nuevos = ediciones::Campos::new();
+    let mut anteriores = ediciones::Campos::new();
+    if titulo != tarea.titulo {
+        nuevos.insert("titulo".into(), titulo.to_string());
+        anteriores.insert("titulo".into(), tarea.titulo.clone());
+    }
+    if detalles != tarea.detalles {
+        nuevos.insert("detalles".into(), detalles.to_string());
+        anteriores.insert("detalles".into(), tarea.detalles.clone());
+    }
+    if nuevos.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios en título ni detalles".into(),
+        ));
+    }
+
+    let campos_cambiados: Vec<&str> = nuevos.keys().map(String::as_str).collect();
+    let resumen_campos = campos_cambiados.join(", ");
+    let creador = normalizar_email(autor_email);
+
+    ediciones::guardar_o_sumar(
+        c,
+        &ediciones::EdicionPendiente {
+            id: payload.edicion_id.clone(),
+            tarea_id: tarea.id.clone(),
+            campos_nuevos: nuevos,
+            campos_anteriores: anteriores,
+            motivo: limpiar_opcional(payload.motivo.clone()),
+            creado_por: creador.clone(),
+            fecha: payload.fecha.clone(),
+        },
+    )?;
+
+    tarea.titulo = titulo.to_string();
+    tarea.detalles = detalles.to_string();
+    db_tareas::actualizar(c, &tarea)?;
+
+    emitir_a_roles_si_falta(c, &[Rol::Lider, Rol::Administrador], |correo| {
+        Notificacion {
+            id: format!("noti_ep_{}_{}_{}", tarea.id, correo, ahora),
+            tipo: TipoNotificacion::EdicionPendiente,
+            para: correo.to_string(),
+            titulo: "Hay una edición de tarea por aprobar".into(),
+            cuerpo: format!(
+                "\"{}\" ({}) fue editada por {} ({}).",
+                tarea.titulo, tarea.id, creador, resumen_campos
+            ),
+            leida: false,
+            fecha: ahora.to_string(),
+            tarea_id: Some(tarea.id.clone()),
+            accionable: true,
+        }
+    })?;
+    Ok(())
+}
+
+fn aplicar_aprobar_modificaciones(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    ids: &[String],
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    if ids.is_empty() {
+        return Err(Error::Validacion(
+            "Selecciona al menos una edición para aprobar".into(),
+        ));
+    }
+    for id in ids {
+        let tarea = db_tareas::obtener(c, id)?;
+        if tarea.eliminada {
+            return Err(Error::Validacion(format!(
+                "La tarea {} está en la Papelera",
+                tarea.id
+            )));
+        }
+        if ediciones::quitar(c, &tarea.id)?.is_none() {
+            return Err(Error::Validacion(format!(
+                "La tarea {} no tiene ediciones pendientes",
+                tarea.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_rechazar_modificacion(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    id: &str,
+) -> Resultado<()> {
+    exigir_lider_o_admin(rol_conocido)?;
+    let mut tarea = db_tareas::obtener(c, id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    let edicion = ediciones::quitar(c, &tarea.id)?.ok_or_else(|| {
+        Error::Validacion(format!(
+            "La tarea {} no tiene ediciones pendientes",
+            tarea.id
+        ))
+    })?;
+    if let Some(prev_titulo) = edicion.campos_anteriores.get("titulo") {
+        tarea.titulo = prev_titulo.clone();
+    }
+    if let Some(prev_detalles) = edicion.campos_anteriores.get("detalles") {
+        tarea.detalles = prev_detalles.clone();
+    }
+    db_tareas::actualizar(c, &tarea)
 }
 
 fn recolectar_descendientes_activas(
@@ -2422,7 +3809,7 @@ fn aplicar_eliminar_tarea(
         ediciones::quitar(c, &tarea.id)?;
         db_tareas::actualizar(c, &tarea)?;
 
-        insertar_notificacion_si_falta(
+        emitir_si_falta(
             c,
             &Notificacion {
                 id: format!("noti_elim_{}_{}", tarea.id, ahora),
@@ -2493,6 +3880,173 @@ fn aplicar_cerrar_por_deteccion(c: &Connection, id: &str, fecha_completada: &str
     recalcular_padres(c, padre)
 }
 
+fn aplicar_hacer_checkin(c: &Connection, payload: &PayloadHacerCheckin) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, &payload.commit.tarea_id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if let Some(tipo) = payload.commit.tipo {
+        validar_tipo_creacion(tipo)?;
+    }
+    commits::guardar(c, &payload.commit)?;
+    let visto = tarea
+        .ultimo_changeset_visto
+        .unwrap_or(0)
+        .max(payload.changeset);
+    let mut cambio = false;
+    if tarea.ultimo_changeset_visto != Some(visto) {
+        tarea.ultimo_changeset_visto = Some(visto);
+        cambio = true;
+    }
+    if !payload.commit.fecha.trim().is_empty() {
+        tarea.actividad_desde = Some(payload.commit.fecha.clone());
+        cambio = true;
+    }
+    if cambio {
+        db_tareas::actualizar(c, &tarea)?;
+    }
+    Ok(())
+}
+
+fn aplicar_crear_en_espera(c: &Connection, tarea: &Tarea) -> Resultado<()> {
+    if tarea.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(
+            "La subtarea En espera debe ser de tipo 'Sin definir'".into(),
+        ));
+    }
+    let padre_id = tarea
+        .tarea_padre_id
+        .as_deref()
+        .ok_or_else(|| Error::Validacion("La subtarea En espera requiere tarea_padre_id".into()))?;
+    let padre = db_tareas::obtener(c, padre_id)?;
+    if padre.eliminada || padre.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea padre {} ya está cerrada o en la Papelera",
+            padre.id
+        )));
+    }
+    if db_tareas::hijas(c, padre_id)?
+        .into_iter()
+        .any(|h| !h.eliminada && h.tipo == TipoTarea::SinDefinir)
+    {
+        return Ok(());
+    }
+    db_tareas::insertar(c, tarea)?;
+    recalcular_padres(c, Some(padre.id))
+}
+
+fn aplicar_quitar_en_espera(c: &Connection, id: &str) -> Resultado<()> {
+    let Some(tarea) = db_tareas::buscar(c, id)? else {
+        return Ok(());
+    };
+    if tarea.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya fue convertida en subtarea y no se puede quitar como En espera",
+            tarea.id
+        )));
+    }
+    let padre_id = tarea.tarea_padre_id.clone();
+    db_tareas::borrar_fila(c, &tarea.id)?;
+    recalcular_padres(c, padre_id)
+}
+
+fn aplicar_crear_rama_desde_espera(
+    c: &Connection,
+    payload: &PayloadCrearRamaDesdeEspera,
+    ahora: &str,
+) -> Resultado<()> {
+    validar_tipo_creacion(payload.tipo)?;
+    let titulo = payload.titulo.trim();
+    if titulo.is_empty() {
+        return Err(Error::Validacion(
+            "El título de la subtarea es obligatorio".into(),
+        ));
+    }
+    let mut tarea = db_tareas::obtener(c, &payload.id)?;
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.tipo != TipoTarea::SinDefinir {
+        return Err(Error::Validacion(format!(
+            "La tarea {} no está En espera",
+            tarea.id
+        )));
+    }
+    let rama = validar_ruta_rama_tarea(&payload.rama)?;
+    let padre = tarea.tarea_padre_id.clone();
+
+    tarea.titulo = titulo.to_string();
+    tarea.detalles = payload.detalles.trim().to_string();
+    tarea.tipo = payload.tipo;
+    tarea.estado = EstadoTarea::EnProduccion;
+    tarea.pendiente_aprobacion = false;
+    tarea.asignado_a = Some(normalizar_email(&payload.asignado_a));
+    tarea.modo_trabajo = Some(MODO_RAMA.to_string());
+    tarea.rama_asociada = Some(rama);
+    tarea.actividad_desde = Some(ahora.to_string());
+    tarea.ultimo_changeset_visto = Some(payload.ultimo_changeset_visto);
+    db_tareas::actualizar(c, &tarea)?;
+    recalcular_padres(c, padre)
+}
+
+fn aplicar_traer_cambios(c: &Connection, payload: &PayloadTraerCambios) -> Resultado<()> {
+    let mut destino = db_tareas::obtener(c, &payload.prestamo.tarea_id)?;
+    if destino.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            destino.id
+        )));
+    }
+    if destino.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            destino.id
+        )));
+    }
+    let _origen = db_tareas::obtener(c, &payload.prestamo.origen_id)?;
+    commits::insertar_prestamo(c, &payload.prestamo)?;
+    if let Some(cs) = payload.ultimo_changeset_visto {
+        let visto = destino.ultimo_changeset_visto.unwrap_or(0).max(cs);
+        if destino.ultimo_changeset_visto != Some(visto) {
+            destino.ultimo_changeset_visto = Some(visto);
+            db_tareas::actualizar(c, &destino)?;
+        }
+    }
+    Ok(())
+}
+
+fn aplicar_devolver_cambios(c: &Connection, payload: &PayloadDevolverCambios) -> Resultado<()> {
+    commits::quitar_prestamo(
+        c,
+        &payload.prestamo_id,
+        &payload.quitado_por,
+        &payload.quitado_en,
+    )
+}
+
+fn aplicar_eliminar_cambios_ajenos(
+    c: &Connection,
+    payload: &PayloadEliminarCambiosAjenos,
+) -> Resultado<()> {
+    let prestamo = commits::obtener_prestamo(c, &payload.prestamo_id)?;
+    commits::limpiar_tocados(c, &prestamo.id, payload.changeset_limpio)?;
+    if let Some(cs) = payload.changeset_limpio {
+        let mut tarea = db_tareas::obtener(c, &prestamo.tarea_id)?;
+        let visto = tarea.ultimo_changeset_visto.unwrap_or(0).max(cs);
+        if tarea.ultimo_changeset_visto != Some(visto) {
+            tarea.ultimo_changeset_visto = Some(visto);
+            db_tareas::actualizar(c, &tarea)?;
+        }
+    }
+    Ok(())
+}
+
 fn aplicar_asignar_revision(
     c: &Connection,
     rol_conocido: Option<Rol>,
@@ -2538,7 +4092,7 @@ fn aplicar_asignar_revision(
     }
     tarea.lider_revision_asignado = Some(revisor.clone());
     db_tareas::actualizar(c, &tarea)?;
-    insertar_notificacion_si_falta(
+    emitir_si_falta(
         c,
         &Notificacion {
             id: format!("noti_revasig_{}_{}_{}", tarea.id, revisor, ahora),
@@ -2619,7 +4173,7 @@ fn aplicar_rechazar_revision(
     recalcular_padres(c, padre)?;
 
     if let Some(responsable) = tarea.asignado_a.clone() {
-        insertar_notificacion_si_falta(
+        emitir_si_falta(
             c,
             &Notificacion {
                 id: format!("noti_rechazo_{}_{}", tarea.id, ahora),
@@ -2760,13 +4314,6 @@ fn buscar_evento_toma_en_ops(
     mejor
 }
 
-fn insertar_notificacion_si_falta(c: &Connection, n: &Notificacion) -> Resultado<()> {
-    if notificaciones::buscar(c, &n.id)?.is_none() {
-        notificaciones::insertar(c, n)?;
-    }
-    Ok(())
-}
-
 /// Resuelve una colisión de doble toma (#97) una vez comprobado si la rama del
 /// perdedor ya tiene changesets reales:
 /// - Sin changesets: revierte la toma al ganador (si hace falta) y notifica al
@@ -2822,7 +4369,7 @@ pub fn aplicar_resolucion_doble_toma(
                 tarea_id: Some(info.tarea_id.clone()),
                 accionable: false,
             };
-            insertar_notificacion_si_falta(c, &n)?;
+            emitir_si_falta(c, &n)?;
         }
         return Ok(false);
     }
@@ -2865,13 +4412,14 @@ pub fn aplicar_resolucion_doble_toma(
         tarea_id: Some(info.tarea_id.clone()),
         accionable: true,
     };
-    insertar_notificacion_si_falta(c, &n)?;
+    emitir_si_falta(c, &n)?;
     Ok(aplicado_entrante)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::notificaciones;
     use crate::db::Db;
     use crate::eventos::lectura::{self, sincronizar};
     use crate::identidad::equipo::{self, Firmante};
@@ -3739,7 +5287,11 @@ mod tests {
         );
         // Se avisó a ambos, al Líder y al Administrador (no al Colaborador externo).
         for correo in [DEV, TESTER, LIDER, ADMIN] {
-            let notifs = notificaciones::de_usuario(e.db_b.conexion(), correo).unwrap();
+            let notifs: Vec<_> = notificaciones::de_usuario(e.db_b.conexion(), correo)
+                .unwrap()
+                .into_iter()
+                .filter(|n| n.tipo == TipoNotificacion::Advertencia)
+                .collect();
             assert_eq!(notifs.len(), 1, "falta notificación para {correo}");
             assert!(!notifs[0].accionable);
             assert!(notifs[0].cuerpo.contains("T-101"));
@@ -4329,7 +5881,9 @@ mod tests {
             assert_eq!(
                 notificaciones::de_usuario(db_b.conexion(), &admin_fila.email)
                     .unwrap()
-                    .len(),
+                    .into_iter()
+                    .filter(|n| n.tipo == TipoNotificacion::Advertencia)
+                    .count(),
                 1
             );
 
@@ -5159,6 +6713,8 @@ mod tests {
                             archivos_tocados: vec![],
                             quitado_en: None,
                             quitado_por: None,
+                            changeset_merge: None,
+                            changeset_limpio: None,
                         },
                     )
                 })
@@ -5351,6 +6907,8 @@ mod tests {
                 archivos_tocados: vec![],
                 quitado_en: None,
                 quitado_por: None,
+                changeset_merge: None,
+                changeset_limpio: None,
             },
         )
         .unwrap();
@@ -5536,6 +7094,8 @@ mod tests {
                 archivos_tocados: vec![],
                 quitado_en: None,
                 quitado_por: None,
+                changeset_merge: None,
+                changeset_limpio: None,
             },
         )
         .unwrap();
@@ -5689,6 +7249,8 @@ mod tests {
                             archivos_tocados: vec![],
                             quitado_en: None,
                             quitado_por: None,
+                            changeset_merge: None,
+                            changeset_limpio: None,
                         },
                     )
                 })
@@ -6480,6 +8042,1851 @@ mod tests {
     }
 
     #[test]
+    fn proponer_sumar_aprobar_y_rechazar_ediciones_pendientes() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        let mut d_vacio = datos_base("Original 102");
+        d_vacio.detalles = String::new();
+        crear(c, &e.ops, &autor_lider, &d_vacio, AHORA, HOY).unwrap();
+        crear(c, &e.ops, &autor_lider, &datos_base("En curso"), AHORA, HOY).unwrap();
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &datos_base("Aprobar lote A"),
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+        crear(
+            c,
+            &e.ops,
+            &autor_lider,
+            &datos_base("Aprobar lote B"),
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::EnProduccion,
+            "2026-11-15T15:01:00Z",
+        )
+        .unwrap();
+        assert!(proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102",
+            "No debe",
+            "",
+            None,
+            "2026-11-15T15:02:00Z",
+            HOY
+        )
+        .is_err());
+
+        // Primera edición sobre T-101 (detalles vacíos originalmente): aplica de inmediato y guarda lo anterior.
+        let r1 = proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            "Editada v1",
+            "Nuevos detalles",
+            Some("Clarificar alcance"),
+            "2026-11-15T15:03:00Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(r1.tarea.titulo, "Editada v1");
+        assert_eq!(r1.tarea.detalles, "Nuevos detalles");
+        assert!(r1.tarea.edicion_pendiente);
+        assert_eq!(r1.edicion.campos_anteriores["titulo"], "Original 102");
+        assert_eq!(r1.edicion.campos_anteriores["detalles"], "");
+
+        // Segunda edición se suma conservando el valor anterior original ("Original 102" y "").
+        let r2 = proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            "Editada v2",
+            "Nuevos detalles",
+            None,
+            "2026-11-15T15:04:00Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(r2.edicion.id, r1.edicion.id);
+        assert_eq!(listar_ediciones_pendientes(c).unwrap().len(), 1);
+        assert_eq!(r2.edicion.campos_anteriores["titulo"], "Original 102");
+        assert_eq!(r2.edicion.campos_nuevos["titulo"], "Editada v2");
+
+        // Desarrollador no puede aprobar ni rechazar.
+        assert!(matches!(
+            aprobar_modificacion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
+                .unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(matches!(
+            rechazar_modificacion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
+                .unwrap_err(),
+            Error::SinPermiso
+        ));
+
+        // Rechazar T-101 restaura título y detalles vacíos originales, y borra la fila pendiente.
+        let revertida =
+            rechazar_modificacion(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:06:00Z")
+                .unwrap();
+        assert_eq!(revertida.titulo, "Original 102");
+        assert_eq!(revertida.detalles, "");
+        assert!(!revertida.edicion_pendiente);
+
+        // T-103 y T-104 se proponen y se aprueban en lote.
+        proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-103",
+            "Lote A v1",
+            "",
+            None,
+            "2026-11-15T15:07:00Z",
+            HOY,
+        )
+        .unwrap();
+        proponer_edicion(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-104",
+            "Lote B v1",
+            "Con detalle",
+            None,
+            "2026-11-15T15:08:00Z",
+            HOY,
+        )
+        .unwrap();
+        let tras_lote = aprobar_modificaciones(
+            c,
+            &e.ops,
+            &autor_lider,
+            &["T-103".into(), "T-104".into()],
+            "2026-11-15T15:09:00Z",
+        )
+        .unwrap();
+        assert!(tras_lote.iter().all(|t| !t.edicion_pendiente));
+        assert!(listar_ediciones_pendientes(c).unwrap().is_empty());
+
+        // Máquina B sincroniza vía ops/ y converge exactamente con A.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let t1_b = db_tareas::obtener(e.db_b.conexion(), "T-101").unwrap();
+        assert_eq!(t1_b.titulo, "Original 102");
+        assert_eq!(t1_b.detalles, "");
+        assert!(!t1_b.edicion_pendiente);
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-103")
+                .unwrap()
+                .titulo,
+            "Lote A v1"
+        );
+        assert!(listar_ediciones_pendientes(e.db_b.conexion())
+            .unwrap()
+            .is_empty());
+        assert!(notificaciones::de_usuario(e.db_b.conexion(), LIDER)
+            .unwrap()
+            .iter()
+            .any(|n| n.tipo == TipoNotificacion::EdicionPendiente && n.accionable));
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_ediciones_pendientes() {
+        use crate::comandos::tareas::{
+            aprobar_modificacion_en, aprobar_modificaciones_en, asignar_en, cambiar_estado_en,
+            listar_ediciones_pendientes_en, proponer_edicion_en, rechazar_modificacion_en,
+        };
+
+        correr_entorno_real("102", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            env.crear_usuario(LIDER, Rol::Lider);
+            let admin_email = env.admin_fila.email.clone();
+
+            let t1 = env.crear_tarea(&admin_email, Rol::Administrador, "Original 102");
+            let t2 = env.crear_tarea(&admin_email, Rol::Administrador, "En produccion 102");
+            let t3 = env.crear_tarea(&admin_email, Rol::Administrador, "Aprobar indiv 102");
+            let t4 = env.crear_tarea(&admin_email, Rol::Administrador, "Aprobar lote 102");
+
+            // T2 tomada (en Unity VC) y en producción: no acepta `proponer_edicion`.
+            let asg2 = asignar_en(&env.estado_a, &t2.id, DEV).unwrap();
+            env.registrar_ramas_de(&asg2);
+            cambiar_estado_en(&env.estado_a, &t2.id, EstadoTarea::EnProduccion).unwrap();
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(proponer_edicion_en(&env.estado_a, &t2.id, "No valida", "", None).is_err());
+
+            // 1) Primera edición por DEV sobre T1 (Sin asignar, detalles inicialmente vacíos "").
+            let r1 = proponer_edicion_en(
+                &env.estado_a,
+                &t1.id,
+                "Editada 102 v1",
+                "Detalles 102",
+                Some("Ajuste inicial"),
+            )
+            .unwrap();
+            assert!(r1.tarea.edicion_pendiente);
+            assert_eq!(r1.edicion.campos_anteriores["titulo"], "Original 102");
+            assert_eq!(r1.edicion.campos_anteriores["detalles"], "");
+
+            // Máquina B sincroniza edición pendiente inmediata y notificación accionable para Líder/Admin.
+            env.sincronizar_b();
+            let t1_b = db_tareas::obtener(env.db_b.conexion(), &t1.id).unwrap();
+            assert_eq!(t1_b.titulo, "Editada 102 v1");
+            assert!(t1_b.edicion_pendiente);
+            assert!(notificaciones::de_usuario(env.db_b.conexion(), LIDER)
+                .unwrap()
+                .iter()
+                .any(|n| n.tipo == TipoNotificacion::EdicionPendiente && n.accionable));
+
+            // 2) Segunda edición se suma conservando valores anteriores originales.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let r2 = proponer_edicion_en(
+                &env.estado_a,
+                &t1.id,
+                "Editada 102 v2",
+                "Detalles 102",
+                Some("Segundo ajuste"),
+            )
+            .unwrap();
+            assert_eq!(r2.edicion.id, r1.edicion.id);
+            assert_eq!(
+                listar_ediciones_pendientes_en(&env.estado_a).unwrap().len(),
+                1
+            );
+            assert_eq!(r2.edicion.campos_anteriores["titulo"], "Original 102");
+            assert_eq!(r2.edicion.campos_anteriores["detalles"], "");
+
+            // DEV no puede aprobar ni rechazar modificaciones.
+            assert!(aprobar_modificacion_en(&env.estado_a, &t1.id).is_err());
+            assert!(rechazar_modificacion_en(&env.estado_a, &t1.id).is_err());
+
+            // T3 (asignada en Por hacer) y T4 (Sin asignar) reciben ediciones pendientes.
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            let asg3 = asignar_en(&env.estado_a, &t3.id, DEV).unwrap();
+            env.registrar_ramas_de(&asg3);
+            env.estado_a.fijar_usuario(Some(DEV));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            proponer_edicion_en(&env.estado_a, &t3.id, "T3 aprobada", "Det T3", None).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            proponer_edicion_en(&env.estado_a, &t4.id, "T4 aprobada lote", "", None).unwrap();
+
+            // 3) Líder rechaza T1 (restaura título y detalles vacíos), aprueba T3 individual y T4 en lote.
+            env.estado_a.fijar_usuario(Some(LIDER));
+            let rev1 = rechazar_modificacion_en(&env.estado_a, &t1.id).unwrap();
+            assert_eq!(rev1.titulo, "Original 102");
+            assert_eq!(rev1.detalles, "");
+            assert!(!rev1.edicion_pendiente);
+
+            let apr3 = aprobar_modificacion_en(&env.estado_a, &t3.id).unwrap();
+            assert_eq!(apr3.titulo, "T3 aprobada");
+            assert!(!apr3.edicion_pendiente);
+
+            let lista_lote =
+                aprobar_modificaciones_en(&env.estado_a, std::slice::from_ref(&t4.id)).unwrap();
+            assert!(lista_lote
+                .iter()
+                .find(|t| t.id == t4.id)
+                .map(|t| !t.edicion_pendiente && t.titulo == "T4 aprobada lote")
+                .unwrap());
+            assert!(listar_ediciones_pendientes_en(&env.estado_a)
+                .unwrap()
+                .is_empty());
+
+            // 4) Máquina B sincroniza vía OneDrive el rechazo (restaurado) y aprobaciones.
+            env.sincronizar_b();
+            let t1_final_b = db_tareas::obtener(env.db_b.conexion(), &t1.id).unwrap();
+            assert_eq!(t1_final_b.titulo, "Original 102");
+            assert_eq!(t1_final_b.detalles, "");
+            assert!(!t1_final_b.edicion_pendiente);
+            let t3_final_b = db_tareas::obtener(env.db_b.conexion(), &t3.id).unwrap();
+            assert_eq!(t3_final_b.titulo, "T3 aprobada");
+            assert!(!t3_final_b.edicion_pendiente);
+            assert!(ediciones::listar(env.db_b.conexion()).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn checkin_desde_branchboard_y_guardia_de_rama() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Padre 105".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::Audio,
+                    titulo: "Sub 105".into(),
+                    detalles: String::new(),
+                }],
+            },
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+
+        tomar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            |_| {
+                Ok(vec![
+                    (
+                        "T-101".into(),
+                        Rama {
+                            id: 1,
+                            name: "/main/dev/T-101-padre-105".into(),
+                            head_changeset: 10,
+                        },
+                    ),
+                    (
+                        "T-101-1".into(),
+                        Rama {
+                            id: 2,
+                            name: "/main/dev/T-101-padre-105/T-101-1-sub-105".into(),
+                            head_changeset: 11,
+                        },
+                    ),
+                ])
+            },
+            "2026-11-15T15:01:00Z",
+        )
+        .unwrap();
+
+        // No permite check-in si no es responsable, si es rama padre con subtareas ni tipo SinDefinir.
+        assert!(matches!(
+            tarea_para_checkin(c, DEV, "/main/dev/T-101-padre-105/T-101-1-sub-105").unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(tarea_para_checkin(c, LIDER, "/main/dev/T-101-padre-105").is_err());
+        assert!(armar_comentario_checkin("Titulo", "", TipoTarea::SinDefinir).is_err());
+        assert!(armar_comentario_checkin("   ", "Desc", TipoTarea::Audio).is_err());
+        assert_eq!(
+            armar_comentario_checkin("  Audio final ", " Con reverb ", TipoTarea::Audio).unwrap(),
+            "Audio final\n\nCon reverb"
+        );
+        assert_eq!(
+            rama_para_cambiar(c, "T-101-1").unwrap(),
+            "/main/dev/T-101-padre-105/T-101-1-sub-105"
+        );
+
+        let commit = registrar_checkin(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosCheckin {
+                tarea_id: "T-101-1",
+                changeset: 25,
+                titulo: "Audio final",
+                descripcion: "Con reverb",
+                tipo: TipoTarea::Audio,
+            },
+            "2026-11-15T15:02:00Z",
+            "2026-11-15T10:02:00",
+        )
+        .unwrap();
+        assert_eq!(commit.id, "C-T-101-1-25");
+        assert_eq!(commit.tipo, Some(TipoTarea::Audio));
+        assert_eq!(
+            db_tareas::obtener(c, "T-101-1")
+                .unwrap()
+                .ultimo_changeset_visto,
+            Some(25)
+        );
+
+        // Máquina B sincroniza vía ops/ y conserva tipo y ultimo_changeset_visto.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let cs_b = commits::de_tarea(e.db_b.conexion(), "T-101-1").unwrap();
+        assert_eq!(cs_b.len(), 1);
+        assert_eq!(cs_b[0].tipo, Some(TipoTarea::Audio));
+        assert_eq!(cs_b[0].descripcion.as_deref(), Some("Con reverb"));
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), "T-101-1")
+                .unwrap()
+                .ultimo_changeset_visto,
+            Some(25)
+        );
+    }
+
+    #[test]
+    fn traer_y_devolver_cambios_reglas_y_viajan_por_ops() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        for titulo in ["Origen prestamo", "Destino prestamo", "Sin rama"] {
+            crear(c, &e.ops, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
+        }
+        // T-101 = origen; T-102 = destino; T-103 = sin rama.
+        let mut con_rama = vec![
+            ("T-101", "/main/dev/T-101-origen"),
+            ("T-102", "/main/dev/T-102-destino"),
+        ];
+        for (id, rama) in con_rama.drain(..) {
+            tomar(
+                c,
+                &e.ops,
+                &autor_dev,
+                id,
+                |_| {
+                    Ok(vec![(
+                        id.into(),
+                        Rama {
+                            id: 1,
+                            name: rama.into(),
+                            head_changeset: 5,
+                        },
+                    )])
+                },
+                AHORA,
+            )
+            .unwrap();
+        }
+
+        // Origen en producción sin commits y origen en 'por hacer' se rechazan.
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).is_err());
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-102", None).is_err());
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-103", "T-101", None).is_err());
+
+        // Origen pasa a producción con commit 12; destino sigue en 'por hacer' (ya tomada) -> permitido.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-101",
+            EstadoTarea::EnProduccion,
+            AHORA,
+        )
+        .unwrap();
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).is_err());
+        commits::guardar(
+            c,
+            &commits::Commit {
+                id: "C-1".into(),
+                tarea_id: "T-101".into(),
+                hash: "12".into(),
+                mensaje: "Base 101".into(),
+                descripcion: None,
+                tipo: Some(TipoTarea::Scripting),
+                autor: DEV.into(),
+                fecha: HOY.into(),
+            },
+        )
+        .unwrap();
+        assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", Some("abc")).is_err());
+
+        let (info, cs) =
+            preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", Some("cs:12")).unwrap();
+        assert_eq!(info.rama_destino, "/main/dev/T-102-destino");
+        assert_eq!(info.rama_origen, "/main/dev/T-101-origen");
+        assert_eq!(cs, Some(12));
+
+        // En EnRevision solo Líder/Admin pueden traer cambios.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102",
+            EstadoTarea::EnRevision,
+            AHORA,
+        )
+        .unwrap();
+        assert!(matches!(
+            preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(preparar_traer_cambios(c, &autor_lider, "T-102", "T-101", None).is_ok());
+
+        // Registrar préstamo viaja por ops/ guardando changeset_merge y archivos.
+        let p = registrar_traer_cambios(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosTraerCambios {
+                destino_id: "T-102",
+                origen_id: "T-101",
+                hash: Some("12"),
+                changeset_merge: 30,
+                archivos: vec!["Assets/Combate.cs".into()],
+            },
+            "2026-11-15T16:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(p.changeset_merge, Some(30));
+        assert_eq!(p.archivos, vec!["Assets/Combate.cs".to_string()]);
+        assert_eq!(
+            db_tareas::obtener(c, "T-102")
+                .unwrap()
+                .ultimo_changeset_visto,
+            Some(30)
+        );
+        // No permite repetir exactamente el mismo préstamo vigente.
+        assert!(preparar_traer_cambios(c, &autor_lider, "T-102", "T-101", Some("12")).is_err());
+
+        // Desarrollador no puede devolver en EnRevision; si hay archivos_tocados también bloquea.
+        assert!(matches!(
+            preparar_devolver_cambios(c, &autor_dev, &p.id).unwrap_err(),
+            Error::SinPermiso
+        ));
+        commits::marcar_tocados(c, &p.id, &["Assets/Combate.cs".into()]).unwrap();
+        assert!(preparar_devolver_cambios(c, &autor_lider, &p.id).is_err());
+        commits::marcar_tocados(c, &p.id, &[]).unwrap();
+        assert!(preparar_devolver_cambios(c, &autor_lider, &p.id).is_ok());
+
+        e.sincronizar_b();
+        let pb = listar_cambios_prestados(e.db_b.conexion(), Some("T-102")).unwrap();
+        assert_eq!(pb.len(), 1);
+        assert_eq!(pb[0].changeset_merge, Some(30));
+
+        let devuelto =
+            registrar_devolver_cambios(c, &e.ops, &autor_lider, &p.id, "2026-11-15T16:05:00Z")
+                .unwrap();
+        assert_eq!(devuelto.quitado_por.as_deref(), Some(LIDER));
+        assert!(commits::prestamos_vigentes(c, "T-102").unwrap().is_empty());
+
+        e.sincronizar_b();
+        let hist_b = listar_cambios_prestados(e.db_b.conexion(), None).unwrap();
+        assert_eq!(hist_b.len(), 1);
+        assert!(hist_b[0].quitado_en.is_some());
+    }
+
+    #[test]
+    fn detectar_y_eliminar_cambios_ajenos_bloquean_terminada_y_viajan_por_ops() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        let autor_dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+
+        for titulo in ["Origen 109", "Destino 109"] {
+            crear(c, &e.ops, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
+        }
+        for (id, rama) in [
+            ("T-101", "/main/dev/T-101-origen"),
+            ("T-102", "/main/dev/T-102-destino"),
+        ] {
+            tomar(
+                c,
+                &e.ops,
+                &autor_dev,
+                id,
+                |_| {
+                    Ok(vec![(
+                        id.into(),
+                        Rama {
+                            id: 1,
+                            name: rama.into(),
+                            head_changeset: 5,
+                        },
+                    )])
+                },
+                "2026-11-15T16:01:00Z",
+            )
+            .unwrap();
+        }
+
+        let prestamo = registrar_traer_cambios(
+            c,
+            &e.ops,
+            &autor_dev,
+            &DatosTraerCambios {
+                destino_id: "T-102",
+                origen_id: "T-101",
+                hash: None,
+                changeset_merge: 30,
+                archivos: vec!["Assets/Player.cs".into(), "Assets/HUD.png".into()],
+            },
+            "2026-11-15T16:02:00Z",
+        )
+        .unwrap();
+
+        // Cruce con pendientes de Windows (`\` / mayúsculas) y check-in <= 30 ignorado.
+        assert!(!actualizar_tocados_de_prestamos(
+            c,
+            "T-102",
+            Some(&[]),
+            &[(30, vec!["Assets/Player.cs".into()])]
+        )
+        .unwrap());
+        assert!(actualizar_tocados_de_prestamos(
+            c,
+            "T-102",
+            Some(&["assets\\player.cs".into(), "Assets/Propio.cs".into()]),
+            &[(31, vec!["Assets/HUD.png".into()])]
+        )
+        .unwrap());
+        let p_tocado = commits::obtener_prestamo(c, &prestamo.id).unwrap();
+        assert_eq!(
+            p_tocado.archivos_tocados,
+            vec!["Assets/HUD.png".to_string(), "Assets/Player.cs".to_string()]
+        );
+
+        // Si polling corre desde otra rama (`None`), no borra los tocados detectados.
+        assert!(!actualizar_tocados_de_prestamos(c, "T-102", None, &[]).unwrap());
+        assert_eq!(
+            commits::obtener_prestamo(c, &prestamo.id)
+                .unwrap()
+                .archivos_tocados
+                .len(),
+            2
+        );
+
+        // Bloquea pasar a Terminada (aunque tuviera que fallar antes incluso que el préstamo) y rechaza sin tocados tras limpiar.
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_dev,
+            "T-102",
+            EstadoTarea::EnRevision,
+            "2026-11-15T16:03:00Z",
+        )
+        .unwrap();
+        let err_term = cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-102",
+            EstadoTarea::Terminada,
+            "2026-11-15T16:04:00Z",
+        )
+        .unwrap_err();
+        assert!(
+            err_term.to_string().contains("cambios ajenos"),
+            "{err_term}"
+        );
+
+        // Desarrollador no puede eliminar en EnRevision; Líder sí y viaja por ops/.
+        assert!(matches!(
+            preparar_eliminar_cambios_ajenos(c, &autor_dev, &prestamo.id).unwrap_err(),
+            Error::SinPermiso
+        ));
+        assert!(preparar_eliminar_cambios_ajenos(c, &autor_lider, &prestamo.id).is_ok());
+
+        assert_eq!(e.sincronizar_b().descartados, 0);
+        let limpio = registrar_eliminar_cambios_ajenos(
+            c,
+            &e.ops,
+            &autor_lider,
+            &prestamo.id,
+            Some(32),
+            "2026-11-15T16:10:00Z",
+        )
+        .unwrap();
+        assert!(limpio.archivos_tocados.is_empty());
+        assert_eq!(limpio.changeset_limpio, Some(32));
+        // Poll posterior con cs 31 (anterior a 32) NO vuelve a marcar tocados.
+        assert!(!actualizar_tocados_de_prestamos(
+            c,
+            "T-102",
+            Some(&[]),
+            &[(31, vec!["Assets/HUD.png".into()])]
+        )
+        .unwrap());
+
+        assert_eq!(e.sincronizar_b().descartados, 0);
+        let pb = commits::obtener_prestamo(e.db_b.conexion(), &prestamo.id).unwrap();
+        assert!(pb.archivos_tocados.is_empty());
+        assert_eq!(pb.changeset_limpio, Some(32));
+    }
+
+    #[test]
+    fn alerta_rama_ajena_ignora_meta_y_no_deshace_cambios() {
+        let mut ajena = Tarea::nueva("T-101", "Ajena", TipoTarea::Scripting, ADMIN, HOY);
+        ajena.asignado_a = Some(LIDER.into());
+        ajena.estado = EstadoTarea::EnProduccion;
+        ajena.rama_asociada = Some("/main/dev/T-101-ajena".into());
+
+        let mut propia = Tarea::nueva("T-102", "Mia", TipoTarea::Scripting, ADMIN, HOY);
+        propia.asignado_a = Some(DEV.into());
+        propia.estado = EstadoTarea::EnProduccion;
+        propia.rama_asociada = Some("/main/dev/T-102-mia".into());
+
+        let mut terminada = Tarea::nueva("T-103", "Cerrada", TipoTarea::Scripting, ADMIN, HOY);
+        terminada.asignado_a = Some(DEV.into());
+        terminada.estado = EstadoTarea::Terminada;
+        terminada.rama_asociada = Some("/main/dev/T-103-cerrada".into());
+
+        let todas = vec![ajena, propia, terminada];
+
+        // Solo `.meta` o rama propia asignada NO disparan alerta.
+        assert!(evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-101-ajena",
+            &["Assets/Player.cs.meta".into()],
+            &[]
+        )
+        .is_none());
+        assert!(evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-102-mia",
+            &["Assets/Player.cs".into()],
+            &[]
+        )
+        .is_none());
+
+        // En `dev` con cambio real sí alerta y sugiere la rama asignada.
+        let en_dev = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev",
+            &["Assets/Enemy.cs".into(), "Assets/Enemy.cs.meta".into()],
+            &[],
+        )
+        .expect("debe alertar en /main/dev");
+        assert_eq!(en_dev.tarea_ajena_id, None);
+        assert_eq!(en_dev.rama_sugerida.as_deref(), Some("/main/dev/T-102-mia"));
+        assert_eq!(en_dev.archivos, vec!["Assets/Enemy.cs".to_string()]);
+        assert!(en_dev.mensaje.contains("/main/dev/T-102-mia"));
+
+        // En rama ajena o terminada con check-in reciente propio sí alerta e identifica tarea/dueño.
+        let en_ajena = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-101-ajena",
+            &[],
+            &["Assets/UI.png".into()],
+        )
+        .expect("debe alertar en rama ajena");
+        assert_eq!(en_ajena.tarea_ajena_id.as_deref(), Some("T-101"));
+        assert_eq!(en_ajena.dueno_rama.as_deref(), Some(LIDER));
+        assert!(en_ajena.mensaje.contains("T-101"));
+
+        let en_cerrada = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-103-cerrada",
+            &["Assets/Fix.cs".into()],
+            &[],
+        )
+        .expect("rama terminada ya no debe editarse");
+        assert_eq!(en_cerrada.tarea_ajena_id.as_deref(), Some("T-103"));
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_hacer_checkin() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{
+            asignar_en, cambiar_a_rama_tarea_en, cambios_pendientes_en, hacer_checkin_en, tomar_en,
+        };
+
+        correr_entorno_real("105", |env| {
+            env.crear_usuario(DEV, Rol::Desarrollador);
+            let admin_email = env.admin_fila.email.clone();
+
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 105",
+                &["Sub checkin 105"],
+            );
+            let sub_id = grupo[1].id.clone();
+            let indep = env.crear_tarea(&admin_email, Rol::Administrador, "Otra rama 105");
+            let asg_indep = asignar_en(&env.estado_a, &indep.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_indep);
+
+            let tomadas = tomar_en(&env.estado_a, &sub_id).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+            let rama_sub = tomadas[1].rama_asociada.clone().unwrap();
+
+            // Guardia: otro usuario o rama padre con subtareas rechazan `hacer_checkin_en`.
+            env.estado_a.fijar_usuario(Some(DEV));
+            assert!(hacer_checkin_en(
+                &env.estado_a,
+                &rama_sub,
+                "No soy dueño",
+                "",
+                TipoTarea::Scripting
+            )
+            .is_err());
+            env.estado_a.fijar_usuario(Some(&admin_email));
+            assert!(hacer_checkin_en(
+                &env.estado_a,
+                &rama_padre,
+                "Padre",
+                "",
+                TipoTarea::Scripting
+            )
+            .is_err());
+
+            // Guardia de rama incorrecta: al volver a /main/dev, detecta rama incorrecta y bloquea check-in.
+            env.volver_a_dev();
+            let pend_fuera = cambios_pendientes_en(&env.estado_a, Some(&rama_sub)).unwrap();
+            assert_eq!(pend_fuera.rama_actual, "/main/dev");
+            assert!(!pend_fuera.en_rama_esperada);
+            assert!(pend_fuera.archivos.is_empty());
+            let err_rama =
+                hacer_checkin_en(&env.estado_a, &rama_sub, "En dev", "", TipoTarea::Scripting)
+                    .unwrap_err();
+            assert!(err_rama.to_string().contains("cambia de rama"));
+
+            // Ofrecer cambiar de rama: `cambiar_a_rama_tarea_en` devuelve el workspace a `rama_sub`.
+            let cambiada = cambiar_a_rama_tarea_en(&env.estado_a, &sub_id).unwrap();
+            assert_eq!(cambiada, rama_sub);
+
+            // Sin cambios pendientes rechaza `hacer_checkin_en`; agregando un archivo, `cm status` lo lista.
+            assert!(
+                hacer_checkin_en(&env.estado_a, &rama_sub, "Vacio", "", TipoTarea::Scripting)
+                    .is_err()
+            );
+            let archivo = env.ws_ruta.join("script-105.txt");
+            std::fs::write(&archivo, "contenido 105").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pend = cambios_pendientes_en(&env.estado_a, Some(&rama_sub)).unwrap();
+            assert!(pend.en_rama_esperada);
+            assert_eq!(pend.rama_actual, rama_sub);
+            assert!(pend.archivos.iter().any(|a| a.contains("script-105.txt")));
+            assert!(cambiar_a_rama_tarea_en(&env.estado_a, &indep.id).is_err());
+
+            // Check-in real desde BranchBoard con título, descripción y tipo `Audio`.
+            let commit = hacer_checkin_en(
+                &env.estado_a,
+                &rama_sub,
+                "Sistema de audio 105",
+                "Efectos base de combate",
+                TipoTarea::Audio,
+            )
+            .unwrap();
+            let cs: i64 = commit.hash.parse().unwrap();
+            assert!(cs > 0);
+            assert_eq!(commit.mensaje, "Sistema de audio 105");
+            assert_eq!(
+                commit.descripcion.as_deref(),
+                Some("Efectos base de combate")
+            );
+            assert_eq!(commit.tipo, Some(TipoTarea::Audio));
+
+            let pend_despues = cambios_pendientes_en(&env.estado_a, Some(&rama_sub)).unwrap();
+            assert!(pend_despues.archivos.is_empty());
+
+            // Releer con `revisar_actualizaciones_en` conserva `tipo` y no marca `modificada`.
+            let pol = revisar_actualizaciones_en(&env.estado_a, Some(&sub_id)).unwrap();
+            assert!(pol.tareas_modificadas.is_empty());
+            let cs_a = env
+                .estado_a
+                .con_db(|db| commits::de_tarea(db.conexion(), &sub_id))
+                .unwrap();
+            assert_eq!(cs_a.len(), 1);
+            assert_eq!(cs_a[0].tipo, Some(TipoTarea::Audio));
+
+            // Máquina B sincroniza vía OneDrive el Commit con su `tipo` y `ultimo_changeset_visto`.
+            env.sincronizar_b();
+            let cs_b = commits::de_tarea(env.db_b.conexion(), &sub_id).unwrap();
+            assert_eq!(cs_b.len(), 1);
+            assert_eq!(cs_b[0].hash, commit.hash);
+            assert_eq!(cs_b[0].tipo, Some(TipoTarea::Audio));
+            assert_eq!(
+                cs_b[0].descripcion.as_deref(),
+                Some("Efectos base de combate")
+            );
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &sub_id)
+                    .unwrap()
+                    .ultimo_changeset_visto,
+                Some(cs)
+            );
+        });
+    }
+
+    #[test]
+    fn en_espera_bloquea_revision_y_se_convierte_en_subtarea() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let autor_lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+
+        crear_con_subtareas(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosNuevaTareaConSubtareas {
+                titulo: "Padre 106".into(),
+                detalles: String::new(),
+                tipo: TipoTarea::Scripting,
+                tarea_padre_id: None,
+                sprint_id: None,
+                backlog_id: None,
+                con_fecha: false,
+                fecha_limite: None,
+                subtareas: vec![DatosSubtareaNueva {
+                    tipo: TipoTarea::Scripting,
+                    titulo: "Sub normal".into(),
+                    detalles: String::new(),
+                }],
+            },
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+        tomar(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            |_| {
+                Ok(vec![
+                    (
+                        "T-101".into(),
+                        Rama {
+                            id: 1,
+                            name: "/main/dev/T-101-padre-106".into(),
+                            head_changeset: 10,
+                        },
+                    ),
+                    (
+                        "T-101-1".into(),
+                        Rama {
+                            id: 2,
+                            name: "/main/dev/T-101-padre-106/T-101-1-sub-normal".into(),
+                            head_changeset: 11,
+                        },
+                    ),
+                ])
+            },
+            "2026-11-15T15:01:00Z",
+        )
+        .unwrap();
+        cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101-1",
+            EstadoTarea::EnRevision,
+            "2026-11-15T15:02:00Z",
+        )
+        .unwrap();
+
+        // Crear subtarea "En espera" en T-101: bloquea EnRevision en padre y en sí misma.
+        let esp = crear_en_espera(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            2,
+            "2026-11-15T15:03:00Z",
+            HOY,
+        )
+        .unwrap();
+        assert_eq!(esp.tipo, TipoTarea::SinDefinir);
+        assert_eq!(esp.estado, EstadoTarea::EnProduccion);
+        assert_eq!(
+            db_tareas::obtener(c, "T-101").unwrap().estado,
+            EstadoTarea::EnProduccion
+        );
+        assert!(cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            EstadoTarea::EnRevision,
+            "2026-11-15T15:04:00Z"
+        )
+        .is_err());
+        assert!(cambiar_estado(
+            c,
+            &e.ops,
+            &autor_lider,
+            &esp.id,
+            EstadoTarea::EnRevision,
+            "2026-11-15T15:04:00Z"
+        )
+        .is_err());
+
+        // Convertir "En espera" en subtarea con rama propia.
+        let conv = convertir_espera_en_subtarea(
+            c,
+            &e.ops,
+            &autor_lider,
+            &DatosRamaDesdeEspera {
+                espera_id: &esp.id,
+                titulo: "Fix colision",
+                detalles: "Ajuste pendiente",
+                tipo: TipoTarea::Scripting,
+                asignado_a: LIDER,
+                rama: "/main/dev/T-101-padre-106/T-101-2-fix-colision",
+                ultimo_changeset_visto: 10,
+            },
+            "2026-11-15T15:05:00Z",
+        )
+        .unwrap();
+        assert_eq!(conv.tipo, TipoTarea::Scripting);
+        assert_eq!(conv.estado, EstadoTarea::EnProduccion);
+        assert_eq!(
+            conv.rama_asociada.as_deref(),
+            Some("/main/dev/T-101-padre-106/T-101-2-fix-colision")
+        );
+
+        // Segunda En espera -> quitar_en_espera la elimina limpiamente.
+        let esp2 = crear_en_espera(
+            c,
+            &e.ops,
+            &autor_lider,
+            "T-101",
+            1,
+            "2026-11-15T15:06:00Z",
+            HOY,
+        )
+        .unwrap();
+        quitar_en_espera(c, &e.ops, &autor_lider, &esp2.id, "2026-11-15T15:07:00Z").unwrap();
+        assert!(db_tareas::buscar(c, &esp2.id).unwrap().is_none());
+
+        // Máquina B sincroniza vía ops/ y llega al mismo estado.
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        let conv_b = db_tareas::obtener(e.db_b.conexion(), &conv.id).unwrap();
+        assert_eq!(conv_b.tipo, TipoTarea::Scripting);
+        assert_eq!(conv_b.titulo, "Fix colision");
+        assert!(db_tareas::buscar(e.db_b.conexion(), &esp2.id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_subtarea_en_espera() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{
+            cambiar_estado_en, cambios_pendientes_en, crear_rama_desde_espera_en, hacer_checkin_en,
+            tomar_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("106", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 106",
+                &["Sub normal 106"],
+            );
+            let padre_id = grupo[0].id.clone();
+            let sub_id = grupo[1].id.clone();
+
+            let tomadas = tomar_en(&env.estado_a, &sub_id).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+
+            // Terminamos la subtarea normal para demostrar que solo "En espera" bloquea al padre.
+            env.volver_a_dev();
+            cambiar_estado_en(&env.estado_a, &sub_id, EstadoTarea::EnProduccion).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub_id, EstadoTarea::EnRevision).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub_id, EstadoTarea::Terminada).unwrap();
+
+            // 1) Trabajo sin check-in directo en la rama padre -> polling crea "En espera".
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let archivo = env.ws_ruta.join("directo-en-padre-106.txt");
+            std::fs::write(&archivo, "cambio directo 106").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(archivo.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pol1 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let espera_id = pol1.espera_creada.expect("debe crear subtarea En espera");
+            let esp_a = env
+                .estado_a
+                .con_db(|db| db_tareas::obtener(db.conexion(), &espera_id))
+                .unwrap();
+            assert_eq!(esp_a.tipo, TipoTarea::SinDefinir);
+            assert_eq!(esp_a.titulo, "En espera");
+            assert_eq!(esp_a.estado, EstadoTarea::EnProduccion);
+
+            // Bloqueos: en padre no se hace check-in ni pasa a revisión mientras exista En espera.
+            assert!(hacer_checkin_en(
+                &env.estado_a,
+                &rama_padre,
+                "Prohibido",
+                "",
+                TipoTarea::Scripting
+            )
+            .is_err());
+            assert!(cambiar_estado_en(&env.estado_a, &padre_id, EstadoTarea::EnRevision).is_err());
+            assert!(cambiar_estado_en(&env.estado_a, &espera_id, EstadoTarea::EnRevision).is_err());
+
+            env.sincronizar_b();
+            let esp_b = db_tareas::obtener(env.db_b.conexion(), &espera_id).unwrap();
+            assert_eq!(esp_b.tipo, TipoTarea::SinDefinir);
+
+            // 2) Crear rama desde En espera: crea rama hija y lleva el cambio pendiente con `--noinput`.
+            let convertida = crear_rama_desde_espera_en(
+                &env.estado_a,
+                &espera_id,
+                "Nueva sub UI 106",
+                "Movida desde rama padre",
+                TipoTarea::UiInterfaz,
+            )
+            .unwrap();
+            let rama_nueva = convertida.rama_asociada.clone().unwrap();
+            env.registrar_rama(&rama_nueva);
+            assert_eq!(convertida.tipo, TipoTarea::UiInterfaz);
+            assert_eq!(convertida.estado, EstadoTarea::EnProduccion);
+
+            let pend_hija = cambios_pendientes_en(&env.estado_a, Some(&rama_nueva)).unwrap();
+            assert!(pend_hija.en_rama_esperada);
+            assert!(
+                pend_hija
+                    .archivos
+                    .iter()
+                    .any(|a| a.contains("directo-en-padre-106.txt")),
+                "archivos pendientes en la hija: {:?}",
+                pend_hija.archivos
+            );
+
+            // Check-in real en la nueva hija + sync en B.
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_nueva,
+                "Commit movido desde espera",
+                "Guardado en su rama",
+                TipoTarea::UiInterfaz,
+            )
+            .unwrap();
+            env.sincronizar_b();
+            let conv_b = db_tareas::obtener(env.db_b.conexion(), &espera_id).unwrap();
+            assert_eq!(conv_b.tipo, TipoTarea::UiInterfaz);
+            assert_eq!(conv_b.rama_asociada.as_deref(), Some(rama_nueva.as_str()));
+
+            // 3) Guardia de rama al crear desde espera + retiro automático si la rama padre queda limpia.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let tmp_arch = env.ws_ruta.join("temporal-106.txt");
+            std::fs::write(&tmp_arch, "temp").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(tmp_arch.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pol2 = revisar_actualizaciones_en(&env.estado_a, Some(&padre_id)).unwrap();
+            let esp2_id = pol2.espera_creada.expect("debe crear segunda En espera");
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            env.volver_a_dev();
+            assert!(crear_rama_desde_espera_en(
+                &env.estado_a,
+                &esp2_id,
+                "Desde dev bloqueado",
+                "",
+                TipoTarea::Audio
+            )
+            .is_err());
+
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let pol3 = revisar_actualizaciones_en(&env.estado_a, Some(&padre_id)).unwrap();
+            assert_eq!(pol3.espera_quitada.as_deref(), Some(esp2_id.as_str()));
+            env.sincronizar_b();
+            assert!(db_tareas::buscar(env.db_b.conexion(), &esp2_id)
+                .unwrap()
+                .is_none());
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambios_prestados() {
+        use crate::cm::Comando;
+        use crate::comandos::tareas::{
+            asignar_en, cambiar_estado_en, devolver_cambios_prestados_en, hacer_checkin_en,
+            listar_cambios_prestados_en, tomar_en, traer_cambios_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("108", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let origen = env.crear_tarea(&admin_email, Rol::Administrador, "Origen prestamo 108");
+            let destino = env.crear_tarea(&admin_email, Rol::Administrador, "Destino prestamo 108");
+
+            // Registrar destino después de origen: la limpieza borra primero destino (quita los merge links).
+            let asg_origen = asignar_en(&env.estado_a, &origen.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_origen);
+            let rama_origen = asg_origen[0].rama_asociada.clone().unwrap();
+
+            let tom_destino = tomar_en(&env.estado_a, &destino.id).unwrap();
+            env.registrar_ramas_de(&tom_destino);
+            let rama_destino = tom_destino[0].rama_asociada.clone().unwrap();
+
+            // Trabajo en origen: dos commits reales en Unity VC.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_origen).unwrap();
+            let arch1 = env.ws_ruta.join("prestamo-uno-108.txt");
+            std::fs::write(&arch1, "uno 108").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(arch1.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let commit1 = hacer_checkin_en(
+                &env.estado_a,
+                &rama_origen,
+                "Primer avance 108",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            let arch2 = env.ws_ruta.join("prestamo-dos-108.txt");
+            let arch3 = env.ws_ruta.join("prestamo-tres-108.txt");
+            std::fs::write(&arch2, "dos 108").unwrap();
+            std::fs::write(&arch3, "tres 108").unwrap();
+            Comando::cm()
+                .arg("add")
+                .args([
+                    arch2.to_string_lossy().as_ref(),
+                    arch3.to_string_lossy().as_ref(),
+                ])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_origen,
+                "Segundo avance 108",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            // Trabajo propio en destino + pruebas de guardia de rama y "check-in primero".
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let propio = env.ws_ruta.join("propio-108.txt");
+            std::fs::write(&propio, "propio 108").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(propio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_destino,
+                "Propio destino 108",
+                "",
+                TipoTarea::UiInterfaz,
+            )
+            .unwrap();
+
+            // Mientras origen esté en 'por hacer' se rechaza aunque ya tenga check-ins.
+            assert!(
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash),)
+                    .is_err()
+            );
+
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::EnProduccion).unwrap();
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnProduccion).unwrap();
+
+            // Cambio pendiente en EnProduccion debe bloquear traer_cambios hasta hacer check-in o limpiar.
+            let sucio = env.ws_ruta.join("sucio-108.txt");
+            std::fs::write(&sucio, "sin checkin").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(sucio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let err_sucio =
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash))
+                    .unwrap_err();
+            assert!(err_sucio.to_string().contains("check-in"), "{err_sucio}");
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            let _ = std::fs::remove_file(&sucio);
+
+            // Con el workspace fuera de rama_destino, la guardia de rama también bloquea.
+            env.volver_a_dev();
+            let err_rama =
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash))
+                    .unwrap_err();
+            assert!(
+                err_rama.to_string().contains("cambia de rama"),
+                "{err_rama}"
+            );
+
+            // 1) Préstamo de un commit puntual (`commit1`) en EnProduccion + devolución sustractiva.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let p1 = traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash))
+                .unwrap();
+            assert!(p1.changeset_merge.is_some());
+            assert_eq!(p1.hash.as_deref(), Some(commit1.hash.as_str()));
+            assert!(p1
+                .archivos
+                .iter()
+                .any(|a| a.contains("prestamo-uno-108.txt")));
+            assert!(!p1
+                .archivos
+                .iter()
+                .any(|a| a.contains("prestamo-dos-108.txt")));
+            assert!(env.ws_ruta.join("prestamo-uno-108.txt").exists());
+            assert!(!env.ws_ruta.join("prestamo-dos-108.txt").exists());
+            assert!(
+                traer_cambios_en(&env.estado_a, &destino.id, &origen.id, Some(&commit1.hash),)
+                    .is_err()
+            );
+            assert!(cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).is_err());
+
+            env.sincronizar_b();
+            let p1_b = listar_cambios_prestados_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert_eq!(p1_b.len(), 1);
+            assert_eq!(
+                db_tareas::obtener(env.db_b.conexion(), &destino.id)
+                    .unwrap()
+                    .id,
+                destino.id
+            );
+            assert_eq!(
+                commits::obtener_prestamo(env.db_b.conexion(), &p1.id).unwrap(),
+                p1
+            );
+
+            let p1_dev = devolver_cambios_prestados_en(&env.estado_a, &p1.id).unwrap();
+            assert!(p1_dev.quitado_en.is_some());
+            assert!(p1_dev.quitado_por.is_some());
+            assert!(!env.ws_ruta.join("prestamo-uno-108.txt").exists());
+            assert!(env.ws_ruta.join("propio-108.txt").exists());
+            env.sincronizar_b();
+            assert!(commits::obtener_prestamo(env.db_b.conexion(), &p1.id)
+                .unwrap()
+                .quitado_en
+                .is_some());
+
+            // 2) Con destino en EnRevision y origen en Terminada: traer TODOS los cambios (intervalo) y devolver.
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::EnRevision).unwrap();
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::Terminada).unwrap();
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnRevision).unwrap();
+
+            let p2 = traer_cambios_en(&env.estado_a, &destino.id, &origen.id, None).unwrap();
+            assert!(p2.hash.is_none());
+            assert!(p2.changeset_merge.is_some());
+            for nombre in [
+                "prestamo-uno-108.txt",
+                "prestamo-dos-108.txt",
+                "prestamo-tres-108.txt",
+            ] {
+                assert!(
+                    p2.archivos.iter().any(|a| a.contains(nombre)),
+                    "falta {nombre} en {:?}",
+                    p2.archivos
+                );
+                assert!(env.ws_ruta.join(nombre).exists(), "debe existir {nombre}");
+            }
+
+            // Sigue bloqueando Terminada hasta devolverlo; tras devolver conserva historial y desbloquea.
+            assert!(cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).is_err());
+            let p2_dev = devolver_cambios_prestados_en(&env.estado_a, &p2.id).unwrap();
+            assert!(p2_dev.quitado_en.is_some());
+            for nombre in [
+                "prestamo-uno-108.txt",
+                "prestamo-dos-108.txt",
+                "prestamo-tres-108.txt",
+            ] {
+                assert!(
+                    !env.ws_ruta.join(nombre).exists(),
+                    "debió revertirse {nombre}"
+                );
+            }
+            assert!(env.ws_ruta.join("propio-108.txt").exists());
+
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap();
+            env.sincronizar_b();
+            let hist_b = commits::prestamos_de_tarea(env.db_b.conexion(), &destino.id).unwrap();
+            assert_eq!(hist_b.len(), 2);
+            assert!(hist_b.iter().all(|x| x.quitado_en.is_some()));
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambios_ajenos_tocados() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{
+            asignar_en, cambiar_estado_en, devolver_cambios_prestados_en,
+            eliminar_cambios_ajenos_en, hacer_checkin_en, tomar_en, traer_cambios_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("109", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let origen = env.crear_tarea(&admin_email, Rol::Administrador, "Origen ajenos 109");
+            let destino = env.crear_tarea(&admin_email, Rol::Administrador, "Destino ajenos 109");
+
+            let asg_origen = asignar_en(&env.estado_a, &origen.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_origen);
+            let rama_origen = asg_origen[0].rama_asociada.clone().unwrap();
+
+            let tom_destino = tomar_en(&env.estado_a, &destino.id).unwrap();
+            env.registrar_ramas_de(&tom_destino);
+            let rama_destino = tom_destino[0].rama_asociada.clone().unwrap();
+
+            // Commit en origen con 2 archivos prestables.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_origen).unwrap();
+            let a1 = env.ws_ruta.join("ajeno-uno-109.txt");
+            let a2 = env.ws_ruta.join("ajeno-dos-109.txt");
+            std::fs::write(&a1, "original ajeno 109").unwrap();
+            std::fs::write(&a2, "original dos 109").unwrap();
+            Comando::cm()
+                .arg("add")
+                .args([a1.to_string_lossy().as_ref(), a2.to_string_lossy().as_ref()])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_origen,
+                "Base prestamo 109",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+            cambiar_estado_en(&env.estado_a, &origen.id, EstadoTarea::EnProduccion).unwrap();
+
+            // Trabajo propio en destino + préstamo de origen.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let propio = env.ws_ruta.join("propio-109.txt");
+            std::fs::write(&propio, "propio v1").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(propio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_destino,
+                "Propio inicial 109",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnProduccion).unwrap();
+
+            let prestamo = traer_cambios_en(&env.estado_a, &destino.id, &origen.id, None).unwrap();
+
+            // 1) Cambio sin check-in en archivo prestado: el polling lo detecta antes de guardarse.
+            std::fs::write(&a1, "tocado sin checkin").unwrap();
+            let pol1 = revisar_actualizaciones_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert!(pol1.tocados_detectados.contains(&destino.id));
+            let tras_local = env
+                .estado_a
+                .con_db(|db| commits::obtener_prestamo(db.conexion(), &prestamo.id))
+                .unwrap();
+            assert_eq!(
+                tras_local.archivos_tocados,
+                vec!["ajeno-uno-109.txt".to_string()]
+            );
+
+            // Limpiar el toque sin check-in vuelve el archivo al original.
+            let limpio_local = eliminar_cambios_ajenos_en(&env.estado_a, &prestamo.id).unwrap();
+            assert!(limpio_local.archivos_tocados.is_empty());
+            assert_eq!(std::fs::read_to_string(&a1).unwrap(), "original ajeno 109");
+
+            // 2) Tocar otro archivo prestado junto con uno propio y hacer check-in en Unity VC.
+            std::fs::write(&a2, "alterado en checkin 109").unwrap();
+            std::fs::write(&propio, "propio v2").unwrap();
+            hacer_checkin_en(
+                &env.estado_a,
+                &rama_destino,
+                "Cambio propio mezclando ajeno",
+                "",
+                TipoTarea::Scripting,
+            )
+            .unwrap();
+
+            let tras_ci = env
+                .estado_a
+                .con_db(|db| commits::obtener_prestamo(db.conexion(), &prestamo.id))
+                .unwrap();
+            assert_eq!(
+                tras_ci.archivos_tocados,
+                vec!["ajeno-dos-109.txt".to_string()]
+            );
+
+            // También debe detectar desde cero vía polling por diff de check-in nuevo.
+            env.estado_a
+                .con_db(|db| commits::marcar_tocados(db.conexion(), &prestamo.id, &[]))
+                .unwrap();
+            let pol2 = revisar_actualizaciones_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert!(pol2.tocados_detectados.contains(&destino.id));
+
+            // Bloquea devolución y Terminada hasta limpiar cambios ajenos; valida guardia de rama.
+            assert!(devolver_cambios_prestados_en(&env.estado_a, &prestamo.id).is_err());
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::EnRevision).unwrap();
+            let err_term =
+                cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap_err();
+            assert!(
+                err_term.to_string().contains("cambios ajenos"),
+                "{err_term}"
+            );
+
+            env.volver_a_dev();
+            let err_guard = eliminar_cambios_ajenos_en(&env.estado_a, &prestamo.id).unwrap_err();
+            assert!(
+                err_guard.to_string().contains("cambia de rama"),
+                "{err_guard}"
+            );
+
+            // Restaurar en la rama + check-in automático; preserva `propio-109.txt` v2.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_destino).unwrap();
+            let limpio_ci = eliminar_cambios_ajenos_en(&env.estado_a, &prestamo.id).unwrap();
+            assert!(limpio_ci.archivos_tocados.is_empty());
+            assert!(limpio_ci.changeset_limpio.is_some());
+            assert_eq!(std::fs::read_to_string(&a2).unwrap(), "original dos 109");
+            assert_eq!(std::fs::read_to_string(&propio).unwrap(), "propio v2");
+
+            // Polling posterior NO vuelve a marcar el check-in ya restaurado, y queda registrado en Unity VC.
+            let pol3 = revisar_actualizaciones_en(&env.estado_a, Some(&destino.id)).unwrap();
+            assert!(!pol3.tocados_detectados.contains(&destino.id));
+            let commits_dest = env
+                .estado_a
+                .con_db(|db| commits::de_tarea(db.conexion(), &destino.id))
+                .unwrap();
+            assert!(commits_dest
+                .iter()
+                .any(|c| c.mensaje.contains("Se eliminaron cambios ajenos")));
+
+            // Máquina B recibe la limpieza por ops/, ya se puede devolver y pasar a Terminada.
+            env.sincronizar_b();
+            let pb = commits::obtener_prestamo(env.db_b.conexion(), &prestamo.id).unwrap();
+            assert!(pb.archivos_tocados.is_empty());
+            assert!(pb.changeset_limpio.is_some());
+
+            devolver_cambios_prestados_en(&env.estado_a, &prestamo.id).unwrap();
+            assert!(!a1.exists());
+            assert!(!a2.exists());
+            assert_eq!(std::fs::read_to_string(&propio).unwrap(), "propio v2");
+            cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap();
+        });
+    }
+
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_alerta_rama_ajena() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::asignar_en;
+        use crate::ramas;
+
+        correr_entorno_real("111", |env| {
+            let compa = "compa.ajeno@ejemplo.com";
+            env.crear_usuario(compa, Rol::Desarrollador);
+            let admin_email = env.admin_fila.email.clone();
+
+            let ajena = env.crear_tarea(&admin_email, Rol::Administrador, "Rama ajena 111");
+            let propia = env.crear_tarea(&admin_email, Rol::Administrador, "Rama propia 111");
+
+            let asg_ajena = asignar_en(&env.estado_a, &ajena.id, compa).unwrap();
+            env.registrar_ramas_de(&asg_ajena);
+            let rama_ajena = asg_ajena[0].rama_asociada.clone().unwrap();
+
+            let asg_propia = asignar_en(&env.estado_a, &propia.id, &admin_email).unwrap();
+            env.registrar_ramas_de(&asg_propia);
+            let rama_propia = asg_propia[0].rama_asociada.clone().unwrap();
+
+            // 1) Cambios exclusivos .meta en /main/dev NO generan falsa alarma.
+            env.volver_a_dev();
+            let meta_dev = env.ws_ruta.join("AutoUnity.cs.meta");
+            std::fs::write(&meta_dev, "guid: 123").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(meta_dev.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_meta = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            assert!(pol_meta.alerta_rama_ajena.is_none());
+
+            // 2) Cambio real sin check-in en /main/dev dispara alerta, sugiere rama propia y NO deshace nada.
+            let dev_real = env.ws_ruta.join("cambio-en-dev-111.txt");
+            std::fs::write(&dev_real, "contenido sin perder 111").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(dev_real.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_dev = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let alerta_dev = pol_dev
+                .alerta_rama_ajena
+                .expect("debe alertar cambio real en /main/dev");
+            assert_eq!(alerta_dev.tarea_ajena_id, None);
+            assert_eq!(
+                alerta_dev.rama_sugerida.as_deref(),
+                Some(rama_propia.as_str())
+            );
+            assert_eq!(
+                alerta_dev.archivos,
+                vec!["cambio-en-dev-111.txt".to_string()]
+            );
+            assert_eq!(
+                std::fs::read_to_string(&dev_real).unwrap(),
+                "contenido sin perder 111"
+            );
+
+            // Limpiamos antes de cambiar de rama en el workspace.
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            let _ = std::fs::remove_file(&meta_dev);
+            let _ = std::fs::remove_file(&dev_real);
+
+            // 3) En rama de otro compañero (`compa`): cambio sin check-in y luego check-in directo.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_ajena).unwrap();
+            let arch_ajeno = env.ws_ruta.join("edicion-ajena-111.txt");
+            std::fs::write(&arch_ajeno, "editado en rama ajena").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(arch_ajeno.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+
+            let pol_ajena = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let alerta_aj = pol_ajena
+                .alerta_rama_ajena
+                .expect("debe alertar cambio pendiente en rama ajena");
+            assert_eq!(alerta_aj.tarea_ajena_id.as_deref(), Some(ajena.id.as_str()));
+            assert_eq!(alerta_aj.dueno_rama.as_deref(), Some(compa));
+            assert_eq!(
+                alerta_aj.rama_sugerida.as_deref(),
+                Some(rama_propia.as_str())
+            );
+            assert!(arch_ajeno.exists());
+
+            // Simular check-in directo hecho desde Unity VC en la rama ajena.
+            Comando::cm()
+                .args(["checkin", "--all", "-c=Checkin equivocado 111"])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_ci = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            let alerta_ci = pol_ci
+                .alerta_rama_ajena
+                .expect("debe alertar check-in propio reciente en rama ajena");
+            assert_eq!(alerta_ci.tarea_ajena_id.as_deref(), Some(ajena.id.as_str()));
+            assert!(alerta_ci
+                .archivos
+                .iter()
+                .any(|a| a.contains("edicion-ajena-111.txt")));
+
+            // 4) En la rama propia asignada NO dispara alerta aunque tenga cambios reales.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_propia).unwrap();
+            let arch_mio = env.ws_ruta.join("mio-111.txt");
+            std::fs::write(&arch_mio, "mio OK").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(arch_mio.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let pol_propia = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+            assert!(pol_propia.alerta_rama_ajena.is_none());
+
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+            let _ = std::fs::remove_file(&arch_mio);
+        });
+    }
+
+    /// **Máquina B para la comprobación en pantalla** (CLAUDE.md, "Comprobación en
+    /// pantalla"). La app de escritorio (máquina A, Administrador) ya entró a
+    /// `BranchBoard-Pruebas`, eligió la carpeta compartida y creó al Desarrollador
+    /// `BB_UI_DEV`. Esta prueba hace de otra máquina sobre la misma carpeta:
+    ///
+    /// - `BB_UI_ACCION=sembrar`: el Desarrollador crea 3 tareas (quedan pendientes
+    ///   de aprobación) y propone una edición sobre cada tarea cuyo título empiece
+    ///   por `A1 editable UI` (creadas antes por el Administrador en la app).
+    /// - `BB_UI_ACCION=comprobar`: reconstruye la máquina B desde `ops/` e imprime
+    ///   cómo quedó cada tarea y qué notificaciones recibió el Desarrollador, para
+    ///   compararlo con lo que se hizo con clics en la app.
+    ///
+    /// `BB_UI_PROYECTO_LOCAL` es la carpeta del proyecto en la app
+    /// (`%LocalAppData%\BranchBoard\proyectos\<proyecto>`); de ahí solo se leen la
+    /// llave pública y la fila del Administrador.
+    #[test]
+    #[ignore = "acompaña a la app abierta: correr a mano con BB_UI_PROYECTO_LOCAL, BB_UI_CARPETA_COMPARTIDA y BB_UI_ACCION"]
+    fn entorno_real_ui_maquina_b() {
+        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+        use crate::identidad::llaves::leer_llave_publica_admin;
+
+        let local_a = PathBuf::from(
+            std::env::var("BB_UI_PROYECTO_LOCAL").expect("falta BB_UI_PROYECTO_LOCAL"),
+        );
+        let compartida =
+            std::env::var("BB_UI_CARPETA_COMPARTIDA").expect("falta BB_UI_CARPETA_COMPARTIDA");
+        let accion = std::env::var("BB_UI_ACCION").expect("falta BB_UI_ACCION");
+        let dev = std::env::var("BB_UI_DEV").unwrap_or_else(|_| DEV.to_string());
+
+        let publica = leer_llave_publica_admin(&local_a)
+            .unwrap()
+            .expect("la app todavía no configuró el proyecto");
+        let admin_fila = {
+            let db_a = Db::abrir(&local_a).unwrap();
+            usuarios::listar(db_a.conexion())
+                .unwrap()
+                .into_iter()
+                .find(|u| u.rol == Rol::Administrador)
+                .expect("sin Administrador en la base de la app")
+        };
+
+        let maquina_b = tempfile::tempdir().unwrap();
+        let local_b = maquina_b
+            .path()
+            .join("proyectos")
+            .join(local_a.file_name().unwrap());
+        configurar_carpeta_compartida(&local_b, &compartida, false).unwrap();
+        fijar_llave_publica_admin(&local_b, &publica).unwrap();
+        let ops_b = carpeta_ops(&local_b).unwrap();
+        let db_b = Db::abrir(&local_b).unwrap();
+        usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
+
+        let sincronizar_b = || {
+            let ahora = Utc::now() + chrono::Duration::minutes(5);
+            let sync = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
+                lectura::aplicar_evento(c, &publica, e)
+            })
+            .unwrap();
+            assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
+            sync
+        };
+        println!("máquina B sincronizó: {:?}", sincronizar_b());
+
+        let rol_dev = verificar_usuarios(&publica, usuarios::listar(db_b.conexion()).unwrap())
+            .into_iter()
+            .find(|u| u.usuario.email == dev)
+            .and_then(|u| u.rol_efectivo);
+        assert_eq!(
+            rol_dev,
+            Some(Rol::Desarrollador),
+            "el Administrador debe crear antes al Desarrollador desde la app"
+        );
+
+        match accion.as_str() {
+            "sembrar" => {
+                let autor = AutorTarea {
+                    email: &dev,
+                    rol: Rol::Desarrollador,
+                };
+                for n in 1..=3 {
+                    let t = crear(
+                        db_b.conexion(),
+                        &ops_b,
+                        &autor,
+                        &DatosNuevaTarea {
+                            titulo: format!("A1 pendiente UI {n}"),
+                            detalles: String::new(),
+                            tipo: TipoTarea::Scripting,
+                            tarea_padre_id: None,
+                            sprint_id: None,
+                            backlog_id: None,
+                            con_fecha: false,
+                            fecha_limite: None,
+                        },
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
+                    )
+                    .unwrap();
+                    assert!(t.pendiente_aprobacion);
+                    println!("sembrada {} «{}» (pendiente de aprobación)", t.id, t.titulo);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                let editables: Vec<Tarea> = db_tareas::listar(db_b.conexion())
+                    .unwrap()
+                    .into_iter()
+                    .filter(|t| t.titulo.starts_with("A1 editable UI"))
+                    .collect();
+                for t in editables {
+                    let r = proponer_edicion(
+                        db_b.conexion(),
+                        &ops_b,
+                        &autor,
+                        &t.id,
+                        &format!("{} (editada por B)", t.titulo),
+                        "Detalle propuesto desde la máquina B",
+                        Some("Comprobación en pantalla"),
+                        &crate::modelo::ahora_iso(),
+                        &crate::modelo::hoy_local(),
+                    )
+                    .unwrap();
+                    assert!(r.tarea.edicion_pendiente);
+                    println!("edición propuesta sobre {} → «{}»", t.id, r.tarea.titulo);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+            "comprobar" => {
+                for t in db_tareas::listar(db_b.conexion()).unwrap() {
+                    println!(
+                        "{} | «{}» | estado={:?} | pendiente={} | edicion_pendiente={} | eliminada={} | sprint={:?}",
+                        t.id, t.titulo, t.estado, t.pendiente_aprobacion, t.edicion_pendiente, t.eliminada, t.sprint_id
+                    );
+                }
+                for n in notificaciones::de_usuario(db_b.conexion(), &dev).unwrap() {
+                    println!("notificación al Desarrollador: {:?}", n.tipo);
+                }
+            }
+            otra => panic!("BB_UI_ACCION desconocida: {otra}"),
+        }
+    }
+    #[test]
     fn revision_elige_revisor_valida_autorizacion_rechaza_y_sincroniza() {
         let e = Escenario::nuevo();
         let c = e.db_a.conexion();
@@ -6706,6 +10113,8 @@ mod tests {
                 archivos_tocados: vec![],
                 quitado_en: None,
                 quitado_por: None,
+                changeset_merge: None,
+                changeset_limpio: None,
             },
         )
         .unwrap();

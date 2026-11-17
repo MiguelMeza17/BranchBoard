@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
 import { api } from './lib/api';
 import { useSincronizacionEventos } from './lib/useSincronizacionEventos';
+import { ConflictoMergeModal } from './components/ConflictoMergeModal';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
@@ -30,6 +31,16 @@ export function App() {
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
   const showToast = useStore((s) => s.showToast);
+  const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
+  const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
+  const cargarSesionUnityVc = useStore((s) => s.cargarSesionUnityVc);
+
+  // Al arrancar la app, consulta en segundo plano WARP (#122), `cm` (#123) y sesión (#124).
+  useEffect(() => {
+    void cargarEstadoWarp();
+    void cargarEstadoCm();
+    void cargarSesionUnityVc();
+  }, [cargarEstadoWarp, cargarEstadoCm, cargarSesionUnityVc]);
 
   // Con una operación de Unity VC en curso, el backend no deja cerrar la ventana; aquí se avisa por qué.
   useEffect(() => {
@@ -71,6 +82,7 @@ export function App() {
   return (
     <>
       {splash}
+      <ConflictoMergeModal />
       <HashRouter>
         <Routes>
           <Route element={<Layout />}>

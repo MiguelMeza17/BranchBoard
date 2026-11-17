@@ -27,7 +27,7 @@ pub async fn entrar_a_proyecto(
 }
 
 /// `%LocalAppData%\BranchBoard` (ver "Base de datos local" en BACKEND.md).
-fn carpeta_datos(app: &AppHandle) -> Resultado<PathBuf> {
+pub fn carpeta_datos(app: &AppHandle) -> Resultado<PathBuf> {
     let base = app
         .path()
         .local_data_dir()
@@ -76,6 +76,7 @@ fn entrar_con(
     if let Some(db) = db {
         estado.abrir_proyecto(db);
         estado.fijar_workspace(Some(workspace.to_path_buf()), Some(repo));
+        let _ = crate::comandos::sprints::evaluar_cierres_en(estado, &email)?;
     }
     Ok(entrada)
 }

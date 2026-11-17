@@ -14,6 +14,9 @@ export function Pendientes() {
   const user = useStore((s) => s.currentUser());
   const tareas = useStore((s) => s.tareas);
   const edicionesPendientes = useStore((s) => s.edicionesPendientes);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const cargarDocumentos = useStore((s) => s.cargarDocumentos);
+  const versionDatos = useStore((s) => s.versionDatos);
   const documentos = useStore((s) => s.documentos);
   const aprobarDocumento = useStore((s) => s.aprobarDocumento);
   const eliminarDocumento = useStore((s) => s.eliminarDocumento);
@@ -43,6 +46,12 @@ export function Pendientes() {
 
   const puedeActuar = puedeAprobarPendientes(user.rol);
   const nuevas = tareas.filter((t) => t.pendiente_aprobacion && !t.eliminada);
+
+  // Al montar o ante cambios del backend, recarga tareas, ediciones y documentos pendientes.
+  useEffect(() => {
+    void cargarTareas();
+    void cargarDocumentos();
+  }, [cargarTareas, cargarDocumentos, versionDatos]);
 
   // Llegada desde una notificación: hace scroll hasta la tarea y la resalta un momento.
   useEffect(() => {

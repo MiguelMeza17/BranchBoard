@@ -50,6 +50,9 @@ pub struct Tarea {
     pub tarea_origen_id: Option<String>,
     #[serde(default)]
     pub reaperturas: u32,
+    /// Fecha/hora ISO de asignación o paso a producción; interno para inactividad (#117).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actividad_desde: Option<String>,
     /// No se guarda: `true` si la tarea tiene una fila en `ediciones_pendientes`.
     #[serde(default)]
     pub edicion_pendiente: bool,
@@ -87,13 +90,14 @@ impl Tarea {
             reporte_testing_origen_id: None,
             tarea_origen_id: None,
             reaperturas: 0,
+            actividad_desde: None,
             edicion_pendiente: false,
         }
     }
 }
 
 /// Columnas guardadas, en el orden de `valores` y `de_fila`.
-const COLUMNAS: [&str; 28] = [
+const COLUMNAS: [&str; 29] = [
     "id",
     "titulo",
     "detalles",
@@ -122,9 +126,10 @@ const COLUMNAS: [&str; 28] = [
     "reporte_testing_origen_id",
     "tarea_origen_id",
     "reaperturas",
+    "actividad_desde",
 ];
 
-fn valores(t: &Tarea) -> [&dyn ToSql; 28] {
+fn valores(t: &Tarea) -> [&dyn ToSql; 29] {
     [
         &t.id,
         &t.titulo,
@@ -154,6 +159,7 @@ fn valores(t: &Tarea) -> [&dyn ToSql; 28] {
         &t.reporte_testing_origen_id,
         &t.tarea_origen_id,
         &t.reaperturas,
+        &t.actividad_desde,
     ]
 }
 
@@ -187,7 +193,8 @@ fn de_fila(f: &Row<'_>) -> rusqlite::Result<Tarea> {
         reporte_testing_origen_id: f.get(25)?,
         tarea_origen_id: f.get(26)?,
         reaperturas: f.get(27)?,
-        edicion_pendiente: f.get(28)?,
+        actividad_desde: f.get(28)?,
+        edicion_pendiente: f.get(29)?,
     })
 }
 
@@ -358,6 +365,7 @@ mod tests {
         t.fecha_limite = Some("2026-12-01".into());
         t.reaperturas = 2;
         t.modificada = true;
+        t.actividad_desde = Some("2026-11-10T09:30:00Z".into());
         actualizar(c, &t).unwrap();
         assert_eq!(obtener(c, "T-101").unwrap(), t);
     }

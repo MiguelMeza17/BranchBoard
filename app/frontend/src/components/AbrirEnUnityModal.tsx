@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api, enTauri } from '../lib/api';
 import { useStore } from '../store/useStore';
-import { estadoMeta, palabraCambios } from '../lib/ui';
+import { estadoMeta, palabraCambios, ramaDeTarea } from '../lib/ui';
 import { Modal } from './Modal';
-import { ramaDeTarea } from './AccionesRama';
 
-// Panel "Abrir en Unity" (solo frontend, simulado): elige con qué tarea vas a trabajar. Click en
-// una tarea: el workspace cambia a su rama (en el backend real: `cm switch`) y se abre el Editor de
+// Panel "Abrir en Unity": elige con qué tarea vas a trabajar. Click en
+// una tarea: el workspace cambia a su rama (`cm switch`) y se abre el Editor de
 // Unity parado en ella. Cada tarea despliega sus commits: click en uno abre Unity en ese commit
 // (changeset) de la rama.
 export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -14,14 +14,52 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
   const ramaWorkspace = useStore((s) => s.ramaWorkspace);
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
   const commits = useStore((s) => s.commits);
+  const cargarTareas = useStore((s) => s.cargarTareas);
+  const cargarCommits = useStore((s) => s.cargarCommits);
+  const refrescarRamaWorkspace = useStore((s) => s.refrescarRamaWorkspace);
+  const aplicarResumenPolling = useStore((s) => s.aplicarResumenPolling);
   const [desplegada, setDesplegada] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(false);
+
+  useEffect(() => {
+    if (!open || !enTauri()) return;
+    let cancelado = false;
+    setCargando(true);
+    void cargarCommits()
+      .then(() => Promise.all([cargarTareas(), refrescarRamaWorkspace()]))
+      .finally(() => {
+        if (!cancelado) setCargando(false);
+      });
+    void api
+      .revisarActualizaciones()
+      .then((resumen) => {
+        if (!cancelado) return aplicarResumenPolling(resumen);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelado = true;
+    };
+  }, [open, cargarTareas, cargarCommits, refrescarRamaWorkspace, aplicarResumenPolling]);
+
   const [ramaWs, commitWs] = (ramaWorkspace ?? '').split(' @ ');
-  const tareaWs = ramaWorkspace ? tareas.find((t) => t.rama_asociada === ramaWs) : undefined;
+  const ramaWsLower = ramaWs.toLowerCase();
+  const enRamaPrincipal = ramaWsLower === '/main/dev' || ramaWsLower === '/main';
+  const ramaVisible = enRamaPrincipal ? null : ramaWorkspace;
+  const tareaWs = ramaVisible
+    ? tareas.find((t) => t.rama_asociada?.toLowerCase() === ramaWsLower)
+    : undefined;
 
   // Rama con la que se trabaja una tarea (ver ramaDeTarea).
   const ramaDe = (t: (typeof tareas)[number]) => ramaDeTarea(t, tareas);
+  const emailYo = user.email.toLowerCase();
   const mias = tareas
-    .filter((t) => !t.eliminada && t.asignado_a === user.email && t.estado !== 'terminada' && ramaDe(t))
+    .filter(
+      (t) =>
+        !t.eliminada &&
+        t.asignado_a?.toLowerCase() === emailYo &&
+        t.estado !== 'terminada' &&
+        ramaDe(t)
+    )
     .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 
   return (
@@ -33,13 +71,13 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
     >
       {/* Dónde está parado el workspace: si es una de tus tareas, se marca en azul en la lista. Aquí arriba
           solo sale si no está en ninguna, o si está en la rama de una tarea que no es tuya. */}
-      {!ramaWorkspace ? (
+      {!ramaVisible ? (
         // Sin rama: nunca se asume dev (trabajar ahí metería cambios directo en la integración).
         <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-200">
-          Tu workspace no está en ninguna tarea
+          No estás en ninguna tarea
         </div>
       ) : (
-        !mias.some((t) => ramaDe(t) === ramaWs) && (
+        !mias.some((t) => ramaDe(t)?.toLowerCase() === ramaWsLower) && (
           <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm">
             <span className="text-faint">Tu workspace está en</span>
             {tareaWs ? (
@@ -54,7 +92,11 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
         )
       )}
 
-      {mias.length === 0 ? (
+      {cargando && mias.length === 0 ? (
+        <div className="rounded-lg border border-border bg-surface-2 px-4 py-6 text-center text-sm text-muted">
+          Cargando tus tareas…
+        </div>
+      ) : mias.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface-2 px-4 py-6 text-center text-sm text-muted">
           No tienes tareas abiertas con rama.
         </div>
@@ -63,7 +105,9 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
           {mias.map((t) => {
             const m = estadoMeta[t.estado];
             const rama = ramaDe(t)!;
-            const actual = !!ramaWorkspace && (ramaWorkspace === rama || ramaWorkspace.startsWith(`${rama} @ `));
+            const ramaLower = rama.toLowerCase();
+            const wsLower = (ramaWorkspace ?? '').toLowerCase();
+            const actual = !!ramaWorkspace && (wsLower === ramaLower || wsLower.startsWith(`${ramaLower} @ `));
             const suyos = commits
               .filter((c) => c.tarea_id === t.id)
               .sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -109,7 +153,7 @@ export function AbrirEnUnityModal({ open, onClose }: { open: boolean; onClose: (
                 {abierta && (
                   <div className="space-y-0.5 border-t border-border px-2 py-1.5">
                     {suyos.map((c, i) => {
-                      const enEste = ramaWorkspace === `${rama} @ ${c.hash}`;
+                      const enEste = wsLower === `${ramaLower} @ ${c.hash.toLowerCase()}`;
                       return (
                         <button
                           key={c.id}

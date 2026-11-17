@@ -53,6 +53,14 @@ impl AppState {
         *self.llave_firma.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// Correo actual de `cm whoami` guardado en memoria, si hay sesión (#124).
+    pub fn usuario_actual(&self) -> Option<String> {
+        self.usuario
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     /// La llave privada con la que firma `yo` en el proyecto de `db`: `admin.key`
     /// si es Administrador, `lider.key` si es Líder. Si está cifrada, la primera
     /// vez en la sesión hace falta `passphrase` (si no, error `llave_cifrada`);

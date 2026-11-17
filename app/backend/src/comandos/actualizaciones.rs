@@ -33,7 +33,17 @@ struct Progreso {
 }
 
 fn error(e: impl std::fmt::Display) -> Error {
-    Error::Actualizacion(e.to_string())
+    Error::Actualizacion(mensaje_claro(&e.to_string()))
+}
+
+/// El plugin responde en inglés. Si no pudo leer `latest.json` (sin conexión, o
+/// todavía no se ha publicado ninguna versión) se dice eso, en vez del texto crudo.
+fn mensaje_claro(original: &str) -> String {
+    if original.contains("valid release JSON") {
+        "no se encontró ninguna versión publicada (revisa tu conexión a internet)".into()
+    } else {
+        original.to_string()
+    }
 }
 
 /// Revisa si hay una versión nueva. No descarga nada.
@@ -75,4 +85,19 @@ pub async fn instalar_actualizacion(app: AppHandle, estado: State<'_, AppState>)
         .map_err(error)?;
 
     app.restart();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sin_versiones_publicadas_el_mensaje_es_claro() {
+        let e = error("Could not fetch a valid release JSON from the remote");
+        assert_eq!(
+            e.to_string(),
+            "No se pudo actualizar: no se encontró ninguna versión publicada (revisa tu conexión a internet)"
+        );
+        assert_eq!(mensaje_claro("otro fallo"), "otro fallo");
+    }
 }

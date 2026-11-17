@@ -132,6 +132,11 @@ pub fn hoy_local() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// Fecha y hora local actual (`AAAA-MM-DDTHH:MM:SS`), formato de `commits.fecha`.
+pub fn ahora_local_segundo() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
 /// Los correos se comparan sin distinguir mayúsculas: se guardan en minúsculas.
 pub fn normalizar_email(email: &str) -> String {
     email.trim().to_lowercase()

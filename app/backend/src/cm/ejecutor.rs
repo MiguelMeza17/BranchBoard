@@ -10,6 +10,7 @@
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -94,12 +95,13 @@ impl Comando {
         partes.join(" ")
     }
 
-    /// Corre el proceso hasta que termine (o se pase del tiempo máximo) y
-    /// devuelve su salida, también cuando el código no es 0.
-    pub fn ejecutar(&self, estado: &AppState) -> Resultado<Salida> {
-        let _operacion = estado.iniciar_operacion();
-
-        let mut comando = Command::new(&self.programa);
+    fn preparar_comando(&self) -> Command {
+        let programa_real = if self.programa == "cm" {
+            crate::cm::instalacion::resolver_cm().unwrap_or_else(|| PathBuf::from("cm"))
+        } else {
+            PathBuf::from(&self.programa)
+        };
+        let mut comando = Command::new(&programa_real);
         comando
             .args(&self.argumentos)
             .stdin(Stdio::null())
@@ -114,8 +116,16 @@ impl Comando {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             comando.creation_flags(CREATE_NO_WINDOW);
         }
+        comando
+    }
 
-        let mut hijo = comando
+    /// Corre el proceso hasta que termine (o se pase del tiempo máximo) y
+    /// devuelve su salida, también cuando el código no es 0.
+    pub fn ejecutar(&self, estado: &AppState) -> Resultado<Salida> {
+        let _operacion = estado.iniciar_operacion();
+
+        let mut hijo = self
+            .preparar_comando()
             .spawn()
             .map_err(|e| error_de_arranque(&self.programa, &e))?;
         let stdout = leer_en_hilo(hijo.stdout.take());
@@ -126,6 +136,55 @@ impl Comando {
             codigo,
             stdout: recoger(stdout),
             stderr: recoger(stderr),
+        })
+    }
+
+    /// Como [`ejecutar`](Self::ejecutar), pero reporta líneas incrementales mientras
+    /// corre (pensado para `cm update --forcedetailedprogress` al clonar, #125).
+    pub fn ejecutar_con_progreso(
+        &self,
+        estado: &AppState,
+        mut al_avanzar: impl FnMut(&str),
+    ) -> Resultado<Salida> {
+        let _operacion = estado.iniciar_operacion();
+
+        let mut hijo = self
+            .preparar_comando()
+            .spawn()
+            .map_err(|e| error_de_arranque(&self.programa, &e))?;
+        let (tx, rx) = mpsc::channel::<String>();
+        let stdout = leer_stream_en_hilo(hijo.stdout.take(), Some(tx.clone()));
+        let stderr = leer_stream_en_hilo(hijo.stderr.take(), Some(tx));
+
+        let inicio = Instant::now();
+        let codigo = loop {
+            while let Ok(linea) = rx.try_recv() {
+                al_avanzar(&linea);
+            }
+            if let Some(fin) = hijo.try_wait().map_err(error_interno)? {
+                break fin.code();
+            }
+            if inicio.elapsed() >= self.tiempo_maximo {
+                let _ = hijo.kill();
+                let _ = hijo.wait();
+                return Err(Error::Cm(format!(
+                    "`{}` tardó más de {} s y se canceló",
+                    self.descripcion(),
+                    self.tiempo_maximo.as_secs()
+                )));
+            }
+            thread::sleep(INTERVALO_ESPERA);
+        };
+
+        let out_str = recoger(stdout);
+        let err_str = recoger(stderr);
+        while let Ok(linea) = rx.try_recv() {
+            al_avanzar(&linea);
+        }
+        Ok(Salida {
+            codigo,
+            stdout: out_str,
+            stderr: err_str,
         })
     }
 
@@ -185,10 +244,44 @@ fn error_de_arranque(programa: &str, e: &io::Error) -> Error {
 /// Lee un flujo del hijo en su propio hilo, para que stdout y stderr no se
 /// bloqueen entre sí cuando el proceso escribe mucho en uno de los dos.
 fn leer_en_hilo(flujo: Option<impl Read + Send + 'static>) -> Option<JoinHandle<Vec<u8>>> {
+    leer_stream_en_hilo(flujo, None)
+}
+
+fn leer_stream_en_hilo(
+    flujo: Option<impl Read + Send + 'static>,
+    tx: Option<Sender<String>>,
+) -> Option<JoinHandle<Vec<u8>>> {
     flujo.map(|mut f| {
         thread::spawn(move || {
             let mut bytes = Vec::new();
-            let _ = f.read_to_end(&mut bytes);
+            let mut linea = Vec::new();
+            let mut buf = [0u8; 512];
+            loop {
+                let n = match f.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                bytes.extend_from_slice(&buf[..n]);
+                if let Some(ref tx) = tx {
+                    for &b in &buf[..n] {
+                        if b == b'\n' || b == b'\r' {
+                            let texto = String::from_utf8_lossy(&linea).trim().to_string();
+                            if !texto.is_empty() {
+                                let _ = tx.send(texto);
+                            }
+                            linea.clear();
+                        } else {
+                            linea.push(b);
+                        }
+                    }
+                }
+            }
+            if let Some(ref tx) = tx {
+                let texto = String::from_utf8_lossy(&linea).trim().to_string();
+                if !texto.is_empty() {
+                    let _ = tx.send(texto);
+                }
+            }
             bytes
         })
     })

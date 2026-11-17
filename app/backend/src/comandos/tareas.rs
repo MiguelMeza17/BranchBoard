@@ -6,17 +6,21 @@ use std::path::Path;
 use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
+use crate::db::commits::{CambioPrestado, Commit};
+use crate::db::ediciones::EdicionPendiente;
 use crate::db::tareas::Tarea;
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos;
-use crate::modelo::{ahora_iso, hoy_local, EstadoTarea};
+use crate::modelo::{ahora_iso, ahora_local_segundo, hoy_local, EstadoTarea, TipoTarea};
 use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
 use crate::tareas::{
-    self, AutorTarea, CambiosTarea, ConflictoMerge, DatosNuevaTarea, DatosNuevaTareaConSubtareas,
-    ResultadoAutorizacion, ResultadoCambioEstado,
+    self, AutorTarea, CambiosTarea, ConflictoMerge, DatosCheckin, DatosNuevaTarea,
+    DatosNuevaTareaConSubtareas, DatosRamaDesdeEspera, DatosTraerCambios, PendientesRama,
+    ResultadoAutorizacion, ResultadoCambioEstado, ResultadoProponerEdicion,
 };
+use crate::unity::{self, ResultadoAbrirUnity};
 
 fn con_ops<T>(
     estado: &AppState,
@@ -329,6 +333,97 @@ pub fn advertir_pendiente_en(estado: &AppState, id: &str, mensaje: &str) -> Resu
     })
 }
 
+/// Lista las ediciones pendientes de aprobación (#102).
+#[tauri::command]
+pub fn listar_ediciones_pendientes(
+    estado: State<'_, AppState>,
+) -> Resultado<Vec<EdicionPendiente>> {
+    listar_ediciones_pendientes_en(&estado)
+}
+
+/// Lo mismo que [`listar_ediciones_pendientes`], sin el envoltorio de Tauri.
+pub fn listar_ediciones_pendientes_en(estado: &AppState) -> Resultado<Vec<EdicionPendiente>> {
+    let _yo = estado.exigir_permiso("listar_ediciones_pendientes")?;
+    estado.con_db(|db| tareas::listar_ediciones_pendientes(db.conexion()))
+}
+
+/// `proponer_edicion(id, titulo, detalles, motivo?)`: cualquier rol edita título/detalles en `'por hacer'` (#102).
+#[tauri::command]
+pub async fn proponer_edicion(
+    estado: State<'_, AppState>,
+    id: String,
+    titulo: String,
+    detalles: String,
+    motivo: Option<String>,
+) -> Resultado<ResultadoProponerEdicion> {
+    proponer_edicion_en(&estado, &id, &titulo, &detalles, motivo.as_deref())
+}
+
+/// Lo mismo que [`proponer_edicion`], sin el envoltorio de Tauri.
+pub fn proponer_edicion_en(
+    estado: &AppState,
+    id: &str,
+    titulo: &str,
+    detalles: &str,
+    motivo: Option<&str>,
+) -> Resultado<ResultadoProponerEdicion> {
+    con_ops(estado, "proponer_edicion", |c, ops, autor| {
+        tareas::proponer_edicion(
+            c,
+            ops,
+            autor,
+            id,
+            titulo,
+            detalles,
+            motivo,
+            &ahora_iso(),
+            &hoy_local(),
+        )
+    })
+}
+
+/// `aprobar_modificacion(id)`: Líder/Admin confirma la edición pendiente (#102).
+#[tauri::command]
+pub async fn aprobar_modificacion(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    aprobar_modificacion_en(&estado, &id)
+}
+
+/// Lo mismo que [`aprobar_modificacion`], sin el envoltorio de Tauri.
+pub fn aprobar_modificacion_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    con_ops(estado, "aprobar_modificacion", |c, ops, autor| {
+        tareas::aprobar_modificacion(c, ops, autor, id, &ahora_iso())
+    })
+}
+
+/// `aprobar_modificaciones(ids)`: Líder/Admin confirma varias ediciones pendientes a la vez (#102).
+#[tauri::command]
+pub async fn aprobar_modificaciones(
+    estado: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Resultado<Vec<Tarea>> {
+    aprobar_modificaciones_en(&estado, &ids)
+}
+
+/// Lo mismo que [`aprobar_modificaciones`], sin el envoltorio de Tauri.
+pub fn aprobar_modificaciones_en(estado: &AppState, ids: &[String]) -> Resultado<Vec<Tarea>> {
+    con_ops(estado, "aprobar_modificaciones", |c, ops, autor| {
+        tareas::aprobar_modificaciones(c, ops, autor, ids, &ahora_iso())
+    })
+}
+
+/// `rechazar_modificacion(id)`: Líder/Admin rechaza la edición pendiente y restaura los valores anteriores (#102).
+#[tauri::command]
+pub async fn rechazar_modificacion(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    rechazar_modificacion_en(&estado, &id)
+}
+
+/// Lo mismo que [`rechazar_modificacion`], sin el envoltorio de Tauri.
+pub fn rechazar_modificacion_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    con_ops(estado, "rechazar_modificacion", |c, ops, autor| {
+        tareas::rechazar_modificacion(c, ops, autor, id, &ahora_iso())
+    })
+}
+
 /// Tareas en la Papelera ordenadas de la más reciente a la más antigua (#103).
 #[tauri::command]
 pub fn listar_papelera(estado: State<'_, AppState>) -> Resultado<Vec<Tarea>> {
@@ -414,6 +509,475 @@ pub fn eliminar_definitivamente_en(estado: &AppState, id: &str) -> Resultado<Vec
         }
     }
     Ok(purgadas)
+}
+
+/// Lista los cambios sin check-in del workspace (`cm status`) indicando si el workspace
+/// apunta a `rama` (guardia de rama, #105).
+#[tauri::command]
+pub fn cambios_pendientes(
+    estado: State<'_, AppState>,
+    rama: Option<String>,
+) -> Resultado<PendientesRama> {
+    cambios_pendientes_en(&estado, rama.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`cambios_pendientes`].
+pub fn cambios_pendientes_en(estado: &AppState, rama: Option<&str>) -> Resultado<PendientesRama> {
+    let _yo = estado.exigir_permiso("cambios_pendientes")?;
+    let workspace = estado.workspace_abierto()?;
+    let actual = crate::cm::lectura::rama_actual_workspace(estado, &workspace)?;
+    let en_rama_esperada = rama.map_or(true, |r| {
+        actual
+            .rama
+            .eq_ignore_ascii_case(r.trim().trim_end_matches('/'))
+    });
+    let archivos = if en_rama_esperada {
+        ramas::cambios_pendientes(estado, &workspace)?
+    } else {
+        Vec::new()
+    };
+    Ok(PendientesRama {
+        rama_actual: actual.rama,
+        en_rama_esperada,
+        archivos,
+    })
+}
+
+/// Cambia el workspace local hacia la rama asociada de `id` si no hay cambios sin check-in (#105).
+#[tauri::command]
+pub async fn cambiar_a_rama_tarea(estado: State<'_, AppState>, id: String) -> Resultado<String> {
+    cambiar_a_rama_tarea_en(&estado, &id)
+}
+
+/// Versión sin envoltorio Tauri de [`cambiar_a_rama_tarea`].
+pub fn cambiar_a_rama_tarea_en(estado: &AppState, id: &str) -> Resultado<String> {
+    let _yo = estado.exigir_permiso("cambiar_a_rama_tarea")?;
+    let workspace = estado.workspace_abierto()?;
+    let rama = estado.con_db(|db| tareas::rama_para_cambiar(db.conexion(), id))?;
+    let pendientes = ramas::cambios_pendientes(estado, &workspace)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in en esta rama. Haz check-in o deshazlos antes de cambiar de rama",
+            pendientes.len()
+        )));
+    }
+    ramas::cambiar_a_rama(estado, &workspace, &rama)?;
+    Ok(rama)
+}
+
+/// `hacer_checkin(rama, titulo, descripcion, tipo)`: ejecuta `cm checkin` en la rama
+/// de una tarea sin subtareas (con guardia de rama actual y responsable) y guarda el
+/// commit con `tipo` en SQLite + `ops/` (#105).
+#[tauri::command]
+pub async fn hacer_checkin(
+    estado: State<'_, AppState>,
+    rama: String,
+    titulo: String,
+    descripcion: String,
+    tipo: TipoTarea,
+) -> Resultado<Commit> {
+    hacer_checkin_en(&estado, &rama, &titulo, &descripcion, tipo)
+}
+
+/// Versión sin envoltorio Tauri de [`hacer_checkin`].
+pub fn hacer_checkin_en(
+    estado: &AppState,
+    rama: &str,
+    titulo: &str,
+    descripcion: &str,
+    tipo: TipoTarea,
+) -> Resultado<Commit> {
+    let yo = estado.exigir_permiso("hacer_checkin")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let tarea = estado.con_db(|db| tareas::tarea_para_checkin(db.conexion(), &yo.email, rama))?;
+    let rama_tarea = tarea
+        .rama_asociada
+        .as_deref()
+        .ok_or_else(|| Error::Validacion("La tarea no tiene rama asociada".into()))?;
+    let comentario = tareas::armar_comentario_checkin(titulo, descripcion, tipo)?;
+
+    let cs = ramas::hacer_checkin_workspace(estado, &workspace, rama_tarea, &comentario)?;
+    let diffs_checkin = if let Ok(repo) = estado.repo_abierto() {
+        let hay_prestamos = estado
+            .con_db(|db| {
+                Ok(!crate::db::commits::prestamos_vigentes(db.conexion(), &tarea.id)?.is_empty())
+            })
+            .unwrap_or(false);
+        if hay_prestamos {
+            let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+            ramas::archivos_changeset(estado, Some(&workspace), &repo_cm, cs).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    estado.con_db(|db| {
+        let commit = tareas::registrar_checkin(
+            db.conexion(),
+            &ops,
+            &autor,
+            &DatosCheckin {
+                tarea_id: &tarea.id,
+                changeset: cs,
+                titulo,
+                descripcion,
+                tipo,
+            },
+            &ahora_iso(),
+            &ahora_local_segundo(),
+        )?;
+        if !diffs_checkin.is_empty() {
+            tareas::actualizar_tocados_de_prestamos(
+                db.conexion(),
+                &tarea.id,
+                Some(&[]),
+                &[(cs, diffs_checkin)],
+            )?;
+        }
+        Ok(commit)
+    })
+}
+
+/// `crear_rama_desde_espera(espera_id, titulo, detalles, tipo)`: convierte una
+/// subtarea `"En espera"` en subtarea normal, crea su rama desde la cabeza del padre
+/// y mueve el workspace + los cambios pendientes hacia ella con `cm switch --noinput` (#106).
+#[tauri::command]
+pub async fn crear_rama_desde_espera(
+    estado: State<'_, AppState>,
+    espera_id: String,
+    titulo: String,
+    detalles: String,
+    tipo: TipoTarea,
+) -> Resultado<Tarea> {
+    crear_rama_desde_espera_en(&estado, &espera_id, &titulo, &detalles, tipo)
+}
+
+/// Versión sin envoltorio Tauri de [`crear_rama_desde_espera`].
+pub fn crear_rama_desde_espera_en(
+    estado: &AppState,
+    espera_id: &str,
+    titulo: &str,
+    detalles: &str,
+    tipo: TipoTarea,
+) -> Resultado<Tarea> {
+    let yo = estado.exigir_permiso("crear_rama_desde_espera")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (espera, rama_padre, asignado) = estado.con_db(|db| {
+        tareas::preparar_rama_desde_espera(
+            db.conexion(),
+            &yo.email,
+            yo.rol,
+            espera_id,
+            titulo,
+            tipo,
+        )
+    })?;
+
+    let actual = crate::cm::lectura::rama_actual_workspace(estado, &workspace)?;
+    if !actual.rama.eq_ignore_ascii_case(&rama_padre) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero los cambios en espera son de la rama {rama_padre} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+
+    let cliente = conectar(estado, &LlaveroSistema, &yo.email, &repo.org)?;
+    let rama_hija = ramas::crear_rama_tarea(
+        &cliente,
+        &repo.repo,
+        Some(&rama_padre),
+        &espera.id,
+        titulo.trim(),
+    )?;
+
+    ramas::cambiar_a_rama_llevando_cambios(estado, &workspace, &rama_hija.name)?;
+
+    estado.con_db(|db| {
+        tareas::convertir_espera_en_subtarea(
+            db.conexion(),
+            &ops,
+            &autor,
+            &DatosRamaDesdeEspera {
+                espera_id: &espera.id,
+                titulo,
+                detalles,
+                tipo,
+                asignado_a: &asignado,
+                rama: &rama_hija.name,
+                ultimo_changeset_visto: rama_hija.head_changeset,
+            },
+            &ahora_iso(),
+        )
+    })
+}
+
+/// Lista los cambios prestados de `tarea_id`, o todos los del proyecto si es `None` (#108).
+#[tauri::command]
+pub fn listar_cambios_prestados(
+    estado: State<'_, AppState>,
+    tarea_id: Option<String>,
+) -> Resultado<Vec<CambioPrestado>> {
+    listar_cambios_prestados_en(&estado, tarea_id.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`listar_cambios_prestados`].
+pub fn listar_cambios_prestados_en(
+    estado: &AppState,
+    tarea_id: Option<&str>,
+) -> Resultado<Vec<CambioPrestado>> {
+    let _yo = estado.exigir_permiso("listar_cambios_prestados")?;
+    estado.con_db(|db| tareas::listar_cambios_prestados(db.conexion(), tarea_id))
+}
+
+/// `traer_cambios(destino_id, origen_id, hash?)`: trae trabajo prestado desde `origen_id`
+/// (`None` = todos sus commits, `Some(cs)` = puntual) mediante `cm merge --cherrypicking`,
+/// guarda el changeset del merge y los archivos que llegaron y lo publica en `ops/` (#108).
+#[tauri::command]
+pub async fn traer_cambios(
+    estado: State<'_, AppState>,
+    destino_id: String,
+    origen_id: String,
+    hash: Option<String>,
+) -> Resultado<CambioPrestado> {
+    traer_cambios_en(&estado, &destino_id, &origen_id, hash.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`traer_cambios`].
+pub fn traer_cambios_en(
+    estado: &AppState,
+    destino_id: &str,
+    origen_id: &str,
+    hash: Option<&str>,
+) -> Resultado<CambioPrestado> {
+    let yo = estado.exigir_permiso("traer_cambios")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (info, cs_puntual) = estado.con_db(|db| {
+        tareas::preparar_traer_cambios(db.conexion(), &autor, destino_id, origen_id, hash)
+    })?;
+
+    let comentario = match cs_puntual {
+        Some(cs) => format!(
+            "Préstamo de {} (cs:{cs}) hacia {}",
+            info.origen_id, info.destino_id
+        ),
+        None => format!(
+            "Préstamo de {} (todos) hacia {}",
+            info.origen_id, info.destino_id
+        ),
+    };
+    let resultado = ramas::traer_cambios_workspace(
+        estado,
+        &workspace,
+        &repo_cm,
+        &info.rama_destino,
+        &info.rama_origen,
+        cs_puntual,
+        &comentario,
+    )?;
+
+    let hash_str = cs_puntual.map(|n| n.to_string());
+    estado.con_db(|db| {
+        tareas::registrar_traer_cambios(
+            db.conexion(),
+            &ops,
+            &autor,
+            &DatosTraerCambios {
+                destino_id: &info.destino_id,
+                origen_id: &info.origen_id,
+                hash: hash_str.as_deref(),
+                changeset_merge: resultado.changeset,
+                archivos: resultado.archivos,
+            },
+            &ahora_iso(),
+        )
+    })
+}
+
+/// `devolver_cambios_prestados(prestamo_id)`: ejecuta un merge sustractivo en Unity VC
+/// sobre el `changeset_merge` guardado y marca el préstamo como devuelto (conservándolo
+/// como historial en `cambios_prestados`, #108).
+#[tauri::command]
+pub async fn devolver_cambios_prestados(
+    estado: State<'_, AppState>,
+    prestamo_id: String,
+) -> Resultado<CambioPrestado> {
+    devolver_cambios_prestados_en(&estado, &prestamo_id)
+}
+
+/// Versión sin envoltorio Tauri de [`devolver_cambios_prestados`].
+pub fn devolver_cambios_prestados_en(
+    estado: &AppState,
+    prestamo_id: &str,
+) -> Resultado<CambioPrestado> {
+    let yo = estado.exigir_permiso("devolver_cambios_prestados")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (prestamo, rama_destino, cs_merge) = estado
+        .con_db(|db| tareas::preparar_devolver_cambios(db.conexion(), &autor, prestamo_id))?;
+
+    let comentario = format!(
+        "Devuelve préstamo {} de {} (cs:{cs_merge})",
+        prestamo.id, prestamo.origen_id
+    );
+    ramas::devolver_cambios_workspace(estado, &workspace, &rama_destino, cs_merge, &comentario)?;
+
+    estado.con_db(|db| {
+        tareas::registrar_devolver_cambios(db.conexion(), &ops, &autor, &prestamo.id, &ahora_iso())
+    })
+}
+
+/// `eliminar_cambios_ajenos(prestamo_id)`: restaura los archivos prestados modificados
+/// a la revisión que llegó en `changeset_merge`, crea un check-in automático si modificó
+/// el workspace respecto a la cabeza y publica `eliminar_cambios_ajenos` en `ops/` (#109).
+#[tauri::command]
+pub async fn eliminar_cambios_ajenos(
+    estado: State<'_, AppState>,
+    prestamo_id: String,
+) -> Resultado<CambioPrestado> {
+    eliminar_cambios_ajenos_en(&estado, &prestamo_id)
+}
+
+/// Versión sin envoltorio Tauri de [`eliminar_cambios_ajenos`].
+pub fn eliminar_cambios_ajenos_en(
+    estado: &AppState,
+    prestamo_id: &str,
+) -> Resultado<CambioPrestado> {
+    let yo = estado.exigir_permiso("eliminar_cambios_ajenos")?;
+    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
+    let workspace = estado.workspace_abierto()?;
+    let repo = estado.repo_abierto()?;
+    let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
+    let autor = AutorTarea {
+        email: &yo.email,
+        rol: yo.rol,
+    };
+
+    let (prestamo, rama_destino, cs_merge) = estado.con_db(|db| {
+        tareas::preparar_eliminar_cambios_ajenos(db.conexion(), &autor, prestamo_id)
+    })?;
+
+    let comentario = format!(
+        "Se eliminaron cambios ajenos (prestados de {})",
+        prestamo.origen_id
+    );
+    let cs_limpio = ramas::eliminar_cambios_ajenos_workspace(
+        estado,
+        &workspace,
+        &repo_cm,
+        &rama_destino,
+        cs_merge,
+        &prestamo.archivos_tocados,
+        &comentario,
+    )?;
+
+    estado.con_db(|db| {
+        tareas::registrar_eliminar_cambios_ajenos(
+            db.conexion(),
+            &ops,
+            &autor,
+            &prestamo.id,
+            cs_limpio,
+            &ahora_iso(),
+        )
+    })
+}
+
+/// Lista los check-ins cacheados en SQLite de una tarea o de todo el proyecto (#112).
+#[tauri::command]
+pub fn listar_commits(
+    estado: State<'_, AppState>,
+    tarea_id: Option<String>,
+) -> Resultado<Vec<Commit>> {
+    listar_commits_en(&estado, tarea_id.as_deref())
+}
+
+/// Versión sin envoltorio Tauri de [`listar_commits`].
+pub fn listar_commits_en(estado: &AppState, tarea_id: Option<&str>) -> Resultado<Vec<Commit>> {
+    estado.exigir_permiso("listar_commits")?;
+    estado.con_db(
+        |db| match tarea_id.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => crate::db::commits::de_tarea(db.conexion(), id),
+            None => crate::db::commits::listar_todos(db.conexion()),
+        },
+    )
+}
+
+/// Versión sin envoltorio Tauri que cambia de rama/changeset y ubica Unity sin abrir GUI (#112).
+pub fn abrir_en_unity_preparar_en(
+    estado: &AppState,
+    tarea_id: &str,
+    rama: &str,
+    changeset: Option<&str>,
+) -> Resultado<ResultadoAbrirUnity> {
+    let _yo = estado.exigir_permiso("abrir_en_unity")?;
+    let workspace = estado.workspace_abierto()?;
+    let (lanzador, estado_ws) = estado
+        .con_db(|db| unity::preparar_apertura(estado, db, &workspace, tarea_id, rama, changeset))?;
+    Ok(ResultadoAbrirUnity {
+        rama_actual: estado_ws.rama,
+        changeset: estado_ws.changeset,
+        ejecutable: lanzador.ejecutable.to_string_lossy().to_string(),
+        usa_hub: lanzador.es_hub,
+    })
+}
+
+/// Versión sin envoltorio Tauri completa de [`abrir_en_unity`] (#112).
+pub fn abrir_en_unity_en(
+    estado: &AppState,
+    tarea_id: &str,
+    rama: &str,
+    changeset: Option<&str>,
+) -> Resultado<ResultadoAbrirUnity> {
+    let _yo = estado.exigir_permiso("abrir_en_unity")?;
+    let workspace = estado.workspace_abierto()?;
+    let (lanzador, estado_ws) = estado
+        .con_db(|db| unity::preparar_apertura(estado, db, &workspace, tarea_id, rama, changeset))?;
+    unity::lanzar_unity(&lanzador, &workspace)?;
+    Ok(ResultadoAbrirUnity {
+        rama_actual: estado_ws.rama,
+        changeset: estado_ws.changeset,
+        ejecutable: lanzador.ejecutable.to_string_lossy().to_string(),
+        usa_hub: lanzador.es_hub,
+    })
+}
+
+/// Cambia el workspace a la rama/changeset de la tarea y abre Unity Editor o Unity Hub (#112).
+#[tauri::command]
+pub async fn abrir_en_unity(
+    estado: State<'_, AppState>,
+    tarea_id: String,
+    rama: String,
+    changeset: Option<String>,
+) -> Resultado<ResultadoAbrirUnity> {
+    abrir_en_unity_en(&estado, &tarea_id, &rama, changeset.as_deref())
 }
 
 /// `asignar_revision(id, email)`: elige el revisor de una tarea en revisión (#107).

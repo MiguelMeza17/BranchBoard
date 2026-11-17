@@ -263,6 +263,94 @@ pub fn cambiar_a_rama(estado: &AppState, carpeta: &Path, rama: &str) -> Resultad
     Ok(ahora)
 }
 
+/// Cambia el workspace local de `carpeta` a un changeset puntual `cs:<n>` (#112).
+/// Bloquea si hay cambios sin check-in para evitar perder trabajo o colgar `cm switch`.
+pub fn cambiar_a_changeset(
+    estado: &AppState,
+    carpeta: &Path,
+    changeset: i64,
+) -> Resultado<EstadoWorkspace> {
+    if changeset <= 0 {
+        return Err(Error::Validacion(
+            "El número de changeset debe ser positivo".into(),
+        ));
+    }
+    let pendientes = cambios_pendientes(estado, carpeta)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in en esta rama. Haz check-in o deshazlos antes de abrir ese changeset",
+            pendientes.len()
+        )));
+    }
+    Comando::cm()
+        .args(["switch", &format!("cs:{changeset}")])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    let ahora = rama_actual_workspace(estado, carpeta)?;
+    if ahora.changeset != Some(changeset) {
+        return Err(Error::Cm(format!(
+            "El workspace quedó en cs:{:?} en vez de cs:{changeset}",
+            ahora.changeset
+        )));
+    }
+    Ok(ahora)
+}
+
+/// Cambia el workspace local a `rama` llevándose los cambios sin check-in mediante
+/// `cm switch br:<rama> --noinput` (shelve temporal automático de Unity VC, #106).
+/// Re-agrega (`cm add`) los archivos nuevos que `cm switch --noinput` deja como privados al moverlos.
+pub fn cambiar_a_rama_llevando_cambios(
+    estado: &AppState,
+    carpeta: &Path,
+    rama: &str,
+) -> Resultado<EstadoWorkspace> {
+    let rama = rama.trim().trim_end_matches('/');
+    if !rama.starts_with(&format!("{RAMA_DEV}/")) {
+        return Err(Error::Validacion(format!(
+            "Rama de tarea no válida: {rama}"
+        )));
+    }
+    let pendientes_antes: std::collections::HashSet<String> = cambios_pendientes(estado, carpeta)?
+        .into_iter()
+        .map(|p| normalizar_ruta_status(&p))
+        .collect();
+    Comando::cm()
+        .args(["switch", &format!("br:{rama}"), "--noinput"])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    let ahora = rama_actual_workspace(estado, carpeta)?;
+    if !ahora.rama.eq_ignore_ascii_case(rama) {
+        return Err(Error::Cm(format!(
+            "El workspace quedó en {} en vez de {rama}",
+            ahora.rama
+        )));
+    }
+    if !pendientes_antes.is_empty() {
+        let privados = Comando::cm()
+            .args(["status", "--private", "--short"])
+            .en(carpeta)
+            .exigir_exito(estado)?;
+        let mut a_reagregar: Vec<String> = interpretar_pendientes_en(carpeta, &privados)
+            .into_iter()
+            .filter(|p| pendientes_antes.contains(&normalizar_ruta_status(p)))
+            .collect();
+        if !a_reagregar.is_empty() {
+            // Padres primero si se movió un directorio agregado junto con sus hijos.
+            a_reagregar.sort_by_key(|p| p.len());
+            Comando::cm()
+                .arg("add")
+                .args(&a_reagregar)
+                .en(carpeta)
+                .exigir_exito(estado)?;
+        }
+    }
+    Ok(ahora)
+}
+
+fn normalizar_ruta_status(ruta: &str) -> String {
+    ruta.trim().replace('\\', "/").to_lowercase()
+}
+
 /// Borra (cierra) una rama de tarea huérfana en Unity VC (`cm branch delete`).
 /// Nunca permite borrar `/main` ni `/main/dev`.
 pub fn borrar_rama(estado: &AppState, repo_cm: &str, rama: &str) -> Resultado<()> {
@@ -375,25 +463,10 @@ pub fn revertir_rama_a_base(
         )));
     }
 
-    let texto_cs = Comando::cm()
-        .args(["find", "changeset"])
-        .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
-        .args(["--format={changesetid} {parent}", "--nototal"])
-        .exigir_exito(estado)?;
-
-    let mut pares: Vec<(i64, i64)> = Vec::new();
-    for linea in texto_cs.lines() {
-        let mut partes = linea.split_whitespace();
-        if let (Some(a), Some(b)) = (partes.next(), partes.next()) {
-            if let (Ok(cs), Ok(parent)) = (a.parse::<i64>(), b.parse::<i64>()) {
-                pares.push((cs, parent));
-            }
-        }
-    }
+    let pares = changesets_de_rama_cm(estado, repo_cm, rama)?;
     if pares.is_empty() {
         return Ok(None);
     }
-    pares.sort_by_key(|(cs, _)| *cs);
     let cs_base = pares[0].1;
     let cabeza = pares.last().unwrap().0;
 
@@ -441,21 +514,63 @@ pub fn revertir_rama_a_base(
 }
 
 /// Archivos con cambios sin check-in en el workspace (agregados, modificados,
-/// borrados, movidos o desprotegidos), sin contar los privados.
+/// copiados/reemplazados por shelve, borrados, movidos o desprotegidos), sin contar los privados.
 pub fn cambios_pendientes(estado: &AppState, carpeta: &Path) -> Resultado<Vec<String>> {
     let texto = Comando::cm()
         .args([
             "status",
+            "--controlledchanged",
             "--changed",
-            "--added",
-            "--deleted",
-            "--moved",
-            "--checkout",
+            "--localdeleted",
+            "--localmoved",
             "--short",
         ])
         .en(carpeta)
         .exigir_exito(estado)?;
-    Ok(interpretar_pendientes(&texto))
+    Ok(interpretar_pendientes_en(carpeta, &texto))
+}
+
+fn normalizar_raiz_comparacion(ruta: &Path) -> String {
+    let raw = ruta.to_string_lossy().replace('\\', "/");
+    raw.strip_prefix("//?/")
+        .unwrap_or(&raw)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn quitar_prefijo_base(linea_norm: &str, base: &str) -> Option<String> {
+    if !base.is_empty()
+        && linea_norm.len() > base.len()
+        && linea_norm.as_bytes()[base.len()] == b'/'
+        && linea_norm[..base.len()].eq_ignore_ascii_case(base)
+    {
+        return Some(linea_norm[base.len() + 1..].to_string());
+    }
+    None
+}
+
+fn hacer_relativa_al_workspace(carpeta: &Path, ruta: &str) -> String {
+    let raw = ruta.trim().replace('\\', "/");
+    let limpia = raw.strip_prefix("//?/").unwrap_or(&raw);
+    let base_a = normalizar_raiz_comparacion(carpeta);
+    if let Some(rel) = quitar_prefijo_base(limpia, &base_a) {
+        return rel;
+    }
+    if let Ok(canon) = std::fs::canonicalize(carpeta) {
+        let base_b = normalizar_raiz_comparacion(&canon);
+        if let Some(rel) = quitar_prefijo_base(limpia, &base_b) {
+            return rel;
+        }
+    }
+    limpia.trim_start_matches('/').to_string()
+}
+
+fn interpretar_pendientes_en(carpeta: &Path, texto: &str) -> Vec<String> {
+    interpretar_pendientes(texto)
+        .into_iter()
+        .map(|l| hacer_relativa_al_workspace(carpeta, &l))
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 fn interpretar_pendientes(texto: &str) -> Vec<String> {
@@ -465,6 +580,514 @@ fn interpretar_pendientes(texto: &str) -> Vec<String> {
         .filter(|l| !l.is_empty())
         .map(String::from)
         .collect()
+}
+
+/// Comprueba que el workspace esté en `rama_esperada` (guardia de rama), verifica
+/// que existan cambios pendientes y ejecuta `cm checkin --all` (#105).
+/// Devuelve el número de changeset resultante.
+pub fn hacer_checkin_workspace(
+    estado: &AppState,
+    carpeta: &Path,
+    rama_esperada: &str,
+    comentario: &str,
+) -> Resultado<i64> {
+    let rama_esperada = rama_esperada.trim().trim_end_matches('/');
+    validar_destino_checkin(rama_esperada)?;
+    let actual = rama_actual_workspace(estado, carpeta)?;
+    if !actual.rama.eq_ignore_ascii_case(rama_esperada) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero esta tarea es de la rama {rama_esperada} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+    let pendientes = cambios_pendientes(estado, carpeta)?;
+    if pendientes.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios pendientes para hacer check-in".into(),
+        ));
+    }
+    Comando::cm()
+        .args(["checkin", "--all", &format!("-c={comentario}")])
+        .en(carpeta)
+        .exigir_exito(estado)?;
+    let despues = rama_actual_workspace(estado, carpeta)?;
+    Ok(despues.changeset.or(actual.changeset).unwrap_or(0))
+}
+
+/// Resultado de traer cambios prestados a una rama en Unity VC (#108).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResultadoMergePrestamo {
+    pub changeset: i64,
+    pub archivos: Vec<String>,
+}
+
+/// Lista `(changeset_id, parent)` de `rama` ordenados de menor a mayor en Unity VC.
+pub fn changesets_de_rama_cm(
+    estado: &AppState,
+    repo_cm: &str,
+    rama: &str,
+) -> Resultado<Vec<(i64, i64)>> {
+    let rama = rama.trim().trim_end_matches('/');
+    let texto_cs = Comando::cm()
+        .args(["find", "changeset"])
+        .arg(format!("where branch='{rama}' on repository '{repo_cm}'"))
+        .args(["--format={changesetid} {parent}", "--nototal"])
+        .exigir_exito(estado)?;
+
+    let mut pares: Vec<(i64, i64)> = Vec::new();
+    for linea in texto_cs.lines() {
+        let mut partes = linea.split_whitespace();
+        if let (Some(a), Some(b)) = (partes.next(), partes.next()) {
+            if let (Ok(cs), Ok(parent)) = (a.parse::<i64>(), b.parse::<i64>()) {
+                pares.push((cs, parent));
+            }
+        }
+    }
+    pares.sort_by_key(|(cs, _)| *cs);
+    Ok(pares)
+}
+
+fn exigir_workspace_limpio_en_rama(
+    estado: &AppState,
+    workspace: &Path,
+    rama_esperada: &str,
+    accion: &str,
+) -> Resultado<i64> {
+    let rama_esperada = rama_esperada.trim().trim_end_matches('/');
+    let actual = rama_actual_workspace(estado, workspace)?;
+    if !actual.rama.eq_ignore_ascii_case(rama_esperada) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero esta tarea es de la rama {rama_esperada} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+    let pendientes = cambios_pendientes(estado, workspace)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in en esta rama. Haz check-in antes de {accion}",
+            pendientes.len()
+        )));
+    }
+    Comando::cm()
+        .args(["update", "."])
+        .en(workspace)
+        .exigir_exito(estado)?;
+    let actualizado = rama_actual_workspace(estado, workspace)?;
+    Ok(actualizado.changeset.or(actual.changeset).unwrap_or(0))
+}
+
+fn normalizar_ruta_repo(ruta: &str) -> String {
+    ruta.trim()
+        .trim_matches('"')
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string()
+}
+
+fn validar_ruta_relativa_workspace(workspace: &Path, ruta: &str) -> Resultado<std::path::PathBuf> {
+    let norm = normalizar_ruta_repo(ruta);
+    if norm.is_empty() {
+        return Err(Error::Validacion("Ruta de archivo vacía".into()));
+    }
+    let rel = std::path::Path::new(&norm);
+    for comp in rel.components() {
+        match comp {
+            std::path::Component::Normal(_) => {}
+            _ => {
+                return Err(Error::Validacion(format!(
+                    "Ruta de archivo no permitida: {ruta}"
+                )));
+            }
+        }
+    }
+    Ok(workspace.join(rel))
+}
+
+fn parsear_archivos_diff(salida: &str) -> Vec<String> {
+    let mut archivos = std::collections::BTreeSet::new();
+    for linea in salida.lines() {
+        let limpia = linea.trim();
+        if limpia.is_empty() {
+            continue;
+        }
+        let partes: Vec<&str> = limpia.split('|').collect();
+        match partes.as_slice() {
+            [tipo, ..] if tipo.trim().eq_ignore_ascii_case("D") => continue,
+            [_, ruta] => {
+                let norm = normalizar_ruta_repo(ruta);
+                if !norm.is_empty() {
+                    archivos.insert(norm);
+                }
+            }
+            [_, ruta, origen] => {
+                for r in [*ruta, *origen] {
+                    let norm = normalizar_ruta_repo(r);
+                    if !norm.is_empty() {
+                        archivos.insert(norm);
+                    }
+                }
+            }
+            _ => {
+                let norm = normalizar_ruta_repo(limpia);
+                if !norm.is_empty() {
+                    archivos.insert(norm);
+                }
+            }
+        }
+    }
+    archivos.into_iter().collect()
+}
+
+fn tiene_conflicto_merge_preview(salida: &str) -> bool {
+    salida.lines().any(|linea| {
+        let l = linea.trim();
+        l.starts_with("FILE_CONFLICT")
+            || l.contains("_CONFLICT")
+            || l.to_lowercase().contains("conflicto")
+    })
+}
+
+/// Trae cambios de `rama_origen` (`Some(cs)` puntual o `None` todos) al workspace
+/// situado en `rama_destino` usando `cm merge --cherrypicking --merge` + `cm checkin --all` (#108).
+pub fn traer_cambios_workspace(
+    estado: &AppState,
+    workspace: &Path,
+    repo_cm: &str,
+    rama_destino: &str,
+    rama_origen: &str,
+    hash: Option<i64>,
+    comentario: &str,
+) -> Resultado<ResultadoMergePrestamo> {
+    validar_destino_checkin(rama_destino)?;
+    let pares = changesets_de_rama_cm(estado, repo_cm, rama_origen)?;
+    if pares.is_empty() {
+        return Err(Error::Validacion(
+            "La tarea origen todavía no tiene check-ins para traer".into(),
+        ));
+    }
+
+    let (cs_obj, cs_interval_origin) = match hash {
+        Some(cs) => {
+            if !pares.iter().any(|(id, _)| *id == cs) {
+                return Err(Error::NoEncontrado(format!(
+                    "el changeset cs:{cs} en la rama {rama_origen}"
+                )));
+            }
+            (cs, None)
+        }
+        None => {
+            let base = pares[0].1;
+            let cabeza = pares.last().unwrap().0;
+            (cabeza, (pares.len() > 1).then_some(base))
+        }
+    };
+
+    let cs_antes = exigir_workspace_limpio_en_rama(
+        estado,
+        workspace,
+        rama_destino,
+        "traer cambios de otra rama",
+    )?;
+
+    let mut args = vec![
+        "merge".to_string(),
+        format!("cs:{cs_obj}"),
+        "--cherrypicking".to_string(),
+    ];
+    if let Some(base) = cs_interval_origin {
+        args.push(format!("--interval-origin=cs:{base}"));
+    }
+    args.push("--merge".to_string());
+    args.push("--nointeractiveresolution".to_string());
+
+    if let Err(e) = Comando::cm().args(&args).en(workspace).exigir_exito(estado) {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(e);
+    }
+    if cambios_pendientes(estado, workspace)?.is_empty() {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(Error::Validacion(
+            "Los cambios elegidos ya estaban presentes o no producen diferencias en esta rama"
+                .into(),
+        ));
+    }
+    if let Err(e) = Comando::cm()
+        .args(["checkin", "--all", &format!("-c={comentario}")])
+        .en(workspace)
+        .exigir_exito(estado)
+    {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(e);
+    }
+
+    let cs_merge = rama_actual_workspace(estado, workspace)?
+        .changeset
+        .ok_or_else(|| Error::Interno("No se pudo leer el changeset del merge".into()))?;
+    let diff = Comando::cm()
+        .args([
+            "diff",
+            &format!("cs:{cs_antes}@{repo_cm}"),
+            &format!("cs:{cs_merge}@{repo_cm}"),
+            "--repositorypaths",
+            "--format={type}|{path}",
+        ])
+        .en(workspace)
+        .exigir_exito(estado)?;
+
+    Ok(ResultadoMergePrestamo {
+        changeset: cs_merge,
+        archivos: parsear_archivos_diff(&diff),
+    })
+}
+
+/// Devuelve en Unity VC un préstamo mediante merge sustractivo de `changeset_merge` (#108).
+/// Ejecuta primero la vista previa sin `--merge` para rechazar conflictos sin colgar `cm`.
+pub fn devolver_cambios_workspace(
+    estado: &AppState,
+    workspace: &Path,
+    rama_destino: &str,
+    changeset_merge: i64,
+    comentario: &str,
+) -> Resultado<i64> {
+    validar_destino_checkin(rama_destino)?;
+    let actual_cs = exigir_workspace_limpio_en_rama(
+        estado,
+        workspace,
+        rama_destino,
+        "devolver cambios prestados",
+    )?;
+
+    let preview = Comando::cm()
+        .args([
+            "merge",
+            &format!("cs:{changeset_merge}"),
+            "--subtractive",
+            "--machinereadable",
+        ])
+        .en(workspace)
+        .ejecutar(estado)?;
+    if tiene_conflicto_merge_preview(&preview.stdout)
+        || tiene_conflicto_merge_preview(&preview.stderr)
+    {
+        return Err(Error::Validacion(
+            "Hay conflictos al devolver estos cambios prestados; resuélvelos en Unity VC antes de continuar"
+                .into(),
+        ));
+    }
+    if !preview.exito() {
+        let detalle = if !preview.stderr.trim().is_empty() {
+            preview.stderr.trim().to_string()
+        } else {
+            preview.stdout.trim().to_string()
+        };
+        return Err(Error::Cm(detalle));
+    }
+
+    if let Err(e) = Comando::cm()
+        .args([
+            "merge",
+            &format!("cs:{changeset_merge}"),
+            "--subtractive",
+            "--merge",
+            "--nointeractiveresolution",
+        ])
+        .en(workspace)
+        .exigir_exito(estado)
+    {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+        return Err(e);
+    }
+
+    if !cambios_pendientes(estado, workspace)?.is_empty() {
+        if let Err(e) = Comando::cm()
+            .args(["checkin", "--all", &format!("-c={comentario}")])
+            .en(workspace)
+            .exigir_exito(estado)
+        {
+            let _ = Comando::cm()
+                .args(["undo", "-r", "."])
+                .en(workspace)
+                .ejecutar(estado);
+            return Err(e);
+        }
+    } else {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+    }
+
+    Ok(rama_actual_workspace(estado, workspace)?
+        .changeset
+        .unwrap_or(actual_cs))
+}
+
+/// Archivos tocados por `changeset` (contra su changeset padre) en Unity VC (#109).
+pub fn archivos_changeset(
+    estado: &AppState,
+    workspace: Option<&Path>,
+    repo_cm: &str,
+    changeset: i64,
+) -> Resultado<Vec<String>> {
+    let mut cmd = Comando::cm();
+    cmd = cmd.args([
+        "diff",
+        &format!("cs:{changeset}@{repo_cm}"),
+        "--repositorypaths",
+        "--format={type}|{path}|{srccmpath}",
+    ]);
+    if let Some(ws) = workspace {
+        cmd = cmd.en(ws);
+    }
+    let salida = cmd.exigir_exito(estado)?;
+    Ok(parsear_archivos_diff(&salida))
+}
+
+/// Restaura `archivos_tocados` de la rama `rama_destino` a su revisión exacta en `cs_merge`
+/// y crea un check-in automático si modificó archivos respecto a la cabeza actual (#109).
+/// Devuelve el changeset resultante (`Some(cs)`) tras la limpieza.
+pub fn eliminar_cambios_ajenos_workspace(
+    estado: &AppState,
+    workspace: &Path,
+    repo_cm: &str,
+    rama_destino: &str,
+    cs_merge: i64,
+    archivos_tocados: &[String],
+    comentario: &str,
+) -> Resultado<Option<i64>> {
+    validar_destino_checkin(rama_destino)?;
+    let rama_destino = rama_destino.trim().trim_end_matches('/');
+    let actual = rama_actual_workspace(estado, workspace)?;
+    if !actual.rama.eq_ignore_ascii_case(rama_destino) {
+        return Err(Error::Validacion(format!(
+            "Tu workspace está en la rama {}, pero esta tarea es de la rama {rama_destino} — cambia de rama antes de continuar",
+            actual.rama
+        )));
+    }
+    if archivos_tocados.is_empty() {
+        return Err(Error::Validacion(
+            "No hay cambios ajenos tocados que eliminar".into(),
+        ));
+    }
+
+    let pendientes_antes: std::collections::HashSet<String> =
+        cambios_pendientes(estado, workspace)?
+            .into_iter()
+            .map(|p| normalizar_ruta_status(&p))
+            .collect();
+
+    struct ArchivoTemporal(std::path::PathBuf);
+    impl Drop for ArchivoTemporal {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    let marca = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut objetivos_checkin: Vec<String> = Vec::new();
+    for (idx, ruta) in archivos_tocados.iter().enumerate() {
+        let local = validar_ruta_relativa_workspace(workspace, ruta)?;
+        let norm = normalizar_ruta_repo(ruta);
+        let clave_status = norm.to_lowercase();
+
+        if pendientes_antes.contains(&clave_status) {
+            let _ = Comando::cm()
+                .args(["undo", &norm])
+                .en(workspace)
+                .ejecutar(estado);
+        }
+
+        let tmp = ArchivoTemporal(std::env::temp_dir().join(format!(
+            "branchboard-getfile-{}-{marca}-{idx}",
+            std::process::id()
+        )));
+        let descarga = Comando::cm()
+            .args([
+                "getfile",
+                &format!("serverpath:/{norm}#cs:{cs_merge}@{repo_cm}"),
+                &format!("--file={}", tmp.0.to_string_lossy()),
+            ])
+            .en(workspace)
+            .ejecutar(estado)?;
+
+        if descarga.exito() {
+            let bytes_origen = std::fs::read(&tmp.0)
+                .map_err(|e| Error::Interno(format!("no se pudo leer {norm} restaurado: {e}")))?;
+            let iguales = local.is_file()
+                && std::fs::read(&local)
+                    .map(|b| b == bytes_origen)
+                    .unwrap_or(false);
+            if !iguales {
+                if let Some(padre) = local.parent() {
+                    std::fs::create_dir_all(padre).map_err(|e| {
+                        Error::Interno(format!("no se pudo crear carpeta para {norm}: {e}"))
+                    })?;
+                }
+                let estaba = local.exists();
+                std::fs::write(&local, &bytes_origen).map_err(|e| {
+                    Error::Interno(format!("no se pudo escribir {norm} restaurado: {e}"))
+                })?;
+                if !estaba {
+                    Comando::cm()
+                        .args(["add", &norm])
+                        .en(workspace)
+                        .exigir_exito(estado)?;
+                }
+                objetivos_checkin.push(norm);
+            }
+        } else if local.exists() {
+            let rm = Comando::cm()
+                .args(["remove", &norm])
+                .en(workspace)
+                .ejecutar(estado)?;
+            if rm.exito() {
+                objetivos_checkin.push(norm);
+            } else {
+                let _ = std::fs::remove_file(&local);
+            }
+        }
+    }
+
+    if !objetivos_checkin.is_empty() {
+        let pendientes_ahora: std::collections::HashSet<String> =
+            cambios_pendientes(estado, workspace)?
+                .into_iter()
+                .map(|p| normalizar_ruta_status(&p))
+                .collect();
+        let mut filtrados: Vec<String> = objetivos_checkin
+            .into_iter()
+            .filter(|r| pendientes_ahora.contains(&r.to_lowercase()))
+            .collect();
+        filtrados.dedup();
+        if !filtrados.is_empty() {
+            let mut cmd = Comando::cm().arg("checkin");
+            cmd = cmd.args(&filtrados);
+            cmd = cmd
+                .args(["--all", &format!("-c={comentario}")])
+                .en(workspace);
+            cmd.exigir_exito(estado)?;
+        }
+    }
+
+    Ok(rama_actual_workspace(estado, workspace)?
+        .changeset
+        .or(actual.changeset))
 }
 
 /// Comprueba si `rama` ya fue mergeada hacia `rama_padre` en Unity VC (`cm find merge`, #104).
@@ -665,6 +1288,13 @@ mod tests {
         assert_eq!(
             interpretar_pendientes(texto),
             ["c:/ws/LEEME.txt", "c:/ws/Assets/a.cs"]
+        );
+        assert_eq!(
+            interpretar_pendientes_en(
+                Path::new(r"C:\ws"),
+                "c:\\ws\\LEEME.txt\r\nc:\\ws\\Assets\\Player.cs\n"
+            ),
+            ["LEEME.txt", "Assets/Player.cs"]
         );
         assert!(interpretar_pendientes("").is_empty());
     }
@@ -875,5 +1505,29 @@ mod tests {
         assert!(!parsear_rama_cerrada(salida, "/main/dev"));
         assert!(parsear_rama_cerrada(salida, "/main/dev/T-101"));
         assert!(parsear_rama_cerrada("merge|br:/main/dev/\n", "/main/dev"));
+    }
+
+    #[test]
+    fn parsea_archivos_diff_y_detecta_conflictos_en_preview() {
+        let diff = "D|\"/Assets/Scripts\"|\"\"\nF|\"/Assets/Scripts/Player.cs\"|\"\"\nM|\"/Assets/EnemyNew.cs\"|\"/Assets/EnemyOld.cs\"\nB|/Assets\\Models\\Hero.fbx|\nF|/Assets/Scripts/Player.cs|\n";
+        assert_eq!(
+            parsear_archivos_diff(diff),
+            vec![
+                "Assets/EnemyNew.cs".to_string(),
+                "Assets/EnemyOld.cs".to_string(),
+                "Assets/Models/Hero.fbx".to_string(),
+                "Assets/Scripts/Player.cs".to_string(),
+            ]
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(validar_ruta_relativa_workspace(tmp.path(), "../secreto.txt").is_err());
+        assert!(validar_ruta_relativa_workspace(tmp.path(), "Assets/Player.cs").is_ok());
+        assert!(tiene_conflicto_merge_preview(
+            "FILE_CONFLICT /Assets/Player.cs 1 2 3 4"
+        ));
+        assert!(tiene_conflicto_merge_preview("EVILTWIN_CONFLICT /x"));
+        assert!(!tiene_conflicto_merge_preview(
+            "Borrado (Subtractive de 26)"
+        ));
     }
 }

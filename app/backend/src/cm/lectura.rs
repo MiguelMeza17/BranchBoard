@@ -93,9 +93,13 @@ pub fn rama_actual_workspace(estado: &AppState, carpeta: &Path) -> Resultado<Est
     })
 }
 
-/// Primera línea de `cm status --header`: `/rama@repo@servidor (cs:N - head)`.
+/// Primera línea de `cm status --header`: `/rama@repo@servidor (cs:N - head)`
+/// o `cs:N@repo@servidor (cs:N)` si el workspace apunta a un changeset puntual (#112).
 fn interpretar_cabecera(texto: &str) -> Option<EstadoWorkspace> {
-    let linea = texto.lines().map(str::trim).find(|l| l.starts_with('/'))?;
+    let linea = texto
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with('/') || l.starts_with("cs:"))?;
     let (especificacion, resto) = match linea.split_once(" (") {
         Some((e, r)) => (e.trim(), Some(r)),
         None => (linea, None),
@@ -107,7 +111,8 @@ fn interpretar_cabecera(texto: &str) -> Option<EstadoWorkspace> {
         .and_then(|d| {
             let digitos: String = d.chars().take_while(char::is_ascii_digit).collect();
             digitos.parse().ok()
-        });
+        })
+        .or_else(|| rama.strip_prefix("cs:").and_then(|d| d.trim().parse().ok()));
     Some(EstadoWorkspace {
         rama: rama.to_string(),
         repositorio: repositorio.trim().to_string(),
