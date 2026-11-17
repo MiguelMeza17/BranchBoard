@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as ejemplo from '../data/fixtures';
-import { api, enTauri, ErrorBackend, mensajeDeError, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type CambiosEntrantes, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
 import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
@@ -422,11 +422,11 @@ interface State {
    */
   eliminarCambiosAjenos: (registroId: string) => void;
   /**
-   * Recibe en el workspace los incoming changes de una subtarea terminada (ya mergeada a esta rama).
-   * No es obligatorio ni automático: se hace desde "Traer cambios". No es un préstamo: el cambio ya
-   * es de esta rama.
+   * Une al workspace TODOS los incoming changes de la rama de `destinoId` (en Unity VC, `cm update .`,
+   * #110): Unity VC no deja unir una sola subtarea, así que llegan todas juntas. No es obligatorio ni
+   * automático. No es un préstamo: el cambio ya es de esta rama. Devuelve null si falló.
    */
-  recibirEntrante: (destinoId: string, hijoId: string) => void;
+  unirEntrantes: (destinoId: string) => Promise<CambiosEntrantes | null>;
   /** Check-in de los pending changes de una rama sin subtareas (simulado): queda en sus check-ins. */
   hacerCheckin: (rama: string, campos: { titulo: string; descripcion: string; tipo: TipoTarea }) => void;
   /**
@@ -829,10 +829,27 @@ export const useStore = create<State>((set, get) => {
       'ok'
     );
   },
-  recibirEntrante: (destinoId, hijoId) => {
-    if (get().entrantesRecibidos.includes(hijoId)) return;
-    set((s) => ({ entrantesRecibidos: [...s.entrantesRecibidos, hijoId] }));
-    get().showToast(`Se unieron a ${destinoId} los cambios de ${hijoId}`, 'ok');
+  unirEntrantes: async (destinoId) => {
+    const s = get();
+    const hijos = entrantesDe(s.tareas, s.entrantesRecibidos, destinoId).map((h) => h.id);
+    const destino = s.tareas.find((t) => t.id === destinoId);
+    try {
+      const res = await api.unirCambiosEntrantes(destinoId, () => ({
+        rama: destino?.rama_asociada ?? '',
+        rama_actual: destino?.rama_asociada ?? '',
+        en_rama: true,
+        changeset_workspace: null,
+        cabeza: null,
+        changesets: [],
+      }));
+      if (!enTauri()) set((st) => ({ entrantesRecibidos: [...st.entrantesRecibidos, ...hijos] }));
+      get().showToast(`Tu workspace ya tiene todos los cambios entrantes de ${destinoId}`, 'ok');
+      get().subirVersionDatos();
+      return res;
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+      return null;
+    }
   },
   hacerCheckin: (rama, { titulo: mensaje, descripcion, tipo }) => {
     const s = get();

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore, entrantesDe } from '../store/useStore';
+import { useStore } from '../store/useStore';
+import { useEntrantes } from '../lib/useEntrantes';
 import { esTareaEnEspera } from '../lib/ui';
 import { ramaDeTarea } from './AccionesRama';
 import { DetalleCommit } from './HistorialRamas';
@@ -74,57 +75,95 @@ export function CheckinsDeLaRama({ tarea }: { tarea: Tarea }) {
   );
 }
 
-// Cambios entrantes (incoming changes): subtareas con rama propia que ya se terminaron, es decir,
-// que se mergearon a la rama de esta tarea, pero que el workspace todavía no tiene. Unirlos es
-// opcional: desde su detalle (click) o desde "⇣ Traer cambios", donde salen primero en azul.
+// Cambios entrantes (incoming changes, #110): lo que ya llegó a la rama de esta tarea (merges de sus
+// subtareas terminadas) y el workspace de esta máquina todavía no tiene. Unirlos es opcional y se
+// unen TODOS JUNTOS: en Unity VC es `cm update .` y no se puede unir una subtarea sola (traer solo
+// una deja la rama con dos cabezas). Por eso no hay "Unir" por subtarea: el detalle es informativo.
 export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
   const tareas = useStore((s) => s.tareas);
   const commits = useStore((s) => s.commits);
-  const recibidos = useStore((s) => s.entrantesRecibidos);
-  const recibirEntrante = useStore((s) => s.recibirEntrante);
   const abrirEnUnity = useStore((s) => s.abrirEnUnity);
   const [ver, setVer] = useState<string | null>(null);
-  const entrantes = entrantesDe(tareas, recibidos, tarea.id);
   // Una tarea terminada ya se mergeó y su rama está cerrada: no tiene workspace al que le falte nada.
   // Sale en toda rama con subtareas (aunque esté en 0): ahí es donde llegan sus merges. Las ramas sin
   // subtareas no la muestran.
   const conHijas = tareas.some((t) => t.tarea_padre_id === tarea.id && !t.eliminada);
-  if (!tarea.rama_asociada || tarea.estado === 'terminada' || !conHijas) return null;
+  const visible = !!tarea.rama_asociada && tarea.estado !== 'terminada' && conHijas;
+  const entrantes = useEntrantes(tarea, visible);
+  if (!visible || !tarea.rama_asociada) return null;
   const rama = tarea.rama_asociada;
-  const viendo = entrantes.find((h) => h.id === ver);
+  const { subtareas, otros, enRama, ramaActual, hayAlgo, uniendo } = entrantes;
+  const total = subtareas.length + otros;
+  const viendo = subtareas.find((h) => h.id === ver);
   const suyos = viendo ? commits.filter((c) => c.tarea_id === viendo.id).sort((a, b) => b.fecha.localeCompare(a.fecha)) : [];
+  const tambien = viendo
+    ? [...subtareas.filter((h) => h.id !== viendo.id).map((h) => h.id), ...(otros > 0 ? [`${otros} changeset${otros === 1 ? '' : 's'} más`] : [])]
+    : [];
+  const botonUnir = (alTerminar?: () => void) => (
+    <button
+      type="button"
+      className="btn-primary btn-sm"
+      disabled={uniendo}
+      onClick={async () => {
+        if (await entrantes.unir()) alTerminar?.();
+      }}
+    >
+      {uniendo ? 'Uniendo…' : `⇣ Unir todo (${total})`}
+    </button>
+  );
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
-      <dt className="mb-2 text-xs font-semibold text-muted">⇣ Incoming changes ({entrantes.length})</dt>
-      {entrantes.length === 0 ? (
-        <p className="text-[12px] text-faint">No hay subtareas terminadas que tu workspace no tenga.</p>
+      <dt className="mb-2 text-xs font-semibold text-muted">⇣ Incoming changes ({enRama ? total : '—'})</dt>
+      {!enRama ? (
+        <div className="flex flex-wrap items-center gap-2 text-[12px] text-faint">
+          <span className="min-w-0 flex-1">
+            Tu workspace está en <span className="font-mono">{ramaActual ?? 'otra rama'}</span>: cámbiate a esta rama para ver y unir lo
+            que le llegó.
+          </span>
+          <button type="button" className="btn-outline btn-sm" onClick={() => abrirEnUnity(tarea.id, rama)}>
+            <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
+          </button>
+        </div>
+      ) : !hayAlgo ? (
+        <p className="text-[12px] text-faint">Tu workspace ya tiene todo lo que llegó a esta rama.</p>
       ) : (
-        <p className="mb-1.5 text-[11px] text-sky-300">
-          Llegaron cambios a esta rama que tu workspace aún no tiene. Unirlos es opcional.
-        </p>
+        <>
+          <p className="mb-1.5 text-[11px] text-sky-300">
+            Llegaron cambios a esta rama que tu workspace aún no tiene. Unirlos es opcional y se unen <b>todos juntos</b>: Unity VC no
+            permite unir una subtarea sola.
+          </p>
+          <ul className="space-y-1">
+            {subtareas.map((h) => {
+              const n = commits.filter((c) => c.tarea_id === h.id).length;
+              return (
+                <li
+                  key={h.id}
+                  onClick={() => setVer(h.id)}
+                  className="cursor-pointer rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 transition hover:bg-sky-500/20"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[11px] text-faint">{h.id}</span>
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-text">{h.titulo}</span>
+                    {h.asignado_a && <Avatar email={h.asignado_a} size={18} />}
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-muted">
+                    Terminada{h.fecha_completada && <> el {h.fecha_completada}</>} · {n} {n === 1 ? 'check-in' : 'check-ins'} · desde{' '}
+                    <span className="font-mono">{h.rama_asociada}</span>
+                  </p>
+                </li>
+              );
+            })}
+            {otros > 0 && (
+              <li className="rounded-lg border border-sky-500/20 px-3 py-1.5 text-[11px] text-muted">
+                {otros === 1
+                  ? '+ 1 changeset que no viene de una subtarea de BranchBoard (ej. un merge hecho directamente en Unity VC). También llega al unir.'
+                  : `+ ${otros} changesets que no vienen de una subtarea de BranchBoard (ej. merges hechos directamente en Unity VC). También llegan al unir.`}
+              </li>
+            )}
+          </ul>
+          <div className="mt-2 flex justify-end">{botonUnir()}</div>
+        </>
       )}
-      <ul className="space-y-1">
-        {entrantes.map((h) => {
-          const n = commits.filter((c) => c.tarea_id === h.id).length;
-          return (
-            <li
-              key={h.id}
-              onClick={() => setVer(h.id)}
-              className="cursor-pointer rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 transition hover:bg-sky-500/20"
-            >
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] text-faint">{h.id}</span>
-                <span className="min-w-0 flex-1 truncate text-[12px] text-text">{h.titulo}</span>
-                {h.asignado_a && <Avatar email={h.asignado_a} size={18} />}
-              </div>
-              <p className="mt-0.5 text-[11px] text-muted">
-                Terminada{h.fecha_completada && <> el {h.fecha_completada}</>} · {n} {n === 1 ? 'check-in' : 'check-ins'} · desde{' '}
-                <span className="font-mono">{h.rama_asociada}</span>
-              </p>
-            </li>
-          );
-        })}
-      </ul>
       {viendo &&
         portal(
           <Modal
@@ -145,16 +184,7 @@ export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
                 >
                   <Icono nombre="unity" className="h-4 w-4" /> Abrir en Unity
                 </button>
-                <button
-                  type="button"
-                  className="btn-primary btn-sm"
-                  onClick={() => {
-                    recibirEntrante(tarea.id, viendo.id);
-                    setVer(null);
-                  }}
-                >
-                  ⇣ Unir cambios
-                </button>
+                {botonUnir(() => setVer(null))}
               </div>
             }
           >
@@ -163,6 +193,13 @@ export function CambiosEntrantes({ tarea }: { tarea: Tarea }) {
                 {viendo.id} ya se terminó y sus cambios se mergearon a <span className="font-mono">{rama}</span>, pero tu workspace todavía no
                 tiene esos cambios. Ya son de esta rama: no es un préstamo y no hay que devolverlos. Unirlos es opcional.
               </p>
+              {tambien.length > 0 && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+                  <IconoEnLinea nombre="alerta" sinColor />
+                  No se puede unir solo {viendo.id}: Unity VC actualiza el workspace hasta el último cambio de la rama. Al unir también
+                  llega: {tambien.join(', ')}.
+                </p>
+              )}
               <dl className="grid grid-cols-2 gap-3">
                 <div>
                   <dt className="text-xs text-faint">Desde la rama</dt>

@@ -8059,6 +8059,99 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambios_entrantes() {
+        use crate::cm::lectura::rama_actual_workspace;
+        use crate::cm::Comando;
+        use crate::comandos::tareas::tomar_en;
+        use crate::entrantes;
+        use crate::ramas;
+
+        correr_entorno_real("110", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 110",
+                &["Sub A 110", "Sub B 110"],
+            );
+            let (padre_id, sub_a, sub_b) = (
+                grupo[0].id.clone(),
+                grupo[1].id.clone(),
+                grupo[2].id.clone(),
+            );
+
+            let tomadas = tomar_en(&env.estado_a, &sub_a).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+            let rama_a = tomadas[1].rama_asociada.clone().unwrap();
+            env.commit_real("entrante_a_110.txt", "a 110", "Check-in A 110");
+            let tomadas_b = tomar_en(&env.estado_a, &sub_b).unwrap();
+            env.registrar_ramas_de(&tomadas_b);
+            let rama_b = tomadas_b
+                .iter()
+                .find(|t| t.id == sub_b)
+                .and_then(|t| t.rama_asociada.clone())
+                .unwrap();
+            env.commit_real("entrante_b_110.txt", "b 110", "Check-in B 110");
+
+            // Workspace en la rama padre, al día: nada entrante.
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            let inicio = entrantes::consultar_en(&env.estado_a, &padre_id).unwrap();
+            assert!(inicio.en_rama);
+            assert!(inicio.changesets.is_empty());
+
+            // Las dos subtareas se mergean a la rama padre del lado del servidor.
+            for rama in [&rama_a, &rama_b] {
+                Comando::cm()
+                    .args(["merge", &format!("br:{rama}@{}", env.repo_cm)])
+                    .arg(format!("--to=br:{rama_padre}@{}", env.repo_cm))
+                    .args(["--merge", "-c=Merge subtarea 110"])
+                    .exigir_exito(&env.estado_a)
+                    .unwrap();
+            }
+            let atrasado = entrantes::consultar_en(&env.estado_a, &padre_id).unwrap();
+            assert!(atrasado.en_rama);
+            assert_eq!(atrasado.changesets.len(), 2, "{atrasado:?}");
+            assert_eq!(
+                atrasado
+                    .changesets
+                    .iter()
+                    .map(|c| c.tarea_origen.clone())
+                    .collect::<Vec<_>>(),
+                vec![Some(sub_a.clone()), Some(sub_b.clone())]
+            );
+            assert_eq!(
+                atrasado.cabeza,
+                atrasado.changesets.last().map(|c| c.changeset)
+            );
+            assert!(!env.ws_ruta.join("entrante_a_110.txt").exists());
+
+            // Desde otra tarea (el workspace no está en su rama) no se puede unir.
+            let otra = entrantes::consultar_en(&env.estado_a, &sub_a).unwrap();
+            assert!(!otra.en_rama && otra.changesets.is_empty());
+            assert!(entrantes::unir_en(&env.estado_a, &sub_a).is_err());
+
+            // Con cambios sin check-in se rechaza y no se toca el workspace.
+            std::fs::write(env.ws_ruta.join("LEEME.txt"), "cambio local 110").unwrap();
+            let err = entrantes::unir_en(&env.estado_a, &padre_id).unwrap_err();
+            assert_eq!(err.codigo(), "validacion", "{err:?}");
+            ramas::descartar_cambios_pendientes(&env.estado_a, &env.ws_ruta).unwrap();
+
+            // Unir trae todo: workspace en la cabeza, ambos archivos y nada pendiente.
+            let unido = entrantes::unir_en(&env.estado_a, &padre_id).unwrap();
+            assert!(unido.changesets.is_empty(), "{unido:?}");
+            assert!(env.ws_ruta.join("entrante_a_110.txt").exists());
+            assert!(env.ws_ruta.join("entrante_b_110.txt").exists());
+            let ws = rama_actual_workspace(&env.estado_a, &env.ws_ruta).unwrap();
+            assert_eq!(ws.changeset, atrasado.cabeza);
+            println!(
+                "Cambios entrantes reales: 2 merges ({sub_a}, {sub_b}) detectados y unidos con cm update; rechazos sin rama y con pendientes OK"
+            );
+        });
+    }
+
+    #[test]
     fn proponer_sumar_aprobar_y_rechazar_ediciones_pendientes() {
         let e = Escenario::nuevo();
         let c = e.db_a.conexion();

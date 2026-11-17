@@ -30,6 +30,28 @@ import type {
 } from '../types';
 
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
+/** Un changeset de la rama que el workspace todavía no tiene (#110). */
+export interface ChangesetEntrante {
+  changeset: number;
+  autor: string;
+  fecha: string;
+  comentario: string;
+  /** Rama de la que vino, si es el merge de otra rama. */
+  rama_origen: string | null;
+  /** Subtarea dueña de `rama_origen`, si BranchBoard la reconoce. */
+  tarea_origen: string | null;
+}
+
+/** Cambios entrantes de una rama vistos desde el workspace de esta máquina (#110). */
+export interface CambiosEntrantes {
+  rama: string;
+  rama_actual: string;
+  en_rama: boolean;
+  changeset_workspace: number | null;
+  cabeza: number | null;
+  changesets: ChangesetEntrante[];
+}
+
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 export const EVENTO_SESION_CADUCADA = 'sesion-unity-vc-caducada';
@@ -564,6 +586,20 @@ export const api = {
       { rama: rama ?? null },
       () => ({ rama_actual: '/main/dev', en_rama_esperada: true, archivos: [] })
     ),
+
+  /**
+   * Cambios entrantes de la rama de `tareaId` que el workspace de esta máquina no tiene (#110).
+   * Local: depende del workspace. Si `en_rama` es false, el workspace está en otra rama.
+   */
+  cambiosEntrantes: (tareaId: string, mockup: () => CambiosEntrantes) =>
+    llamar<CambiosEntrantes>('cambios_entrantes', { tareaId }, mockup),
+
+  /**
+   * Une al workspace TODOS los cambios entrantes de la rama de `tareaId` (`cm update .`, #110).
+   * Unity VC no permite unir una sola subtarea: `cm update` trae la rama hasta su cabeza.
+   */
+  unirCambiosEntrantes: (tareaId: string, mockup: () => CambiosEntrantes) =>
+    llamar<CambiosEntrantes>('unir_cambios_entrantes', { tareaId }, mockup),
 
   /** Cambia el workspace local hacia la rama de `id` (#105). */
   cambiarARamaTarea: (id: string) =>
