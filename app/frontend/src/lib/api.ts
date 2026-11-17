@@ -54,6 +54,8 @@ export interface CambiosEntrantes {
 
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+export const EVENTO_SESION_CADUCADA = 'sesion-unity-vc-caducada';
+
 /** Códigos de error del backend (`app/backend/src/error.rs`). */
 export type CodigoError =
   | 'sin_permiso'
@@ -61,6 +63,7 @@ export type CodigoError =
   | 'validacion'
   | 'cm_no_instalado'
   | 'sin_sesion_unity_vc'
+  | 'sesion_unity_vc_caducada'
   | 'cm'
   | 'servidor_unity_vc'
   | 'token_servidor_invalido'
@@ -105,7 +108,11 @@ export async function llamar<T>(
   try {
     return enTauri() ? await invoke<T>(comando, args) : await mockup();
   } catch (e) {
-    throw aErrorBackend(e);
+    const error = aErrorBackend(e);
+    if (enTauri() && error.codigo === 'sesion_unity_vc_caducada') {
+      window.dispatchEvent(new Event(EVENTO_SESION_CADUCADA));
+    }
+    throw error;
   }
 }
 
@@ -358,6 +365,12 @@ export const api = {
     return listen('cierre-bloqueado', () => avisar());
   },
 
+  /** Sesión SSO caducada detectada por el polling del backend (#203). */
+  alSesionUnityVcCaducada: async (avisar: () => void): Promise<() => void> => {
+    if (!enTauri()) return () => {};
+    return listen(EVENTO_SESION_CADUCADA, () => avisar());
+  },
+
   /**
    * Entra al proyecto del workspace de `carpeta`: el backend lee `cm whoami`, el repo del workspace y,
    * si el proyecto no tiene datos, si quien entra es su dueño. En el mockup responde `mockup()`, que
@@ -535,6 +548,16 @@ export const api = {
   /** Rechaza una revisión con motivo: la tarea y sus subtareas vuelven a producción (#107). */
   rechazarRevision: (id: string, motivo: string, mockup: () => Tarea[]) =>
     llamar<Tarea[]>('rechazar_revision', { id, motivo }, mockup),
+
+  /**
+   * "Resolver en Unity VC" de la alerta de conflicto (#207): deja el workspace en la rama `destino`
+   * (falla si hay cambios sin check-in) y abre Unity VC en su Branch Explorer. En el mockup no abre nada.
+   */
+  abrirResolucionConflicto: (destino: string) =>
+    llamar<{ rama_actual: string; workspace: string }>('abrir_resolucion_conflicto', { destino }, () => ({
+      rama_actual: destino,
+      workspace: '',
+    })),
 
   /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109, #111). */
   revisarActualizaciones: (tareaId?: string) =>

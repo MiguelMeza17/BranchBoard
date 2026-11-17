@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
-import { api } from './lib/api';
+import { api, EVENTO_SESION_CADUCADA } from './lib/api';
 import { useSincronizacionEventos } from './lib/useSincronizacionEventos';
 import { ConflictoMergeModal } from './components/ConflictoMergeModal';
 import { Layout } from './components/Layout';
@@ -34,6 +34,22 @@ export function App() {
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
   const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
   const cargarSesionUnityVc = useStore((s) => s.cargarSesionUnityVc);
+  const marcarSesionUnityVcCaducada = useStore((s) => s.marcarSesionUnityVcCaducada);
+
+  useEffect(() => {
+    let cancelado = false;
+    let dejar: (() => void) | undefined;
+    window.addEventListener(EVENTO_SESION_CADUCADA, marcarSesionUnityVcCaducada);
+    void api.alSesionUnityVcCaducada(marcarSesionUnityVcCaducada).then((limpiar) => {
+      if (cancelado) limpiar();
+      else dejar = limpiar;
+    });
+    return () => {
+      cancelado = true;
+      dejar?.();
+      window.removeEventListener(EVENTO_SESION_CADUCADA, marcarSesionUnityVcCaducada);
+    };
+  }, [marcarSesionUnityVcCaducada]);
 
   // Al arrancar la app, consulta en segundo plano WARP (#122), `cm` (#123) y sesión (#124).
   useEffect(() => {

@@ -293,6 +293,8 @@ interface State {
   // pantalla de "no hay sesión de Unity VC" en vez de los tableros (ver FRONTEND.md,
   // "Autenticación / acceso al proyecto"). Toggle de demo en el Topbar.
   cmSesionActiva: boolean;
+  sesionUnityVcCaducada: boolean;
+  marcarSesionUnityVcCaducada: () => void;
   // Si ya se pasó por las pantallas de acceso al proyecto (Pantalla inicial →
   // workspaces → validación del .db). En el mockup nunca bloquea: se pueden saltar.
   accesoCompletado: boolean;
@@ -492,6 +494,8 @@ interface State {
   conflictoMerge: (ConflictoMerge & { tareaId: string }) | null;
   autorizandoMerge: boolean;
   cerrarConflictoMerge: () => void;
+  /** "Resolver en Unity VC" (#207): `true` si se abrió Unity VC en la rama destino. */
+  resolverConflictoEnUnityVc: () => Promise<boolean>;
   autorizarMerge: (id: string) => Promise<void>;
   /** "terminada" -> "en revisión" con motivo obligatorio; respeta LIMITE_REAPERTURAS. */
   reabrirTarea: (id: string, motivo: string) => void;
@@ -553,6 +557,11 @@ export const useStore = create<State>((set, get) => {
   cmInstalado: true,
   cmInstalando: false,
   cmSesionActiva: true,
+  sesionUnityVcCaducada: false,
+  marcarSesionUnityVcCaducada: () => set({
+    cmSesionActiva: false, accesoCompletado: false, sesionUnityVC: null,
+    sesionUnityVcCaducada: true,
+  }),
   accesoCompletado: false,
   proyectoActual: enTauri() ? '' : fx.PROYECTO_NOMBRE,
   workspaceActual: enTauri() ? null : fx.PROYECTO_NOMBRE,
@@ -1024,8 +1033,11 @@ export const useStore = create<State>((set, get) => {
   },
   cargarSesionUnityVc: async () => {
     if (!enTauri()) return;
+    if (get().sesionUnityVcCaducada) return;
     try {
       const s = await api.sesionUnityVc();
+      // Una consulta local iniciada antes del error no debe ocultar el aviso.
+      if (get().sesionUnityVcCaducada) return;
       if (s.activa && s.email) {
         set({ cmInstalado: true, cmSesionActiva: true, sesionUnityVC: s.email, currentEmail: s.email });
         void get().cargarWorkspacesYProyectos();
@@ -1046,12 +1058,21 @@ export const useStore = create<State>((set, get) => {
       return true;
     }
     try {
+      if (get().sesionUnityVcCaducada) {
+        // Abrir el SSO solo tras pulsar Reconectar. Un `whoami` local puede
+        // seguir devolviendo el correo aunque la sesión remota haya vencido.
+        const sesion = await api.iniciarSesionUnityVc(true);
+        if (!sesion.activa || !sesion.email) {
+          throw new ErrorBackend('sin_sesion_unity_vc', 'Completa el inicio de sesión de Unity VC y vuelve a intentar.');
+        }
+      }
       const res = await api.reconectarUnityVc(org);
       set({
         cmInstalado: true,
         cmSesionActiva: true,
         sesionUnityVC: res.email,
         currentEmail: res.email,
+        sesionUnityVcCaducada: false,
       });
       get().showToast(res.mensaje, 'ok');
       return true;
@@ -1756,6 +1777,27 @@ export const useStore = create<State>((set, get) => {
   conflictoMerge: null,
   autorizandoMerge: false,
   cerrarConflictoMerge: () => set({ conflictoMerge: null }),
+  resolverConflictoEnUnityVc: async () => {
+    const conflicto = get().conflictoMerge;
+    if (!conflicto) return false;
+    try {
+      const { rama_actual } = await api.abrirResolucionConflicto(conflicto.destino);
+      set({ conflictoMerge: null });
+      const despues = get().tareas.find((t) => t.id === conflicto.tareaId)?.tarea_padre_id
+        ? 'BranchBoard la cerrará solo al detectar el merge.'
+        : 'Después vuelve a autorizar la tarea en BranchBoard.';
+      get().showToast(
+        enTauri()
+          ? `Tu workspace quedó en ${rama_actual}. En Unity VC: clic derecho en ${conflicto.origen} → "Merge from this branch", resuelve los archivos y haz check-in. ${despues}`
+          : 'En la app de escritorio esto abre Unity VC en la rama destino para resolver el conflicto.',
+        'info',
+      );
+      return true;
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+      return false;
+    }
+  },
   autorizarMerge: async (id) => {
     if (enTauri()) {
       if (get().autorizandoMerge) return;

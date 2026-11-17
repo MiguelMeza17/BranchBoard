@@ -980,6 +980,68 @@ pub async fn abrir_en_unity(
     abrir_en_unity_en(&estado, &tarea_id, &rama, changeset.as_deref())
 }
 
+/// Respuesta de `abrir_resolucion_conflicto` (#207).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ResultadoResolucionConflicto {
+    /// Rama en la que quedó el workspace (la destino del merge).
+    pub rama_actual: String,
+    pub workspace: String,
+}
+
+/// Deja el workspace de quien autoriza en la rama `destino` del merge que chocó
+/// (#207), sin abrir nada. Si ya está ahí no toca nada; si no, exige que no haya
+/// cambios sin check-in (un `cm switch` con cambios se queda preguntando) y
+/// cambia con `cm switch`. Solo acepta `/main/dev` o ramas debajo.
+pub fn preparar_resolucion_conflicto_en(
+    estado: &AppState,
+    destino: &str,
+) -> Resultado<ResultadoResolucionConflicto> {
+    let _yo = estado.exigir_permiso("abrir_resolucion_conflicto")?;
+    let workspace = estado.workspace_abierto()?;
+    let destino = destino.trim().trim_end_matches('/');
+    let bajo_dev =
+        destino == ramas::RAMA_DEV || destino.starts_with(&format!("{}/", ramas::RAMA_DEV));
+    if !bajo_dev {
+        return Err(Error::Validacion(format!(
+            "La rama destino del merge no es válida: {destino}"
+        )));
+    }
+    let actual = crate::cm::lectura::rama_actual_workspace(estado, &workspace)?;
+    let rama_actual = if actual.rama.eq_ignore_ascii_case(destino) {
+        actual.rama
+    } else {
+        let pendientes = ramas::cambios_pendientes(estado, &workspace)?;
+        if !pendientes.is_empty() {
+            return Err(Error::Validacion(format!(
+                "Tienes {} cambio(s) sin check-in en {}. Haz check-in o deshazlos antes de resolver el conflicto en {destino}",
+                pendientes.len(),
+                actual.rama
+            )));
+        }
+        ramas::cambiar_a_rama(estado, &workspace, destino)?.rama
+    };
+    Ok(ResultadoResolucionConflicto {
+        rama_actual,
+        workspace: workspace.to_string_lossy().to_string(),
+    })
+}
+
+/// `abrir_resolucion_conflicto(destino)`: botón "Resolver en Unity VC" de la
+/// alerta de conflicto (#207). Deja el workspace en la rama destino
+/// ([`preparar_resolucion_conflicto_en`]) y abre Unity VC en su Branch Explorer,
+/// donde la persona hace "Merge from this branch" desde la rama origen, resuelve
+/// y hace check-in. Después, en una subtarea la escucha de Unity VC cierra la
+/// tarea sola (#104); en una tarea general se vuelve a "Autorizar" (#107).
+#[tauri::command]
+pub async fn abrir_resolucion_conflicto(
+    estado: State<'_, AppState>,
+    destino: String,
+) -> Resultado<ResultadoResolucionConflicto> {
+    let resultado = preparar_resolucion_conflicto_en(&estado, &destino)?;
+    crate::cm::sesion::abrir_plastic_en_workspace(std::path::Path::new(&resultado.workspace))?;
+    Ok(resultado)
+}
+
 /// `asignar_revision(id, email)`: elige el revisor de una tarea en revisión (#107).
 /// Líder/Admin mientras no tenga revisor; solo el Administrador si ya tiene.
 #[tauri::command]
