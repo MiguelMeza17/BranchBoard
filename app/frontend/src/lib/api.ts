@@ -172,6 +172,20 @@ export interface CambiosEditarTarea {
   fecha_limite?: string | null;
 }
 
+/** Merge que no se pudo hacer solo: archivos que hay que resolver en Unity VC (#107). */
+export interface ConflictoMerge {
+  origen: string;
+  destino: string;
+  archivos: string[];
+  mensaje: string;
+}
+
+/** Respuesta de `autorizar_merge` (#107): o terminó la tarea, o hubo conflicto y nada cambió. */
+export interface ResultadoAutorizacion {
+  tareas: Tarea[];
+  conflicto: ConflictoMerge | null;
+}
+
 /**
  * Qué ve la persona al abrir un workspace (`entrar_a_proyecto`, #89):
  * - `dentro`: entra con su rol; `configurado_ahora` = era el dueño del repo y el proyecto se configuró.
@@ -471,6 +485,22 @@ export const api = {
 
   /** Cambia el workspace local de vuelta a `/main/dev` (notificación de doble toma, #97). */
   volverADev: () => llamar<string>('volver_a_dev', undefined, () => '/main/dev'),
+
+  /** Elige el revisor de una tarea en revisión (Líder/Admin sin revisor; solo Admin si ya tiene, #107). */
+  asignarRevision: (id: string, email: string, mockup: () => Tarea) =>
+    llamar<Tarea>('asignar_revision', { id, email }, mockup),
+
+  /**
+   * Autoriza el merge de la rama de `id` hacia `dev` (tarea general) o hacia la rama de su tarea
+   * padre (subtarea), del lado del servidor (#107). Si hay conflicto, la tarea no cambia y
+   * `conflicto` trae los archivos para la alerta; si no, `tareas` ya viene con ella terminada.
+   */
+  autorizarMerge: (id: string, mockup: () => ResultadoAutorizacion) =>
+    llamar<ResultadoAutorizacion>('autorizar_merge', { id }, mockup),
+
+  /** Rechaza una revisión con motivo: la tarea y sus subtareas vuelven a producción (#107). */
+  rechazarRevision: (id: string, motivo: string, mockup: () => Tarea[]) =>
+    llamar<Tarea[]>('rechazar_revision', { id, motivo }, mockup),
 
   /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109, #111). */
   revisarActualizaciones: (tareaId?: string) =>

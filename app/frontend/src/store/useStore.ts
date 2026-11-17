@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as ejemplo from '../data/fixtures';
-import { api, enTauri, ErrorBackend, mensajeDeError, type ProyectoServidor, type ResumenPolling } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
 import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
@@ -489,11 +489,14 @@ interface State {
   rechazarEdicion: (tareaId: string) => void;
 
   // revisión
-  autorizarMerge: (id: string) => void;
+  conflictoMerge: (ConflictoMerge & { tareaId: string }) | null;
+  autorizandoMerge: boolean;
+  cerrarConflictoMerge: () => void;
+  autorizarMerge: (id: string) => Promise<void>;
   /** "terminada" -> "en revisión" con motivo obligatorio; respeta LIMITE_REAPERTURAS. */
   reabrirTarea: (id: string, motivo: string) => void;
-  rechazarRevision: (id: string, motivo: string) => void;
-  asignarRevision: (id: string, liderEmail: string) => void;
+  rechazarRevision: (id: string, motivo: string) => Promise<boolean>;
+  asignarRevision: (id: string, liderEmail: string) => Promise<boolean>;
   autoasignarRevision: (id: string, email: string) => void;
 
   // notificaciones
@@ -1733,7 +1736,29 @@ export const useStore = create<State>((set, get) => {
 
   // Orden de merge de abajo hacia arriba (BACKEND.md): una tarea con subtareas solo se mergea
   // cuando todas ya se mergearon a su rama ("terminada"), y entonces termina solo ella.
-  autorizarMerge: (id) => {
+  conflictoMerge: null,
+  autorizandoMerge: false,
+  cerrarConflictoMerge: () => set({ conflictoMerge: null }),
+  autorizarMerge: async (id) => {
+    if (enTauri()) {
+      if (get().autorizandoMerge) return;
+      set({ autorizandoMerge: true, conflictoMerge: null });
+      try {
+        const resultado = await api.autorizarMerge(id, () => ({ tareas: get().tareas, conflicto: null }));
+        set({ tareas: resultado.tareas });
+        if (resultado.conflicto) {
+          set({ conflictoMerge: { ...resultado.conflicto, tareaId: id } });
+        } else {
+          get().showToast('Merge autorizado — tarea terminada');
+          get().subirVersionDatos();
+        }
+      } catch (e) {
+        get().showToast(mensajeDeError(e), 'danger');
+      } finally {
+        set({ autorizandoMerge: false });
+      }
+      return;
+    }
     if (!get().puedeAvanzar(id, 'terminada')) return;
     set((s) => {
       const hoy = today();
@@ -1776,7 +1801,19 @@ export const useStore = create<State>((set, get) => {
     });
   },
 
-  rechazarRevision: (id, motivo) => {
+  rechazarRevision: async (id, motivo) => {
+    if (enTauri()) {
+      try {
+        const tareas = await api.rechazarRevision(id, motivo, () => get().tareas);
+        set({ tareas, conflictoMerge: null });
+        get().subirVersionDatos();
+        get().showToast('Revisión rechazada — vuelve a producción', 'info');
+        return true;
+      } catch (e) {
+        get().showToast(mensajeDeError(e), 'danger');
+        return false;
+      }
+    }
     const tarea = get().tareas.find((t) => t.id === id);
     // Igual que moverTarea: si es una tarea general, sus subtareas también vuelven a producción.
     set((s) => {
@@ -1802,10 +1839,23 @@ export const useStore = create<State>((set, get) => {
         accionable: false,
       });
     }
+    return true;
   },
 
   // Notificación #6 (BACKEND.md): revisión asignada a un Líder específico.
-  asignarRevision: (id, liderEmail) => {
+  asignarRevision: async (id, liderEmail) => {
+    if (enTauri()) {
+      try {
+        const tarea = await api.asignarRevision(id, liderEmail, () => get().tareas.find((t) => t.id === id)!);
+        set((s) => ({ tareas: s.tareas.map((t) => t.id === id ? tarea : t) }));
+        get().subirVersionDatos();
+        get().showToast('Revisión asignada');
+        return true;
+      } catch (e) {
+        get().showToast(mensajeDeError(e), 'danger');
+        return false;
+      }
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (t.id === id ? { ...t, lider_revision_asignado: liderEmail } : t)),
     }));
@@ -1819,9 +1869,14 @@ export const useStore = create<State>((set, get) => {
       tarea_id: id,
       accionable: false,
     });
+    return true;
   },
 
   autoasignarRevision: (id, email) => {
+    if (enTauri()) {
+      void get().asignarRevision(id, email);
+      return;
+    }
     set((s) => ({
       tareas: s.tareas.map((t) => (t.id === id ? { ...t, lider_revision_asignado: email } : t)),
     }));

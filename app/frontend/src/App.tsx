@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
 import { api } from './lib/api';
 import { useSincronizacionEventos } from './lib/useSincronizacionEventos';
+import { ConflictoMergeModal } from './components/ConflictoMergeModal';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
 import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
@@ -81,6 +82,7 @@ export function App() {
   return (
     <>
       {splash}
+      <ConflictoMergeModal />
       <HashRouter>
         <Routes>
           <Route element={<Layout />}>
