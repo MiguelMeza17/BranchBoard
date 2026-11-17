@@ -31,6 +31,8 @@ use crate::eventos::{self, Evento};
 use crate::modelo::{normalizar_email, Rol};
 use crate::tareas::rol_verificado_de;
 
+pub mod eliminacion;
+
 /// Tipos de evento de los ajustes del proyecto que viajan por `ops/`.
 pub const TIPOS: &[&str] = &["actualizar_configuracion_proyecto"];
 

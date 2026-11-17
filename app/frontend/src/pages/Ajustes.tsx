@@ -290,6 +290,12 @@ function SeccionProyecto() {
   const showToast = useStore((s) => s.showToast);
   const [nombre, setNombre] = useState(proyecto);
   const [open, setOpen] = useState(false);
+  const [ocupado, setOcupado] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const workspaces = useStore((s) => s.workspaces);
+  const workspaceActual = useStore((s) => s.workspaceActual);
+  const setWorkspaces = useStore((s) => s.setWorkspaces);
+  const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
   const cambio = nombre.trim() && nombre.trim() !== proyecto;
 
   return (
@@ -305,18 +311,40 @@ function SeccionProyecto() {
       <div className="mt-5 rounded-lg border border-danger/40 p-4">
         <div className="text-sm font-semibold text-red-300">Eliminar proyecto</div>
         <p className="mt-1 text-sm text-muted">
-          Borra absolutamente todo. Requiere escribir el nombre exacto del proyecto y permiso{' '}
+          Elimina el repositorio del proyecto en Unity VC. Requiere escribir el nombre exacto del proyecto y permiso{' '}
           <span className="font-mono">rmrepository</span> en Unity Version Control.
         </p>
-        <button className="btn-danger mt-3" onClick={() => setOpen(true)}>Eliminar proyecto completo</button>
+        <p className="mt-2 text-xs text-muted">Las carpetas del equipo y las copias locales no se borran.</p>
+        <button className="btn-danger mt-3" onClick={() => { setError(null); setOpen(true); }}>Eliminar proyecto completo</button>
       </div>
       <ConfirmLock
         open={open}
         onClose={() => setOpen(false)}
-        onConfirm={() => { showToast('Proyecto eliminado (mockup)', 'danger'); setOpen(false); }}
+        onConfirm={async (_, confirmacion) => {
+          if (ocupado) return;
+          setOcupado(true);
+          setError(null);
+          try {
+            const resultado = await api.eliminarProyecto(confirmacion ?? '', () => ({
+              repo: workspaces.find((w) => w.nombre === workspaceActual)?.repo ?? '',
+              nombre: proyecto,
+            }));
+            setWorkspaces(workspaces.filter((w) => w.repo !== resultado.repo));
+            setOpen(false);
+            cambiarDeProyecto();
+            showToast(`Proyecto ${resultado.nombre} eliminado de Unity VC`, 'info');
+          } catch (e) {
+            setError(mensajeDeError(e));
+          } finally {
+            setOcupado(false);
+          }
+        }}
         title="Eliminar proyecto completo"
         tone="danger"
         palabra={proyecto}
+        exacta
+        ocupado={ocupado}
+        error={error}
         confirmLabel="Eliminar proyecto"
         description={<>Escribe el nombre exacto del proyecto <strong className="font-mono text-text">{proyecto}</strong> para confirmar. Esta es la acción más destructiva de la app.</>}
       />
