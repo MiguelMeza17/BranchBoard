@@ -431,6 +431,12 @@ Prueba en el entorno real: `BB_PRUEBA_ORG=<org> BB_PRUEBA_REPO=<Proyecto/Repo> c
 
 ### Sesión de Unity VC desde la app, proyectos y salir (según el frontend)
 
+**Caducidad SSO (#203)**: `cm::Comando` traduce la salida fallida `Error: Controlador no válido.` (también sin acento o con el carácter de reemplazo de la consola) a `sesion_unity_vc_caducada`, tanto en ejecución normal como con progreso. Solo reconoce líneas de error de `cm`, no salidas exitosas ni mensajes de otros programas. Invalida la identidad en memoria sin modificar el PAT, la sesión de Unity ID ni los datos del proyecto. No repite el comando. Los errores de red/permisos conservan su tratamiento anterior.
+
+Las llamadas IPC notifican al frontend al recibir ese código; si se detecta en el polling, el backend emite `sesion-unity-vc-caducada`. App muestra el aviso existente de Reconectar. Solo el clic de la persona fuerza `iniciar_sesion_unity_vc(true)` y después verifica la reconexión. Cuando se conoce la organización, `reconectar_unity_vc` comprueba también `cm repo list <org>@unity`: un `whoami` local y un PAT válido no demuestran que la sesión remota de la CLI siga vigente. La identidad solo se restaura después de validar la conexión. La limitación de Unity (necesitar el SSO oficial) permanece.
+
+Pruebas de #203: `entorno_real_clasificacion_sesion_caducada` hace lecturas reales de ramas de BranchBoard-Pruebas, incluida la salida incremental, y verifica la reconexión de una sesión sana sin abrir el navegador. Reproduce la salida de caducidad observada en la issue sobre el estado temporal de la prueba; no caduca ni modifica las credenciales reales. `npm run test:sesion` comprueba el error IPC, el aviso sin reintentos, la conservación de datos, la cancelación y la reconexión explícita con un backend controlado.
+
 **Nuevo (2026-11-07)**. Lo que el frontend ya muestra en la [Pantalla inicial](./FRONTEND.md#autenticación--acceso-al-proyecto) y en el menú del proyecto (clic en el logo):
 
 - **"Iniciar sesión con Unity VC"**: si no hay sesión (`cm whoami` falla), la app abre el inicio de sesión **oficial de Unity en el navegador** vía `plastic.exe --configure` (SSO); BranchBoard nunca ve ni guarda la contraseña. Al volver, se vuelve a correr `cm whoami`. (**Implementado #124** en `app/backend/src/cm/sesion.rs` y `comandos/cm.rs`: `sesion_unity_vc()`, `iniciar_sesion_unity_vc(forzar?)`, `reconectar_unity_vc(org?)`, `cerrar_sesion_unity_vc()`.)

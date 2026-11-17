@@ -32,6 +32,8 @@ import type {
 /** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+export const EVENTO_SESION_CADUCADA = 'sesion-unity-vc-caducada';
+
 /** Códigos de error del backend (`app/backend/src/error.rs`). */
 export type CodigoError =
   | 'sin_permiso'
@@ -39,6 +41,7 @@ export type CodigoError =
   | 'validacion'
   | 'cm_no_instalado'
   | 'sin_sesion_unity_vc'
+  | 'sesion_unity_vc_caducada'
   | 'cm'
   | 'servidor_unity_vc'
   | 'token_servidor_invalido'
@@ -83,7 +86,11 @@ export async function llamar<T>(
   try {
     return enTauri() ? await invoke<T>(comando, args) : await mockup();
   } catch (e) {
-    throw aErrorBackend(e);
+    const error = aErrorBackend(e);
+    if (enTauri() && error.codigo === 'sesion_unity_vc_caducada') {
+      window.dispatchEvent(new Event(EVENTO_SESION_CADUCADA));
+    }
+    throw error;
   }
 }
 
@@ -332,6 +339,12 @@ export const api = {
   alCierreBloqueado: async (avisar: () => void): Promise<() => void> => {
     if (!enTauri()) return () => {};
     return listen('cierre-bloqueado', () => avisar());
+  },
+
+  /** Sesión SSO caducada detectada por el polling del backend (#203). */
+  alSesionUnityVcCaducada: async (avisar: () => void): Promise<() => void> => {
+    if (!enTauri()) return () => {};
+    return listen(EVENTO_SESION_CADUCADA, () => avisar());
   },
 
   /**

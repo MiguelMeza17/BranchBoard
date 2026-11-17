@@ -87,6 +87,7 @@ Lo que ya existe (2026-11-14) y las reglas que se siguen al agregar algo nuevo:
 
    | Prueba | Qué comprueba |
    |---|---|
+   | `cm::ejecutor::…::entorno_real_clasificacion_sesion_caducada` | Lecturas reales de ramas de BranchBoard-Pruebas normales y con progreso; reproduce el error SSO de #203 sobre AppState temporal y verifica una reconexión sana con la CLI real. No modifica credenciales ni recursos remotos; una guarda falla si se intenta abrir el asistente/navegador. `npm run test:sesion` cubre aviso, cancelación y reconexión con backend controlado |
    | `servidor::pat::…::entorno_real_crear_usar_y_renovar_el_pat` | Crea el PAT, lo guarda en el llavero, la API responde, lo reusa, y con un token dañado (401) lo renueva |
    | `ramas::…::entorno_real_ramas_de_tareas` | Rama desde la cabeza de `dev`, subtarea y nivel 5, rechazo del nivel 6 y de la repetida, rama del padre que falte, `cm switch` y bloqueo por cambios sin check-in |
    | `checkins::…::entorno_real_checkins_de_una_rama` | Dos check-ins de verdad (uno con descripción) se leen con título, descripción, autor y hora, sin duplicar |

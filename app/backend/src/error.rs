@@ -23,6 +23,9 @@ pub enum Error {
     /// No hay sesión de Unity VC iniciada (`cm whoami` falla).
     #[error("No se detectó una sesión de Unity VC")]
     SinSesionUnityVc,
+    /// La CLI perdió la sesión SSO, aunque el PAT de la API siga siendo válido.
+    #[error("La sesión de Unity VC caducó. Pulsa Reconectar para volver a iniciar sesión")]
+    SesionUnityVcCaducada,
     /// `cm` respondió con error.
     #[error("Unity Version Control respondió con un error: {0}")]
     Cm(String),
@@ -58,6 +61,7 @@ impl Error {
             Error::Validacion(_) => "validacion",
             Error::CmNoInstalado => "cm_no_instalado",
             Error::SinSesionUnityVc => "sin_sesion_unity_vc",
+            Error::SesionUnityVcCaducada => "sesion_unity_vc_caducada",
             Error::Cm(_) => "cm",
             Error::ServidorUnityVc(_) => "servidor_unity_vc",
             Error::TokenServidorInvalido => "token_servidor_invalido",
@@ -102,5 +106,20 @@ mod tests {
             serde_json::to_value(Error::Validacion("El título es obligatorio".into())).unwrap();
         assert_eq!(json["codigo"], "validacion");
         assert_eq!(json["mensaje"], "El título es obligatorio");
+    }
+
+    #[test]
+    fn sesion_caducada_conserva_un_codigo_distinto_de_pat_y_sesion_ausente() {
+        let json = serde_json::to_value(Error::SesionUnityVcCaducada).unwrap();
+        assert_eq!(json["codigo"], "sesion_unity_vc_caducada");
+        assert!(json["mensaje"].as_str().unwrap().contains("Reconectar"));
+        assert_ne!(
+            Error::SesionUnityVcCaducada.codigo(),
+            Error::TokenServidorInvalido.codigo()
+        );
+        assert_ne!(
+            Error::SesionUnityVcCaducada.codigo(),
+            Error::SinSesionUnityVc.codigo()
+        );
     }
 }

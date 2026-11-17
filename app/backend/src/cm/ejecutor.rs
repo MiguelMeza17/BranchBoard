@@ -35,6 +35,28 @@ impl Salida {
     pub fn exito(&self) -> bool {
         self.codigo == Some(0)
     }
+
+    /// Mensaje observado al caducar el SSO de `cm` (#203). No confundir una
+    /// salida válida (p. ej. el contenido de un archivo) con un error de sesión.
+    fn sesion_caducada(&self) -> bool {
+        !self.exito()
+            && [&self.stdout, &self.stderr].into_iter().any(|texto| {
+                texto.lines().any(|linea| {
+                    let linea = linea.trim().to_lowercase();
+                    let mensaje = linea
+                        .strip_prefix("error:")
+                        .unwrap_or(&linea)
+                        .trim()
+                        .trim_end_matches('.');
+                    matches!(
+                        mensaje,
+                        "controlador no válido"
+                            | "controlador no valido"
+                            | "controlador no v\u{fffd}lido"
+                    )
+                })
+            })
+    }
 }
 
 /// Un comando por ejecutar: programa, argumentos separados, carpeta y tiempo máximo.
@@ -132,11 +154,14 @@ impl Comando {
         let stderr = leer_en_hilo(hijo.stderr.take());
 
         let codigo = self.esperar(&mut hijo)?;
-        Ok(Salida {
-            codigo,
-            stdout: recoger(stdout),
-            stderr: recoger(stderr),
-        })
+        self.interpretar_salida(
+            estado,
+            Salida {
+                codigo,
+                stdout: recoger(stdout),
+                stderr: recoger(stderr),
+            },
+        )
     }
 
     /// Como [`ejecutar`](Self::ejecutar), pero reporta líneas incrementales mientras
@@ -181,11 +206,30 @@ impl Comando {
         while let Ok(linea) = rx.try_recv() {
             al_avanzar(&linea);
         }
-        Ok(Salida {
-            codigo,
-            stdout: out_str,
-            stderr: err_str,
-        })
+        self.interpretar_salida(
+            estado,
+            Salida {
+                codigo,
+                stdout: out_str,
+                stderr: err_str,
+            },
+        )
+    }
+
+    fn interpretar_salida(&self, estado: &AppState, salida: Salida) -> Resultado<Salida> {
+        let es_cm = Path::new(&self.programa)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|nombre| {
+                nombre.eq_ignore_ascii_case("cm") || nombre.eq_ignore_ascii_case("cm.exe")
+            });
+        if es_cm && salida.sesion_caducada() {
+            // Solo invalida la identidad en memoria; no toca el PAT ni las
+            // credenciales SSO, ni reintenta una operación con efectos.
+            estado.fijar_usuario(None);
+            return Err(Error::SesionUnityVcCaducada);
+        }
+        Ok(salida)
     }
 
     /// Como [`ejecutar`](Self::ejecutar), pero exige código 0 y devuelve el `stdout`;
@@ -410,5 +454,116 @@ mod tests {
         assert_eq!(comando.descripcion(), "cm log br:/main/task-1 --xml");
         assert_eq!(comando.tiempo_maximo, Duration::from_secs(5));
         assert_eq!(comando.carpeta.as_deref(), Some(Path::new("C:/ws")));
+    }
+
+    #[test]
+    fn sesion_caducada_invalida_identidad_solo_para_errores_reales_de_cm() {
+        let estado = AppState::default();
+        let correo = "admin@example.test";
+        for mensaje in [
+            "Error: Controlador no válido.",
+            "Controlador no valido",
+            "ERROR: Controlador no v\u{fffd}lido.\r\n",
+        ] {
+            for por_stderr in [true, false] {
+                estado.fijar_usuario(Some(correo));
+                let salida = Salida {
+                    codigo: Some(1),
+                    stdout: if por_stderr {
+                        String::new()
+                    } else {
+                        mensaje.into()
+                    },
+                    stderr: if por_stderr {
+                        mensaje.into()
+                    } else {
+                        String::new()
+                    },
+                };
+                let error = Comando::cm()
+                    .interpretar_salida(&estado, salida)
+                    .unwrap_err();
+                assert_eq!(error.codigo(), "sesion_unity_vc_caducada");
+                assert!(estado.usuario_actual().is_none());
+                assert!(!estado.hay_operacion_en_curso());
+            }
+        }
+        for (programa, codigo, mensaje) in [
+            ("cm", 0, "Error: Controlador no válido."),
+            ("cm", 1, "No se puede conectar al servidor"),
+            ("cm", 1, "Permission denied"),
+            ("cm", 1, "El archivo contiene: Controlador no válido."),
+            ("otro", 1, "Error: Controlador no válido."),
+        ] {
+            estado.fijar_usuario(Some(correo));
+            let salida = Salida {
+                codigo: Some(codigo),
+                stdout: mensaje.into(),
+                stderr: String::new(),
+            };
+            assert_eq!(
+                Comando::nuevo(programa)
+                    .interpretar_salida(&estado, salida.clone())
+                    .unwrap(),
+                salida
+            );
+            assert_eq!(estado.usuario_actual().as_deref(), Some(correo));
+        }
+    }
+
+    #[test]
+    #[ignore = "lecturas reales contra BranchBoard-Pruebas: BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
+    fn entorno_real_clasificacion_sesion_caducada() {
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
+        let estado = AppState::default();
+        let email = crate::cm::lectura::whoami(&estado).unwrap();
+        estado.fijar_usuario(Some(&email));
+        let consulta = format!("on repository '{repo}@{org}@unity'");
+        let comando =
+            Comando::cm().args(["find", "branch", &consulta, "--format={name}", "--nototal"]);
+        let salida = comando.ejecutar(&estado).unwrap();
+        assert!(salida.exito());
+        assert!(salida
+            .stdout
+            .lines()
+            .any(|linea| linea.trim() == "/main/dev"));
+        let mut lineas = Vec::new();
+        assert!(comando
+            .ejecutar_con_progreso(&estado, |linea| lineas.push(linea.to_string()))
+            .unwrap()
+            .exito());
+        assert!(!lineas.is_empty());
+        assert_eq!(estado.usuario_actual().as_deref(), Some(email.as_str()));
+
+        // Reproduce la salida observada en #203 sin expirar ni modificar la
+        // sesión real del equipo. Se invalida únicamente AppState de esta prueba.
+        let error = comando
+            .interpretar_salida(
+                &estado,
+                Salida {
+                    codigo: Some(1),
+                    stdout: String::new(),
+                    stderr: "Error: Controlador no válido.".into(),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.codigo(), "sesion_unity_vc_caducada");
+        assert!(estado.usuario_actual().is_none());
+        assert!(!estado.hay_operacion_en_curso());
+        assert!(comando.exigir_exito(&estado).unwrap().contains("/main/dev"));
+        assert_eq!(crate::cm::lectura::whoami(&estado).unwrap(), email);
+        let reconexion = crate::cm::sesion::reconectar_con(
+            || crate::cm::lectura::whoami(&estado),
+            || panic!("la prueba no debe abrir el navegador ni el asistente"),
+            |_, forzado| {
+                assert!(!forzado);
+                comando.exigir_exito(&estado).map(|_| ())
+            },
+            |email| estado.fijar_usuario(email),
+        )
+        .unwrap();
+        assert!(reconexion.reconectado && !reconexion.abrio_asistente);
+        assert_eq!(estado.usuario_actual().as_deref(), Some(email.as_str()));
     }
 }

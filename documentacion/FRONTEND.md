@@ -257,6 +257,8 @@ Al abrir BranchBoard, antes de mostrar la Pantalla inicial, se muestra una **ani
 
 ## Autenticación / acceso al proyecto
 
+**Sesión caducada (#203)**: si una operación o el polling detecta que venció la sesión de Unity VC, se muestra «La sesión de Unity VC caducó» con «Reconectar». Se conservan los datos del proyecto y la operación fallida no se repite. El asistente oficial se abre únicamente al pulsar Reconectar; mientras tanto el inicio de sesión alternativo queda deshabilitado para no aceptar solo una identidad local antigua. Si se cancela o falla la reconexión, el aviso permanece; al completarla se vuelve al acceso normal al proyecto. Los fallos de red o permisos no muestran este aviso.
+
 **Actualizado**: BranchBoard no tiene login propio ni contraseña — ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario). La identidad se obtiene automáticamente de `cm whoami` (la sesión de Unity Version Control ya iniciada en la máquina). Esto reemplaza el formulario de credenciales que se había planteado antes.
 
 **Resuelto**: si `cm whoami` falla o no hay ninguna sesión de Unity VC iniciada en la máquina, en vez de los tableros se muestra la pantalla **"No se detectó una sesión de Unity VC"**. **Actualizado (2026-11-07)**: tiene un solo botón, **"Iniciar sesión con Unity VC"**, que abre el inicio de sesión **oficial de Unity en el navegador** (BranchBoard nunca ve ni guarda la contraseña) y, al volver, sigue al flujo de abajo. Ya no están "Abrir Unity VC" ni "Reintentar".
