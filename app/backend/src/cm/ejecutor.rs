@@ -66,6 +66,7 @@ pub struct Comando {
     argumentos: Vec<String>,
     carpeta: Option<PathBuf>,
     tiempo_maximo: Duration,
+    invalidar_sesion: bool,
 }
 
 impl Comando {
@@ -75,12 +76,20 @@ impl Comando {
             argumentos: Vec::new(),
             carpeta: None,
             tiempo_maximo: TIEMPO_MAXIMO,
+            invalidar_sesion: true,
         }
     }
 
     /// `cm` de Unity Version Control.
     pub fn cm() -> Self {
         Self::nuevo("cm")
+    }
+
+    /// Consulta opcional de descubrimiento: conserva el error tipado, pero el
+    /// llamador decide si un perfil inaccesible acredita una caducidad global.
+    pub(crate) fn como_sondeo(mut self) -> Self {
+        self.invalidar_sesion = false;
+        self
     }
 
     /// Agrega un argumento tal cual, sin interpretarlo.
@@ -226,7 +235,9 @@ impl Comando {
         if es_cm && salida.sesion_caducada() {
             // Solo invalida la identidad en memoria; no toca el PAT ni las
             // credenciales SSO, ni reintenta una operación con efectos.
-            estado.fijar_usuario(None);
+            if self.invalidar_sesion {
+                estado.fijar_usuario(None);
+            }
             return Err(Error::SesionUnityVcCaducada);
         }
         Ok(salida)
@@ -509,6 +520,23 @@ mod tests {
             );
             assert_eq!(estado.usuario_actual().as_deref(), Some(correo));
         }
+        let error = Comando::cm()
+            .como_sondeo()
+            .interpretar_salida(
+                &estado,
+                Salida {
+                    codigo: Some(1),
+                    stdout: String::new(),
+                    stderr: "Error: Controlador no válido.".into(),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.codigo(), "sesion_unity_vc_caducada");
+        assert_eq!(
+            estado.usuario_actual().as_deref(),
+            Some(correo),
+            "un perfil opcional no invalida toda la sesión"
+        );
     }
 
     #[test]
