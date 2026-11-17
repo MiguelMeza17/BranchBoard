@@ -317,6 +317,8 @@ export interface ConfiguracionProyecto {
 }
 
 export const api = {
+  eliminarProyecto: (confirmacion: string, mockup: () => { repo: string; nombre: string }) =>
+    llamar<{ repo: string; nombre: string }>('eliminar_proyecto', { confirmacion }, mockup),
   diffRama: (tareaId: string) => llamar<Diferencias>('diff_rama', { tareaId }, diffEjemplo),
   diffChangeset: (tareaId: string, hash: string) =>
     llamar<Diferencias>('diff_changeset', { tareaId, hash }, diffEjemplo),

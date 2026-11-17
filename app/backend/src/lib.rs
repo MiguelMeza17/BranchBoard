@@ -205,6 +205,7 @@ pub fn run() {
             comandos_documentos::abrir_documento,
             comandos_proyecto::obtener_configuracion_proyecto,
             comandos_proyecto::renombrar_proyecto,
+            comandos_proyecto::eliminar_proyecto,
             comandos_proyecto::actualizar_configuracion_proyecto,
             comandos_proyecto::subir_imagen_proyecto,
             comandos_vistos::marcar_visto,

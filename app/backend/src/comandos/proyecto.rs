@@ -11,6 +11,14 @@ use crate::eventos;
 use crate::modelo::ahora_iso;
 use crate::proyecto::{self, ConfiguracionProyecto};
 
+#[tauri::command]
+pub async fn eliminar_proyecto(
+    estado: State<'_, AppState>,
+    confirmacion: String,
+) -> Resultado<proyecto::eliminacion::ProyectoEliminado> {
+    proyecto::eliminacion::eliminar_en(&estado, &confirmacion)
+}
+
 /// El nombre y la imagen del proyecto abierto.
 #[tauri::command]
 pub fn obtener_configuracion_proyecto(
