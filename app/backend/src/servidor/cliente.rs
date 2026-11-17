@@ -3,6 +3,7 @@
 //! HTTPS, y no aparece en ningún mensaje ni en `Debug`.
 
 use std::fmt;
+use std::io::Read;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -148,6 +149,28 @@ impl ClienteServidor {
         let texto = leer_respuesta(self.preparar("GET", ruta).call())?
             .map_err(|f| error_http(f.codigo, &f.cuerpo))?;
         sanear::interpretar(&texto)
+    }
+
+    /// Contenido versionado, nunca una ruta del disco. No se interpreta como
+    /// JSON: las claves del código fuente no son metadatos de autenticación.
+    /// `None` si excede el límite de memoria del visor.
+    pub fn revision_bytes(&self, repo: &str, revision: i64) -> Resultado<Option<Vec<u8>>> {
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let ruta = format!("/repos/{}/revisions/{revision}/raw", codificar(repo));
+        let respuesta = match self.preparar("GET", &ruta).call() {
+            Ok(r) => r,
+            Err(e) => {
+                leer_respuesta(Err(e))?.map_err(|f| error_http(f.codigo, &f.cuerpo))?;
+                return Err(Error::ServidorUnityVc("No se pudo leer el archivo".into()));
+            }
+        };
+        let mut bytes = Vec::new();
+        respuesta
+            .into_reader()
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::ServidorUnityVc("No se pudo leer el archivo".into()))?;
+        Ok((bytes.len() as u64 <= MAX_BYTES).then_some(bytes))
     }
 
     fn preparar(&self, metodo: &str, ruta: &str) -> ureq::Request {

@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import { Modal } from './Modal';
+import { VisorDiff } from './VisorDiff';
 import { avatarColor, estadoMeta, iniciales } from '../lib/ui';
 import type { Commit, Tarea, Usuario } from '../types';
 import { Icono } from './Icono';
@@ -416,6 +417,7 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
       onClose={onCerrar}
       title={commit.mensaje}
       subtitle={`Commit ${posicion} de ${total} en esta rama`}
+      size="lg"
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <button type="button" className="btn-ghost btn-sm" onClick={onAnterior} disabled={!onAnterior}>
@@ -465,6 +467,7 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
           <span className="text-text">{fechaLarga}</span>
           <span className="ml-2 text-faint">{haceCuanto(commit.fecha)}</span>
         </FilaDetalle>
+        <DiffCommitAbierto key={`${commit.tarea_id}:${commit.hash}`} tareaId={commit.tarea_id} hash={commit.hash} />
         <FilaDetalle k="Hash">
           <span className="font-mono text-text">{commit.hash}</span>
           <button
@@ -477,6 +480,16 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
         </FilaDetalle>
       </div>
     </Modal>
+  );
+}
+
+function DiffCommitAbierto({ tareaId, hash }: { tareaId: string; hash: string }) {
+  const [abierto, setAbierto] = useState(false);
+  return (
+    <details className="rounded-lg border border-border p-3" onToggle={(e) => setAbierto(e.currentTarget.open)}>
+      <summary className="cursor-pointer text-xs text-primary">Ver diferencias de este check-in</summary>
+      {abierto && <div className="mt-3"><VisorDiff tareaId={tareaId} hash={hash} /></div>}
+    </details>
   );
 }
 

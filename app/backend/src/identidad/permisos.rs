@@ -36,6 +36,9 @@ pub const SOLO_ADMIN: &[Rol] = &[Rol::Administrador];
 /// Todos los comandos de Tauri y quién puede usarlos. Al agregar un comando a
 /// `lib.rs` hay que agregarlo aquí (una prueba lo exige).
 pub const PERMISOS: &[(&str, Acceso)] = &[
+    ("diff_rama", Acceso::Roles(LIDER_O_ADMIN)),
+    ("diff_changeset", Acceso::Roles(TODOS)),
+    ("diff_archivo", Acceso::Roles(TODOS)),
     ("ping", Acceso::Libre),
     ("hay_operacion_en_curso", Acceso::Libre),
     ("elegir_carpeta", Acceso::Libre),
