@@ -549,6 +549,16 @@ export const api = {
   rechazarRevision: (id: string, motivo: string, mockup: () => Tarea[]) =>
     llamar<Tarea[]>('rechazar_revision', { id, motivo }, mockup),
 
+  /**
+   * "Resolver en Unity VC" de la alerta de conflicto (#207): deja el workspace en la rama `destino`
+   * (falla si hay cambios sin check-in) y abre Unity VC en su Branch Explorer. En el mockup no abre nada.
+   */
+  abrirResolucionConflicto: (destino: string) =>
+    llamar<{ rama_actual: string; workspace: string }>('abrir_resolucion_conflicto', { destino }, () => ({
+      rama_actual: destino,
+      workspace: '',
+    })),
+
   /** Revisa ramas activas y rama del workspace en Unity VC (#104, #106, #109, #111). */
   revisarActualizaciones: (tareaId?: string) =>
     llamar<ResumenPolling>(

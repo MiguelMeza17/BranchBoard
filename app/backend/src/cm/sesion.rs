@@ -78,6 +78,39 @@ pub fn resolver_plastic_exe() -> Option<PathBuf> {
     buscar_plastic_en(&candidatos_plastic_windows())
 }
 
+/// Argumentos para abrir Unity VC (`plastic.exe`) en el Branch Explorer del
+/// workspace `workspace` (#207). `--branchexplorer=<ruta>` está documentado en
+/// las notas de la versión 11 del cliente.
+pub fn argumentos_branch_explorer(workspace: &Path) -> Vec<String> {
+    vec![format!("--branchexplorer={}", workspace.display())]
+}
+
+/// Abre Unity VC en el Branch Explorer de `workspace` sin esperar a que la
+/// persona lo cierre (#207): BranchBoard no se queda bloqueado mientras se
+/// resuelve el conflicto. Devuelve la ruta de `plastic.exe` usada.
+pub fn abrir_plastic_en_workspace(workspace: &Path) -> Resultado<PathBuf> {
+    let ruta = resolver_plastic_exe().ok_or_else(|| {
+        Error::Validacion(
+            "No se encontró Unity Version Control (plastic) en este equipo para resolver el conflicto."
+                .into(),
+        )
+    })?;
+    let mut comando = std::process::Command::new(&ruta);
+    comando
+        .args(argumentos_branch_explorer(workspace))
+        .current_dir(workspace);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        comando.creation_flags(DETACHED_PROCESS);
+    }
+    comando
+        .spawn()
+        .map_err(|e| Error::Interno(format!("No se pudo abrir Unity Version Control: {e}")))?;
+    Ok(ruta)
+}
+
 /// Ruta de configuración local de Unity Version Control (`%LOCALAPPDATA%\plastic4` o `~/.plastic4`).
 pub fn carpeta_config_plastic() -> Option<PathBuf> {
     #[cfg(windows)]
@@ -397,6 +430,16 @@ mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
+
+    #[test]
+    fn el_branch_explorer_se_abre_con_la_ruta_del_workspace() {
+        let ws = Path::new(r"C:\Users\ana\Proyectos\Mi Juego");
+        assert_eq!(
+            argumentos_branch_explorer(ws),
+            [r"--branchexplorer=C:\Users\ana\Proyectos\Mi Juego".to_string()],
+            "un solo argumento: Rust lo entrecomilla si la ruta tiene espacios"
+        );
+    }
 
     #[derive(Default)]
     struct LlaveroMemoria(RefCell<HashMap<String, String>>);

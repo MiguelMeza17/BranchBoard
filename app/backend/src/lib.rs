@@ -180,6 +180,7 @@ pub fn run() {
             comandos_tareas::rechazar_revision,
             comandos_tareas::listar_commits,
             comandos_tareas::abrir_en_unity,
+            comandos_tareas::abrir_resolucion_conflicto,
             comandos_sprints::listar_sprints,
             comandos_sprints::crear_sprint,
             comandos_sprints::asignar_tarea_a_sprint,
