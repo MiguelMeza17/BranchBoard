@@ -274,6 +274,24 @@ export interface ProgresoClonado {
   mensaje: string;
 }
 
+export interface ResultadoProyectoNuevo {
+  workspace: WorkspaceUnityVC;
+  entrada: EntradaProyecto;
+}
+
+/** Extrae los proyectos padre de Unity VC Cloud (`Proyecto/Repo`) presentes en el servidor (#126). */
+export function proyectosPadreUnity(servidor: ProyectoServidor[]): string[] {
+  return Array.from(
+    new Set(
+      servidor
+        .map((p) => p.repo.split('@')[0] ?? '')
+        .filter((r) => r.includes('/'))
+        .map((r) => r.split('/')[0])
+        .filter(Boolean),
+    ),
+  );
+}
+
 // ───────── Comandos ─────────
 
 /** Un ajuste de `configuracion_proyecto` tal como lo guarda el backend (#127). */
@@ -943,6 +961,57 @@ export const api = {
       'clonar_proyecto',
       { repo, carpeta },
       mockup ?? (() => ({ nombre: '', repo, ruta: carpeta, tiene_db_branchboard: false })),
+    ),
+
+  /** Crea un proyecto nuevo en Unity VC Cloud (`cm repo create` + `cm workspace create`, #126). */
+  crearProyecto: (
+    nombre: string,
+    carpeta: string,
+    proyectoUnity?: string,
+    org?: string,
+    mockup?: () => ResultadoProyectoNuevo,
+  ) =>
+    llamar<ResultadoProyectoNuevo>(
+      'crear_proyecto',
+      { nombre, carpeta, proyectoUnity, org },
+      mockup ??
+        (() => ({
+          workspace: {
+            nombre,
+            repo: `${proyectoUnity ? `${proyectoUnity}/` : ''}${nombre}@MIGUELMEZA`,
+            ruta: `${carpeta.replace(/\\$/, '')}\\${nombre}`,
+            tiene_db_branchboard: true,
+          },
+          entrada: {
+            estado: 'dentro',
+            email: '',
+            rol: 'Administrador',
+            rol_verificado: true,
+            proyecto: nombre,
+            configurado_ahora: true,
+            vistos: {},
+          },
+        })),
+    ),
+
+  /** Configura BranchBoard en un workspace local de Unity VC sin base previa (#126). */
+  traerProyecto: (carpeta: string, mockup?: () => ResultadoProyectoNuevo) =>
+    llamar<ResultadoProyectoNuevo>(
+      'traer_proyecto',
+      { carpeta },
+      mockup ??
+        (() => ({
+          workspace: { nombre: '', repo: '', ruta: carpeta, tiene_db_branchboard: true },
+          entrada: {
+            estado: 'dentro',
+            email: '',
+            rol: 'Administrador',
+            rol_verificado: true,
+            proyecto: '',
+            configurado_ahora: true,
+            vistos: {},
+          },
+        })),
     ),
 
   /** Escucha el progreso incremental del clonado (`clonado-progreso`, #125). */

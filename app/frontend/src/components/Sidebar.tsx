@@ -3,7 +3,8 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Modal } from './Modal';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
-import { api, enTauri, mensajeDeError } from '../lib/api';
+import { api, enTauri, mensajeDeError, proyectosPadreUnity } from '../lib/api';
+import type { Rol, WorkspaceUnityVC } from '../types';
 import * as fx from '../data/fixtures';
 import { Icono } from './Icono';
 import logoB from '../assets/logo-b.png';
@@ -189,14 +190,33 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const [cargarProyecto, setCargarProyecto] = useState(false);
   const irAClonar = useStore((s) => s.irAClonar);
   const delServidorSinClonar = proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
+  const proyectosUnity = proyectosPadreUnity(proyectosServidor);
   const sinBranchBoard = workspaces.filter((w) => !w.tiene_db_branchboard);
   const setWorkspaces = useStore((s) => s.setWorkspaces);
   const setRolActual = useStore((s) => s.setRolActual);
+  const setCarpetaCompartida = useStore((s) => s.setCarpetaCompartida);
+  const normalizada = (p: string) => p.replace(/\//g, '\\').toLowerCase();
+  const [proyectoUnityNuevo, setProyectoUnityNuevo] = useState('');
   const [nombreNuevo, setNombreNuevo] = useState('');
-  const [carpetaNueva, setCarpetaNueva] = useState('D:\\Unity');
+  const [carpetaNueva, setCarpetaNueva] = useState(() => (enTauri() ? '' : 'D:\\Unity'));
+  const [ocupadoNuevo, setOcupadoNuevo] = useState<'creando' | 'compartida' | string | null>(null);
+  const [errorNuevoProyecto, setErrorNuevoProyecto] = useState<string | null>(null);
+  const [pendienteCompartida, setPendienteCompartida] = useState<{
+    workspace: WorkspaceUnityVC;
+    proyecto: string;
+    rol: Rol;
+    email: string;
+  } | null>(null);
+  const [rutaCompartidaNueva, setRutaCompartidaNueva] = useState('');
+  const proyectoUnityEfectivo = proyectoUnityNuevo || proyectosUnity[0] || '';
   const cerrarNuevo = () => {
+    if (ocupadoNuevo) return;
     setNuevoProyecto(false);
+    setProyectoUnityNuevo('');
     setNombreNuevo('');
+    setErrorNuevoProyecto(null);
+    setPendienteCompartida(null);
+    setRutaCompartidaNueva('');
   };
   const proyectoActual = useStore((s) => s.proyectoActual);
   const workspaceActual = useStore((s) => s.workspaceActual);
@@ -419,6 +439,10 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
               onClick={() => {
                 setMenuProyecto(false);
+                if (enTauri()) void cargarWorkspacesYProyectos();
+                setErrorNuevoProyecto(null);
+                setPendienteCompartida(null);
+                setRutaCompartidaNueva('');
                 setNuevoProyecto(true);
               }}
             >
@@ -531,82 +555,286 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
       <Modal
         open={nuevoProyecto}
         onClose={cerrarNuevo}
-        title="Nuevo proyecto"
-        subtitle="Trae un proyecto de Unity VC que ya tienes en este equipo, o crea uno nuevo"
+        title={pendienteCompartida ? 'Carpeta compartida del proyecto' : 'Nuevo proyecto'}
+        subtitle={
+          pendienteCompartida
+            ? `${pendienteCompartida.workspace.nombre} quedó listo — eres su ${pendienteCompartida.rol}`
+            : 'Trae un proyecto de Unity VC que ya tienes en este equipo, o crea uno nuevo'
+        }
         size="md"
       >
-        <div className="space-y-5 text-sm">
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
-              Traer un proyecto local de Unity VC
+        {pendienteCompartida ? (
+          <div className="space-y-4 text-sm">
+            <p className="text-[12px] text-muted">
+              Elige la carpeta compartida (Drive o OneDrive) donde BranchBoard sincronizará los cambios de{' '}
+              <span className="font-semibold text-text">{pendienteCompartida.workspace.nombre}</span> con el equipo.
+            </p>
+            <div>
+              <label className="label">Carpeta compartida</label>
+              <SelectorCarpeta
+                value={rutaCompartidaNueva}
+                disabled={ocupadoNuevo !== null}
+                onChange={(v) => {
+                  setRutaCompartidaNueva(v);
+                  setErrorNuevoProyecto(null);
+                }}
+                placeholder="Ej. C:\Users\...\OneDrive\Proyecto"
+              />
             </div>
-            {sinBranchBoard.length === 0 ? (
-              <p className="text-[12px] text-faint">No tienes proyectos de Unity VC en este equipo que no estén ya en BranchBoard.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {sinBranchBoard.map((ws) => (
-                  <button
-                    key={ws.repo}
-                    type="button"
-                    className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary"
-                    onClick={() => {
-                      cerrarNuevo();
-                      // Va al acceso, donde se configura BranchBoard en ese proyecto.
-                      cambiarDeProyecto();
-                    }}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-text">{ws.nombre}</span>
-                      <span className="block truncate font-mono text-[10px] text-faint">{ws.ruta}</span>
-                    </span>
-                    <span className="shrink-0 text-[11px] text-primary">Traer</span>
-                  </button>
-                ))}
+            {errorNuevoProyecto && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                {errorNuevoProyecto}
               </div>
             )}
-          </div>
-          <div className="border-t border-border pt-4">
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
-              Crear un proyecto nuevo
-            </div>
-            <p className="mb-2 text-[12px] text-muted">
-              Para un proyecto que todavía no está en Unity VC: se crea su repositorio y su workspace, y quedas como
-              Administrador.
-            </p>
-            <div className="space-y-2">
-              <input
-                className="input"
-                placeholder="Nombre del proyecto"
-                value={nombreNuevo}
-                onChange={(e) => setNombreNuevo(e.target.value)}
-              />
-              <SelectorCarpeta value={carpetaNueva} onChange={setCarpetaNueva} />
+            <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
-                className="btn-primary btn-sm w-full"
-                disabled={!nombreNuevo.trim() || !carpetaNueva.trim() || workspaces.some((w) => w.nombre === nombreNuevo.trim())}
-                onClick={() => {
-                  const nombre = nombreNuevo.trim();
-                  setWorkspaces([
-                    ...workspaces,
-                    {
-                      nombre,
-                      repo: `${nombre}@MIGUELMEZA`,
-                      ruta: `${carpetaNueva.trim().replace(/\\$/, '')}\\${nombre}`,
-                      tiene_db_branchboard: true,
-                    },
-                  ]);
-                  setRolActual('Administrador');
-                  entrarAProyecto(nombre);
-                  showToast(`Proyecto ${nombre} creado — eres su Administrador`);
-                  cerrarNuevo();
+                className="btn-ghost btn-sm"
+                disabled={ocupadoNuevo !== null}
+                onClick={cerrarNuevo}
+              >
+                Configurar después
+              </button>
+              <button
+                type="button"
+                className="btn-primary btn-sm"
+                disabled={ocupadoNuevo !== null || !rutaCompartidaNueva.trim()}
+                onClick={async () => {
+                  if (!pendienteCompartida || !rutaCompartidaNueva.trim() || ocupadoNuevo) return;
+                  setOcupadoNuevo('compartida');
+                  setErrorNuevoProyecto(null);
+                  try {
+                    const guardada = await api.configurarCarpetaCompartida(
+                      rutaCompartidaNueva.trim(),
+                      () => rutaCompartidaNueva.trim()
+                    );
+                    const { workspace, proyecto, rol, email } = pendienteCompartida;
+                    setCarpetaCompartida(proyecto, guardada);
+                    setEmail(email);
+                    setRolActual(rol);
+                    entrarAProyecto(proyecto, workspace.nombre);
+                    showToast(`Proyecto ${workspace.nombre} listo — eres su ${rol}`);
+                    setPendienteCompartida(null);
+                    setRutaCompartidaNueva('');
+                    setNombreNuevo('');
+                    setNuevoProyecto(false);
+                  } catch (e) {
+                    setErrorNuevoProyecto(mensajeDeError(e));
+                  } finally {
+                    setOcupadoNuevo(null);
+                  }
                 }}
               >
-                Crear proyecto
+                {ocupadoNuevo === 'compartida' ? 'Guardando…' : 'Guardar y entrar'}
               </button>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-5 text-sm">
+            {errorNuevoProyecto && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                {errorNuevoProyecto}
+              </div>
+            )}
+            <div>
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+                Traer un proyecto local de Unity VC
+              </div>
+              {sinBranchBoard.length === 0 ? (
+                <p className="text-[12px] text-faint">No tienes proyectos de Unity VC en este equipo que no estén ya en BranchBoard.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {sinBranchBoard.map((ws) => {
+                    const trayendoEste = ocupadoNuevo === ws.ruta;
+                    return (
+                      <button
+                        key={ws.repo || ws.ruta}
+                        type="button"
+                        disabled={ocupadoNuevo !== null}
+                        className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary disabled:opacity-60"
+                        onClick={async () => {
+                          if (!enTauri()) {
+                            cerrarNuevo();
+                            cambiarDeProyecto();
+                            return;
+                          }
+                          setOcupadoNuevo(ws.ruta);
+                          setErrorNuevoProyecto(null);
+                          try {
+                            const res = await api.traerProyecto(ws.ruta);
+                            if (res.entrada.estado !== 'dentro') {
+                              const mensajes: Record<Exclude<typeof res.entrada.estado, 'dentro'>, string> = {
+                                esperar_dueno:
+                                  'Este proyecto no usa BranchBoard todavía. Solo el dueño del repositorio en Unity VC puede traerlo primero para quedar como Administrador.',
+                                no_registrado:
+                                  'Este proyecto ya existe en el equipo, pero tu cuenta todavía no está registrada en él.',
+                                pendiente:
+                                  'Tu cuenta está pendiente de confirmación por el Administrador en este proyecto.',
+                              };
+                              setErrorNuevoProyecto(mensajes[res.entrada.estado]);
+                              return;
+                            }
+                            setWorkspaces([
+                              ...workspaces.filter((w) => normalizada(w.ruta) !== normalizada(res.workspace.ruta)),
+                              res.workspace,
+                            ]);
+                            const carpeta = await api.carpetaCompartida(() => null);
+                            if (carpeta) {
+                              setCarpetaCompartida(res.entrada.proyecto, carpeta);
+                              setEmail(res.entrada.email);
+                              setRolActual(res.entrada.rol);
+                              entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
+                              showToast(`Proyecto ${res.workspace.nombre} configurado — eres su ${res.entrada.rol}`);
+                              setNuevoProyecto(false);
+                              setNombreNuevo('');
+                            } else {
+                              setPendienteCompartida({
+                                workspace: res.workspace,
+                                proyecto: res.entrada.proyecto,
+                                rol: res.entrada.rol,
+                                email: res.entrada.email,
+                              });
+                            }
+                          } catch (e) {
+                            setErrorNuevoProyecto(mensajeDeError(e));
+                          } finally {
+                            setOcupadoNuevo(null);
+                          }
+                        }}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium text-text">{ws.nombre}</span>
+                          <span className="block truncate font-mono text-[10px] text-faint">{ws.ruta}</span>
+                        </span>
+                        <span className="shrink-0 text-[11px] text-primary">
+                          {trayendoEste ? 'Configurando…' : 'Traer'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="border-t border-border pt-4">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+                Crear un proyecto nuevo
+              </div>
+              <p className="mb-2 text-[12px] text-muted">
+                Para un proyecto que todavía no está en Unity VC: se crea su repositorio y su workspace, y quedas como
+                Administrador.
+              </p>
+              <div className="space-y-2">
+                {enTauri() && proyectosUnity.length > 0 && (
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-semibold text-faint">Proyecto en Unity Cloud</span>
+                    <select
+                      className="input"
+                      disabled={ocupadoNuevo !== null}
+                      value={proyectoUnityEfectivo}
+                      onChange={(e) => {
+                        setProyectoUnityNuevo(e.target.value);
+                        setErrorNuevoProyecto(null);
+                      }}
+                    >
+                      {proyectosUnity.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <input
+                  className="input"
+                  placeholder="Nombre del proyecto"
+                  disabled={ocupadoNuevo !== null}
+                  value={nombreNuevo}
+                  onChange={(e) => {
+                    setNombreNuevo(e.target.value);
+                    setErrorNuevoProyecto(null);
+                  }}
+                />
+                <SelectorCarpeta
+                  value={carpetaNueva}
+                  disabled={ocupadoNuevo !== null}
+                  onChange={(v) => {
+                    setCarpetaNueva(v);
+                    setErrorNuevoProyecto(null);
+                  }}
+                  placeholder="Carpeta donde se creará el workspace"
+                />
+                <button
+                  type="button"
+                  className="btn-primary btn-sm w-full"
+                  disabled={
+                    ocupadoNuevo !== null ||
+                    !nombreNuevo.trim() ||
+                    !carpetaNueva.trim() ||
+                    workspaces.some((w) => w.nombre.toLowerCase() === nombreNuevo.trim().toLowerCase())
+                  }
+                  onClick={async () => {
+                    const nombre = nombreNuevo.trim();
+                    if (!enTauri()) {
+                      setWorkspaces([
+                        ...workspaces,
+                        {
+                          nombre,
+                          repo: `${nombre}@MIGUELMEZA`,
+                          ruta: `${carpetaNueva.trim().replace(/\\$/, '')}\\${nombre}`,
+                          tiene_db_branchboard: true,
+                        },
+                      ]);
+                      setRolActual('Administrador');
+                      entrarAProyecto(nombre);
+                      showToast(`Proyecto ${nombre} creado — eres su Administrador`);
+                      cerrarNuevo();
+                      return;
+                    }
+                    setOcupadoNuevo('creando');
+                    setErrorNuevoProyecto(null);
+                    try {
+                      const res = await api.crearProyecto(
+                        nombre,
+                        carpetaNueva.trim(),
+                        proyectoUnityEfectivo || undefined
+                      );
+                      setWorkspaces([
+                        ...workspaces.filter((w) => normalizada(w.ruta) !== normalizada(res.workspace.ruta)),
+                        res.workspace,
+                      ]);
+                      if (res.entrada.estado === 'dentro') {
+                        const carpeta = await api.carpetaCompartida(() => null);
+                        if (carpeta) {
+                          setCarpetaCompartida(res.entrada.proyecto, carpeta);
+                          setEmail(res.entrada.email);
+                          setRolActual(res.entrada.rol);
+                          entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
+                          showToast(`Proyecto ${res.workspace.nombre} creado — eres su ${res.entrada.rol}`);
+                          setNombreNuevo('');
+                          setNuevoProyecto(false);
+                        } else {
+                          showToast(`Proyecto ${res.workspace.nombre} creado en Unity VC`);
+                          setPendienteCompartida({
+                            workspace: res.workspace,
+                            proyecto: res.entrada.proyecto,
+                            rol: res.entrada.rol,
+                            email: res.entrada.email,
+                          });
+                        }
+                      }
+                    } catch (e) {
+                      setErrorNuevoProyecto(mensajeDeError(e));
+                    } finally {
+                      setOcupadoNuevo(null);
+                    }
+                  }}
+                >
+                  {ocupadoNuevo === 'creando' ? 'Creando repositorio y workspace…' : 'Crear proyecto'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
       <Modal
         open={confirmarCerrarSesion}
