@@ -1252,6 +1252,109 @@ mod tests {
                 usuarios::listar(db_a.conexion()).unwrap(),
                 "la base reconstruida en B coincide con la de A"
             );
+
+            // También ejercita `compactar_eventos_en` sobre un proyecto real entrado contra
+            // `BranchBoard-Pruebas` + carpeta compartida en OneDrive (auditoría #94).
+            if let (Ok(org), Ok(repo)) = (
+                std::env::var("BB_PRUEBA_ORG"),
+                std::env::var("BB_PRUEBA_REPO"),
+            ) {
+                let estado_real = crate::estado::AppState::default();
+                let ws_real = tempfile::tempdir().unwrap();
+                let datos_real = tempfile::tempdir().unwrap();
+                let comp_real = nube.join(format!(
+                    "BranchBoard-prueba-94-real-{}",
+                    chrono::Local::now().format("%H%M%S")
+                ));
+                std::fs::create_dir_all(&comp_real).unwrap();
+                let ruta_ws = ws_real.path().to_string_lossy().to_string();
+                let spec_real = format!("{repo}@{org}@unity");
+                crate::cm::Comando::cm()
+                    .args(["workspace", "create"])
+                    .arg(format!(
+                        "bb-prueba-94-{}",
+                        chrono::Local::now().format("%H%M%S")
+                    ))
+                    .arg(&ruta_ws)
+                    .arg(format!("rep:{spec_real}"))
+                    .exigir_exito(&estado_real)
+                    .unwrap();
+
+                let res_real = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    crate::comandos::acceso::entrar_en(
+                        &estado_real,
+                        datos_real.path(),
+                        ws_real.path(),
+                    )
+                    .unwrap();
+                    let local_real = crate::comandos::datos::carpeta_abierta(&estado_real).unwrap();
+                    configurar_carpeta_compartida(&local_real, &comp_real.to_string_lossy(), true)
+                        .unwrap();
+                    let ops_real = carpeta_ops(&local_real).unwrap();
+                    let pub_real = estado_real
+                        .con_db(|db| crate::estado::llave_publica_del_proyecto(db))
+                        .unwrap();
+                    let adm_real = llaves::cargar_llave_admin(&local_real, None).unwrap();
+                    let admin_email = estado_real
+                        .con_db(|db| usuarios::listar(db.conexion()))
+                        .unwrap()
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                        .email;
+                    let hace_40_dias = (Utc::now() - Duration::days(40))
+                        .to_rfc3339_opts(SecondsFormat::Secs, true);
+                    let (nom, ape) = usuarios::nombre_desde_email("aud94@virustf.dev");
+                    let u94 = Usuario {
+                        email: "aud94@virustf.dev".into(),
+                        nombre: nom,
+                        apellido: ape,
+                        rol: Rol::Tester,
+                        fecha_alta: hace_40_dias[..10].to_string(),
+                        firma: Some(
+                            firmas::firmar_rol(
+                                &adm_real,
+                                "aud94@virustf.dev",
+                                Rol::Tester,
+                                &hace_40_dias,
+                            )
+                            .unwrap(),
+                        ),
+                        firmado_en: Some(hace_40_dias.clone()),
+                        firmado_por: Some(admin_email.clone()),
+                        llave_publica: None,
+                        certificado: None,
+                    };
+                    let mut ev94 = Evento::nuevo(
+                        "crear_usuario",
+                        None,
+                        &admin_email,
+                        serde_json::to_value(&u94).unwrap(),
+                    );
+                    ev94.timestamp = format!("{}.000Z", &hace_40_dias[..19]);
+                    let ev94 = ev94.firmar(&adm_real);
+                    estado_real
+                        .con_db(|db| {
+                            super::super::publicar(db.conexion(), &ops_real, &ev94, |tx| {
+                                equipo::aplicar_evento(tx, &pub_real, Rol::Administrador, &ev94)
+                            })
+                        })
+                        .unwrap();
+
+                    let res_compactar =
+                        crate::comandos::eventos::compactar_eventos_en(&estado_real, None).unwrap();
+                    assert_eq!(res_compactar.compactados, 1);
+                    assert!(res_compactar.archivo.is_some());
+                }));
+                estado_real.cerrar_proyecto();
+                let _ = crate::cm::Comando::cm()
+                    .args(["workspace", "delete", &ruta_ws])
+                    .ejecutar(&estado_real);
+                let _ = std::fs::remove_dir_all(&comp_real);
+                if let Err(p) = res_real {
+                    std::panic::resume_unwind(p);
+                }
+            }
         }));
         let borrada = std::fs::remove_dir_all(&compartida);
         println!("subcarpeta de prueba borrada: {}", borrada.is_ok());

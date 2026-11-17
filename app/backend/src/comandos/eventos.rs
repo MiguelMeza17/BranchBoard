@@ -108,10 +108,9 @@ pub fn revisar_y_cerrar_rama_perdedor(
 /// Junta los eventos de más de 30 días en `ops/snapshot_<fecha>.json` (firmado
 /// con la llave del Administrador) y los borra de `ops/` (#94). Solo
 /// Administrador; no corre solo.
-#[tauri::command]
-pub fn compactar_eventos(
-    estado: State<'_, AppState>,
-    passphrase: Option<String>,
+pub fn compactar_eventos_en(
+    estado: &AppState,
+    passphrase: Option<&str>,
 ) -> Resultado<ResumenCompactacion> {
     let yo = estado.exigir_permiso("compactar_eventos")?;
     let Some(_escaneo) = estado.iniciar_sincronizacion() else {
@@ -119,11 +118,11 @@ pub fn compactar_eventos(
             "Hay una sincronización de eventos en curso. Intenta de nuevo en unos segundos.".into(),
         ));
     };
-    let carpeta = carpeta_abierta(&estado)?;
+    let carpeta = carpeta_abierta(estado)?;
     let ops = eventos::carpeta_ops(&carpeta)?;
     estado.con_db(|db| {
         let publica = llave_publica_del_proyecto(db)?;
-        let llave = estado.llave_firma(db, &yo, passphrase.as_deref())?;
+        let llave = estado.llave_firma(db, &yo, passphrase)?;
         let firmante = Firmante {
             email: &yo.email,
             rol: yo.rol,
@@ -131,6 +130,14 @@ pub fn compactar_eventos(
         };
         eventos::compactar(db.conexion(), &ops, &publica, &firmante, Utc::now())
     })
+}
+
+#[tauri::command]
+pub fn compactar_eventos(
+    estado: State<'_, AppState>,
+    passphrase: Option<String>,
+) -> Resultado<ResumenCompactacion> {
+    compactar_eventos_en(&estado, passphrase.as_deref())
 }
 
 /// Evento Tauri emitido al detectar cambios nuevos o cierres en Unity VC (#104).

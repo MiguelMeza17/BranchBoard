@@ -113,6 +113,8 @@ pub fn run() {
             comandos_cm::listar_tus_proyectos,
             comandos_cm::listar_proyectos_servidor,
             comandos_cm::clonar_proyecto,
+            comandos_cm::crear_proyecto,
+            comandos_cm::traer_proyecto,
             acceso::entrar_a_proyecto,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,
