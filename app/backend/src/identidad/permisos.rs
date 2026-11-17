@@ -52,6 +52,8 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("listar_tus_proyectos", Acceso::Libre),
     ("listar_proyectos_servidor", Acceso::Libre),
     ("clonar_proyecto", Acceso::Libre),
+    ("crear_proyecto", Acceso::Libre),
+    ("traer_proyecto", Acceso::Libre),
     ("entrar_a_proyecto", Acceso::Libre),
     ("buscar_actualizacion", Acceso::Libre),
     ("instalar_actualizacion", Acceso::Libre),

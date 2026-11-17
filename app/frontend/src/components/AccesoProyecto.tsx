@@ -2,7 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import type { WorkspaceUnityVC } from '../types';
-import { api, enTauri, ErrorBackend, mensajeDeError, type EntradaProyecto, type ProyectoServidor } from '../lib/api';
+import {
+  api,
+  enTauri,
+  ErrorBackend,
+  mensajeDeError,
+  proyectosPadreUnity,
+  type EntradaProyecto,
+  type ProyectoServidor,
+} from '../lib/api';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { Modal } from './Modal';
@@ -305,8 +313,33 @@ export function AccesoProyecto() {
         )}
       </div>
 
+      <ModalCrearProyectoReal
+        open={crear && enTauri()}
+        onClose={cerrarCrear}
+        onCreado={async (ws, entrada) => {
+          setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
+          cerrarCrear();
+          if (entrada.estado !== 'dentro') {
+            const pasos = {
+              pendiente: 'pendiente',
+              no_registrado: 'no-registrado',
+              esperar_dueno: 'esperar-dueno',
+            } as const;
+            setPaso(pasos[entrada.estado]);
+            return;
+          }
+          const carpeta = await api.carpetaCompartida(() => null);
+          if (!carpeta) {
+            setPorEntrar({ ws, entrada });
+            setPaso('carpeta-compartida');
+            return;
+          }
+          terminarEntrada(ws, entrada);
+        }}
+      />
+
       <Modal
-        open={crear}
+        open={crear && !enTauri()}
         onClose={cerrarCrear}
         title="Crear un nuevo proyecto"
         subtitle="Quedarás como Administrador del proyecto"
@@ -943,5 +976,133 @@ function PasoClonar({
         </div>
       )}
     </>
+  );
+}
+
+function ModalCrearProyectoReal({
+  open,
+  onClose,
+  onCreado,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreado: (ws: WorkspaceUnityVC, entrada: EntradaProyecto) => void | Promise<void>;
+}) {
+  const proyectosServidor = useStore((s) => s.proyectosServidor);
+  const proyectosUnity = proyectosPadreUnity(proyectosServidor);
+  const [proyectoUnity, setProyectoUnity] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [carpeta, setCarpeta] = useState('');
+  const [creando, setCreando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const proyectoUnityEfectivo = proyectoUnity || proyectosUnity[0] || '';
+
+  const cerrar = () => {
+    if (creando) return;
+    setProyectoUnity('');
+    setNombre('');
+    setCarpeta('');
+    setError(null);
+    onClose();
+  };
+
+  const enviar = async () => {
+    if (!nombre.trim() || !carpeta.trim() || creando) return;
+    setCreando(true);
+    setError(null);
+    try {
+      const res = await api.crearProyecto(
+        nombre.trim(),
+        carpeta.trim(),
+        proyectoUnityEfectivo || undefined
+      );
+      setProyectoUnity('');
+      setNombre('');
+      setCarpeta('');
+      await onCreado(res.workspace, res.entrada);
+    } catch (e) {
+      setError(mensajeDeError(e));
+    } finally {
+      setCreando(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={cerrar}
+      title="Crear un nuevo proyecto"
+      subtitle="Crea el repositorio y su workspace en Unity VC Cloud; quedarás como Administrador"
+      size="sm"
+      footer={
+        <div className="flex w-full justify-end gap-2">
+          <button type="button" className="btn-ghost btn-sm" disabled={creando} onClick={cerrar}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn-primary btn-sm"
+            disabled={creando || !nombre.trim() || !carpeta.trim()}
+            onClick={() => void enviar()}
+          >
+            {creando ? 'Creando proyecto…' : 'Crear proyecto'}
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        {proyectosUnity.length > 0 && (
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold text-text">Proyecto en Unity Cloud</span>
+            <select
+              className="input"
+              disabled={creando}
+              value={proyectoUnityEfectivo}
+              onChange={(e) => {
+                setProyectoUnity(e.target.value);
+                setError(null);
+              }}
+            >
+              {proyectosUnity.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-semibold text-text">Nombre del proyecto</span>
+          <input
+            className="input"
+            autoFocus
+            disabled={creando}
+            placeholder="Mi proyecto"
+            value={nombre}
+            onChange={(e) => {
+              setNombre(e.target.value);
+              setError(null);
+            }}
+          />
+        </label>
+        <div>
+          <span className="mb-1.5 block text-xs font-semibold text-text">Carpeta de destino</span>
+          <SelectorCarpeta
+            value={carpeta}
+            onChange={(v) => {
+              setCarpeta(v);
+              setError(null);
+            }}
+            disabled={creando}
+            placeholder="Carpeta donde se creará el workspace"
+          />
+        </div>
+        {error && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+            {error}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

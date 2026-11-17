@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::cm::instalacion::{self, EstadoCm, ResultadoInstalacionCm};
 use crate::cm::proyectos::{
-    self, ProyectoServidor, WorkspaceProyecto, EVENTO_PROGRESO_CLONADO,
+    self, ProyectoServidor, ResultadoProyectoNuevo, WorkspaceProyecto, EVENTO_PROGRESO_CLONADO,
 };
 use crate::cm::sesion::{self, EstadoSesionUnityVc, ResultadoReconexionUnityVc};
 use crate::comandos::acceso::carpeta_datos;
@@ -85,4 +85,34 @@ pub async fn clonar_proyecto(
     proyectos::clonar_proyecto_en(&estado, &datos, &repo, &carpeta, |p| {
         let _ = app.emit(EVENTO_PROGRESO_CLONADO, &p);
     })
+}
+
+#[tauri::command]
+pub async fn crear_proyecto(
+    app: AppHandle,
+    estado: State<'_, AppState>,
+    nombre: String,
+    carpeta: String,
+    proyecto_unity: Option<String>,
+    org: Option<String>,
+) -> Resultado<ResultadoProyectoNuevo> {
+    let datos = carpeta_datos(&app)?;
+    proyectos::crear_proyecto_en(
+        &estado,
+        &datos,
+        &nombre,
+        &carpeta,
+        proyecto_unity.as_deref(),
+        org.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub async fn traer_proyecto(
+    app: AppHandle,
+    estado: State<'_, AppState>,
+    carpeta: String,
+) -> Resultado<ResultadoProyectoNuevo> {
+    let datos = carpeta_datos(&app)?;
+    proyectos::traer_proyecto_en(&estado, &datos, std::path::Path::new(&carpeta))
 }
