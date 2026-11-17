@@ -6,6 +6,7 @@ pub mod actualizaciones;
 pub mod chat;
 pub mod cm;
 pub mod datos;
+pub mod diff;
 pub mod documentos;
 pub mod eventos;
 pub mod identidad;

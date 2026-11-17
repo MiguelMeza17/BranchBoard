@@ -20,6 +20,7 @@ pub mod checkins;
 pub mod cm;
 pub mod comandos;
 pub mod db;
+pub mod diff;
 pub mod documentos;
 pub mod error;
 pub mod estado;
@@ -98,6 +99,9 @@ pub fn run() {
         .on_window_event(manejar_evento_ventana)
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
+            comandos::diff::diff_rama,
+            comandos::diff::diff_changeset,
+            comandos::diff::diff_archivo,
             sistema::hay_operacion_en_curso,
             sistema::elegir_carpeta,
             comandos_warp::estado_warp,

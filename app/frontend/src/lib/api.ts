@@ -9,6 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
+import { diffEjemplo, type ArchivoDiff, type Diferencias } from './diff';
 import type {
   AvanceBacklog,
   AvanceSprint,
@@ -309,6 +310,15 @@ export interface ConfiguracionProyecto {
 }
 
 export const api = {
+  diffRama: (tareaId: string) => llamar<Diferencias>('diff_rama', { tareaId }, diffEjemplo),
+  diffChangeset: (tareaId: string, hash: string) =>
+    llamar<Diferencias>('diff_changeset', { tareaId, hash }, diffEjemplo),
+  diffArchivo: (tareaId: string, ruta: string, hash?: string) =>
+    llamar<ArchivoDiff>('diff_archivo', { tareaId, ruta, hash: hash ?? null }, () => {
+      const archivo = diffEjemplo().archivos.find((a) => a.ruta === ruta);
+      if (!archivo) throw new Error('El archivo no forma parte de estas diferencias.');
+      return archivo;
+    }),
   /** Comando de prueba: `"pong"` si el backend responde. */
   ping: () => llamar<string>('ping', undefined, () => 'pong (mockup)'),
 
