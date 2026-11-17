@@ -490,6 +490,33 @@ mod tests {
             .exigir_exito(&estado)
             .unwrap();
         let email = lectura::whoami(&estado).unwrap();
+        use crate::servidor::pat::{cuenta_llavero, Llavero, Pat};
+        struct PatDePrueba {
+            cuenta: String,
+            org: String,
+            previo: Option<String>,
+        }
+        impl Drop for PatDePrueba {
+            fn drop(&mut self) {
+                if let Ok(Some(valor)) = servidor::LlaveroSistema.leer(&self.cuenta) {
+                    if let Ok(pat) = serde_json::from_str::<Pat>(&valor) {
+                        if self.previo.as_deref() != Some(pat.id.as_str()) {
+                            servidor::pat::revocar_pat(&AppState::default(), &self.org, &pat.id);
+                            let _ = servidor::LlaveroSistema.borrar(&self.cuenta);
+                        }
+                    }
+                }
+            }
+        }
+        let cuenta = cuenta_llavero(&email, &org);
+        let _pat = PatDePrueba {
+            previo: servidor::LlaveroSistema
+                .leer(&cuenta)
+                .unwrap()
+                .map(|v| serde_json::from_str::<Pat>(&v).unwrap().id),
+            cuenta,
+            org: format!("{}@unity", servidor::nombre_organizacion(&org)),
+        };
         let cliente = servidor::conectar(&estado, &servidor::LlaveroSistema, &email, &org).unwrap();
         let rama =
             std::env::var("BB_PRUEBA_RAMA_DIFF").unwrap_or_else(|_| "/main/dev/T-101".into());

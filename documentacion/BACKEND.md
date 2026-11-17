@@ -584,6 +584,8 @@ Implementado en `src/diff.rs` y `comandos/diff.rs`. Se usa la API REST del servi
 
 Verificado en `BranchBoard-Pruebas`: `diff/changeset/1` y `diff/branch/%2Fmain%2Fdev%2FT-101` devuelven grupos `Added` con `/LEEME.txt`, `type: TextFile`, `dstRev: 102`; `revisions/102/raw` devuelve 54 bytes UTF-8. Prueba automatizada: `diff::tests::entorno_real_diff_lectura` (solo lectura, con `BB_PRUEBA_ORG` y `BB_PRUEBA_REPO`).
 
+El auxiliar `cargo run --example probar_diff_152` permite comprobar el IPC y el visor en una WebView Tauri real **oculta**, con una base temporal y la tarea local `T-152` apuntando a la rama de prueba existente `/main/dev/T-101`, sin workspace. Usa las mismas variables y un frontend en `http://127.0.0.2:4300`; solo registra los tres comandos de diff y `terminar_prueba` (exclusivo del auxiliar). Al terminar cierra la base, retira la carpeta temporal y revoca únicamente el PAT que haya creado. El binario de producción no expone ese comando auxiliar. La prueba Rust también revoca su PAT nuevo, conservando uno preexistente.
+
 ## Conexión VPN (Cloudflare WARP)
 
 Problema real observado: en la red de la universidad, `cm` no logra conectar con el servidor de Unity Version Control (bloqueo de puerto). La solución probada en la práctica es activar **Cloudflare WARP** (cliente gratuito, `warp-cli`) — con la VPN activa, `cm` conecta sin problema.
