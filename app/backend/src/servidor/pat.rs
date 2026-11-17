@@ -12,7 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cm::Comando;
+use crate::cm::{Comando, Salida};
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::modelo::normalizar_email;
@@ -168,21 +168,22 @@ fn asegurar_pat(
     }
 }
 
-/// Tiempo de vida del PAT. `cm accesstoken create` lo exige (comprobado
-/// 2026-11-15 con el cliente 11.0.16: sin él responde la ayuda del comando y
-/// no crea nada). Al vencer, la API responde 401 y [`conectar`] crea otro solo.
+/// Algunos clientes exigen este argumento; otros usan la vigencia del servidor.
 const VIDA_PAT: &str = "4w";
 
-/// `cm accesstoken create "BranchBoard (<máquina>)" 4w <org>@unity --format={id}` + `reveal`.
-fn crear_pat(estado: &AppState, org_cm: &str) -> Resultado<Pat> {
-    let salida = Comando::cm()
-        .args(["accesstoken", "create"])
-        .arg(descripcion_pat())
-        .arg(VIDA_PAT)
-        .arg(org_cm)
-        .arg("--format={id}")
-        .ejecutar(estado)?;
-    let id = interpretar_id(&salida.stdout).filter(|_| salida.exito()).ok_or_else(|| {
+/// Prueba la sintaxis sin vigencia. Solo reintenta con `4w` si recibió la ayuda
+/// del comando sin un id válido; no repite ante errores de red o permisos.
+fn crear_id_pat_con(crear: impl Fn(bool) -> Resultado<Salida>) -> Resultado<String> {
+    let mut salida = crear(false)?;
+    if interpretar_id(&salida.stdout)
+        .filter(|_| salida.exito())
+        .is_none()
+        && (salida.stdout.contains("cm accesstoken create")
+            || salida.stderr.contains("cm accesstoken create"))
+    {
+        salida = crear(true)?;
+    }
+    interpretar_id(&salida.stdout).filter(|_| salida.exito()).ok_or_else(|| {
         let crudo = if !salida.stderr.trim().is_empty() {
             salida.stderr.trim()
         } else {
@@ -197,6 +198,19 @@ fn crear_pat(estado: &AppState, org_cm: &str) -> Resultado<Pat> {
         Error::Cm(format!(
             "No se pudo crear el token de acceso de Unity VC{sufijo}. Si no eres el dueño de la organización, puede que su Administrador tenga que permitirlo (cm accesstoken admin allowlist)"
         ))
+    })
+}
+
+/// `cm accesstoken create` + `reveal`, compatible con ambos clientes (#107).
+fn crear_pat(estado: &AppState, org_cm: &str) -> Resultado<Pat> {
+    let id = crear_id_pat_con(|con_vigencia| {
+        let mut comando = Comando::cm()
+            .args(["accesstoken", "create"])
+            .arg(descripcion_pat());
+        if con_vigencia {
+            comando = comando.arg(VIDA_PAT);
+        }
+        comando.arg(org_cm).arg("--format={id}").ejecutar(estado)
     })?;
 
     let revelado = Comando::cm()
@@ -307,6 +321,49 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
+
+    #[test]
+    fn crear_pat_admite_ambas_sintaxis_sin_repetir_errores_de_permisos() {
+        const ID: &str = "12345678-1234-1234-1234-123456789abc";
+        let salida = |codigo, texto: &str| Salida {
+            codigo: Some(codigo),
+            stdout: texto.into(),
+            stderr: String::new(),
+        };
+        let llamadas = RefCell::new(Vec::new());
+        let id = crear_id_pat_con(|vigencia| {
+            llamadas.borrow_mut().push(vigencia);
+            Ok(salida(0, ID))
+        })
+        .unwrap();
+        assert_eq!(id, ID);
+        assert_eq!(*llamadas.borrow(), [false]);
+
+        llamadas.borrow_mut().clear();
+        let id = crear_id_pat_con(|vigencia| {
+            llamadas.borrow_mut().push(vigencia);
+            Ok(if vigencia {
+                salida(0, ID)
+            } else {
+                salida(
+                    0,
+                    "Usage: cm accesstoken create <description> <lifetime> [server]",
+                )
+            })
+        })
+        .unwrap();
+        assert_eq!(id, ID);
+        assert_eq!(*llamadas.borrow(), [false, true]);
+
+        llamadas.borrow_mut().clear();
+        let error = crear_id_pat_con(|vigencia| {
+            llamadas.borrow_mut().push(vigencia);
+            Ok(salida(1, "Access denied"))
+        })
+        .unwrap_err();
+        assert_eq!(*llamadas.borrow(), [false]);
+        assert!(error.to_string().contains("Access denied"));
+    }
 
     #[derive(Default)]
     struct LlaveroMemoria(RefCell<HashMap<String, String>>);

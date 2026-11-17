@@ -213,6 +213,9 @@ pub struct PayloadDesasignarTarea {
 pub struct PayloadCambiarEstado {
     pub id: String,
     pub estado: EstadoTarea,
+    /// Día local de quien termina la tarea; se conserva igual al reproducir el evento.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fecha_completada: Option<String>,
 }
 
 /// Respuesta de [`cambiar_estado`] (#99): tareas actualizadas y posibles
@@ -1077,6 +1080,8 @@ pub fn cambiar_estado(
     let payload = PayloadCambiarEstado {
         id: id.to_string(),
         estado,
+        fecha_completada: (estado == EstadoTarea::Terminada)
+            .then(|| fecha_de_iso_en_zona(ahora, &chrono::Local)),
     };
     let mut ev = Evento::nuevo(
         "cambiar_estado",
@@ -2540,7 +2545,7 @@ pub fn registrar_merge_autorizado(
         id: id.to_string(),
         destino: destino.to_string(),
         changeset,
-        fecha_completada: fecha_corta_de_iso(ahora),
+        fecha_completada: fecha_de_iso_en_zona(ahora, &chrono::Local),
     };
     let mut ev = Evento::nuevo(
         "autorizar_merge",
@@ -3226,6 +3231,12 @@ fn fecha_corta_de_iso(ahora: &str) -> String {
     ahora.get(..10).unwrap_or(ahora).to_string()
 }
 
+fn fecha_de_iso_en_zona(ahora: &str, zona: &impl chrono::TimeZone) -> String {
+    chrono::DateTime::parse_from_rfc3339(ahora)
+        .map(|fecha| fecha.with_timezone(zona).date_naive().to_string())
+        .unwrap_or_else(|_| fecha_corta_de_iso(ahora))
+}
+
 fn aplicar_cambiar_estado(
     c: &Connection,
     autor_email: &str,
@@ -3350,7 +3361,13 @@ fn aplicar_cambiar_estado(
         tarea.actividad_desde = Some(ahora.to_string());
     }
     if payload.estado == EstadoTarea::Terminada {
-        tarea.fecha_completada = Some(fecha_corta_de_iso(ahora));
+        // Los eventos anteriores a #107 conservan su interpretación original UTC.
+        tarea.fecha_completada = Some(
+            payload
+                .fecha_completada
+                .clone()
+                .unwrap_or_else(|| fecha_corta_de_iso(ahora)),
+        );
     }
     db_tareas::actualizar(c, &tarea)?;
 
@@ -9886,6 +9903,67 @@ mod tests {
             otra => panic!("BB_UI_ACCION desconocida: {otra}"),
         }
     }
+    #[test]
+    fn fecha_de_finalizacion_conserva_el_dia_del_emisor_y_compatibilidad() {
+        let colombia = chrono::FixedOffset::west_opt(5 * 3600).unwrap();
+        let ahora = "2026-11-17T01:00:00.000Z";
+        assert_eq!(fecha_de_iso_en_zona(ahora, &colombia), "2026-11-16");
+        assert_eq!(fecha_de_iso_en_zona(ahora, &chrono::Utc), "2026-11-17");
+        let anterior: PayloadCambiarEstado = serde_json::from_value(serde_json::json!({
+            "id": "T-101", "estado": "terminada"
+        }))
+        .unwrap();
+        assert_eq!(anterior.fecha_completada, None);
+
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let admin = AutorTarea {
+            email: ADMIN,
+            rol: Rol::Administrador,
+        };
+        let tarea = crear(
+            c,
+            &e.ops,
+            &admin,
+            &datos_base("Fecha local"),
+            "2026-11-17T00:59:00.000Z",
+            "2026-11-16",
+        )
+        .unwrap();
+        let nuevo = PayloadCambiarEstado {
+            id: tarea.id.clone(),
+            estado: EstadoTarea::Terminada,
+            fecha_completada: Some(fecha_de_iso_en_zona(ahora, &colombia)),
+        };
+        let mut evento = Evento::nuevo(
+            "cambiar_estado",
+            Some(&tarea.id),
+            ADMIN,
+            serde_json::to_value(&nuevo).unwrap(),
+        );
+        evento.timestamp = ahora.into();
+        eventos::publicar(c, &e.ops, &evento, |tx| {
+            aplicar_cambiar_estado(tx, ADMIN, Some(Rol::Administrador), &nuevo, ahora).map(|_| ())
+        })
+        .unwrap();
+        assert_eq!(
+            db_tareas::obtener(c, &tarea.id)
+                .unwrap()
+                .fecha_completada
+                .as_deref(),
+            Some("2026-11-16")
+        );
+        let sync = e.sincronizar_b();
+        assert_eq!(sync.descartados, 0);
+        assert_eq!(
+            db_tareas::obtener(e.db_b.conexion(), &tarea.id)
+                .unwrap()
+                .fecha_completada
+                .as_deref(),
+            Some("2026-11-16")
+        );
+    }
+
     #[test]
     fn revision_elige_revisor_valida_autorizacion_rechaza_y_sincroniza() {
         let e = Escenario::nuevo();
