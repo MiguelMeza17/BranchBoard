@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cm::{lectura, Comando};
+use crate::cm::{lectura, Comando, Salida};
 use crate::db::{carpeta_proyecto, NOMBRE_DB};
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
@@ -127,6 +127,7 @@ fn organizaciones_candidatas(estado: &AppState, carpeta_datos: &Path) -> Vec<Str
     }
     if let Ok(salida) = Comando::cm()
         .args(["profile", "list", "--format={server}"])
+        .como_sondeo()
         .ejecutar(estado)
     {
         if salida.exito() {
@@ -211,6 +212,7 @@ fn repo_tiene_ramas_branchboard(estado: &AppState, spec: &str) -> bool {
         .arg(format!("where parent='/main/dev' on repository '{spec}'"))
         .arg("--format={name}")
         .arg("--nototal")
+        .como_sondeo()
         .ejecutar(estado);
     let Ok(salida) = ok_rama else {
         return false;
@@ -223,32 +225,21 @@ fn repo_tiene_ramas_branchboard(estado: &AppState, spec: &str) -> bool {
             .any(|l| l.starts_with("/main/dev/T-"))
 }
 
-/// Lista los repositorios accesibles en Unity VC Cloud vía `cm repo list`, marcando
-/// con `tiene_db_branchboard = true` ("Con tareas") los que ya usan BranchBoard (#125).
-pub fn listar_proyectos_servidor_en(
+// Un perfil histórico puede responder "Controlador no válido" mientras otra
+// organización sigue disponible. No cerrar la sesión por un sondeo fallido.
+fn consultar_organizaciones(
     estado: &AppState,
-    carpeta_datos: &Path,
+    orgs: &[String],
+    mut consultar: impl FnMut(&str) -> Resultado<Salida>,
 ) -> Resultado<Vec<ProyectoServidor>> {
-    let _email = lectura::whoami(estado)?;
-    let orgs = organizaciones_candidatas(estado, carpeta_datos);
-
     let mut proyectos: Vec<ProyectoServidor> = Vec::new();
     let mut alguna_ok = false;
-    let mut ultimo_error: Option<Error> = None;
-
-    if orgs.is_empty() {
-        let stdout = Comando::cm()
-            .args(["repo", "list", "--format={repname}|{repserver}"])
-            .exigir_exito(estado)?;
-        alguna_ok = true;
-        proyectos.extend(interpretar_repos_servidor(&stdout, None));
-    } else {
-        for org in &orgs {
-            let servidor = format!("{org}@unity");
-            let salida = Comando::cm()
-                .args(["repo", "list", &servidor, "--format={repname}|{repserver}"])
-                .ejecutar(estado)?;
-            if salida.exito() {
+    let mut caducidad = false;
+    let mut otro_error = None;
+    for org in orgs {
+        let servidor = format!("{org}@unity");
+        match consultar(&servidor) {
+            Ok(salida) if salida.exito() => {
                 alguna_ok = true;
                 for item in interpretar_repos_servidor(&salida.stdout, Some(org)) {
                     if !proyectos
@@ -258,22 +249,62 @@ pub fn listar_proyectos_servidor_en(
                         proyectos.push(item);
                     }
                 }
-            } else {
+            }
+            Ok(salida) => {
                 let detalle = if salida.stderr.trim().is_empty() {
                     salida.stdout.trim()
                 } else {
                     salida.stderr.trim()
                 };
-                ultimo_error = Some(Error::Cm(format!("`cm repo list {servidor}`: {detalle}")));
+                otro_error = Some(Error::Cm(format!("`cm repo list {servidor}`: {detalle}")));
             }
+            Err(Error::SesionUnityVcCaducada) => caducidad = true,
+            Err(error) => return Err(error),
         }
     }
-
     if !alguna_ok {
-        if let Some(err) = ultimo_error {
-            return Err(err);
+        if let Some(error) = otro_error {
+            return Err(error);
+        }
+        if caducidad {
+            estado.fijar_usuario(None);
+            return Err(Error::SesionUnityVcCaducada);
         }
     }
+    Ok(proyectos)
+}
+
+/// Lista los repositorios accesibles en Unity VC Cloud vía `cm repo list`, marcando
+/// con `tiene_db_branchboard = true` ("Con tareas") los que ya usan BranchBoard (#125).
+pub fn listar_proyectos_servidor_en(
+    estado: &AppState,
+    carpeta_datos: &Path,
+) -> Resultado<Vec<ProyectoServidor>> {
+    let _email = lectura::whoami(estado)?;
+    let orgs = organizaciones_candidatas(estado, carpeta_datos);
+
+    let mut proyectos = if orgs.is_empty() {
+        // Sin organización explícita el mismo mensaje puede indicar que falta
+        // configurar el servidor predeterminado, no que venció el SSO (#203).
+        let stdout = Comando::cm()
+            .args(["repo", "list", "--format={repname}|{repserver}"])
+            .como_sondeo()
+            .exigir_exito(estado)
+            .map_err(|error| match error {
+                Error::SesionUnityVcCaducada => Error::Validacion(
+                    "No se encontró una organización de Unity VC válida. Abre el proyecto en Unity VC y vuelve a intentar".into(),
+                ),
+                otro => otro,
+            })?;
+        interpretar_repos_servidor(&stdout, None)
+    } else {
+        consultar_organizaciones(estado, &orgs, |servidor| {
+            Comando::cm()
+                .args(["repo", "list", servidor, "--format={repname}|{repserver}"])
+                .como_sondeo()
+                .ejecutar(estado)
+        })?
+    };
 
     for p in &mut proyectos {
         if let Some(r) = RepoUnityVc::desde_especificacion(&p.repo) {
@@ -788,6 +819,54 @@ pub fn traer_proyecto_en(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn perfil_obsoleto_no_oculta_organizacion_activa_ni_invalida_sesion() {
+        let estado = AppState::default();
+        for orgs in [["obsoleta", "activa"], ["activa", "obsoleta"]] {
+            estado.fijar_usuario(Some("dev@example.test"));
+            let orgs = orgs.map(str::to_string);
+            let proyectos = consultar_organizaciones(&estado, &orgs, |servidor| {
+                if servidor == "obsoleta@unity" {
+                    return Err(Error::SesionUnityVcCaducada);
+                }
+                Ok(Salida {
+                    codigo: Some(0),
+                    stdout: "BranchBoard-Pruebas/BranchBoard-Pruebas|activa@unity".into(),
+                    stderr: String::new(),
+                })
+            })
+            .unwrap();
+            assert_eq!(proyectos.len(), 1);
+            assert_eq!(proyectos[0].org, "activa");
+            assert_eq!(estado.usuario_actual().as_deref(), Some("dev@example.test"));
+        }
+    }
+
+    #[test]
+    fn sondeos_solo_caducan_sesion_si_no_hay_respuestas_ni_otro_error() {
+        let estado = AppState::default();
+        let orgs = ["primera".to_string(), "segunda".to_string()];
+        estado.fijar_usuario(Some("dev@example.test"));
+        let error = consultar_organizaciones(&estado, &orgs, |_| Err(Error::SesionUnityVcCaducada))
+            .unwrap_err();
+        assert_eq!(error.codigo(), "sesion_unity_vc_caducada");
+        assert!(estado.usuario_actual().is_none());
+        estado.fijar_usuario(Some("dev@example.test"));
+        let error = consultar_organizaciones(&estado, &orgs, |servidor| {
+            if servidor == "primera@unity" {
+                return Err(Error::SesionUnityVcCaducada);
+            }
+            Ok(Salida {
+                codigo: Some(1),
+                stdout: String::new(),
+                stderr: "Permission denied".into(),
+            })
+        })
+        .unwrap_err();
+        assert_eq!(error.codigo(), "cm");
+        assert_eq!(estado.usuario_actual().as_deref(), Some("dev@example.test"));
+    }
 
     #[test]
     fn interpreta_repos_servidor_y_deduplica_y_filtra_eliminados() {

@@ -293,6 +293,8 @@ interface State {
   // pantalla de "no hay sesión de Unity VC" en vez de los tableros (ver FRONTEND.md,
   // "Autenticación / acceso al proyecto"). Toggle de demo en el Topbar.
   cmSesionActiva: boolean;
+  sesionUnityVcCaducada: boolean;
+  marcarSesionUnityVcCaducada: () => void;
   // Si ya se pasó por las pantallas de acceso al proyecto (Pantalla inicial →
   // workspaces → validación del .db). En el mockup nunca bloquea: se pueden saltar.
   accesoCompletado: boolean;
@@ -553,6 +555,11 @@ export const useStore = create<State>((set, get) => {
   cmInstalado: true,
   cmInstalando: false,
   cmSesionActiva: true,
+  sesionUnityVcCaducada: false,
+  marcarSesionUnityVcCaducada: () => set({
+    cmSesionActiva: false, accesoCompletado: false, sesionUnityVC: null,
+    sesionUnityVcCaducada: true,
+  }),
   accesoCompletado: false,
   proyectoActual: enTauri() ? '' : fx.PROYECTO_NOMBRE,
   workspaceActual: enTauri() ? null : fx.PROYECTO_NOMBRE,
@@ -1024,8 +1031,11 @@ export const useStore = create<State>((set, get) => {
   },
   cargarSesionUnityVc: async () => {
     if (!enTauri()) return;
+    if (get().sesionUnityVcCaducada) return;
     try {
       const s = await api.sesionUnityVc();
+      // Una consulta local iniciada antes del error no debe ocultar el aviso.
+      if (get().sesionUnityVcCaducada) return;
       if (s.activa && s.email) {
         set({ cmInstalado: true, cmSesionActiva: true, sesionUnityVC: s.email, currentEmail: s.email });
         void get().cargarWorkspacesYProyectos();
@@ -1046,12 +1056,21 @@ export const useStore = create<State>((set, get) => {
       return true;
     }
     try {
+      if (get().sesionUnityVcCaducada) {
+        // Abrir el SSO solo tras pulsar Reconectar. Un `whoami` local puede
+        // seguir devolviendo el correo aunque la sesión remota haya vencido.
+        const sesion = await api.iniciarSesionUnityVc(true);
+        if (!sesion.activa || !sesion.email) {
+          throw new ErrorBackend('sin_sesion_unity_vc', 'Completa el inicio de sesión de Unity VC y vuelve a intentar.');
+        }
+      }
       const res = await api.reconectarUnityVc(org);
       set({
         cmInstalado: true,
         cmSesionActiva: true,
         sesionUnityVC: res.email,
         currentEmail: res.email,
+        sesionUnityVcCaducada: false,
       });
       get().showToast(res.mensaje, 'ok');
       return true;

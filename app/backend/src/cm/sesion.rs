@@ -15,6 +15,8 @@ use crate::servidor::{nombre_organizacion, region};
 
 const TIEMPO_MAXIMO_ASISTENTE: Duration = Duration::from_secs(300);
 
+pub const EVENTO_SESION_CADUCADA: &str = "sesion-unity-vc-caducada";
+
 /// Estado actual de la sesión de Unity Version Control en esta máquina (#124).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EstadoSesionUnityVc {
@@ -129,6 +131,14 @@ pub fn iniciar_sesion_unity_vc(
 }
 
 fn lanzar_plastic_configure(estado: &AppState) -> Resultado<()> {
+    // Las corridas automáticas pueden prohibir cualquier asistente interactivo.
+    // No se compila en la aplicación publicada.
+    #[cfg(test)]
+    if std::env::var_os("BB_PRUEBA_SIN_ASISTENTE").is_some() {
+        return Err(Error::Validacion(
+            "La prueba automática no permite abrir el asistente de Unity VC".into(),
+        ));
+    }
     let ruta = resolver_plastic_exe().ok_or_else(|| {
         Error::Validacion(
             "No se encontró el asistente `plastic` de Unity Version Control para iniciar sesión."
@@ -211,6 +221,11 @@ pub fn reconectar_unity_vc(
             let Some(ref o) = org else {
                 return Ok(());
             };
+            // `whoami` es local y un PAT válido no acredita que el SSO de la
+            // CLI funcione. Comprueba también una lectura remota de `cm` (#203).
+            Comando::cm()
+                .args(["repo", "list", &format!("{o}@unity")])
+                .exigir_exito(estado)?;
             let cliente = if reintento_forzado {
                 pat::renovar_pat_forzado(estado, &LlaveroSistema, email, o)?
             } else {
@@ -244,8 +259,8 @@ pub fn reconectar_con(
 
     abrir_asistente()?;
     let email = whoami_fn()?;
-    fijar_usuario(Some(&email));
     verificar_o_renovar_pat(&email, true)?;
+    fijar_usuario(Some(&email));
     Ok(ResultadoReconexionUnityVc {
         email,
         reconectado: true,
@@ -486,6 +501,29 @@ mod tests {
         assert!(conf.contains("<WorkingMode>SSOWorkingMode</WorkingMode>"));
         assert!(conf.contains("<SecurityConfig></SecurityConfig>"));
         assert!(!conf.contains("ana@equipo.dev"));
+    }
+
+    #[test]
+    fn reconectar_no_restaura_identidad_si_la_cli_sigue_caducada() {
+        let abrio = Cell::new(0);
+        let identidades_restauradas = Cell::new(0);
+        let error = reconectar_con(
+            || Ok("dev@example.test".into()), // whoami local sigue funcionando.
+            || {
+                abrio.set(abrio.get() + 1);
+                Ok(())
+            },
+            |_, _| Err(Error::SesionUnityVcCaducada),
+            |email| {
+                if email.is_some() {
+                    identidades_restauradas.set(identidades_restauradas.get() + 1);
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.codigo(), "sesion_unity_vc_caducada");
+        assert_eq!(abrio.get(), 1);
+        assert_eq!(identidades_restauradas.get(), 0);
     }
 
     #[test]

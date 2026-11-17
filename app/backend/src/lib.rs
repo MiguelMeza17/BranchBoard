@@ -54,13 +54,19 @@ const INTERVALO_POLLING_SEGUNDOS: u64 = 15;
 fn disparar_polling(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let estado = app.state::<estado::AppState>();
-        if let Ok(resumen) = comandos_eventos::revisar_actualizaciones_en(&estado, None) {
-            if resumen.hubo_cambios() {
-                let _ = app.emit(comandos_eventos::EVENTO_UNITY_ACTUALIZADO, &resumen);
+        match comandos_eventos::revisar_actualizaciones_en(&estado, None) {
+            Ok(resumen) => {
+                if resumen.hubo_cambios() {
+                    let _ = app.emit(comandos_eventos::EVENTO_UNITY_ACTUALIZADO, &resumen);
+                }
+                if let Some(ref alerta) = resumen.alerta_rama_ajena {
+                    let _ = app.emit(comandos_eventos::EVENTO_RAMA_AJENA, alerta);
+                }
             }
-            if let Some(ref alerta) = resumen.alerta_rama_ajena {
-                let _ = app.emit(comandos_eventos::EVENTO_RAMA_AJENA, alerta);
+            Err(error::Error::SesionUnityVcCaducada) => {
+                let _ = app.emit(cm::sesion::EVENTO_SESION_CADUCADA, ());
             }
+            Err(_) => {}
         }
     });
 }

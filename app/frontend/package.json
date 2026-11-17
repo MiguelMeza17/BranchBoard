@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test:sesion": "node scripts/probar-sesion.mjs",
     "tauri": "cd ../backend && tauri"
   },
   "dependencies": {
