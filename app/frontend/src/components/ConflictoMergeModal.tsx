@@ -8,7 +8,9 @@ export function ConflictoMergeModal() {
   const conflicto = useStore((s) => s.conflictoMerge);
   const cerrar = useStore((s) => s.cerrarConflictoMerge);
   const rechazar = useStore((s) => s.rechazarRevision);
+  const resolverEnUnityVc = useStore((s) => s.resolverConflictoEnUnityVc);
   const [confirmarRechazo, setConfirmarRechazo] = useState(false);
+  const [abriendo, setAbriendo] = useState(false);
   const tarea = useStore((s) => s.tareas.find((t) => t.id === conflicto?.tareaId));
   if (!conflicto) return null;
   const onClose = () => { setConfirmarRechazo(false); cerrar(); };
@@ -16,7 +18,10 @@ export function ConflictoMergeModal() {
     <>
       <Modal open={!confirmarRechazo} onClose={onClose} title="Conflicto al autorizar merge"
         footer={<>
-          <button className="btn-outline" onClick={onClose}>Resolver en Unity VC</button>
+          <button className="btn-outline" disabled={abriendo} onClick={() => {
+            setAbriendo(true);
+            void resolverEnUnityVc().finally(() => setAbriendo(false));
+          }}>{abriendo ? 'Abriendo Unity VC…' : 'Resolver en Unity VC'}</button>
           {tarea?.estado === 'en revisión' && <button className="btn-danger" onClick={() => setConfirmarRechazo(true)}>Enviar a corregir</button>}
         </>}>
         <p className="text-sm text-muted">{conflicto.mensaje}</p>

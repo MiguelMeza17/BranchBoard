@@ -494,6 +494,8 @@ interface State {
   conflictoMerge: (ConflictoMerge & { tareaId: string }) | null;
   autorizandoMerge: boolean;
   cerrarConflictoMerge: () => void;
+  /** "Resolver en Unity VC" (#207): `true` si se abrió Unity VC en la rama destino. */
+  resolverConflictoEnUnityVc: () => Promise<boolean>;
   autorizarMerge: (id: string) => Promise<void>;
   /** "terminada" -> "en revisión" con motivo obligatorio; respeta LIMITE_REAPERTURAS. */
   reabrirTarea: (id: string, motivo: string) => void;
@@ -1775,6 +1777,27 @@ export const useStore = create<State>((set, get) => {
   conflictoMerge: null,
   autorizandoMerge: false,
   cerrarConflictoMerge: () => set({ conflictoMerge: null }),
+  resolverConflictoEnUnityVc: async () => {
+    const conflicto = get().conflictoMerge;
+    if (!conflicto) return false;
+    try {
+      const { rama_actual } = await api.abrirResolucionConflicto(conflicto.destino);
+      set({ conflictoMerge: null });
+      const despues = get().tareas.find((t) => t.id === conflicto.tareaId)?.tarea_padre_id
+        ? 'BranchBoard la cerrará solo al detectar el merge.'
+        : 'Después vuelve a autorizar la tarea en BranchBoard.';
+      get().showToast(
+        enTauri()
+          ? `Tu workspace quedó en ${rama_actual}. En Unity VC: clic derecho en ${conflicto.origen} → "Merge from this branch", resuelve los archivos y haz check-in. ${despues}`
+          : 'En la app de escritorio esto abre Unity VC en la rama destino para resolver el conflicto.',
+        'info',
+      );
+      return true;
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+      return false;
+    }
+  },
   autorizarMerge: async (id) => {
     if (enTauri()) {
       if (get().autorizandoMerge) return;

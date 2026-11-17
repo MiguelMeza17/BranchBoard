@@ -10430,6 +10430,91 @@ mod tests {
             .any(|n| n.tipo == TipoNotificacion::TareaRechazada));
     }
 
+    /// #207: "Resolver en Unity VC" deja el workspace en la rama destino del merge
+    /// que chocó y no cambia de rama si hay cambios sin check-in. No abre Unity VC
+    /// (eso es `cm::sesion::abrir_plastic_en_workspace`, probado a mano).
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_preparar_resolucion_de_conflicto() {
+        use crate::cm::lectura::rama_actual_workspace;
+        use crate::cm::Comando;
+        use crate::comandos::tareas::{
+            autorizar_merge_en, cambiar_estado_en, preparar_resolucion_conflicto_en, tomar_en,
+        };
+        use crate::ramas;
+
+        correr_entorno_real("207", |env| {
+            let admin_email = env.admin_fila.email.clone();
+            let grupo = env.crear_con_subtareas(
+                &admin_email,
+                Rol::Administrador,
+                "Padre 207",
+                &["Sub 207"],
+            );
+            let sub = grupo[1].id.clone();
+
+            // Conflicto real: la subtarea y su padre cambian el mismo archivo.
+            let tomadas = tomar_en(&env.estado_a, &sub).unwrap();
+            env.registrar_ramas_de(&tomadas);
+            let rama_padre = tomadas[0].rama_asociada.clone().unwrap();
+            let rama_sub = tomadas[1].rama_asociada.clone().unwrap();
+            env.commit_real("c207.txt", "base", "Sub 207: crea c207");
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_padre).unwrap();
+            env.commit_real("c207.txt", "padre", "Padre 207: cambia c207");
+            ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama_sub).unwrap();
+            cambiar_estado_en(&env.estado_a, &sub, EstadoTarea::EnRevision).unwrap();
+            let conflicto = autorizar_merge_en(&env.estado_a, &sub)
+                .unwrap()
+                .conflicto
+                .expect("debía haber conflicto");
+            assert_eq!(conflicto.destino, rama_padre);
+
+            // 1) Con un cambio sin check-in en la rama de la subtarea: no cambia de rama.
+            let pendiente = env.ws_ruta.join("pendiente207.txt");
+            std::fs::write(&pendiente, "sin check-in").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(pendiente.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let err =
+                preparar_resolucion_conflicto_en(&env.estado_a, &conflicto.destino).unwrap_err();
+            assert!(err.to_string().contains("sin check-in"), "{err}");
+            assert_eq!(
+                rama_actual_workspace(&env.estado_a, &env.ws_ruta)
+                    .unwrap()
+                    .rama,
+                rama_sub
+            );
+            Comando::cm()
+                .args(["undo"])
+                .arg(pendiente.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let _ = std::fs::remove_file(&pendiente);
+
+            // 2) Sin cambios: el workspace queda en la rama destino; repetirlo no toca nada.
+            let listo =
+                preparar_resolucion_conflicto_en(&env.estado_a, &conflicto.destino).unwrap();
+            assert_eq!(listo.rama_actual, rama_padre);
+            assert_eq!(
+                rama_actual_workspace(&env.estado_a, &env.ws_ruta)
+                    .unwrap()
+                    .rama,
+                rama_padre
+            );
+            let otra_vez =
+                preparar_resolucion_conflicto_en(&env.estado_a, &conflicto.destino).unwrap();
+            assert_eq!(otra_vez.rama_actual, rama_padre);
+
+            // 3) Fuera de /main/dev se rechaza.
+            assert!(preparar_resolucion_conflicto_en(&env.estado_a, "/main").is_err());
+            assert!(preparar_resolucion_conflicto_en(&env.estado_a, "/otra").is_err());
+        });
+    }
+
     #[test]
     #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
     fn entorno_real_revision_autorizar_merge_y_rechazar() {
