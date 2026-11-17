@@ -15,6 +15,8 @@ use crate::servidor::{nombre_organizacion, region};
 
 const TIEMPO_MAXIMO_ASISTENTE: Duration = Duration::from_secs(300);
 
+pub const EVENTO_SESION_CADUCADA: &str = "sesion-unity-vc-caducada";
+
 /// Estado actual de la sesión de Unity Version Control en esta máquina (#124).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EstadoSesionUnityVc {
@@ -76,6 +78,39 @@ pub fn resolver_plastic_exe() -> Option<PathBuf> {
     buscar_plastic_en(&candidatos_plastic_windows())
 }
 
+/// Argumentos para abrir Unity VC (`plastic.exe`) en el Branch Explorer del
+/// workspace `workspace` (#207). `--branchexplorer=<ruta>` está documentado en
+/// las notas de la versión 11 del cliente.
+pub fn argumentos_branch_explorer(workspace: &Path) -> Vec<String> {
+    vec![format!("--branchexplorer={}", workspace.display())]
+}
+
+/// Abre Unity VC en el Branch Explorer de `workspace` sin esperar a que la
+/// persona lo cierre (#207): BranchBoard no se queda bloqueado mientras se
+/// resuelve el conflicto. Devuelve la ruta de `plastic.exe` usada.
+pub fn abrir_plastic_en_workspace(workspace: &Path) -> Resultado<PathBuf> {
+    let ruta = resolver_plastic_exe().ok_or_else(|| {
+        Error::Validacion(
+            "No se encontró Unity Version Control (plastic) en este equipo para resolver el conflicto."
+                .into(),
+        )
+    })?;
+    let mut comando = std::process::Command::new(&ruta);
+    comando
+        .args(argumentos_branch_explorer(workspace))
+        .current_dir(workspace);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        comando.creation_flags(DETACHED_PROCESS);
+    }
+    comando
+        .spawn()
+        .map_err(|e| Error::Interno(format!("No se pudo abrir Unity Version Control: {e}")))?;
+    Ok(ruta)
+}
+
 /// Ruta de configuración local de Unity Version Control (`%LOCALAPPDATA%\plastic4` o `~/.plastic4`).
 pub fn carpeta_config_plastic() -> Option<PathBuf> {
     #[cfg(windows)]
@@ -129,6 +164,14 @@ pub fn iniciar_sesion_unity_vc(
 }
 
 fn lanzar_plastic_configure(estado: &AppState) -> Resultado<()> {
+    // Las corridas automáticas pueden prohibir cualquier asistente interactivo.
+    // No se compila en la aplicación publicada.
+    #[cfg(test)]
+    if std::env::var_os("BB_PRUEBA_SIN_ASISTENTE").is_some() {
+        return Err(Error::Validacion(
+            "La prueba automática no permite abrir el asistente de Unity VC".into(),
+        ));
+    }
     let ruta = resolver_plastic_exe().ok_or_else(|| {
         Error::Validacion(
             "No se encontró el asistente `plastic` de Unity Version Control para iniciar sesión."
@@ -211,6 +254,11 @@ pub fn reconectar_unity_vc(
             let Some(ref o) = org else {
                 return Ok(());
             };
+            // `whoami` es local y un PAT válido no acredita que el SSO de la
+            // CLI funcione. Comprueba también una lectura remota de `cm` (#203).
+            Comando::cm()
+                .args(["repo", "list", &format!("{o}@unity")])
+                .exigir_exito(estado)?;
             let cliente = if reintento_forzado {
                 pat::renovar_pat_forzado(estado, &LlaveroSistema, email, o)?
             } else {
@@ -244,8 +292,8 @@ pub fn reconectar_con(
 
     abrir_asistente()?;
     let email = whoami_fn()?;
-    fijar_usuario(Some(&email));
     verificar_o_renovar_pat(&email, true)?;
+    fijar_usuario(Some(&email));
     Ok(ResultadoReconexionUnityVc {
         email,
         reconectado: true,
@@ -383,6 +431,16 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
 
+    #[test]
+    fn el_branch_explorer_se_abre_con_la_ruta_del_workspace() {
+        let ws = Path::new(r"C:\Users\ana\Proyectos\Mi Juego");
+        assert_eq!(
+            argumentos_branch_explorer(ws),
+            [r"--branchexplorer=C:\Users\ana\Proyectos\Mi Juego".to_string()],
+            "un solo argumento: Rust lo entrecomilla si la ruta tiene espacios"
+        );
+    }
+
     #[derive(Default)]
     struct LlaveroMemoria(RefCell<HashMap<String, String>>);
 
@@ -486,6 +544,29 @@ mod tests {
         assert!(conf.contains("<WorkingMode>SSOWorkingMode</WorkingMode>"));
         assert!(conf.contains("<SecurityConfig></SecurityConfig>"));
         assert!(!conf.contains("ana@equipo.dev"));
+    }
+
+    #[test]
+    fn reconectar_no_restaura_identidad_si_la_cli_sigue_caducada() {
+        let abrio = Cell::new(0);
+        let identidades_restauradas = Cell::new(0);
+        let error = reconectar_con(
+            || Ok("dev@example.test".into()), // whoami local sigue funcionando.
+            || {
+                abrio.set(abrio.get() + 1);
+                Ok(())
+            },
+            |_, _| Err(Error::SesionUnityVcCaducada),
+            |email| {
+                if email.is_some() {
+                    identidades_restauradas.set(identidades_restauradas.get() + 1);
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.codigo(), "sesion_unity_vc_caducada");
+        assert_eq!(abrio.get(), 1);
+        assert_eq!(identidades_restauradas.get(), 0);
     }
 
     #[test]

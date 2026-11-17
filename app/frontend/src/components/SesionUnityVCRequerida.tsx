@@ -16,6 +16,7 @@ export function SesionUnityVCRequerida() {
   const setSesionUnityVC = useStore((s) => s.setSesionUnityVC);
   const cmInstalado = useStore((s) => s.cmInstalado);
   const cmInstalando = useStore((s) => s.cmInstalando);
+  const sesionCaducada = useStore((s) => s.sesionUnityVcCaducada);
   const instalarCm = useStore((s) => s.instalarCm);
   const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
   const [reconectando, setReconectando] = useState(false);
@@ -33,10 +34,12 @@ export function SesionUnityVCRequerida() {
         </div>
 
         <div>
-          <h2 className="text-base font-semibold text-text">No se detectó una sesión de Unity VC</h2>
+          <h2 className="text-base font-semibold text-text">{sesionCaducada ? 'La sesión de Unity VC caducó' : 'No se detectó una sesión de Unity VC'}</h2>
           <p className="mt-1.5 text-sm text-muted">
+            {sesionCaducada ? 'Pulsa Reconectar para volver a iniciar sesión con Unity VC.' : <>
             BranchBoard identifica al usuario a través de Unity Version Control (<code className="font-mono text-xs">cm whoami</code>),
             y no encontró ninguna sesión activa en este equipo. Inicia sesión con Unity VC para continuar.
+            </>}
           </p>
         </div>
 
@@ -53,7 +56,7 @@ export function SesionUnityVCRequerida() {
           )}
           <button
             className={`${cmInstalado ? 'btn-primary' : 'btn-outline'} btn-sm w-full`}
-            disabled={!cmInstalado || cmInstalando || reconectando}
+            disabled={!cmInstalado || cmInstalando || reconectando || sesionCaducada}
             onClick={() => setLogin(true)}
           >
             Iniciar sesión con Unity VC

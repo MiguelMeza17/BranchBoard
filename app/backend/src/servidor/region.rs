@@ -57,6 +57,48 @@ fn interpretar_organizaciones(texto: &str) -> Vec<String> {
     orgs
 }
 
+/// Página de proyectos de la organización en el Unity Cloud Dashboard (#205):
+/// con el id numérico va directo a la organización; sin él, a la portada,
+/// donde la persona elige la organización.
+pub fn url_proyectos_unity_cloud(id_organizacion: Option<&str>) -> String {
+    match id_organizacion {
+        Some(id) if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) => {
+            format!("https://cloud.unity.com/home/organizations/{id}/projects")
+        }
+        _ => "https://cloud.unity.com/home".to_string(),
+    }
+}
+
+/// Id numérico de la organización `org` según `cloudregions.conf` (#205): el
+/// cliente lo anota como `organization=<id>@cloud` en las máquinas que entraron
+/// por Unity ID. Si la organización está por nombre no hay forma de saberlo,
+/// salvo que el archivo tenga una sola línea numérica.
+pub fn id_organizacion(org: &str) -> Option<String> {
+    let ruta = ruta_cloudregions()?;
+    let texto = std::fs::read_to_string(ruta).ok()?;
+    interpretar_id_organizacion(&texto, org)
+}
+
+fn interpretar_id_organizacion(texto: &str, org: &str) -> Option<String> {
+    let buscada = nombre_organizacion(org).to_lowercase();
+    let nombres = interpretar_organizaciones(texto);
+    let es_id = |n: &str| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit());
+    if nombres
+        .iter()
+        .any(|n| n.to_lowercase() == buscada && es_id(n))
+    {
+        return Some(buscada);
+    }
+    if nombres.iter().any(|n| n.to_lowercase() == buscada) {
+        return None;
+    }
+    let mut ids = nombres.iter().filter(|n| es_id(n));
+    match (ids.next(), ids.next()) {
+        (Some(unico), None) => Some(unico.clone()),
+        _ => None,
+    }
+}
+
 fn armar_url_api(base: &str, org: &str) -> String {
     format!(
         "{}/api/v1/organizations/{}",
@@ -209,6 +251,58 @@ organization=otra@cloud server=x:8787 version=2 encrypted=False webserver=http:/
         assert_eq!(
             interpretar_organizaciones(EJEMPLO),
             vec!["MiguelM17".to_string(), "otra".to_string()]
+        );
+    }
+
+    #[test]
+    #[ignore = "lee el cloudregions.conf de esta máquina: correr a mano con BB_PRUEBA_ORG"]
+    fn entorno_real_id_de_la_organizacion_de_esta_maquina() {
+        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let id = id_organizacion(&org);
+        println!(
+            "id de {org}: {id:?} -> {}",
+            url_proyectos_unity_cloud(id.as_deref())
+        );
+        assert!(
+            url_api(&org).is_ok(),
+            "la región de {org} tiene que resolverse"
+        );
+    }
+
+    #[test]
+    fn id_de_la_organizacion_y_url_del_dashboard() {
+        let por_id = "organization=4673426565751@cloud server=x:8787 version=2 encrypted=False webserver=https://x:7178\n";
+        assert_eq!(
+            interpretar_id_organizacion(por_id, "MiguelM17@unity").as_deref(),
+            Some("4673426565751"),
+            "una sola línea numérica: es la de esa organización"
+        );
+        assert_eq!(
+            interpretar_id_organizacion(por_id, "4673426565751").as_deref(),
+            Some("4673426565751")
+        );
+        assert_eq!(
+            interpretar_id_organizacion(EJEMPLO, "MiguelM17"),
+            None,
+            "está por nombre: no se conoce el id"
+        );
+        let dos =
+            "organization=1@cloud webserver=https://a\norganization=2@cloud webserver=https://b\n";
+        assert_eq!(interpretar_id_organizacion(dos, "otra"), None);
+        assert_eq!(interpretar_id_organizacion("", "x"), None);
+
+        assert_eq!(
+            url_proyectos_unity_cloud(Some("4673426565751")),
+            "https://cloud.unity.com/home/organizations/4673426565751/projects"
+        );
+        assert_eq!(
+            url_proyectos_unity_cloud(None),
+            "https://cloud.unity.com/home"
+        );
+        assert_eq!(
+            url_proyectos_unity_cloud(Some("x/../y")),
+            "https://cloud.unity.com/home",
+            "solo dígitos van a la URL"
         );
     }
 }

@@ -57,6 +57,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("clonar_proyecto", Acceso::Libre),
     ("crear_proyecto", Acceso::Libre),
     ("traer_proyecto", Acceso::Libre),
+    ("abrir_unity_cloud", Acceso::Libre),
     ("entrar_a_proyecto", Acceso::Libre),
     ("buscar_actualizacion", Acceso::Libre),
     ("instalar_actualizacion", Acceso::Libre),
@@ -115,6 +116,8 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("rechazar_revision", Acceso::Roles(TODOS)),
     ("listar_commits", Acceso::Roles(TODOS)),
     ("abrir_en_unity", Acceso::Roles(TODOS)),
+    // Solo cambia el workspace propio y abre Unity VC; quién puede autorizar ya lo revisó `autorizar_merge` (#207).
+    ("abrir_resolucion_conflicto", Acceso::Roles(TODOS)),
     ("listar_sprints", Acceso::Roles(TODOS)),
     ("crear_sprint", Acceso::Roles(LIDER_O_ADMIN)),
     ("asignar_tarea_a_sprint", Acceso::Roles(LIDER_O_ADMIN)),
