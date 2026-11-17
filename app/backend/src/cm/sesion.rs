@@ -131,6 +131,14 @@ pub fn iniciar_sesion_unity_vc(
 }
 
 fn lanzar_plastic_configure(estado: &AppState) -> Resultado<()> {
+    // Las corridas automáticas pueden prohibir cualquier asistente interactivo.
+    // No se compila en la aplicación publicada.
+    #[cfg(test)]
+    if std::env::var_os("BB_PRUEBA_SIN_ASISTENTE").is_some() {
+        return Err(Error::Validacion(
+            "La prueba automática no permite abrir el asistente de Unity VC".into(),
+        ));
+    }
     let ruta = resolver_plastic_exe().ok_or_else(|| {
         Error::Validacion(
             "No se encontró el asistente `plastic` de Unity Version Control para iniciar sesión."
