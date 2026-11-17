@@ -218,6 +218,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
     setRutaCompartidaNueva('');
   };
   const proyectoActual = useStore((s) => s.proyectoActual);
+  const workspaceActual = useStore((s) => s.workspaceActual);
   const showToast = useStore((s) => s.showToast);
   const [menuProyecto, setMenuProyecto] = useState(false);
   const [confirmarSalir, setConfirmarSalir] = useState(false);
@@ -366,7 +367,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
             {workspaces
               .filter((ws) => ws.tiene_db_branchboard)
               .map((ws) => {
-                const actual = ws.nombre === proyectoActual;
+                const actual = ws.nombre === workspaceActual;
                 return (
                   <button
                     key={ws.repo}
@@ -406,8 +407,8 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                         }
                         setEmail(res.email);
                         setRolActual(res.rol);
-                        entrarAProyecto(ws.nombre);
-                        showToast(`Cambiaste al proyecto ${ws.nombre}`);
+                        entrarAProyecto(res.proyecto, ws.nombre);
+                        showToast(`Cambiaste al proyecto ${res.proyecto}`);
                       } catch (e) {
                         showToast(mensajeDeError(e), 'danger');
                       }
@@ -506,7 +507,8 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
       {/* Papelera y Ajustes, abajo y separados del resto. */}
       <div className={`space-y-0.5 border-t border-border py-2 ${colapsado ? 'px-2' : 'px-3'}`}>{ABAJO.map(renderItem)}</div>
 
-      {!colapsado && (
+      {!colapsado && !enTauri() && (
+        // Solo en el navegador: en la app de escritorio los datos son los del proyecto.
         <div className="border-t border-border px-4 py-3 text-[11px] text-faint">
           Mockup UI · datos en memoria
         </div>

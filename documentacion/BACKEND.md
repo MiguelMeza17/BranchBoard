@@ -120,7 +120,7 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
   - Revisión: `autorizar_merge`, `rechazar_revision`, `reabrir_tarea`, `asignar_revision`.
   - Ramas: `hacer_checkin`, `crear_rama_desde_espera`, `traer_cambios`, `devolver_cambios_prestados`, `eliminar_cambios_ajenos`, `mover_cambios_entre_ramas` (sin pantalla en el mockup).
   - Planificación: `crear_sprint`, `cerrar_sprint`, `asignar_tarea_a_sprint`, `asignar_tarea_a_backlog`, `asignar_backlog_a_sprint`.
-  - Equipo y proyecto: `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `renombrar_proyecto`, `actualizar_configuracion_proyecto`, `subir_imagen_proyecto`, `solicitar_accion_bd`, `enviar_mensaje`.
+  - Equipo y proyecto: `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario`, `renombrar_proyecto`, `actualizar_configuracion_proyecto`, `subir_imagen_proyecto`, `solicitar_accion_bd`, `enviar_mensaje`. Los tres del proyecto viajan como un solo tipo de evento, `actualizar_configuracion_proyecto` (`{ clave, valor }`, issue #127).
   - Documentos y chat: `subir_documentos`, `aprobar_documento`, `eliminar_documento`, `enviar_chat`, `crear_grupo_chat`.
   - Sin pantalla en el mockup: `crear_reporte_testing`.
   - En general: cualquier comando que escriba en `tareas`, `usuarios`, `ediciones_pendientes`, `reportes_testing`, `notificaciones` (la fila de notificación misma), `sprints`, `reportes_sprint`, `cambios_prestados`, `documentos`, `mensajes_chat`, `grupos_chat` o `configuracion_proyecto`.
@@ -561,7 +561,7 @@ Botón visible dentro de la app una vez hay un proyecto cargado (ver [Panel "Abr
 
 - Comando Tauri `abrir_en_unity(tarea_id, rama, changeset?)`: cambia el workspace a esa rama (`cm switch`, o a un changeset concreto si se pide) y lanza el Editor de Unity (o Unity Hub) apuntando a la ruta del workspace, vía su propio CLI — mismo patrón de invocar un ejecutable externo ya usado con `cm` y `warp-cli`. Es local a la máquina, no pasa por `ops/`.
 - **Según el frontend (2026-11-07)**: el botón de la barra superior abre el panel **"¿Qué tarea vas a trabajar en Unity?"** con el nombre y rol de quien lo usa, la rama en la que está el workspace (**nunca `dev`**; si no está en ninguna tarea, "No estás en ninguna tarea") y sus **tareas abiertas** (asignadas a él, no terminadas). También hay "Abrir en Unity" en los detalles de una tarea, en cada check-in (abre ese changeset) y en la pantalla de éxito al tomar una tarea. El backend tiene que exponer la rama actual del workspace (`rama_actual_workspace()`, de `cm status --header`).
-- Pendiente definir: comando exacto del CLI de Unity Hub para abrir un proyecto por ruta (verificar al implementar), y qué pasa si Unity Editor no está instalado (¿mismo patrón de "Instalar" con winget, o simplemente un mensaje de error?).
+- ~~Pendiente definir: comando exacto del CLI de Unity Hub para abrir un proyecto por ruta (verificar al implementar), y qué pasa si Unity Editor no está instalado (¿mismo patrón de "Instalar" con winget, o simplemente un mensaje de error?).~~ **Resuelto (#112, `app/backend/src/unity.rs`)**: prioriza `Unity.exe` de la versión declarada en `ProjectSettings/ProjectVersion.txt` (`-projectPath <ws>`) y cae a `Unity Hub.exe` (`-- --projectPath <ws>`) o error claro de validación si no está instalado; al abrir por rama devuelve `changeset: None` y al abrir un changeset puntual devuelve la rama real de la tarea (`rama_actual`, no `cs:<n>`). También admite subtarea `"En espera"` usando la rama de su padre.
 
 ## Conexión VPN (Cloudflare WARP)
 
@@ -675,7 +675,13 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 
 ## Imagen del proyecto
 
-**Nuevo (2026-11-07, pendiente de implementar)**: `subir_imagen_proyecto(ruta_archivo)` — Administrador (por definir si también el Líder). Copia la imagen elegida a la carpeta compartida del proyecto (ej. `proyecto/icono.png`, redimensionada a un tamaño fijo, p. ej. 256×256) y guarda la ruta en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto) con la clave `icono_proyecto`. Migra a eventos para que todas las máquinas la vean. Validar tipo (png/jpg/webp) y tamaño máximo, con la misma [validación de rutas](#validación-de-rutas-de-archivoadjuntos-resuelto-previene-path-traversal) que los adjuntos. Ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos).
+**Implementado (2026-11-16, issue #127)** en `app/backend/src/proyecto.rs` y `app/backend/src/comandos/proyecto.rs`. Lo que quedó:
+
+- `subir_imagen_proyecto(ruta)` — **solo Administrador** (el Líder no; se queda como decía este diseño mientras nadie decida lo contrario). El formato sale del **contenido** del archivo, no de la extensión: PNG, JPG o WebP; más de **5 MB**, más de 8192 px de lado, o cualquier otro formato → `validacion`. Se **recorta al centro y se redimensiona a 256×256** (el ícono se ve en un círculo) y se guarda **siempre como PNG** con un nombre que genera el backend, `<carpeta compartida>/proyecto/icono-<uuid>.png`. La clave `icono_proyecto` guarda **solo ese nombre**, nunca una ruta; un valor que no sea `icono-<letras/números/guiones>.png` se rechaza al emitir y al aplicar. Al subir otra, la anterior se borra (Drive/OneDrive replica el borrado). Devuelve la imagen como `data:image/png;base64,…`.
+- `obtener_configuracion_proyecto()` — **todos los roles**, local: `{ nombre, imagen }`. `imagen` es la `data:` URL, o `null` si no hay imagen, si esta máquina no configuró la carpeta compartida o si el archivo todavía no llegó por Drive/OneDrive. Antes de leer el archivo se valida de forma canónica que esté dentro de `proyecto/`.
+- En las demás máquinas el evento se aplica solo si quien lo emitió es **Administrador verificado** (rol firmado, igual que `cerrar_sprint`); si no, o si la clave/valor no son válidos, se descarta.
+
+Diseño original (2026-11-07): `subir_imagen_proyecto(ruta_archivo)` — Administrador (por definir si también el Líder). Copia la imagen elegida a la carpeta compartida del proyecto (ej. `proyecto/icono.png`, redimensionada a un tamaño fijo, p. ej. 256×256) y guarda la ruta en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto) con la clave `icono_proyecto`. Migra a eventos para que todas las máquinas la vean. Validar tipo (png/jpg/webp) y tamaño máximo, con la misma [validación de rutas](#validación-de-rutas-de-archivoadjuntos-resuelto-previene-path-traversal) que los adjuntos. Ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos).
 
 ## Actualizaciones de la app
 
@@ -978,6 +984,12 @@ Tabla clave/valor para ajustes del proyecto entero. **Actualizado (2026-11-07)**
 | `actualizado_por` | email | |
 | `fecha_actualizacion` | fecha | |
 
+**Implementado (2026-11-16, issue #127)**: `renombrar_proyecto(nombre)` y `actualizar_configuracion_proyecto(clave, valor)` en `app/backend/src/proyecto.rs`, los dos solo Administrador y por el evento `actualizar_configuracion_proyecto`. Reglas:
+- **Clave**: minúsculas, números y `_`, empieza por letra, máximo 64. `icono_proyecto` no se cambia por el comando genérico (solo con `subir_imagen_proyecto`, que crea el archivo).
+- **Valor**: máximo 1000 caracteres. `nombre_proyecto` se recorta, no puede quedar vacío, tener saltos de línea ni pasar de 80 caracteres; renombrar al mismo nombre da `validacion`.
+- `fecha_actualizacion` guarda el `timestamp` del evento (ISO 8601 UTC); gana el último evento en el orden de `ops/`.
+- Al entrar por primera vez, `nombre_proyecto` = nombre del repositorio de Unity VC (#89). **Falta en el frontend**: que el menú y la lista de proyectos muestren este nombre en vez del del workspace, y la regla de "no repetir el nombre de otro proyecto del equipo", que hoy solo comprueba el mockup.
+
 Comando Tauri `actualizar_configuracion_proyecto(clave, valor)` — exclusivo Administrador. **Migra a eventos** (agregarlo a la lista en [Sincronización entre máquinas](#sincronización-entre-máquinas-arquitectura-de-eventos)) — de lo contrario cambiar un ajuste del proyecto en una máquina no se reflejaría en las demás.
 
 ## Pendiente por definir
@@ -1075,6 +1087,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | `asignarTareaASprint` / `asignarTareaABacklog` / `asignarBacklogASprint` | `asignar_tarea_a_sprint` / `asignar_tarea_a_backlog` / `asignar_backlog_a_sprint` | Líder/Admin |
 | `crearUsuario` / `cambiarRol` / `eliminarUsuario` / `confirmarUsuario` | `crear_usuario` / `cambiar_rol` / `eliminar_usuario` / `confirmar_usuario` | ver [Comandos de usuarios](#comandos-de-usuarios-y-ajustes) |
 | `renombrarProyecto` / `restaurarBackup` | `renombrar_proyecto` / `restaurar_backup` (local) | Administrador |
+| `obtenerConfiguracionProyecto` / `actualizarConfiguracionProyecto` / `subirImagenProyecto` | `obtener_configuracion_proyecto` (local) / `actualizar_configuracion_proyecto` / `subir_imagen_proyecto` | todos / Administrador / Administrador |
 | `enviarMensaje` / `solicitarAccionBd` | `enviar_mensaje` / `solicitar_accion_bd` | todos / Líder y Desarrollador |
 | `listarDocumentos` / `subirDocumentos` / `aprobarDocumento` / `eliminarDocumento` / `abrirDocumento` | `listar_documentos` / `subir_documentos` / `aprobar_documento` / `eliminar_documento` / `abrir_documento` (local) | todos / todos / Líder/Admin / Líder/Admin / todos |
 | `enviarChat` / `crearGrupoChat` / `marcarChatLeido` / `eliminarChat` | `enviar_chat` / `crear_grupo_chat` / `marcar_chat_leido` (local) / `eliminar_chat` (local) | todos |

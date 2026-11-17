@@ -1,4 +1,4 @@
-import type { EstadoTarea, TipoTarea } from '../types';
+import type { EstadoTarea, Tarea, TipoTarea } from '../types';
 
 // Column / state visual language for the Scrum board and badges.
 export const estadoMeta: Record<
@@ -83,6 +83,16 @@ export function coincidePalabra(texto: string, palabra: string): boolean {
 export function esTareaEnEspera(t: { tipo: string }): boolean {
   return t.tipo === 'Sin definir';
 }
+
+/** Rama donde se trabaja una tarea: la suya; una "En espera" usa la de su padre (sus cambios están ahí). */
+export function ramaDeTarea(t: Tarea, tareas: Tarea[]): string | null {
+  if (t.rama_asociada) return t.rama_asociada;
+  if (esTareaEnEspera(t) && t.tarea_padre_id) {
+    return tareas.find((p) => p.id === t.tarea_padre_id)?.rama_asociada ?? null;
+  }
+  return null;
+}
+
 export function palabraCambios(n: number): string {
   return n === 1 ? 'commit' : 'commits';
 }
