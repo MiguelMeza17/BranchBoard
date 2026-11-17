@@ -116,3 +116,20 @@ pub async fn traer_proyecto(
     let datos = carpeta_datos(&app)?;
     proyectos::traer_proyecto_en(&estado, &datos, std::path::Path::new(&carpeta))
 }
+
+/// `abrir_unity_cloud(org)`: abre en el navegador la página de proyectos de la
+/// organización en el Unity Cloud Dashboard, para crear ahí un proyecto padre
+/// nuevo (`cm` no puede, #205). Devuelve la URL abierta. Sin el id numérico de
+/// la organización (solo está en `cloudregions.conf` cuando se entró por Unity
+/// ID) abre la portada del Dashboard.
+#[tauri::command]
+pub async fn abrir_unity_cloud(org: Option<String>) -> Resultado<String> {
+    let id = org
+        .as_deref()
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+        .and_then(crate::servidor::region::id_organizacion);
+    let url = crate::servidor::region::url_proyectos_unity_cloud(id.as_deref());
+    crate::instalacion::abrir_url(&url)?;
+    Ok(url)
+}

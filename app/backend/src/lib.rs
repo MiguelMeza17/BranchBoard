@@ -122,6 +122,7 @@ pub fn run() {
             comandos_cm::clonar_proyecto,
             comandos_cm::crear_proyecto,
             comandos_cm::traer_proyecto,
+            comandos_cm::abrir_unity_cloud,
             acceso::entrar_a_proyecto,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,

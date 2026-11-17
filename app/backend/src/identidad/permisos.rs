@@ -57,6 +57,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("clonar_proyecto", Acceso::Libre),
     ("crear_proyecto", Acceso::Libre),
     ("traer_proyecto", Acceso::Libre),
+    ("abrir_unity_cloud", Acceso::Libre),
     ("entrar_a_proyecto", Acceso::Libre),
     ("buscar_actualizacion", Acceso::Libre),
     ("instalar_actualizacion", Acceso::Libre),

@@ -997,6 +997,33 @@ function ModalCrearProyectoReal({
   const [creando, setCreando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const proyectoUnityEfectivo = proyectoUnity || proyectosUnity[0] || '';
+  // `cm` no puede crear proyectos padre en Unity Organizations (#205): se crean en el
+  // Dashboard y después se vuelve a pedir la lista al servidor.
+  const recargarProyectos = useStore((s) => s.cargarWorkspacesYProyectos);
+  const orgUnity = proyectosServidor[0]?.org;
+  const [recargando, setRecargando] = useState(false);
+
+  const abrirUnityCloud = async () => {
+    setError(null);
+    try {
+      await api.abrirUnityCloud(orgUnity);
+    } catch (e) {
+      setError(mensajeDeError(e));
+    }
+  };
+
+  const recargar = async () => {
+    if (recargando || creando) return;
+    setRecargando(true);
+    setError(null);
+    try {
+      await recargarProyectos();
+    } catch (e) {
+      setError(mensajeDeError(e));
+    } finally {
+      setRecargando(false);
+    }
+  };
 
   const cerrar = () => {
     if (creando) return;
@@ -1072,6 +1099,29 @@ function ModalCrearProyectoReal({
             </select>
           </label>
         )}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          <span>
+            {proyectosUnity.length > 0
+              ? '¿Necesitas otro proyecto en Unity Cloud?'
+              : 'Unity VC no devolvió ningún proyecto: crea uno en Unity Cloud y vuelve a cargar la lista.'}
+          </span>
+          <button
+            type="button"
+            className="font-semibold text-primary hover:underline disabled:opacity-50"
+            disabled={creando}
+            onClick={() => void abrirUnityCloud()}
+          >
+            Crearlo en Unity Cloud
+          </button>
+          <button
+            type="button"
+            className="font-semibold text-primary hover:underline disabled:opacity-50"
+            disabled={creando || recargando}
+            onClick={() => void recargar()}
+          >
+            {recargando ? 'Recargando…' : 'Recargar proyectos'}
+          </button>
+        </div>
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-text">Nombre del proyecto</span>
           <input
