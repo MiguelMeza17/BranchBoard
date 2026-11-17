@@ -71,8 +71,10 @@ pub fn url_proyectos_unity_cloud(id_organizacion: Option<&str>) -> String {
 
 /// Id numérico de la organización `org` según `cloudregions.conf` (#205): el
 /// cliente lo anota como `organization=<id>@cloud` en las máquinas que entraron
-/// por Unity ID. Si la organización está por nombre no hay forma de saberlo,
-/// salvo que el archivo tenga una sola línea numérica.
+/// por Unity ID. Si la organización está por nombre, se toma el id que está en
+/// el mismo `server` solo cuando ese servidor tiene exactamente un nombre y un
+/// id (el cliente anota la misma organización de las dos formas). Si no está,
+/// vale el único id del archivo.
 pub fn id_organizacion(org: &str) -> Option<String> {
     let ruta = ruta_cloudregions()?;
     let texto = std::fs::read_to_string(ruta).ok()?;
@@ -90,13 +92,55 @@ fn interpretar_id_organizacion(texto: &str, org: &str) -> Option<String> {
         return Some(buscada);
     }
     if nombres.iter().any(|n| n.to_lowercase() == buscada) {
-        return None;
+        let lineas = interpretar_organizaciones_y_servidor(texto);
+        let servidor = lineas
+            .iter()
+            .find(|(n, _)| n.to_lowercase() == buscada)
+            .map(|(_, s)| s.clone())?;
+        let mismo: Vec<&String> = lineas
+            .iter()
+            .filter(|(_, s)| !s.is_empty() && s.eq_ignore_ascii_case(&servidor))
+            .map(|(n, _)| n)
+            .collect();
+        let mut ids = mismo.iter().filter(|n| es_id(n));
+        let nombres_en_servidor = mismo.iter().filter(|n| !es_id(n)).count();
+        return match (ids.next(), ids.next(), nombres_en_servidor) {
+            (Some(unico), None, 1) => Some((*unico).clone()),
+            _ => None,
+        };
     }
     let mut ids = nombres.iter().filter(|n| es_id(n));
     match (ids.next(), ids.next()) {
         (Some(unico), None) => Some(unico.clone()),
         _ => None,
     }
+}
+
+/// Pares `(organización, server)` de cada línea activa de `cloudregions.conf`,
+/// sin repetir organización (#205).
+fn interpretar_organizaciones_y_servidor(texto: &str) -> Vec<(String, String)> {
+    let mut pares: Vec<(String, String)> = Vec::new();
+    for linea in texto
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with("//") && !l.is_empty())
+    {
+        let mut org = None;
+        let mut servidor = String::new();
+        for par in linea.split_whitespace() {
+            match par.split_once('=') {
+                Some(("organization", valor)) => org = Some(nombre_organizacion(valor).to_string()),
+                Some(("server", valor)) => servidor = valor.to_string(),
+                _ => {}
+            }
+        }
+        if let Some(org) = org.filter(|o| !o.is_empty()) {
+            if !pares.iter().any(|(o, _)| o.eq_ignore_ascii_case(&org)) {
+                pares.push((org, servidor));
+            }
+        }
+    }
+    pares
 }
 
 fn armar_url_api(base: &str, org: &str) -> String {
@@ -284,7 +328,35 @@ organization=otra@cloud server=x:8787 version=2 encrypted=False webserver=http:/
         assert_eq!(
             interpretar_id_organizacion(EJEMPLO, "MiguelM17"),
             None,
-            "está por nombre: no se conoce el id"
+            "está por nombre y no hay id en su servidor: no se conoce"
+        );
+        let nombre_e_id = "organization=MiguelM17@cloud server=prd-eastus:8787 version=2
+organization=4673426565751@cloud server=prd-eastus:8787 version=2
+organization=otra@cloud server=europa:8787 version=2
+";
+        assert_eq!(
+            interpretar_id_organizacion(nombre_e_id, "MiguelM17@unity").as_deref(),
+            Some("4673426565751"),
+            "por nombre y por id en el mismo servidor: es la misma organización"
+        );
+        assert_eq!(
+            interpretar_id_organizacion(nombre_e_id, "otra"),
+            None,
+            "el id de otro servidor no se le asigna"
+        );
+        let ambiguo = "organization=MiguelM17@cloud server=s:1
+organization=111@cloud server=s:1
+organization=222@cloud server=s:1
+";
+        assert_eq!(interpretar_id_organizacion(ambiguo, "MiguelM17"), None);
+        let dos_nombres = "organization=MiguelM17@cloud server=s:1
+organization=otra@cloud server=s:1
+organization=111@cloud server=s:1
+";
+        assert_eq!(
+            interpretar_id_organizacion(dos_nombres, "MiguelM17"),
+            None,
+            "dos nombres y un id en el mismo servidor: no se sabe de cuál es"
         );
         let dos =
             "organization=1@cloud webserver=https://a\norganization=2@cloud webserver=https://b\n";
