@@ -203,6 +203,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const [errorNuevoProyecto, setErrorNuevoProyecto] = useState<string | null>(null);
   const [pendienteCompartida, setPendienteCompartida] = useState<{
     workspace: WorkspaceUnityVC;
+    proyecto: string;
     rol: Rol;
     email: string;
   } | null>(null);
@@ -607,11 +608,11 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                       rutaCompartidaNueva.trim(),
                       () => rutaCompartidaNueva.trim()
                     );
-                    const { workspace, rol, email } = pendienteCompartida;
-                    setCarpetaCompartida(workspace.nombre, guardada);
+                    const { workspace, proyecto, rol, email } = pendienteCompartida;
+                    setCarpetaCompartida(proyecto, guardada);
                     setEmail(email);
                     setRolActual(rol);
-                    entrarAProyecto(workspace.nombre);
+                    entrarAProyecto(proyecto, workspace.nombre);
                     showToast(`Proyecto ${workspace.nombre} listo — eres su ${rol}`);
                     setPendienteCompartida(null);
                     setRutaCompartidaNueva('');
@@ -679,16 +680,17 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                             ]);
                             const carpeta = await api.carpetaCompartida(() => null);
                             if (carpeta) {
-                              setCarpetaCompartida(res.workspace.nombre, carpeta);
+                              setCarpetaCompartida(res.entrada.proyecto, carpeta);
                               setEmail(res.entrada.email);
                               setRolActual(res.entrada.rol);
-                              entrarAProyecto(res.workspace.nombre);
+                              entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
                               showToast(`Proyecto ${res.workspace.nombre} configurado — eres su ${res.entrada.rol}`);
                               setNuevoProyecto(false);
                               setNombreNuevo('');
                             } else {
                               setPendienteCompartida({
                                 workspace: res.workspace,
+                                proyecto: res.entrada.proyecto,
                                 rol: res.entrada.rol,
                                 email: res.entrada.email,
                               });
@@ -803,10 +805,10 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                       if (res.entrada.estado === 'dentro') {
                         const carpeta = await api.carpetaCompartida(() => null);
                         if (carpeta) {
-                          setCarpetaCompartida(res.workspace.nombre, carpeta);
+                          setCarpetaCompartida(res.entrada.proyecto, carpeta);
                           setEmail(res.entrada.email);
                           setRolActual(res.entrada.rol);
-                          entrarAProyecto(res.workspace.nombre);
+                          entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
                           showToast(`Proyecto ${res.workspace.nombre} creado — eres su ${res.entrada.rol}`);
                           setNombreNuevo('');
                           setNuevoProyecto(false);
@@ -814,6 +816,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                           showToast(`Proyecto ${res.workspace.nombre} creado en Unity VC`);
                           setPendienteCompartida({
                             workspace: res.workspace,
+                            proyecto: res.entrada.proyecto,
                             rol: res.entrada.rol,
                             email: res.entrada.email,
                           });

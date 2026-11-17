@@ -952,9 +952,40 @@ Grupo/__DELETED__Sub|MiguelM17@unity
     #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_crear_y_traer_proyecto() {
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
+        let org = nombre_organizacion(&org);
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
         let spec = format!("{repo}@{org}@unity");
         let estado = AppState::default();
+
+        // Si esta prueba necesita crear un PAT, lo revoca incluso al fallar.
+        // El PAT que ya usa la app se conserva.
+        use crate::servidor::pat::{cuenta_llavero, Llavero, Pat};
+        struct LimpiarPatNuevo {
+            cuenta: String,
+            org: String,
+            id_previo: Option<String>,
+        }
+        impl Drop for LimpiarPatNuevo {
+            fn drop(&mut self) {
+                if let Ok(Some(valor)) = servidor::LlaveroSistema.leer(&self.cuenta) {
+                    if let Ok(pat) = serde_json::from_str::<Pat>(&valor) {
+                        if self.id_previo.as_deref() != Some(pat.id.as_str()) {
+                            servidor::pat::revocar_pat(&AppState::default(), &self.org, &pat.id);
+                            let _ = servidor::LlaveroSistema.borrar(&self.cuenta);
+                        }
+                    }
+                }
+            }
+        }
+        let cuenta = cuenta_llavero(&lectura::whoami(&estado).unwrap(), org);
+        let _limpiar_pat = LimpiarPatNuevo {
+            id_previo: servidor::LlaveroSistema
+                .leer(&cuenta)
+                .unwrap()
+                .map(|valor| serde_json::from_str::<Pat>(&valor).unwrap().id),
+            cuenta,
+            org: format!("{org}@unity"),
+        };
 
         // ── Parte A: traer proyecto local sin BranchBoard ──
         let datos_traer = tempfile::tempdir().unwrap();
@@ -987,9 +1018,10 @@ Grupo/__DELETED__Sub|MiguelM17@unity
             );
         }));
         estado.cerrar_proyecto();
-        let _ = Comando::cm()
+        Comando::cm()
             .args(["workspace", "delete", &clonado.ruta])
-            .ejecutar(&estado);
+            .exigir_exito(&estado)
+            .unwrap();
         if let Err(p) = res_traer {
             std::panic::resume_unwind(p);
         }
@@ -1007,7 +1039,7 @@ Grupo/__DELETED__Sub|MiguelM17@unity
             &nombre_nuevo,
             &destino_crear.path().to_string_lossy(),
             Some(proyecto_unity),
-            Some(&org),
+            Some(org),
         )
         .unwrap();
 
@@ -1040,12 +1072,14 @@ Grupo/__DELETED__Sub|MiguelM17@unity
         }));
 
         estado.cerrar_proyecto();
-        let _ = Comando::cm()
+        let limpieza_workspace = Comando::cm()
             .args(["workspace", "delete", &creado.workspace.ruta])
-            .ejecutar(&estado);
-        let _ = Comando::cm()
+            .exigir_exito(&estado);
+        let limpieza_repo = Comando::cm()
             .args(["repo", "rm", &format!("rep:{}", creado.workspace.repo)])
-            .ejecutar(&estado);
+            .exigir_exito(&estado);
+        limpieza_workspace.unwrap();
+        limpieza_repo.unwrap();
 
         if let Err(p) = res_crear {
             std::panic::resume_unwind(p);
