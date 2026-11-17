@@ -37,11 +37,16 @@ async function esperar(expression) {
 }
 try {
   await esperar('window.__TAURI_INTERNALS__');
+  await esperar(`document.getElementById('root')?.childElementCount>0&&performance.getEntriesByType('resource').some(e=>e.name.includes('/src/App.tsx'))`);
   await evaluar(`
     const recursos=performance.getEntriesByType('resource').map(e=>e.name);
-    const ruta=recursos.find(n=>n.includes('/@fs/')&&n.endsWith('/src/store/useStore.ts'))??'/src/store/useStore.ts';
+    const app=recursos.find(n=>n.includes('/src/App.tsx'));
+    const base=app.slice(0,app.indexOf('/src/App.tsx'));
+    const ruta=recursos.find(n=>n.startsWith(base+'/src/store/useStore.ts'));
+    if(!ruta)throw new Error('Falta el store usado por App');
     const {useStore}=await import(ruta);
-    const rutaApi=recursos.find(n=>n.includes('/@fs/')&&n.endsWith('/src/lib/api.ts'))??'/src/lib/api.ts';
+    const rutaApi=recursos.find(n=>n.startsWith(base+'/src/lib/api.ts'));
+    if(!rutaApi)throw new Error('Falta el cliente IPC usado por App');
     const {llamar}=await import(rutaApi);
     window.__prueba203={store:useStore,llamar,invoke:window.__TAURI_INTERNALS__.invoke};
     useStore.setState({cmInstalado:true,cmSesionActiva:true,accesoCompletado:false,sesionUnityVcCaducada:false});
@@ -50,6 +55,7 @@ try {
   const codigo = await evaluar(`try {await __prueba203.llamar('simular_caducidad',{segundoPlano:false},()=>null);} catch(e){return e.codigo;}`);
   assert.equal(codigo, 'sesion_unity_vc_caducada');
   await esperar(`document.body.textContent.includes('La sesión de Unity VC caducó')`);
+  await esperar(`__prueba203.store.getState().sesionUnityVcCaducada`);
   assert.deepEqual(await evaluar(`return await __prueba203.invoke('contadores');`), { inicios: 0, reconexiones: 0, identidad: false });
   console.log('OK Tauri: error IPC muestra aviso sin abrir SSO');
   await evaluar(`const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Reconectar');if(!b||b.disabled)throw new Error('Reconectar no disponible');b.click();`);
