@@ -22,6 +22,7 @@ pub mod comandos;
 pub mod db;
 pub mod diff;
 pub mod documentos;
+pub mod entrantes;
 pub mod error;
 pub mod estado;
 pub mod eventos;
@@ -102,6 +103,8 @@ pub fn run() {
             comandos::diff::diff_rama,
             comandos::diff::diff_changeset,
             comandos::diff::diff_archivo,
+            entrantes::cambios_entrantes,
+            entrantes::unir_cambios_entrantes,
             sistema::hay_operacion_en_curso,
             sistema::elegir_carpeta,
             comandos_warp::estado_warp,

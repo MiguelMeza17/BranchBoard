@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { entrantesDe, estadoEntrante, useStore } from '../store/useStore';
+import { estadoEntrante, useStore } from '../store/useStore';
+import { useEntrantes } from '../lib/useEntrantes';
 import { coincidePalabra, esTareaEnEspera, estadoMeta, palabraCambios, ramaDeTarea } from '../lib/ui';
 import { Modal } from './Modal';
 import { EditarTareaModal } from './EditarTareaModal';
@@ -288,10 +289,12 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
   // Lo elegido: toda una tarea ("Traer todo") o un solo commit de ella ("Traer este").
   // entrante = incoming change de una subtarea ya mergeada a esta rama (no es un préstamo).
   const [eleccion, setEleccion] = useState<{ tarea: Tarea; hash?: string; entrante?: boolean } | null>(null);
-  const recibirEntrante = useStore((s) => s.recibirEntrante);
-  const recibidos = useStore((s) => s.entrantesRecibidos);
-  const entrantes = useMemo(() => entrantesDe(tareas, recibidos, tarea.id), [tareas, recibidos, tarea.id]);
-  const elegida = eleccion?.tarea ?? null;
+  // Incoming changes (#110): se unen todos juntos (`cm update .`), no uno por subtarea.
+  const entrantesRama = useEntrantes(tarea);
+  const entrantes = entrantesRama.subtareas;
+  const totalEntrantes = entrantes.length + entrantesRama.otros;
+  // Unir los incoming changes no es traer otra tarea: no aplican las alertas de revisión/producción.
+  const elegida = eleccion && !eleccion.entrante ? eleccion.tarea : null;
   const [desplegada, setDesplegada] = useState<string | null>(null);
   // Traer cambios es delicado: hay que escribir "traer" para confirmar.
   const [frase, setFrase] = useState('');
@@ -432,7 +435,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
             disabled={!eleccion || !fraseOk}
             onClick={() => {
               if (!eleccion) return;
-              if (eleccion.entrante) recibirEntrante(tarea.id, eleccion.tarea.id);
+              if (eleccion.entrante) void entrantesRama.unir();
               else traerCambios(tarea.id, rama, eleccion.tarea.id, eleccion.hash);
               onClose();
             }}
@@ -440,7 +443,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
             {!eleccion
               ? 'Elige qué traer'
               : eleccion.entrante
-                ? `Unir los cambios de ${eleccion.tarea.id}`
+                ? `Unir todos los cambios entrantes (${totalEntrantes})`
                 : eleccion.hash
                 ? `Traer commit ${eleccion.hash} de ${eleccion.tarea.id}`
                 : `Traer todo de ${eleccion.tarea.id}`}
@@ -481,7 +484,7 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
       <div className="max-h-[380px] space-y-3 overflow-y-auto">
         {/* Primero, en azul: incoming changes, lo que ya le llegó a ESTA rama (subtareas terminadas y
             mergeadas aquí) y todavía no está en el workspace. Recibirlo es opcional. */}
-        {entrantes.length > 0 && (
+        {entrantesRama.enRama && totalEntrantes > 0 && (
           <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-2.5">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-sky-300">
               ⇣ Incoming changes — llegaron a esta rama
@@ -489,19 +492,18 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
             <p className="mb-2 text-[11px] text-sky-200/80">
               Son de subtareas de {tarea.id} cuyos cambios ya están en <span className="font-mono">{rama}</span>,
               pero tu workspace todavía no los tiene. Ya son de esta rama: no es un préstamo y no hay que devolverlos.
-              Unirlos es opcional.
+              Unirlos es opcional y se unen <b>todos juntos</b>: Unity VC no permite unir una subtarea sola.
             </p>
             <div className="space-y-1.5">
               {[...entrantes]
                 .sort((a, b) => Number(a.estado !== 'terminada') - Number(b.estado !== 'terminada'))
                 .map((h) => {
                 const n = commits.filter((c) => c.tarea_id === h.id).length;
-                const elegido = !!eleccion?.entrante && eleccion.tarea.id === h.id;
                 return (
                   <div
                     key={h.id}
                     className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${
-                      elegido ? 'border-sky-400 bg-sky-500/20' : 'border-sky-500/30 bg-surface-2'
+                      eleccion?.entrante ? 'border-sky-400 bg-sky-500/20' : 'border-sky-500/30 bg-surface-2'
                     }`}
                   >
                     <span className="shrink-0 font-mono font-semibold text-sky-300">{h.id}</span>
@@ -513,18 +515,27 @@ function TraerCambiosModal({ tarea, rama, onClose }: { tarea: Tarea; rama: strin
                         desde <span className="font-mono">{h.rama_asociada}</span>
                       </span>
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setEleccion({ tarea: h, entrante: true })}
-                      className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] transition ${
-                        elegido ? 'border-sky-400 bg-sky-500 text-white' : 'border-sky-500/40 text-sky-200 hover:border-sky-400'
-                      }`}
-                    >
-                      Unir cambios
-                    </button>
                   </div>
                 );
               })}
+              {entrantesRama.otros > 0 && (
+                <div className="rounded-lg border border-sky-500/20 px-3 py-1.5 text-[11px] text-muted">
+                  + {entrantesRama.otros === 1 ? '1 changeset' : `${entrantesRama.otros} changesets`} que no viene
+                  {entrantesRama.otros === 1 ? '' : 'n'} de una subtarea de BranchBoard. También llega
+                  {entrantesRama.otros === 1 ? '' : 'n'} al unir.
+                </div>
+              )}
+            </div>
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setEleccion({ tarea, entrante: true })}
+                className={`rounded-md border px-2.5 py-1 text-[11px] transition ${
+                  eleccion?.entrante ? 'border-sky-400 bg-sky-500 text-white' : 'border-sky-500/40 text-sky-200 hover:border-sky-400'
+                }`}
+              >
+                ⇣ Unir todo ({totalEntrantes})
+              </button>
             </div>
           </div>
         )}
