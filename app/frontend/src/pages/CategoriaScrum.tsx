@@ -16,6 +16,7 @@ import { type EstadoTarea, type Tarea, type TipoTarea } from '../types';
 import { estadoMeta, tipoMeta } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { TaskCard } from '../components/TaskCard';
+import { esTareaRoja } from '../components/CambiosDirectos';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
@@ -356,7 +357,7 @@ export function CategoriaScrum() {
                               <Icono nombre="mano" className="h-3.5 w-3.5" sinColor /> Tomar tarea
                             </button>
                           )}
-                          {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && (
+                          {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && !esTareaRoja(t) && (
                             <button
                               className="btn-primary btn-sm"
                               onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}

@@ -120,6 +120,32 @@ export interface Tarea {
   reaperturas?: number;
   // UI-only: edición pendiente (sombra amarilla) — derivada de ediciones_pendientes
   edicion_pendiente: boolean;
+  // Tarea roja (#225): la crea BranchBoard al ver check-ins hechos directamente en main o dev desde
+  // fuera de la app. Sigue en rojo hasta que un Líder/Administrador traslada esos cambios a su rama.
+  cambios_directos?: CambiosDirectos | null;
+}
+
+/** Un check-in hecho directamente en `/main` o `/main/dev` (#225). */
+export interface ChangesetDirecto {
+  changeset: number;
+  padre: number | null;
+  autor: string;
+  /** UTC, como la da Unity VC (`2026-11-12T17:20:04Z`). */
+  fecha: string;
+  comentario: string | null;
+  archivos: string[];
+}
+
+/** Datos de una tarea roja (#225). `trasladado_en` vacío = sigue en rojo. */
+export interface CambiosDirectos {
+  /** `/main` o `/main/dev`. */
+  rama: string;
+  detectado: string;
+  changesets: ChangesetDirecto[];
+  rama_traslado: string | null;
+  changesets_reversion: number[];
+  trasladado_en: string | null;
+  trasladado_por: string | null;
 }
 
 // Un checkin sobre la rama de una tarea genera un commit — una rama acumula

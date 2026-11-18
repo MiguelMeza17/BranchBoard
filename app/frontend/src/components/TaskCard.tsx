@@ -4,6 +4,7 @@ import { TipoBadge, Avatar } from './primitives';
 import { tipoMeta, estadoMeta } from '../lib/ui';
 import { LIMITE_REAPERTURAS, useStore } from '../store/useStore';
 import { Icono } from './Icono';
+import { esTareaRoja, ramaCorta } from './CambiosDirectos';
 
 /** "Sin asignar" es el recorte visual de 'por hacer' sin dueño, igual que la columna del tablero. */
 export type EstadoVisual = 'sin asignar' | EstadoTarea;
@@ -43,7 +44,9 @@ export function TaskCard({
   ocultarResponsable,
 }: Props) {
   const navigate = useNavigate();
-  const accent = tipoMeta[tarea.tipo].color;
+  // Tarea roja (#225): check-ins directos en main/dev que todavía no se trasladaron a su rama.
+  const roja = esTareaRoja(tarea);
+  const accent = roja ? '#ef4444' : tipoMeta[tarea.tipo].color;
   const tiposHijas = childCount > 0 ? tipoResumen ?? [] : [];
   const estado = estadoMeta[tarea.estado];
   // Pending changes de su rama (En espera: la de su padre). Se ve en la tarjeta sin abrirla.
@@ -56,8 +59,13 @@ export function TaskCard({
   return (
     <div
       className={`group relative cursor-grab rounded-xl border bg-surface-2 shadow-card transition-all duration-200 active:cursor-grabbing hover:border-border-strong hover:shadow-pop ${
-        tarea.edicion_pendiente ? 'border-warn/70 shadow-edit-pending' : 'border-border'
+        roja
+          ? 'border-red-500/80 bg-red-500/10 ring-1 ring-red-500/40'
+          : tarea.edicion_pendiente
+            ? 'border-warn/70 shadow-edit-pending'
+            : 'border-border'
       } ${childCount > 0 || onOpenDetalle ? 'cursor-pointer' : ''}`}
+      data-tarea-roja={roja ? tarea.id : undefined}
       onClick={(e) => {
         // Con subtareas: el click abre su Scrum interno (carpeta), como siempre.
         if (childCount > 0) {
@@ -94,6 +102,15 @@ export function TaskCard({
           <div className="min-w-0 flex-1">
             <div className="mb-1.5 flex flex-wrap items-center gap-1.5" onClick={childCount > 0 ? (e) => e.stopPropagation() : undefined}>
               <span className="font-mono text-[11px] text-faint">{tarea.id}</span>
+              {roja && tarea.cambios_directos && (
+                <span
+                  className="chip border border-red-500/50 bg-red-500/20 font-semibold text-red-300"
+                  title={`Check-ins directos en ${tarea.cambios_directos.rama}`}
+                >
+                  ⚠ En {ramaCorta(tarea.cambios_directos.rama)} ·{' '}
+                  {tarea.cambios_directos.changesets.map((c) => `cs:${c.changeset}`).join(', ')}
+                </span>
+              )}
               {tarea.pendiente_aprobacion && (
                 <button
                   className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300 transition hover:brightness-125"

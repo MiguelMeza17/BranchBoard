@@ -56,6 +56,59 @@ pub struct Tarea {
     /// No se guarda: `true` si la tarea tiene una fila en `ediciones_pendientes`.
     #[serde(default)]
     pub edicion_pendiente: bool,
+    /// No se guarda en `tareas`: la fila de `cambios_directos` si es una tarea roja
+    /// por check-ins directos en `/main` o `/main/dev` (#225).
+    #[serde(default)]
+    pub cambios_directos: Option<CambiosDirectos>,
+}
+
+/// Un check-in hecho directamente en `/main` o `/main/dev` (fuera de BranchBoard, #225).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangesetDirecto {
+    pub changeset: i64,
+    /// Changeset anterior en la misma rama (`parentChangesetId` de la API).
+    #[serde(default)]
+    pub padre: Option<i64>,
+    /// Correo de la cuenta de Unity que hizo el check-in.
+    pub autor: String,
+    /// Fecha en UTC, como la da la API (`2026-11-12T17:20:04Z`).
+    pub fecha: String,
+    #[serde(default)]
+    pub comentario: Option<String>,
+    #[serde(default)]
+    pub archivos: Vec<String>,
+}
+
+/// Datos de una tarea roja (#225): en qué rama están los cambios y si ya se
+/// trasladaron a la rama de la tarea y se revirtieron de ahí.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CambiosDirectos {
+    /// `/main` o `/main/dev`.
+    pub rama: String,
+    /// Hora ISO en que se detectó (la del evento): desempata dos detecciones a la vez.
+    pub detectado: String,
+    pub changesets: Vec<ChangesetDirecto>,
+    /// Rama a la que se trasladaron, `None` mientras sigan solo en `rama`.
+    #[serde(default)]
+    pub rama_traslado: Option<String>,
+    /// Changesets que los revirtieron en `rama` (merge sustractivo).
+    #[serde(default)]
+    pub changesets_reversion: Vec<i64>,
+    #[serde(default)]
+    pub trasladado_en: Option<String>,
+    #[serde(default)]
+    pub trasladado_por: Option<String>,
+}
+
+impl CambiosDirectos {
+    /// Sigue en rojo: los cambios todavía están solo en `main`/`dev`.
+    pub fn pendiente(&self) -> bool {
+        self.trasladado_en.is_none()
+    }
+
+    pub fn incluye(&self, changeset: i64) -> bool {
+        self.changesets.iter().any(|c| c.changeset == changeset)
+    }
 }
 
 impl Tarea {
@@ -92,6 +145,7 @@ impl Tarea {
             reaperturas: 0,
             actividad_desde: None,
             edicion_pendiente: false,
+            cambios_directos: None,
         }
     }
 }
@@ -195,15 +249,62 @@ fn de_fila(f: &Row<'_>) -> rusqlite::Result<Tarea> {
         reaperturas: f.get(27)?,
         actividad_desde: f.get(28)?,
         edicion_pendiente: f.get(29)?,
+        cambios_directos: match f.get::<_, Option<String>>(30)? {
+            Some(json) => Some(serde_json::from_str(&json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    30,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?),
+            None => None,
+        },
     })
 }
 
-/// `SELECT` de todas las columnas más `edicion_pendiente` calculada.
+/// `SELECT` de todas las columnas más `edicion_pendiente` y `cambios_directos` calculados.
 fn seleccion() -> String {
     let columnas = COLUMNAS.map(|c| format!("t.{c}")).join(", ");
     format!(
-        "SELECT {columnas}, EXISTS (SELECT 1 FROM ediciones_pendientes e WHERE e.tarea_id = t.id) FROM tareas t"
+        "SELECT {columnas}, EXISTS (SELECT 1 FROM ediciones_pendientes e WHERE e.tarea_id = t.id),
+            (SELECT json_object(
+                'rama', d.rama, 'detectado', d.detectado, 'changesets', json(d.changesets),
+                'rama_traslado', d.rama_traslado,
+                'changesets_reversion', json(d.changesets_reversion),
+                'trasladado_en', d.trasladado_en, 'trasladado_por', d.trasladado_por)
+             FROM cambios_directos d WHERE d.tarea_id = t.id)
+         FROM tareas t"
     )
+}
+
+/// Guarda (o reemplaza) la fila de `cambios_directos` de una tarea roja (#225).
+pub fn guardar_cambios_directos(
+    c: &Connection,
+    tarea_id: &str,
+    datos: &CambiosDirectos,
+) -> Resultado<()> {
+    let changesets = serde_json::to_string(&datos.changesets)
+        .map_err(|e| Error::Interno(format!("no se pudo guardar cambios_directos: {e}")))?;
+    let reversion = serde_json::to_string(&datos.changesets_reversion)
+        .map_err(|e| Error::Interno(format!("no se pudo guardar cambios_directos: {e}")))?;
+    c.execute(
+        "INSERT INTO cambios_directos (tarea_id, rama, detectado, changesets, rama_traslado,
+             changesets_reversion, trasladado_en, trasladado_por)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT (tarea_id) DO UPDATE SET rama = ?2, detectado = ?3, changesets = ?4,
+             rama_traslado = ?5, changesets_reversion = ?6, trasladado_en = ?7, trasladado_por = ?8",
+        rusqlite::params![
+            tarea_id,
+            datos.rama,
+            datos.detectado,
+            changesets,
+            datos.rama_traslado,
+            reversion,
+            datos.trasladado_en,
+            datos.trasladado_por
+        ],
+    )?;
+    Ok(())
 }
 
 fn exigir_titulo(t: &Tarea) -> Resultado<()> {

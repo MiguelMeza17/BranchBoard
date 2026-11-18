@@ -138,6 +138,7 @@ mod tests {
             owner: "Ana@VirusTF.dev".into(),
             date: "2026-11-12T17:20:04Z".into(),
             comment: comentario.map(String::from),
+            parent_changeset_id: None,
         }
     }
 

@@ -17,6 +17,7 @@ import { estadoMeta, tipoMeta } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea, tareaVisibleEnTableroPrincipal } from '../lib/permisos';
 import { perteneceA } from '../lib/planificacion';
 import { TaskCard, type EstadoVisual } from '../components/TaskCard';
+import { esTareaRoja } from '../components/CambiosDirectos';
 import { PageHeader, EstadoBadge, Avatar } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
@@ -462,7 +463,7 @@ export function ScrumBoard() {
           </button>
         )}
         {/* Líder/Admin: autorizar su propia tarea directamente */}
-        {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && (
+        {t.estado === 'en producción' && esDueno(t) && puedeAutorizarPropia && !esTareaRoja(t) && (
           <button
             className="btn-primary btn-sm"
             onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}

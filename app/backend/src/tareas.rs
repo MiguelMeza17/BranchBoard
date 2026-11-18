@@ -2459,6 +2459,14 @@ pub fn plan_de_autorizacion(
             tarea.id
         )));
     }
+    if let Some(ref cd) = tarea.cambios_directos {
+        if cd.pendiente() {
+            return Err(Error::Validacion(format!(
+                "Los cambios de {} siguen en {}: trasládalos a una rama antes de autorizar el merge",
+                tarea.id, cd.rama
+            )));
+        }
+    }
     exigir_revisor(c, autor.email, Some(autor.rol), &tarea)?;
 
     let es_suya = tarea.asignado_a.as_deref() == Some(normalizar_email(autor.email).as_str());
@@ -9728,6 +9736,236 @@ mod tests {
             assert!(!a2.exists());
             assert_eq!(std::fs::read_to_string(&propio).unwrap(), "propio v2");
             cambiar_estado_en(&env.estado_a, &destino.id, EstadoTarea::Terminada).unwrap();
+        });
+    }
+
+    /// #225: check-ins directos en `/main/dev` (como desde Plastic) → tarea roja,
+    /// sin duplicar, con los check-ins siguientes sumados; se replica en B; se
+    /// puede mandar a revisión pero no autorizar; el traslado la saca de rojo, deja
+    /// `dev` sin esos cambios y la rama de la tarea con ellos, y el merge
+    /// autorizado los devuelve a `dev` sin conflictos. Al final borra de `/main/dev`
+    /// todos los changesets que creó (y la rama de la tarea).
+    #[test]
+    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    fn entorno_real_cambios_directos() {
+        use crate::cm::Comando;
+        use crate::comandos::eventos::revisar_actualizaciones_en;
+        use crate::comandos::tareas::{autorizar_merge_en, cambiar_estado_en};
+        use crate::ramas::{self, RAMA_DEV, RAMA_MAIN};
+
+        correr_entorno_real("225", |env| {
+            let cabeza = |env: &EntornoRealPrueba, rama: &str| -> i64 {
+                let sal = Comando::cm()
+                    .args(["find", "changeset"])
+                    .arg(format!(
+                        "where branch='{rama}' on repository '{}'",
+                        env.repo_cm
+                    ))
+                    .args(["--format={changesetid}", "--nototal"])
+                    .exigir_exito(&env.estado_a)
+                    .unwrap();
+                sal.lines()
+                    .filter_map(|l| l.trim().parse::<i64>().ok())
+                    .max()
+                    .unwrap()
+            };
+            let leer = |env: &EntornoRealPrueba, archivo: &str| -> Option<String> {
+                Comando::cm()
+                    .args(["update", "."])
+                    .en(&env.ws_ruta)
+                    .exigir_exito(&env.estado_a)
+                    .unwrap();
+                std::fs::read_to_string(env.ws_ruta.join(archivo))
+                    .ok()
+                    .map(|t| t.replace("\r\n", "\n"))
+            };
+
+            // Changesets que la prueba deja en /main/dev, para borrarlos al final.
+            let mut en_dev: Vec<i64> = Vec::new();
+            let mut cs_merge: Option<i64> = None;
+            let mut rama_tarea: Option<String> = None;
+            let admin = env.admin_fila.email.clone();
+            let archivo = format!("directo-225-{}.txt", chrono::Local::now().format("%H%M%S"));
+
+            let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, RAMA_DEV).unwrap();
+                // La historia de dev anterior a configurar el proyecto no cuenta.
+                let r0 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+                assert!(r0.cambios_directos.is_empty(), "{:?}", r0.cambios_directos);
+
+                // 1) Check-in directo en /main/dev, como desde Plastic (sin pasar por la app).
+                env.commit_real(&archivo, "cambio directo\n", "checkin directo prueba 225");
+                let cs1 = cabeza(env, RAMA_DEV);
+                en_dev.push(cs1);
+                let r1 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+                assert_eq!(r1.cambios_directos.len(), 1, "debe crear la tarea roja");
+                let id = r1.cambios_directos[0].clone();
+                let roja = env
+                    .estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &id))
+                    .unwrap();
+                let cd = roja.cambios_directos.clone().unwrap();
+                assert!(cd.pendiente());
+                assert_eq!(cd.rama, RAMA_DEV);
+                assert_eq!(
+                    cd.changesets
+                        .iter()
+                        .map(|x| x.changeset)
+                        .collect::<Vec<_>>(),
+                    [cs1]
+                );
+                assert!(
+                    cd.changesets[0]
+                        .archivos
+                        .iter()
+                        .any(|a| a.ends_with(&archivo)),
+                    "{:?}",
+                    cd.changesets[0].archivos
+                );
+                assert_eq!(cd.changesets[0].autor, admin);
+                assert_eq!(roja.asignado_a.as_deref(), Some(admin.as_str()));
+                assert_eq!(roja.estado, EstadoTarea::EnProduccion);
+                assert!(roja.rama_asociada.is_none());
+
+                // Otra revisión no la duplica.
+                let r2 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+                assert!(r2.cambios_directos.is_empty());
+
+                // 2) Un segundo check-in directo se suma a la misma tarea roja.
+                env.commit_real(
+                    &archivo,
+                    "cambio directo\nsegunda linea\n",
+                    "segundo directo 225",
+                );
+                let cs2 = cabeza(env, RAMA_DEV);
+                en_dev.push(cs2);
+                let r3 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+                assert_eq!(r3.cambios_directos, std::slice::from_ref(&id));
+                let roja = env
+                    .estado_a
+                    .con_db(|db| db_tareas::obtener(db.conexion(), &id))
+                    .unwrap();
+                assert_eq!(
+                    roja.cambios_directos
+                        .as_ref()
+                        .unwrap()
+                        .changesets
+                        .iter()
+                        .map(|x| x.changeset)
+                        .collect::<Vec<_>>(),
+                    [cs1, cs2]
+                );
+
+                // 3) La máquina B la ve igual.
+                env.sincronizar_b();
+                let roja_b = db_tareas::obtener(env.db_b.conexion(), &id).unwrap();
+                assert_eq!(roja_b.cambios_directos, roja.cambios_directos);
+                assert_eq!(roja_b.asignado_a, roja.asignado_a);
+
+                // 4) Se puede mandar a revisión, pero no autorizar el merge.
+                cambiar_estado_en(&env.estado_a, &id, EstadoTarea::EnRevision).unwrap();
+                let err = autorizar_merge_en(&env.estado_a, &id).unwrap_err();
+                assert!(err.to_string().contains("trasládalos"), "{err}");
+
+                // 5) Trasladar: rama de la tarea con los cambios, dev sin ellos.
+                let t = crate::cambios_directos::trasladar_en(&env.estado_a, &id).unwrap();
+                let cd = t.cambios_directos.clone().unwrap();
+                let rama = cd.rama_traslado.clone().unwrap();
+                rama_tarea = Some(rama.clone());
+                env.registrar_rama(rama.clone());
+                en_dev.extend(cd.changesets_reversion.iter().rev());
+                assert!(!cd.pendiente());
+                assert_eq!(cd.changesets_reversion.len(), 2);
+                assert_eq!(cd.trasladado_por.as_deref(), Some(admin.as_str()));
+                assert_eq!(t.rama_asociada.as_deref(), Some(rama.as_str()));
+                assert!(rama.starts_with(&format!("{RAMA_DEV}/{id}-")), "{rama}");
+                let ws =
+                    crate::cm::lectura::rama_actual_workspace(&env.estado_a, &env.ws_ruta).unwrap();
+                assert_eq!(ws.rama, RAMA_DEV, "el workspace vuelve a donde estaba");
+                assert_eq!(leer(env, &archivo), None, "dev ya no tiene el archivo");
+                ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, &rama).unwrap();
+                assert_eq!(
+                    leer(env, &archivo).as_deref(),
+                    Some("cambio directo\nsegunda linea\n"),
+                    "la rama de la tarea tiene los dos check-ins"
+                );
+                ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, RAMA_DEV).unwrap();
+
+                // 6) La reversión no se toma como otro check-in directo.
+                let r4 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+                assert!(r4.cambios_directos.is_empty(), "{:?}", r4.cambios_directos);
+                let rojas = env
+                    .estado_a
+                    .con_db(|db| db_tareas::listar(db.conexion()))
+                    .unwrap()
+                    .into_iter()
+                    .filter(|t| t.cambios_directos.is_some())
+                    .count();
+                assert_eq!(rojas, 1);
+
+                // 7) B recibe el traslado.
+                env.sincronizar_b();
+                let t_b = db_tareas::obtener(env.db_b.conexion(), &id).unwrap();
+                assert_eq!(t_b.cambios_directos, t.cambios_directos);
+                assert_eq!(t_b.rama_asociada, t.rama_asociada);
+
+                // 8) Ya trasladada, el merge autorizado la devuelve a dev sin conflicto.
+                let aut = autorizar_merge_en(&env.estado_a, &id).unwrap();
+                assert!(aut.conflicto.is_none(), "{:?}", aut.conflicto);
+                cs_merge = Some(cabeza(env, RAMA_DEV));
+                assert_eq!(
+                    leer(env, &archivo).as_deref(),
+                    Some("cambio directo\nsegunda linea\n"),
+                    "dev recibe los cambios por el merge de la tarea"
+                );
+                let r5 = revisar_actualizaciones_en(&env.estado_a, None).unwrap();
+                assert!(
+                    r5.cambios_directos.is_empty(),
+                    "el merge no es un check-in directo"
+                );
+            }));
+
+            // Limpieza de /main/dev: el workspace sale de dev, se borra la cabeza (el
+            // merge de la tarea), la rama de la tarea y después la reversión y los
+            // check-ins directos, del más nuevo al más viejo.
+            let _ = ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, RAMA_MAIN);
+            en_dev.sort_unstable();
+            en_dev.dedup();
+            let borrar_cs = |cs: i64| {
+                let _ = Comando::cm()
+                    .args(["changeset", "delete", &format!("cs:{cs}@{}", env.repo_cm)])
+                    .ejecutar(&env.estado_a);
+            };
+            if let Some(cs) = cs_merge {
+                borrar_cs(cs);
+            }
+            if let Some(ref rama) = rama_tarea {
+                let _ = Comando::cm()
+                    .args(["branch", "delete", "--delete-changesets"])
+                    .arg(format!("br:{rama}@{}", env.repo_cm))
+                    .ejecutar(&env.estado_a);
+            }
+            for cs in en_dev.iter().rev() {
+                borrar_cs(*cs);
+            }
+            let quedan = Comando::cm()
+                .args(["find", "changeset"])
+                .arg(format!(
+                    "where branch='{RAMA_DEV}' on repository '{}'",
+                    env.repo_cm
+                ))
+                .args(["--format={changesetid}", "--nototal"])
+                .exigir_exito(&env.estado_a)
+                .unwrap_or_default();
+            let sobran: Vec<i64> = quedan
+                .lines()
+                .filter_map(|l| l.trim().parse::<i64>().ok())
+                .filter(|cs| en_dev.contains(cs) || Some(*cs) == cs_merge)
+                .collect();
+            if let Err(p) = resultado {
+                std::panic::resume_unwind(p);
+            }
+            assert!(sobran.is_empty(), "quedaron en /main/dev: {sobran:?}");
         });
     }
 

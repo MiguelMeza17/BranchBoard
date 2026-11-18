@@ -38,6 +38,21 @@ Explicaciones que el agente debería poder dar (salen de lo conversado al diseñ
 - **¿Por qué algunas líneas van punteadas y moviéndose?** Son las de tareas "En producción": alguien está trabajando en ellas ahora mismo.
 - **¿Por qué en los recuadros solo sale el número de la tarea?** Es corto, nunca se corta y su forma (`T-101` → `T-101-1`) ya dice quién es hija de quién. El nombre completo, el título y el estado salen al pasar el mouse.
 
+### Tarea roja (check-ins directos en `main` o `dev`, #225)
+
+Explicaciones que el agente debería poder dar (diseño en [FRONTEND.md](./FRONTEND.md#tarea-roja-check-ins-directos-en-main-o-dev-225) y [BACKEND.md](./BACKEND.md#tarea-roja-por-check-ins-directos-en-main-o-dev-issue-225)):
+
+- **¿Por qué apareció una tarea en rojo que nadie creó?** Alguien hizo check-in directo en `dev` (o en `main`) desde Plastic o `cm`, sin pasar por BranchBoard. Unity Cloud no deja bloquear esas ramas, así que BranchBoard no lo puede impedir, pero lo ve en el servidor y crea la tarea para que no se pierda. La etiqueta `⚠ En dev · cs:…` dice en qué rama y en qué check-ins están esos cambios.
+- **¿Por qué es un problema?** En `dev` solo debería entrar trabajo revisado, por el merge de una tarea. Un check-in directo se salta la revisión y queda mezclado con lo de todos.
+- **¿Qué hago con ella?** Es una tarea normal: se trabaja, se puede mandar a revisión. Lo que la saca de rojo es que un Líder o el Administrador pulse **"Trasladar a una rama"**: BranchBoard crea la rama de la tarea, le pasa esos cambios y los quita de `dev`. Desde ahí sigue el camino de siempre y los cambios vuelven a `dev` cuando se autorice su merge.
+- **¿Por qué no puedo autorizar el merge?** Porque los cambios todavía están solo en `dev`, no en la rama de la tarea: no habría nada que mergear. Primero hay que trasladarlos.
+- **¿Por qué solo Líder o Administrador?** Trasladar hace un check-in en `dev` (el que quita los cambios), y eso es lo único que BranchBoard deja hacer en `dev` fuera de un merge.
+- **Hice check-in en `dev` sin querer, ¿se perdió mi trabajo?** No. Sigue en la tarea roja y, al trasladarla, queda en su propia rama.
+
+### Alerta de cambios en una rama ajena (#111)
+
+- **¿Por qué me sale un aviso rojo arriba?** Tu workspace está en `main`, `dev` o en la rama de otra persona, y tienes cambios ahí (sin check-in, o un check-in tuyo reciente). No se borró nada: el aviso es para que te cambies a la rama de tu tarea antes de seguir. Si el cambio ya quedó en otra rama, se puede llevar a la tuya con "Mover cambios entre ramas".
+
 ### Usuarios
 
 Textos que estaban en pantalla y se quitaron:

@@ -390,6 +390,42 @@ export const tareas: Tarea[] = [
     pendiente_aprobacion: true,
   }),
 
+  // --- Tarea roja (#225): check-ins hechos directamente en /main/dev desde Plastic ---
+  t({
+    id: 'T-611',
+    titulo: 'Cambios directos en dev',
+    tipo: 'Corrección',
+    estado: 'en producción',
+    creado_por: LIDER,
+    asignado_a: DEV,
+    cambios_directos: {
+      rama: '/main/dev',
+      detectado: '2026-11-17T15:02:11.000Z',
+      changesets: [
+        {
+          changeset: 412,
+          padre: 411,
+          autor: DEV,
+          fecha: '2026-11-17T14:58:40Z',
+          comentario: 'arreglo rapido del menu',
+          archivos: ['/Assets/Scripts/UI/MenuPausa.cs', '/Assets/Prefabs/MenuPausa.prefab'],
+        },
+        {
+          changeset: 414,
+          padre: 413,
+          autor: DEV,
+          fecha: '2026-11-17T15:01:05Z',
+          comentario: null,
+          archivos: ['/Assets/Scripts/UI/MenuPausa.cs'],
+        },
+      ],
+      rama_traslado: null,
+      changesets_reversion: [],
+      trasladado_en: null,
+      trasladado_por: null,
+    },
+  }),
+
   // --- Tarea con edición pendiente (sombra amarilla) ---
   t({
     id: 'T-107',

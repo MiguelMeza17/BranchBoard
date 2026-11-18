@@ -4,6 +4,7 @@ import { PANTALLA_ANGOSTA, useMediaQuery } from '../lib/useMediaQuery';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { Toast } from './Toast';
+import { AlertaRamaAjena } from './AlertaRamaAjena';
 
 const CLAVE_SIDEBAR = 'branchboard.sidebarColapsado';
 
@@ -55,6 +56,7 @@ export function Layout() {
         <main className="flex-1 overflow-y-auto">
           {/* Con el menú contraído, el contenido gana el ancho que liberó el menú (240px). */}
           <div className={`mx-auto px-3 py-4 sm:px-6 sm:py-6 ${colapsado ? 'max-w-[1640px]' : 'max-w-[1400px]'}`}>
+            <AlertaRamaAjena />
             <Outlet />
           </div>
         </main>
