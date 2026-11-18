@@ -158,11 +158,14 @@ pub struct ResumenPolling {
     pub alerta_rama_ajena: Option<AlertaRamaAjena>,
     pub sprints_actualizados: Vec<String>,
     pub inactividad_notificada: Vec<String>,
+    /// Tareas rojas creadas o con check-ins directos nuevos en `/main` o `/main/dev` (#225).
+    pub cambios_directos: Vec<String>,
 }
 
 impl ResumenPolling {
     pub fn hubo_cambios(&self) -> bool {
-        self.rama_actual.is_some()
+        !self.cambios_directos.is_empty()
+            || self.rama_actual.is_some()
             || !self.tareas_modificadas.is_empty()
             || !self.tareas_cerradas.is_empty()
             || self.espera_creada.is_some()
@@ -463,6 +466,9 @@ pub fn revisar_actualizaciones_en(
 
         Ok(())
     })?;
+
+    // 4. Check-ins directos en `/main` y `/main/dev`, leídos del servidor (#225).
+    resumen.cambios_directos = crate::cambios_directos::revisar_en(estado, &yo.email)?;
 
     resumen.sprints_actualizados = crate::comandos::sprints::evaluar_cierres_en(estado, &yo.email)?;
     Ok(resumen)

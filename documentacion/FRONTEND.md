@@ -146,6 +146,19 @@ Antes de sincronizar o crear una subtarea, el backend valida que el workspace es
 - Botón **"Cambiar de rama y continuar"**: BranchBoard ejecuta el `cm switch` correcto y reintenta la acción original, sin que la persona tenga que hacerlo a mano
 - Botón "Cancelar": cierra el aviso sin hacer nada
 
+## Tarea roja: check-ins directos en `main` o `dev` (#225)
+
+**Implementado (2026-11-17).** Cuando alguien hace check-in directo en `/main` o `/main/dev` desde fuera de BranchBoard (Plastic, `cm`), el backend crea una tarea normal en rojo (ver [Tarea roja en BACKEND.md](./BACKEND.md#tarea-roja-por-check-ins-directos-en-main-o-dev-issue-225)). En la interfaz:
+
+- **Tarjeta** (`TaskCard`, en el Tablero Scrum, los tableros de categoría y la Lista de tareas): borde y fondo rojos, franja roja y una etiqueta `⚠ En dev · cs:418, cs:420` (o `En main`) junto al id. Va en la columna de su estado como cualquier otra (nace **en producción**, asignada a quien hizo el check-in si es del equipo). Mientras siga en rojo **no** muestra "Autorizar (merge a dev)", y si se intenta pasar a terminada se avisa que primero hay que trasladar los cambios. Se puede mandar a revisión.
+- **Detalles** (`DetalleTareaModal` → `CambiosDirectosSeccion`, arriba de todo): título `⚠ Cambios en /main/dev — trasladar a una rama y quitar de dev`, cada check-in con su `cs:`, autor, fecha, comentario y archivos, y el botón **"Trasladar a una rama"** (solo Líder y Administrador; mientras corre dice "Trasladando…"). Al terminar, la tarea deja de estar en rojo y la sección queda como registro: `Estaban en /main/dev`, "Trasladados a" (la rama nueva), "Por" (quién y cuándo) y "Revertidos en dev" (los changesets de la reversión).
+- La ventana de detalles muestra siempre la tarea actual del store, no la copia de cuando se abrió: el traslado (y cualquier otro cambio) se ve sin cerrarla.
+- **Mockup**: `T-611` en `fixtures.ts` es una tarea roja con dos check-ins en `/main/dev`; "Trasladar a una rama" la saca de rojo en memoria.
+
+## Alerta de cambios en una rama ajena (#111)
+
+**En pantalla desde #225 (2026-11-17).** El backend avisa con el evento `alerta-rama-ajena` cuando el workspace de esta persona tiene cambios (sin check-in o un check-in suyo reciente) en `main`, `dev` o la rama de otra persona. `AlertaRamaAjena` la muestra arriba del contenido de cualquier pantalla, en rojo, con el mensaje del backend, la rama y hasta 5 archivos (`+N` si hay más), y un botón "Cerrar". No deshace nada. La misma alerta cerrada no vuelve a salir aunque el polling la repita cada 15 s; si cambian los archivos o la rama, sale de nuevo.
+
 ## Confirmación al arrastrar tareas (drag & drop)
 
 En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dispara acciones reales sobre Unity Version Control (crear rama, mandar a revisión, mergear a `dev`). Por eso, ciertos arrastres piden confirmación antes de ejecutarse:

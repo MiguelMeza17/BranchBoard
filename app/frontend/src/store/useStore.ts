@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as ejemplo from '../data/fixtures';
-import { api, enTauri, ErrorBackend, mensajeDeError, type CambiosEntrantes, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type AlertaRamaAjena, type CambiosEntrantes, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
 import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
@@ -187,6 +187,10 @@ export function progresoDe(tareas: Tarea[], commits: { tarea_id: string }[], id:
   const afectadas = [id, ...descendientesDe(tareas, id)];
   return afectadas.filter((x) => commits.some((c) => c.tarea_id === x));
 }
+/** Alerta de rama ajena (#111) que la persona ya cerró: no se vuelve a mostrar igual. */
+let alertaRamaAjenaCerrada: string | null = null;
+const claveAlertaRamaAjena = (a: AlertaRamaAjena) => `${a.rama_actual}|${a.archivos.join(',')}`;
+
 function tieneProgreso(s: { tareas: Tarea[]; commits: { tarea_id: string }[]; showToast: (m: string, tono?: 'ok' | 'info' | 'danger') => void }, id: string): boolean {
   const conCommits = progresoDe(s.tareas, s.commits, id);
   if (!conCommits.length) return false;
@@ -497,6 +501,16 @@ interface State {
   /** "Resolver en Unity VC" (#207): `true` si se abrió Unity VC en la rama destino. */
   resolverConflictoEnUnityVc: () => Promise<boolean>;
   autorizarMerge: (id: string) => Promise<void>;
+  /**
+   * Tarea roja (#225), solo Líder/Administrador: pasa los check-ins directos de `main`/`dev` a la rama
+   * de la tarea y los revierte de ahí. `true` si se trasladaron.
+   */
+  trasladarCambiosDirectos: (id: string) => Promise<boolean>;
+  trasladandoCambiosDirectos: boolean;
+  /** Alerta de #111 (cambios en `main`, `dev` o la rama de otra persona en tu workspace). */
+  alertaRamaAjena: AlertaRamaAjena | null;
+  mostrarAlertaRamaAjena: (alerta: AlertaRamaAjena) => void;
+  cerrarAlertaRamaAjena: () => void;
   /** "terminada" -> "en revisión" con motivo obligatorio; respeta LIMITE_REAPERTURAS. */
   reabrirTarea: (id: string, motivo: string) => void;
   rechazarRevision: (id: string, motivo: string) => Promise<boolean>;
@@ -635,7 +649,8 @@ export const useStore = create<State>((set, get) => {
       resumen.tareas_cerradas.length > 0 ||
       !!resumen.espera_creada ||
       !!resumen.espera_quitada ||
-      (resumen.tocados_detectados?.length ?? 0) > 0;
+      (resumen.tocados_detectados?.length ?? 0) > 0 ||
+      (resumen.cambios_directos?.length ?? 0) > 0;
     if (hayCambiosDatos) {
       await get().cargarCommits();
       await get().cargarTareas();
@@ -1192,6 +1207,15 @@ export const useStore = create<State>((set, get) => {
     // los roles. Cuenta los de la tarea y los de sus subtareas (un check-in trabaja sobre la rama
     // del padre).
     const tareas = get().tareas;
+    // Tarea roja (#225): a revisión puede ir; al merge no hasta trasladar sus cambios.
+    const directos = tareas.find((t) => t.id === id)?.cambios_directos;
+    if (estado === 'terminada' && directos && !directos.trasladado_en) {
+      get().showToast(
+        `Los cambios de ${id} siguen en ${directos.rama}: trasládalos a una rama antes de autorizar el merge`,
+        'danger'
+      );
+      return false;
+    }
     const ids = new Set([id]);
     for (let creció = true; creció; ) {
       creció = false;
@@ -1797,6 +1821,56 @@ export const useStore = create<State>((set, get) => {
       get().showToast(mensajeDeError(e), 'danger');
       return false;
     }
+  },
+  trasladandoCambiosDirectos: false,
+  trasladarCambiosDirectos: async (id) => {
+    if (get().trasladandoCambiosDirectos) return false;
+    const s = get();
+    const tarea = s.tareas.find((t) => t.id === id);
+    const directos = tarea?.cambios_directos;
+    if (!tarea || !directos || directos.trasladado_en) return false;
+    if (!esLiderOAdmin(s.currentUser().rol)) {
+      s.showToast('Solo un Líder o el Administrador puede trasladar estos cambios', 'danger');
+      return false;
+    }
+    set({ trasladandoCambiosDirectos: true });
+    try {
+      const rama = `/main/dev/${tarea.id}-cambios-directos-en-${directos.rama === '/main' ? 'main' : 'dev'}`;
+      const actualizada = await api.trasladarCambiosDirectos(id, () => ({
+        ...tarea,
+        rama_asociada: rama,
+        modo_trabajo: 'rama',
+        cambios_directos: {
+          ...directos,
+          rama_traslado: rama,
+          changesets_reversion: directos.changesets.map((_, i) => 900 + i).reverse(),
+          trasladado_en: new Date().toISOString(),
+          trasladado_por: s.currentEmail,
+        },
+      }));
+      set((st) => ({ tareas: st.tareas.map((t) => (t.id === id ? actualizada : t)) }));
+      get().showToast(`Cambios trasladados a ${actualizada.rama_asociada ?? 'su rama'}`, 'ok');
+      get().subirVersionDatos();
+      return true;
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+      return false;
+    } finally {
+      set({ trasladandoCambiosDirectos: false });
+    }
+  },
+  alertaRamaAjena: null,
+  mostrarAlertaRamaAjena: (alerta) => {
+    // El polling la repite cada 15 s mientras dure: solo se muestra si es otra y no se cerró ya.
+    const clave = claveAlertaRamaAjena(alerta);
+    const actual = get().alertaRamaAjena;
+    if (clave === alertaRamaAjenaCerrada || (actual && claveAlertaRamaAjena(actual) === clave)) return;
+    set({ alertaRamaAjena: alerta });
+  },
+  cerrarAlertaRamaAjena: () => {
+    const actual = get().alertaRamaAjena;
+    if (actual) alertaRamaAjenaCerrada = claveAlertaRamaAjena(actual);
+    set({ alertaRamaAjena: null });
   },
   autorizarMerge: async (id) => {
     if (enTauri()) {

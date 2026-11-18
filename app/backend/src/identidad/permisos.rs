@@ -108,6 +108,8 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("traer_cambios", Acceso::Roles(TODOS)),
     ("devolver_cambios_prestados", Acceso::Roles(TODOS)),
     ("eliminar_cambios_ajenos", Acceso::Roles(TODOS)),
+    // Tarea roja por check-ins directos en main/dev (#225): solo Líder o Administrador.
+    ("trasladar_cambios_directos", Acceso::Roles(LIDER_O_ADMIN)),
     ("volver_a_dev", Acceso::Roles(TODOS)),
     // Revisión (issue #107). `autorizar_merge` y `rechazar_revision` los puede usar
     // también quien tiene a cargo la tarea padre de una subtarea; `tareas` lo revisa.

@@ -301,6 +301,13 @@ pub fn aplicar_evento(
                 Err(e) => Err(e),
             }
         }
+        None if crate::cambios_directos::TIPOS.contains(&evento.tipo.as_str()) => {
+            match crate::cambios_directos::aplicar_evento(c, publica_admin, evento) {
+                Ok(()) => Ok(Aplicacion::Aplicado),
+                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+                Err(e) => Err(e),
+            }
+        }
         None if tareas::TIPOS.contains(&evento.tipo.as_str()) => {
             match tareas::aplicar_evento(c, publica_admin, evento) {
                 Ok(()) => Ok(Aplicacion::Aplicado),

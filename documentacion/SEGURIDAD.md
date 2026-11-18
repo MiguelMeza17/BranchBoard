@@ -107,6 +107,7 @@
 | Ver "Papelera" | ✅ | ✅ | 👁️ solo lectura | 👁️ solo lectura |
 | Eliminar definitivamente desde "Papelera" | ✅ | ✅ | ❌ | ❌ |
 | Mover cambios entre ramas propias | ✅ | ✅ | ✅ | ✅ |
+| "Trasladar a una rama" en una tarea roja (#225): pasa a la rama de la tarea los check-ins hechos directamente en `main`/`dev` y los revierte ahí. Es la **única excepción** a "nunca check-in a `main`/`dev`" y solo sirve para esa reversión | ✅ | ✅ | ❌ | ❌ |
 | Mover cambios entre ramas de dos personas distintas | ✅ (exclusivo de Líder/Admin) | ✅ (exclusivo de Líder/Admin) | ❌ | ❌ |
 
 ### Usuarios semilla (equipo VirusTF)
@@ -134,6 +135,7 @@ Para que alguien pueda usar BranchBoard en un proyecto, además de crearlo en [U
 
 - **Mínimo privilegio**: como la API REST se llama con el [PAT de cada persona](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12), lo que puede hacer en el servidor lo limita su grupo de Unity, no BranchBoard. Por eso nadie fuera del Administrador va en `-admin` salvo decisión explícita: `-admin` permite borrar el repo y cambiar permisos aunque BranchBoard no lo ofrezca.
 - **`-rw` permite mergear a `dev`** (tiene `ci` y `mergefrom`): la regla "solo Líder/Administrador autorizan el merge a `dev`" sigue siendo de la app, no de Unity (ver [Protección de ramas en BACKEND.md](./BACKEND.md#protección-de-ramas-main-y-dev)).
+- **Los permisos de BranchBoard y los de UVCS son independientes** (decidido 2026-11-17, #204): Unity Cloud no tiene permisos por rama en el Dashboard y no se usa `cm acl` por rama, así que cualquiera en `-rw` puede hacer check-in directo en `main` o `dev` desde Plastic. BranchBoard no lo impide: lo detecta en el servidor y lo convierte en una [tarea roja](./BACKEND.md#tarea-roja-por-check-ins-directos-en-main-o-dev-issue-225) que un Líder o el Administrador traslada a su rama (#225). Para esa reversión quien traslada necesita `ci` en `dev`, que `-rw` y `-admin` tienen.
 - **Rol en la organización**: no dar **Propietario** a nadie más; puede tocar la facturación y borrar la organización completa (todos sus proyectos). Para alguien que ayude a administrar, **Manager**.
 - **Administrador de BranchBoard es uno solo**: es el dueño del repositorio ([Identidad](./BACKEND.md#identidad-de-usuario)) y `cambiar_rol` no asigna Administrador. Alguien con todos los permisos en Unity (`-admin`) puede ser, como mucho, **Líder** en BranchBoard.
 - Los nombres exactos de los roles de proyecto en el Dashboard (cuál cae en `-admin`/`-rw`/`-ro`) se confirman al invitar al primer miembro; esta tabla está en términos de los grupos, que es lo que se verificó.

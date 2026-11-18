@@ -1,13 +1,18 @@
 import { Modal } from './Modal';
 import { AccionesRama, CambiosTraidos, RamaDeLaTarea } from './AccionesRama';
 import { CambiosEntrantes, CheckinsDeLaRama, PendingChanges } from './CheckinsDeLaRama';
+import { CambiosDirectosSeccion } from './CambiosDirectos';
 import { estadoMeta } from '../lib/ui';
+import { useStore } from '../store/useStore';
 import type { Tarea } from '../types';
 
 // Ventana de detalles de una tarea: la misma en el Tablero Scrum, el tablero de categoría y la Lista
 // de tareas. Arriba su rama y las secciones de la rama; al pie, los botones de la rama
 // (Abrir en Unity, Traer cambios, Editar).
-export function DetalleTareaModal({ tarea, onClose }: { tarea: Tarea | null; onClose: () => void }) {
+export function DetalleTareaModal({ tarea: abierta, onClose }: { tarea: Tarea | null; onClose: () => void }) {
+  // Quien la abre pasa la tarea de ese momento: se muestra la del store para ver los cambios mientras está
+  // abierta (ej. "Trasladar a una rama" de una tarea roja, #225).
+  const tarea = useStore((s) => (abierta ? s.tareas.find((t) => t.id === abierta.id) : undefined)) ?? abierta;
   return (
     <Modal
       open={!!tarea}
@@ -19,6 +24,7 @@ export function DetalleTareaModal({ tarea, onClose }: { tarea: Tarea | null; onC
     >
       {tarea && (
         <div className="space-y-4 text-sm">
+          <CambiosDirectosSeccion tarea={tarea} />
           <RamaDeLaTarea tarea={tarea} />
           <PendingChanges tarea={tarea} />
           <CambiosEntrantes tarea={tarea} />

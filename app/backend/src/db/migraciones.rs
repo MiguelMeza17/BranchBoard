@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 9;
+pub const VERSION_ESQUEMA: u32 = 10;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -214,6 +214,25 @@ fn migraciones() -> Vec<String> {
         "ALTER TABLE cambios_prestados ADD COLUMN changeset_limpio INTEGER;".to_string(),
         // 9 — marca de última activación/reanudación de trabajo en la tarea (#117).
         "ALTER TABLE tareas ADD COLUMN actividad_desde TEXT;".to_string(),
+        // 10 — tarea roja por check-ins directos en `/main` o `/main/dev` (#225).
+        // `cambios_directos` viaja por `ops/`; `changesets_revisados` es local: los
+        // changesets de esas ramas que ya se vio que son destino de un merge.
+        "CREATE TABLE cambios_directos (
+            tarea_id             TEXT PRIMARY KEY REFERENCES tareas (id) ON DELETE CASCADE,
+            rama                 TEXT NOT NULL,
+            detectado            TEXT NOT NULL,
+            changesets           TEXT NOT NULL,
+            rama_traslado        TEXT,
+            changesets_reversion TEXT NOT NULL DEFAULT '[]',
+            trasladado_en        TEXT,
+            trasladado_por       TEXT
+        ) STRICT;
+        CREATE TABLE changesets_revisados (
+            rama      TEXT NOT NULL,
+            changeset INTEGER NOT NULL,
+            PRIMARY KEY (rama, changeset)
+        ) STRICT;"
+            .to_string(),
     ]
 }
 

@@ -235,6 +235,10 @@ pub fn importar_estado(c: &Connection, estado: &EstadoSnapshot) -> Resultado<()>
     }
     for t in &estado.tareas {
         tareas::insertar(c, t)?;
+        // La tarea roja (#225) viaja dentro de la tarea; su fila va aparte.
+        if let Some(ref cd) = t.cambios_directos {
+            tareas::guardar_cambios_directos(c, &t.id, cd)?;
+        }
     }
     for e in &estado.ediciones_pendientes {
         ediciones::guardar_o_sumar(c, e)?;

@@ -47,6 +47,9 @@ pub struct Changeset {
     pub date: String,
     #[serde(default)]
     pub comment: Option<String>,
+    /// Changeset anterior (de la misma rama o, en el primero, del que nació la rama).
+    #[serde(rename = "parentChangesetId", default)]
+    pub parent_changeset_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -482,6 +485,7 @@ mod tests {
                 owner: "ana@virustf.dev".into(),
                 date: "2026-11-12T17:20:04Z".into(),
                 comment: Some("T-101: agrega LEEME.txt".into()),
+                parent_changeset_id: Some(0),
             }]
         );
     }

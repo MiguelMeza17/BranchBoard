@@ -1124,9 +1124,200 @@ fn parsear_rama_cerrada(salida: &str, rama_padre: &str) -> bool {
     })
 }
 
+/// Changesets de `rama` que son destino de un merge (de cualquier tipo: merge de
+/// una tarea, cherrypick o sustractivo), con `cm find merge … dstbranch` (#225).
+/// Probado 2026-11-17 en BranchBoard-Pruebas: en `/main/dev` devuelve los cs de los
+/// merges de las tareas y no el del check-in directo.
+pub fn destinos_de_merge(
+    estado: &AppState,
+    repo_cm: &str,
+    rama: &str,
+) -> Resultado<std::collections::BTreeSet<i64>> {
+    let rama = rama.trim().trim_end_matches('/');
+    let salida = Comando::cm()
+        .args(["find", "merge"])
+        .arg(format!(
+            "where dstbranch='br:{rama}' on repository '{repo_cm}'"
+        ))
+        .args(["--format={dstchangeset}", "--nototal"])
+        .exigir_exito(estado)?;
+    Ok(interpretar_destinos_merge(&salida))
+}
+
+fn interpretar_destinos_merge(salida: &str) -> std::collections::BTreeSet<i64> {
+    salida
+        .lines()
+        .filter_map(|l| l.trim().parse::<i64>().ok())
+        .collect()
+}
+
+/// Mueve los check-ins directos `changesets` de `rama_origen` (`/main` o
+/// `/main/dev`) a `rama_tarea` y los quita de `rama_origen` (#225). Devuelve los
+/// changesets de la reversión, del más nuevo al más viejo.
+///
+/// `rama_tarea` tiene que nacer **antes** del primer check-in directo (en `dev`,
+/// del padre del primero; en `main`, de la cabeza de `dev`): si nace después de
+/// revertirlos, `cm merge --cherrypicking` responde "No se han detectados merges"
+/// (probado 2026-11-17). Pasos, cada uno con su vista previa para no colgar `cm`:
+/// 1. En `rama_tarea`, `cm merge cs:<n> --cherrypicking --merge` + check-in por
+///    cada uno, del más viejo al más nuevo. Se salta si `ya_en_la_rama` (un
+///    traslado anterior se cortó después de este paso).
+/// 2. En `rama_origen`, `cm merge cs:<n> --subtractive --merge` + check-in por cada
+///    uno, del más nuevo al más viejo. **Única excepción** a
+///    [`validar_destino_checkin`]: solo para esta reversión, y el comando que la
+///    llama exige Líder o Administrador.
+/// 3. Vuelve el workspace a la rama en la que estaba.
+#[allow(clippy::too_many_arguments)]
+pub fn trasladar_cambios_workspace(
+    estado: &AppState,
+    workspace: &Path,
+    rama_origen: &str,
+    rama_tarea: &str,
+    changesets: &[i64],
+    ya_en_la_rama: bool,
+    comentario_traslado: &str,
+    comentario_reversion: &str,
+) -> Resultado<Vec<i64>> {
+    let rama_origen = rama_origen.trim().trim_end_matches('/');
+    if !(rama_origen.eq_ignore_ascii_case(RAMA_MAIN) || rama_origen.eq_ignore_ascii_case(RAMA_DEV))
+    {
+        return Err(Error::Validacion(format!(
+            "Solo se trasladan check-ins directos de {RAMA_MAIN} o {RAMA_DEV}, no de {rama_origen}"
+        )));
+    }
+    validar_destino_checkin(rama_tarea)?;
+    if changesets.is_empty() {
+        return Err(Error::Validacion("No hay changesets que trasladar".into()));
+    }
+    let mut orden: Vec<i64> = changesets.to_vec();
+    orden.sort_unstable();
+    orden.dedup();
+
+    let pendientes = cambios_pendientes(estado, workspace)?;
+    if !pendientes.is_empty() {
+        return Err(Error::Validacion(format!(
+            "Tienes {} cambio(s) sin check-in. Haz check-in o deshazlos antes de trasladar los cambios",
+            pendientes.len()
+        )));
+    }
+    let rama_inicial = rama_actual_workspace(estado, workspace)?.rama;
+
+    let resultado = (|| -> Resultado<Vec<i64>> {
+        if !ya_en_la_rama {
+            cambiar_a_rama(estado, workspace, rama_tarea)?;
+            for cs in &orden {
+                merge_y_checkin(
+                    estado,
+                    workspace,
+                    *cs,
+                    "--cherrypicking",
+                    &format!("{comentario_traslado} (cs:{cs})"),
+                )?;
+            }
+        }
+        cambiar_a_rama(estado, workspace, rama_origen)?;
+        let mut reversion = Vec::new();
+        for cs in orden.iter().rev() {
+            if let Some(nuevo) = merge_y_checkin(
+                estado,
+                workspace,
+                *cs,
+                "--subtractive",
+                &format!("{comentario_reversion} (revierte cs:{cs})"),
+            )? {
+                reversion.push(nuevo);
+            }
+        }
+        Ok(reversion)
+    })();
+
+    // Se intenta dejar el workspace donde estaba, también si algo falló.
+    if cambios_pendientes(estado, workspace)
+        .map(|p| p.is_empty())
+        .unwrap_or(false)
+    {
+        let _ = cambiar_a_rama(estado, workspace, &rama_inicial);
+    }
+    resultado
+}
+
+/// `cm merge cs:<cs> <tipo>` (cherrypick o sustractivo) en la rama actual del
+/// workspace, con vista previa primero, y check-in. `None` si no cambió nada.
+fn merge_y_checkin(
+    estado: &AppState,
+    workspace: &Path,
+    cs: i64,
+    tipo: &str,
+    comentario: &str,
+) -> Resultado<Option<i64>> {
+    let preview = Comando::cm()
+        .args(["merge", &format!("cs:{cs}"), tipo, "--machinereadable"])
+        .en(workspace)
+        .ejecutar(estado)?;
+    if tiene_conflicto_merge_preview(&preview.stdout)
+        || tiene_conflicto_merge_preview(&preview.stderr)
+    {
+        return Err(Error::Validacion(format!(
+            "Hay conflictos al trasladar cs:{cs}: resuélvelo en Unity VC y vuelve a intentarlo"
+        )));
+    }
+    if !preview.exito() {
+        let detalle = if preview.stderr.trim().is_empty() {
+            preview.stdout.trim().to_string()
+        } else {
+            preview.stderr.trim().to_string()
+        };
+        return Err(Error::Cm(detalle));
+    }
+    let deshacer = || {
+        let _ = Comando::cm()
+            .args(["undo", "-r", "."])
+            .en(workspace)
+            .ejecutar(estado);
+    };
+    if let Err(e) = Comando::cm()
+        .args([
+            "merge",
+            &format!("cs:{cs}"),
+            tipo,
+            "--merge",
+            "--nointeractiveresolution",
+        ])
+        .en(workspace)
+        .exigir_exito(estado)
+    {
+        deshacer();
+        return Err(e);
+    }
+    if cambios_pendientes(estado, workspace)?.is_empty() {
+        deshacer();
+        return Ok(None);
+    }
+    // Sin `validar_destino_checkin`: en el sustractivo la rama es `main`/`dev`
+    // (la excepción de #225, ver `trasladar_cambios_workspace`).
+    if let Err(e) = Comando::cm()
+        .args(["checkin", "--all", &format!("-c={comentario}")])
+        .en(workspace)
+        .exigir_exito(estado)
+    {
+        deshacer();
+        return Err(e);
+    }
+    Ok(rama_actual_workspace(estado, workspace)?.changeset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destinos_de_merge_desde_la_salida_de_cm() {
+        // Salida real de `cm find merge "where dstbranch='br:/main/dev' …"
+        // --format={dstchangeset} --nototal` en BranchBoard-Pruebas (2026-11-17).
+        let destinos = interpretar_destinos_merge("2\r\n5\n8\n\n");
+        assert_eq!(destinos.into_iter().collect::<Vec<_>>(), [2, 5, 8]);
+        assert!(interpretar_destinos_merge("").is_empty());
+    }
 
     #[test]
     fn nombre_de_la_rama() {

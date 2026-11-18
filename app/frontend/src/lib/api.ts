@@ -172,6 +172,8 @@ export interface ResumenPolling {
   alerta_rama_ajena?: AlertaRamaAjena | null;
   sprints_actualizados?: string[];
   inactividad_notificada?: string[];
+  /** Tareas rojas creadas o con check-ins directos nuevos en `/main` o `/main/dev` (#225). */
+  cambios_directos?: string[];
 }
 
 /** Datos para `crear_tarea` (#95). */
@@ -698,6 +700,13 @@ export const api = {
       { prestamoId },
       mockup ?? (() => ({}) as CambioTraido),
     ),
+
+  /**
+   * Tarea roja (#225), solo Líder/Administrador: crea la rama de la tarea, le pasa los check-ins directos
+   * de `main`/`dev` (cherrypick) y los revierte de ahí. Devuelve la tarea ya fuera de rojo.
+   */
+  trasladarCambiosDirectos: (id: string, mockup: () => Tarea) =>
+    llamar<Tarea>('trasladar_cambios_directos', { id }, mockup),
 
   /** Restaura los archivos prestados que se modificaron y hace check-in automático (#109). */
   eliminarCambiosAjenos: (prestamoId: string, mockup?: () => CambioTraido) =>

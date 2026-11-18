@@ -15,11 +15,13 @@ export const INTERVALO_SINCRONIZACION_MS = 2 * 60 * 1000;
 export function useSincronizacionEventos(activo: boolean) {
   const subirVersionDatos = useStore((s) => s.subirVersionDatos);
   const aplicarResumenPolling = useStore((s) => s.aplicarResumenPolling);
+  const mostrarAlertaRamaAjena = useStore((s) => s.mostrarAlertaRamaAjena);
 
   useEffect(() => {
     if (!activo) return;
     let cancelado = false;
     let dejarUnity: (() => void) | undefined;
+    let dejarAlerta: (() => void) | undefined;
     const revisar = async () => {
       try {
         const resumen = await api.sincronizarEventos();
@@ -44,6 +46,18 @@ export function useSincronizacionEventos(activo: boolean) {
             dejarUnity = dejar;
           }
         });
+      // Cambios en main, dev o la rama de otra persona en este workspace (#111).
+      void api
+        .alAlertaRamaAjena((alerta) => {
+          if (!cancelado) mostrarAlertaRamaAjena(alerta);
+        })
+        .then((dejar) => {
+          if (cancelado) {
+            dejar();
+          } else {
+            dejarAlerta = dejar;
+          }
+        });
     }
 
     void revisar();
@@ -53,9 +67,10 @@ export function useSincronizacionEventos(activo: boolean) {
     return () => {
       cancelado = true;
       dejarUnity?.();
+      dejarAlerta?.();
       window.clearInterval(temporizador);
       window.removeEventListener('focus', alVolver);
       document.removeEventListener('visibilitychange', alVolver);
     };
-  }, [activo, subirVersionDatos, aplicarResumenPolling]);
+  }, [activo, subirVersionDatos, aplicarResumenPolling, mostrarAlertaRamaAjena]);
 }

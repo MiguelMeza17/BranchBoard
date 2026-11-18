@@ -15,6 +15,7 @@
 //! - `estado` — estado compartido de la app.
 
 pub mod avance;
+pub mod cambios_directos;
 pub mod chat;
 pub mod checkins;
 pub mod cm;
@@ -175,6 +176,7 @@ pub fn run() {
             comandos_tareas::traer_cambios,
             comandos_tareas::devolver_cambios_prestados,
             comandos_tareas::eliminar_cambios_ajenos,
+            cambios_directos::trasladar_cambios_directos,
             comandos_tareas::volver_a_dev,
             comandos_tareas::asignar_revision,
             comandos_tareas::autorizar_merge,
