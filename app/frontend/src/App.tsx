@@ -30,6 +30,7 @@ export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
+  const modoSinUnityVc = useStore((s) => s.modoSinUnityVc);
   const showToast = useStore((s) => s.showToast);
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
   const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
@@ -77,7 +78,8 @@ export function App() {
   // interfaz de BranchBoard antes de iniciar sesión.
   const splash = showSplash && <SplashScreen onDone={() => setShowSplash(false)} />;
 
-  if (!cmSesionActiva) {
+  // "Continuar sin Unity VC" deja pasar sin sesión: los proyectos locales no la necesitan.
+  if (!cmSesionActiva && !modoSinUnityVc) {
     return (
       <>
         {splash}

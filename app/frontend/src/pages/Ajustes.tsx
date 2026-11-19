@@ -11,24 +11,69 @@ import { Seccion } from '../components/Seccion';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
 import { SelectorCarpeta } from '../components/SelectorCarpeta';
-import { api, mensajeDeError, type InfoActualizacion } from '../lib/api';
+import { api, enTauri, mensajeDeError, type InfoActualizacion } from '../lib/api';
 
 export function Ajustes() {
   const user = useStore((s) => s.currentUser());
+  // Proyecto sin Unity VC: su carpeta compartida va dentro del proyecto y no hay repositorio que borrar;
+  // en su lugar se puede exportar.
+  const proyectoLocal = useStore((s) => s.proyectoLocal);
 
   return (
     <div>
       <PageHeader title="Ajustes" desc="Acciones administrativas del proyecto. Cada sección aparece según tu rol." />
       <div className="space-y-3">
         <SeccionActualizar />
-        <SeccionCarpetaCompartida />
+        {proyectoLocal ? (
+          puedeEliminarProyecto(user.rol) && <SeccionExportarProyecto carpeta={proyectoLocal} />
+        ) : (
+          <SeccionCarpetaCompartida />
+        )}
         <SeccionBackups />
-        {puedeEliminarProyecto(user.rol) && <SeccionProyecto />}
+        {puedeEliminarProyecto(user.rol) && !proyectoLocal && <SeccionProyecto />}
         {!esLiderOAdmin(user.rol) && (
           <EmptyState icon="candado" title="Sin acciones administrativas" desc="Con tu rol actual no hay ajustes que gestionar aparte de reportar problemas de BD." />
         )}
       </div>
     </div>
+  );
+}
+
+// Exportar proyecto (solo Administrador, proyectos sin Unity VC): guarda todo el proyecto en un archivo
+// `.bbproyecto` que se abre en otro equipo con "Ingresar a un proyecto existente" → "Importar". La llave
+// del Administrador va cifrada con la contraseña del proyecto.
+function SeccionExportarProyecto({ carpeta }: { carpeta: string }) {
+  const showToast = useStore((s) => s.showToast);
+  const [exportando, setExportando] = useState(false);
+
+  const exportar = async () => {
+    if (!enTauri()) {
+      showToast('En la app de escritorio aquí se elige dónde guardar el archivo .bbproyecto', 'info');
+      return;
+    }
+    setExportando(true);
+    try {
+      const ruta = await api.exportarProyectoLocal();
+      if (ruta) showToast(`Proyecto exportado en ${ruta}`);
+    } catch (e) {
+      showToast(mensajeDeError(e), 'danger');
+    } finally {
+      setExportando(false);
+    }
+  };
+
+  return (
+    <Seccion title="Exportar proyecto">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 text-sm">
+          <div className="text-muted">Carpeta del proyecto</div>
+          <div className="truncate font-mono text-xs text-text">{carpeta}</div>
+        </div>
+        <button className="btn-outline btn-sm" disabled={exportando} onClick={() => void exportar()}>
+          {exportando ? 'Exportando…' : 'Exportar .bbproyecto'}
+        </button>
+      </div>
+    </Seccion>
   );
 }
 

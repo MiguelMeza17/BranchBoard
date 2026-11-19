@@ -52,7 +52,7 @@ pub const TIPOS_FIRMADOS: &[&str] = &[
     "compactar_eventos",
 ];
 /// Ajustes de esta máquina para el proyecto (dentro de su carpeta local).
-const ARCHIVO_LOCAL: &str = "local.json";
+pub const ARCHIVO_LOCAL: &str = "local.json";
 /// Marca, dentro de la carpeta compartida, de qué proyecto es.
 pub const ARCHIVO_MARCA: &str = "branchboard-proyecto.json";
 
@@ -384,6 +384,19 @@ pub fn configurar_carpeta_compartida(
     let json = serde_json::to_string_pretty(&ajustes).map_err(|e| Error::Interno(e.to_string()))?;
     std::fs::write(carpeta_proyecto.join(ARCHIVO_LOCAL), json)?;
     Ok(ruta)
+}
+
+/// Proyecto local (sin Unity VC, ver `proyecto_local`): su "carpeta compartida"
+/// es una subcarpeta del propio proyecto. Se fija sin las validaciones de
+/// [`configurar_carpeta_compartida`] cada vez que se abre, para que siga sirviendo
+/// aunque la carpeta del proyecto se haya movido, copiado o importado.
+pub fn fijar_carpeta_compartida_local(carpeta_proyecto: &Path, ruta: &Path) -> Resultado<()> {
+    std::fs::create_dir_all(ruta.join("ops"))?;
+    let mut ajustes = leer_locales(carpeta_proyecto)?;
+    ajustes.carpeta_compartida = Some(ruta.to_path_buf());
+    let json = serde_json::to_string_pretty(&ajustes).map_err(|e| Error::Interno(e.to_string()))?;
+    std::fs::write(carpeta_proyecto.join(ARCHIVO_LOCAL), json)?;
+    Ok(())
 }
 
 /// En Windows `canonicalize` devuelve `\\?\C:\…`; para guardar y mostrar se deja

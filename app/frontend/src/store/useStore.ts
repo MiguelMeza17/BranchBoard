@@ -297,6 +297,14 @@ interface State {
   // pantalla de "no hay sesión de Unity VC" en vez de los tableros (ver FRONTEND.md,
   // "Autenticación / acceso al proyecto"). Toggle de demo en el Topbar.
   cmSesionActiva: boolean;
+  /**
+   * "Continuar sin Unity VC": deja pasar a la pantalla de acceso (y a un proyecto local) sin sesión de
+   * Unity VC. Ver "Proyectos sin Unity VC" en FRONTEND.md.
+   */
+  modoSinUnityVc: boolean;
+  setModoSinUnityVc: (activo: boolean) => void;
+  /** Carpeta del proyecto local abierto (sin Unity VC), o `null` si el proyecto es de Unity VC. */
+  proyectoLocal: string | null;
   sesionUnityVcCaducada: boolean;
   marcarSesionUnityVcCaducada: () => void;
   // Si ya se pasó por las pantallas de acceso al proyecto (Pantalla inicial →
@@ -336,7 +344,7 @@ interface State {
   irAClonar: (nombre: string, repo?: string | null) => void;
   cargarWorkspacesYProyectos: () => Promise<void>;
   /** `workspace`: el workspace de Unity VC por el que se entró, si su nombre no es el del proyecto. */
-  entrarAProyecto: (nombre: string, workspace?: string) => void;
+  entrarAProyecto: (nombre: string, workspace?: string, carpetaLocal?: string) => void;
   /**
    * Mockup de la carpeta compartida (Drive/OneDrive) de cada proyecto en esta máquina, por nombre del
    * proyecto. En la app real la guarda el backend (`configurar_carpeta_compartida`).
@@ -571,11 +579,17 @@ export const useStore = create<State>((set, get) => {
   cmInstalado: true,
   cmInstalando: false,
   cmSesionActiva: true,
+  modoSinUnityVc: false,
+  setModoSinUnityVc: (activo) => set({ modoSinUnityVc: activo }),
+  proyectoLocal: null,
   sesionUnityVcCaducada: false,
-  marcarSesionUnityVcCaducada: () => set({
-    cmSesionActiva: false, accesoCompletado: false, sesionUnityVC: null,
-    sesionUnityVcCaducada: true,
-  }),
+  marcarSesionUnityVcCaducada: () =>
+    set((s) =>
+      // Un proyecto local no depende de la sesión de Unity VC: no se saca a nadie de él.
+      s.proyectoLocal
+        ? { cmSesionActiva: false, sesionUnityVC: null, sesionUnityVcCaducada: true }
+        : { cmSesionActiva: false, accesoCompletado: false, sesionUnityVC: null, sesionUnityVcCaducada: true }
+    ),
   accesoCompletado: false,
   proyectoActual: enTauri() ? '' : fx.PROYECTO_NOMBRE,
   workspaceActual: enTauri() ? null : fx.PROYECTO_NOMBRE,
@@ -1032,7 +1046,8 @@ export const useStore = create<State>((set, get) => {
   toggleCmSesion: () => set((s) => ({ cmSesionActiva: !s.cmSesionActiva })),
   setAccesoCompletado: (v) =>
     set({ accesoCompletado: v, accesoIrAWorkspaces: false, proyectoAClonar: null, proyectoRepoAClonar: null }),
-  cambiarDeProyecto: () => set({ accesoCompletado: false, accesoIrAWorkspaces: true }),
+  // Desde un proyecto local se vuelve a las opciones sin Unity VC (no a la lista de workspaces).
+  cambiarDeProyecto: () => set((s) => ({ accesoCompletado: false, accesoIrAWorkspaces: !s.proyectoLocal })),
   cerrarSesion: async () => {
     if (!enTauri()) {
       set({ cmSesionActiva: false, accesoCompletado: false, accesoIrAWorkspaces: false, sesionUnityVC: null });
@@ -1129,6 +1144,8 @@ export const useStore = create<State>((set, get) => {
       ramaWorkspace: null,
       proyectoActual: proyecto,
       workspaceActual: proyecto,
+      proyectoLocal: `D:\\BranchBoard\\${proyecto}`,
+      modoSinUnityVc: true,
       accesoCompletado: true,
       accesoIrAWorkspaces: false,
       proyectoAClonar: null,
@@ -1160,8 +1177,10 @@ export const useStore = create<State>((set, get) => {
       proyectoAClonar: nombre,
       proyectoRepoAClonar: repo,
     }),
-  entrarAProyecto: (nombre, workspace) => {
+  entrarAProyecto: (nombre, workspace, carpetaLocal) => {
     set({
+      proyectoLocal: carpetaLocal ?? null,
+      ...(carpetaLocal ? { modoSinUnityVc: true } : {}),
       proyectoActual: nombre,
       workspaceActual: workspace ?? nombre,
       accesoCompletado: true,

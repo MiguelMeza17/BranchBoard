@@ -448,6 +448,17 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
             >
               <Icono nombre="mas" className="h-4 w-4" /> Nuevo proyecto
             </button>
+            {/* Crear, abrir o importar un proyecto sin Unity VC (vuelve a la pantalla de acceso, en esas opciones). */}
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                useStore.setState({ modoSinUnityVc: true, accesoCompletado: false, accesoIrAWorkspaces: false });
+              }}
+            >
+              <Icono nombre="carpetaAbierta" className="h-4 w-4" /> Proyectos sin Unity VC
+            </button>
             <div className="my-1 border-t border-border" />
             <button
               type="button"

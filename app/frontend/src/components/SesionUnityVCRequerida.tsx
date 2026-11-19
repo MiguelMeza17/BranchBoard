@@ -20,6 +20,7 @@ export function SesionUnityVCRequerida() {
   const instalarCm = useStore((s) => s.instalarCm);
   const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
   const [reconectando, setReconectando] = useState(false);
+  const setModoSinUnityVc = useStore((s) => s.setModoSinUnityVc);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface">
@@ -71,6 +72,15 @@ export function SesionUnityVCRequerida() {
             }}
           >
             {reconectando ? 'Reconectando…' : 'Reconectar'}
+          </button>
+          {/* Proyectos sin Unity VC: no necesitan sesión (ver "Proyectos sin Unity VC" en FRONTEND.md). */}
+          <button
+            type="button"
+            className="btn-ghost btn-sm w-full"
+            disabled={reconectando}
+            onClick={() => setModoSinUnityVc(true)}
+          >
+            Continuar sin Unity VC
           </button>
         </div>
       </div>

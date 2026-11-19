@@ -32,6 +32,7 @@ pub mod instalacion;
 pub mod modelo;
 pub mod notificaciones;
 pub mod proyecto;
+pub mod proyecto_local;
 pub mod ramas;
 pub mod servidor;
 pub mod sprints;
@@ -45,8 +46,9 @@ use comandos::{
     acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
     identidad as comandos_identidad, notificaciones as comandos_notificaciones,
-    proyecto as comandos_proyecto, sistema, sprints as comandos_sprints, tareas as comandos_tareas,
-    usuarios, vistos as comandos_vistos, warp as comandos_warp,
+    proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local, sistema,
+    sprints as comandos_sprints, tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
+    warp as comandos_warp,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -215,6 +217,11 @@ pub fn run() {
             comandos_proyecto::eliminar_proyecto,
             comandos_proyecto::actualizar_configuracion_proyecto,
             comandos_proyecto::subir_imagen_proyecto,
+            comandos_proyecto_local::crear_proyecto_local,
+            comandos_proyecto_local::abrir_proyecto_local,
+            comandos_proyecto_local::listar_proyectos_locales,
+            comandos_proyecto_local::exportar_proyecto_local,
+            comandos_proyecto_local::importar_proyecto_local,
             comandos_vistos::marcar_visto,
             comandos_vistos::obtener_vistos,
         ])
