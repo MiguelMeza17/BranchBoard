@@ -9,6 +9,7 @@ import {
   mensajeDeError,
   proyectosPadreUnity,
   type EntradaProyecto,
+  type ProyectoLocal,
   type ProyectoServidor,
 } from '../lib/api';
 import { SelectorCarpeta } from './SelectorCarpeta';
@@ -73,32 +74,107 @@ export function AccesoProyecto() {
   const sesion = useStore((s) => s.sesionUnityVC);
   const setSesion = useStore((s) => s.setSesionUnityVC);
   const [login, setLogin] = useState(false);
-  const [sinUvcs, setSinUvcs] = useState(false);
+  // "Continuar sin Unity VC": se guarda también en el store, porque sin sesión de Unity VC es lo que deja
+  // pasar de la pantalla de sesión a esta (ver App.tsx).
+  const modoSinUnityVc = useStore((s) => s.modoSinUnityVc);
+  const setModoSinUnityVc = useStore((s) => s.setModoSinUnityVc);
+  const [sinUvcs, setSinUvcsLocal] = useState(modoSinUnityVc);
+  const setSinUvcs = (activo: boolean) => {
+    setSinUvcsLocal(activo);
+    setModoSinUnityVc(activo);
+  };
   // "Crear un nuevo proyecto": nombre del proyecto y tus datos; quedas como Administrador.
   const crearProyectoNuevo = useStore((s) => s.crearProyectoNuevo);
   const [crear, setCrear] = useState(false);
   // "Ingresar a un proyecto existente" sin Unity VC: abre el buscador de carpetas del equipo.
+  // La app de escritorio lo reconoce por el archivo `branchboard-proyecto-local.json` de la carpeta y pide
+  // la contraseña del proyecto; el mockup busca en los proyectos creados en esta sesión.
   const [abrirLocal, setAbrirLocal] = useState(false);
   const [carpetaLocal, setCarpetaLocal] = useState('');
+  const [claveLocal, setClaveLocal] = useState('');
   const [errorLocal, setErrorLocal] = useState<string | null>(null);
+  const [ocupadoLocal, setOcupadoLocal] = useState(false);
+  const [recientes, setRecientes] = useState<ProyectoLocal[]>([]);
   const entrarAProyectoLocal = useStore((s) => s.entrarAProyecto);
-  const abrirCarpetaLocal = () => {
-    const ruta = carpetaLocal.trim().replace(/[\\/]+$/, '');
-    const ws = workspaces.find((w) => w.repo.endsWith('@local') && w.ruta.toLowerCase() === ruta.toLowerCase());
-    if (!ws) {
-      setErrorLocal('En esa carpeta no hay un proyecto de BranchBoard.');
-      return;
-    }
+  const proyectosDelMockup = () =>
+    workspaces.filter((w) => w.repo.endsWith('@local')).map((w) => ({ nombre: w.nombre, ruta: w.ruta }));
+  useEffect(() => {
+    if (!abrirLocal) return;
+    api
+      .listarProyectosLocales(proyectosDelMockup)
+      .then(setRecientes)
+      .catch(() => setRecientes([]));
+    // Solo al abrir la ventana.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abrirLocal]);
+  const cerrarAbrirLocal = () => {
     setAbrirLocal(false);
     setErrorLocal(null);
-    entrarAProyectoLocal(ws.nombre);
-    showToast(`Abriste ${ws.nombre}`);
+    setClaveLocal('');
   };
-  const [nuevo, setNuevo] = useState({ proyecto: '', nombre: '', correo: '', clave: '' });
+  const abrirCarpetaLocal = async () => {
+    const ruta = carpetaLocal.trim().replace(/[\\/]+$/, '');
+    if (!ruta) {
+      setErrorLocal('Elige la carpeta del proyecto.');
+      return;
+    }
+    if (!enTauri()) {
+      const ws = workspaces.find((w) => w.repo.endsWith('@local') && w.ruta.toLowerCase() === ruta.toLowerCase());
+      if (!ws) {
+        setErrorLocal('En esa carpeta no hay un proyecto de BranchBoard.');
+        return;
+      }
+      cerrarAbrirLocal();
+      entrarAProyectoLocal(ws.nombre, ws.nombre, ws.ruta);
+      showToast(`Abriste ${ws.nombre}`);
+      return;
+    }
+    if (!claveLocal) {
+      setErrorLocal('Escribe la contraseña del proyecto.');
+      return;
+    }
+    setOcupadoLocal(true);
+    try {
+      const entrada = await api.abrirProyectoLocal(ruta, claveLocal, () => {
+        throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
+      });
+      if (entrada.estado === 'dentro') {
+        cerrarAbrirLocal();
+        terminarEntradaLocal(entrada, ruta);
+      }
+    } catch (e) {
+      setErrorLocal(mensajeDeError(e));
+    } finally {
+      setOcupadoLocal(false);
+    }
+  };
+  // Importar un `.bbproyecto`: se elige dónde descomprimirlo y queda listo para abrir con su contraseña.
+  const importarLocal = async () => {
+    setErrorLocal(null);
+    try {
+      const destino = await api.elegirCarpeta('¿En qué carpeta guardo el proyecto importado?');
+      if (!destino) return;
+      setOcupadoLocal(true);
+      const importado = await api.importarProyectoLocal(destino);
+      if (!importado) return;
+      setCarpetaLocal(importado.ruta);
+      setClaveLocal('');
+      showToast(`Proyecto ${importado.nombre} importado. Escribe su contraseña para abrirlo.`);
+    } catch (e) {
+      setErrorLocal(mensajeDeError(e));
+    } finally {
+      setOcupadoLocal(false);
+    }
+  };
+  const [nuevo, setNuevo] = useState({ carpeta: '', proyecto: '', nombre: '', correo: '', clave: '' });
   const correoNuevoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nuevo.correo.trim());
+  const [creandoLocal, setCreandoLocal] = useState(false);
+  const [errorCrearLocal, setErrorCrearLocal] = useState<string | null>(null);
   // Errores por campo: se marcan en cuanto sales del campo (o al pulsar "Crear", si nunca entraste).
-  type CampoNuevo = 'proyecto' | 'nombre' | 'correo' | 'clave';
+  type CampoNuevo = 'carpeta' | 'proyecto' | 'nombre' | 'correo' | 'clave';
   const errorNuevo: Record<CampoNuevo, string | null> = {
+    // En el mockup no hay disco: la carpeta solo se pide en la app de escritorio.
+    carpeta: !enTauri() || nuevo.carpeta.trim() ? null : 'Elige dónde guardar el proyecto.',
     proyecto: nuevo.proyecto.trim() ? null : 'Escribe el nombre del proyecto.',
     nombre: nuevo.nombre.trim() ? null : 'Escribe tu nombre.',
     correo: !nuevo.correo.trim()
@@ -118,6 +194,40 @@ export function AccesoProyecto() {
   const cerrarCrear = () => {
     setCrear(false);
     setTocados(new Set());
+    setErrorCrearLocal(null);
+  };
+  const crearLocal = async () => {
+    if (Object.values(errorNuevo).some(Boolean)) {
+      setTocados(new Set(['carpeta', 'proyecto', 'nombre', 'correo', 'clave']));
+      return;
+    }
+    const datos = {
+      carpeta: nuevo.carpeta.trim(),
+      proyecto: nuevo.proyecto.trim(),
+      nombre: nuevo.nombre.trim(),
+      correo: nuevo.correo.trim(),
+      clave: nuevo.clave,
+    };
+    if (!enTauri()) {
+      crearProyectoNuevo({ proyecto: datos.proyecto, nombre: datos.nombre, correo: datos.correo });
+      cerrarCrear();
+      setNuevo({ carpeta: '', proyecto: '', nombre: '', correo: '', clave: '' });
+      return;
+    }
+    setCreandoLocal(true);
+    setErrorCrearLocal(null);
+    try {
+      const { ruta, entrada } = await api.crearProyectoLocal(datos, () => {
+        throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
+      });
+      cerrarCrear();
+      setNuevo({ carpeta: '', proyecto: '', nombre: '', correo: '', clave: '' });
+      if (entrada.estado === 'dentro') terminarEntradaLocal(entrada, ruta);
+    } catch (e) {
+      setErrorCrearLocal(mensajeDeError(e));
+    } finally {
+      setCreandoLocal(false);
+    }
   };
 
   // Lo que decidiría el backend, con los datos de ejemplo y el correo elegido en "Demo · cm whoami".
@@ -196,6 +306,27 @@ export function AccesoProyecto() {
     );
   };
 
+  // Proyecto sin Unity VC: no hay workspace ni carpeta compartida que elegir (va dentro del proyecto).
+  const terminarEntradaLocal = (entrada: EntradaDentro, ruta: string) => {
+    if (!useStore.getState().usuarios.some((u) => u.email === entrada.email)) {
+      const [nombre, apellido = ''] = entrada.email.split('@')[0].split(/[._-]/);
+      useStore.setState((s) => ({
+        usuarios: [
+          ...s.usuarios,
+          { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '', firma: 'backend', firmado_en: null },
+        ],
+      }));
+    }
+    setEmail(entrada.email);
+    setRolActual(entrada.rol);
+    entrarAProyecto(entrada.proyecto, entrada.proyecto, ruta);
+    showToast(
+      entrada.configurado_ahora
+        ? `Proyecto ${entrada.proyecto} creado — eres su Administrador`
+        : `Abriste ${entrada.proyecto}`
+    );
+  };
+
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-surface p-4">
@@ -237,7 +368,7 @@ export function AccesoProyecto() {
             onCrear={() => setCrear(true)}
             // Con sesión: tus proyectos de Unity VC. Sin Unity VC: buscar en tu equipo la carpeta de un
             // proyecto de BranchBoard que no está conectado a Unity VC.
-            onIngresar={() => (sinUvcs && !sesion ? setAbrirLocal(true) : setPaso('workspaces'))}
+            onIngresar={() => (sinUvcs ? setAbrirLocal(true) : setPaso('workspaces'))}
           />
         )}
 
@@ -315,7 +446,7 @@ export function AccesoProyecto() {
       </div>
 
       <ModalCrearProyectoReal
-        open={crear && enTauri()}
+        open={crear && enTauri() && !sinUvcs}
         onClose={cerrarCrear}
         onCreado={async (ws, entrada) => {
           setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
@@ -340,35 +471,43 @@ export function AccesoProyecto() {
       />
 
       <Modal
-        open={crear && !enTauri()}
+        open={crear && (!enTauri() || sinUvcs)}
         onClose={cerrarCrear}
         title="Crear un nuevo proyecto"
-        subtitle="Quedarás como Administrador del proyecto"
+        subtitle="Sin Unity VC. Quedarás como Administrador del proyecto"
         size="sm"
         footer={
           <div className="flex w-full justify-end gap-2">
-            <button type="button" className="btn-ghost btn-sm" onClick={cerrarCrear}>
+            <button type="button" className="btn-ghost btn-sm" onClick={cerrarCrear} disabled={creandoLocal}>
               Cancelar
             </button>
-            <button
-              type="button"
-              className="btn-primary btn-sm"
-              onClick={() => {
-                if (Object.values(errorNuevo).some(Boolean)) {
-                  setTocados(new Set(['proyecto', 'nombre', 'correo', 'clave']));
-                  return;
-                }
-                crearProyectoNuevo({ proyecto: nuevo.proyecto.trim(), nombre: nuevo.nombre.trim(), correo: nuevo.correo.trim() });
-                cerrarCrear();
-                setNuevo({ proyecto: '', nombre: '', correo: '', clave: '' });
-              }}
-            >
-              Crear
+            <button type="button" className="btn-primary btn-sm" onClick={() => void crearLocal()} disabled={creandoLocal}>
+              {creandoLocal ? 'Creando…' : 'Crear'}
             </button>
           </div>
         }
       >
         <div className="space-y-3 text-sm">
+          {enTauri() && (
+            <label className="block">
+              <span className="mb-1 block text-xs text-faint">Dónde guardarlo</span>
+              <SelectorCarpeta
+                value={nuevo.carpeta}
+                onChange={(v) => {
+                  setNuevo({ ...nuevo, carpeta: v });
+                  tocar('carpeta');
+                }}
+                placeholder="Carpeta donde se crea la del proyecto"
+                titulo="¿Dónde guardo el proyecto?"
+              />
+              {errorVisible('carpeta') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('carpeta')}</span>}
+              {nuevo.carpeta.trim() && nuevo.proyecto.trim() && (
+                <span className="mt-1 block truncate font-mono text-[11px] text-faint">
+                  {nuevo.carpeta.trim().replace(/[\\/]+$/, '')}\{nuevo.proyecto.trim()}
+                </span>
+              )}
+            </label>
+          )}
           {/* El nombre del proyecto va destacado: más grande que tus datos. */}
           <label className="block pb-1">
             <span className="mb-1.5 block text-sm font-semibold text-text">Nombre del proyecto</span>
@@ -415,42 +554,91 @@ export function AccesoProyecto() {
             />
             {errorVisible('clave') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('clave')}</span>}
           </label>
+          {errorCrearLocal && <p className="text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorCrearLocal}</p>}
         </div>
       </Modal>
 
       <Modal
         open={abrirLocal}
-        onClose={() => {
-          setAbrirLocal(false);
-          setErrorLocal(null);
-        }}
+        onClose={cerrarAbrirLocal}
         title="Abrir un proyecto de BranchBoard"
-        subtitle="Busca en tu equipo la carpeta de un proyecto que no está conectado a Unity VC"
+        subtitle="Elige la carpeta de un proyecto sin Unity VC"
         size="sm"
         footer={
-          <div className="flex w-full justify-end gap-2">
-            <button type="button" className="btn-ghost btn-sm" onClick={() => setAbrirLocal(false)}>
-              Cancelar
-            </button>
-            <button type="button" className="btn-primary btn-sm" onClick={abrirCarpetaLocal}>
-              Abrir
-            </button>
+          <div className="flex w-full items-center justify-between gap-2">
+            {enTauri() ? (
+              <button type="button" className="btn-ghost btn-sm" onClick={() => void importarLocal()} disabled={ocupadoLocal}>
+                Importar .bbproyecto…
+              </button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost btn-sm" onClick={cerrarAbrirLocal} disabled={ocupadoLocal}>
+                Cancelar
+              </button>
+              <button type="button" className="btn-primary btn-sm" onClick={() => void abrirCarpetaLocal()} disabled={ocupadoLocal}>
+                {ocupadoLocal ? 'Abriendo…' : 'Abrir'}
+              </button>
+            </div>
           </div>
         }
       >
-        <div className="space-y-2 text-sm">
-          <SelectorCarpeta
-            value={carpetaLocal}
-            onChange={(v) => {
-              setCarpetaLocal(v);
-              setErrorLocal(null);
-            }}
-            placeholder="Carpeta del proyecto"
-          />
+        <div className="space-y-3 text-sm">
+          {recientes.length > 0 && (
+            <div>
+              <span className="mb-1 block text-xs text-faint">Recientes</span>
+              <div className="space-y-1">
+                {recientes.map((p) => (
+                  <button
+                    key={p.ruta}
+                    type="button"
+                    onClick={() => {
+                      setCarpetaLocal(p.ruta);
+                      setErrorLocal(null);
+                    }}
+                    className={`flex w-full flex-col items-start rounded-lg border px-3 py-2 text-left transition hover:border-primary ${
+                      carpetaLocal === p.ruta ? 'border-primary bg-primary-soft' : 'border-border bg-surface-2'
+                    }`}
+                  >
+                    <span className="text-sm font-medium text-text">{p.nombre}</span>
+                    <span className="w-full truncate font-mono text-[11px] text-faint">{p.ruta}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <label className="block">
+            <span className="mb-1 block text-xs text-faint">Carpeta del proyecto</span>
+            <SelectorCarpeta
+              value={carpetaLocal}
+              onChange={(v) => {
+                setCarpetaLocal(v);
+                setErrorLocal(null);
+              }}
+              placeholder="Carpeta del proyecto"
+              titulo="Carpeta del proyecto de BranchBoard"
+            />
+          </label>
+          {enTauri() && (
+            <label className="block">
+              <span className="mb-1 block text-xs text-faint">Contraseña del proyecto</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={claveLocal}
+                onChange={(e) => {
+                  setClaveLocal(e.target.value);
+                  setErrorLocal(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void abrirCarpetaLocal();
+                }}
+              />
+            </label>
+          )}
           {errorLocal && <p className="text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorLocal}</p>}
-          <p className="text-[11px] text-faint">
-            En la app de escritorio, el botón de carpeta abre el explorador de carpetas de Windows.
-          </p>
         </div>
       </Modal>
 
@@ -672,12 +860,12 @@ function PasoInicio({
         </button>
       </div>
 
-      {!cmInstalado && !(sinUvcs && !sesion) && (
+      {!cmInstalado && !sinUvcs && (
         <AvisoInstalarCm instalando={cmInstalando} onInstalar={onInstalarCm} />
       )}
 
       {/* Sesión de Unity VC: es la identidad en BranchBoard (no hay login propio). */}
-      {sinUvcs && !sesion ? null : sesion ? (
+      {sinUvcs ? null : sesion ? (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-done/40 bg-done/10 px-4 py-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-text">Sesión de Unity VC iniciada</div>
@@ -702,9 +890,8 @@ function PasoInicio({
         </button>
       )}
 
-      {/* Sin sesión de Unity VC solo se puede crear un proyecto nuevo (que todavía no está en Unity VC);
-          para entrar a uno existente hace falta la sesión. */}
-      {!sesion && !sinUvcs && (
+      {/* Proyectos sin Unity VC: con o sin sesión de Unity VC. */}
+      {!sinUvcs && (
         <button
           onClick={onSinUvcs}
           className="w-full rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:border-border-strong hover:text-text"
@@ -715,7 +902,7 @@ function PasoInicio({
 
       {/* Las dos opciones solo salen al elegir "Continuar sin Unity VC". Con sesión, se va directo a tus
           workspaces. */}
-      {sinUvcs && !sesion && (
+      {sinUvcs && (
       <div className="grid gap-3 sm:grid-cols-2">
         <button
           onClick={onCrear}

@@ -149,6 +149,12 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("obtener_configuracion_proyecto", Acceso::Roles(TODOS)),
     ("renombrar_proyecto", Acceso::Roles(SOLO_ADMIN)),
     ("eliminar_proyecto", Acceso::Roles(SOLO_ADMIN)),
+    // Proyectos sin Unity VC (`proyecto_local`).
+    ("crear_proyecto_local", Acceso::Libre),
+    ("abrir_proyecto_local", Acceso::Libre),
+    ("listar_proyectos_locales", Acceso::Libre),
+    ("importar_proyecto_local", Acceso::Libre),
+    ("exportar_proyecto_local", Acceso::Roles(SOLO_ADMIN)),
     (
         "actualizar_configuracion_proyecto",
         Acceso::Roles(SOLO_ADMIN),

@@ -237,6 +237,23 @@ export type EntradaProyecto =
     }
   | { estado: 'pendiente' | 'no_registrado' | 'esperar_dueno'; email: string; proyecto: string };
 
+/** Un proyecto sin Unity VC que esta máquina ya abrió (`listar_proyectos_locales`). */
+export interface ProyectoLocal {
+  nombre: string;
+  /** Carpeta del proyecto (la que tiene `branchboard-proyecto-local.json`). */
+  ruta: string;
+}
+
+/** Datos de "Crear un nuevo proyecto" sin Unity VC (`crear_proyecto_local`). */
+export interface NuevoProyectoLocal {
+  /** Carpeta donde se crea la carpeta del proyecto (con el nombre del proyecto). */
+  carpeta: string;
+  proyecto: string;
+  nombre: string;
+  correo: string;
+  clave: string;
+}
+
 /** Estado concreto de Cloudflare WARP en esta máquina (#122). */
 export type EstadoConexionWarp =
   | 'no_instalado'
@@ -380,6 +397,23 @@ export const api = {
    */
   entrarAProyecto: (carpeta: string, mockup: () => EntradaProyecto) =>
     llamar<EntradaProyecto>('entrar_a_proyecto', { carpeta }, mockup),
+
+  // Proyectos sin Unity VC: una carpeta con `branchboard-proyecto-local.json` (ver "Proyectos sin Unity VC"
+  // en BACKEND.md). La contraseña cifra la llave del Administrador y se pide al abrirlo.
+  /** Crea la carpeta del proyecto dentro de `datos.carpeta` y lo abre como Administrador. */
+  crearProyectoLocal: (datos: NuevoProyectoLocal, mockup: () => { ruta: string; entrada: EntradaProyecto }) =>
+    llamar<{ ruta: string; entrada: EntradaProyecto }>('crear_proyecto_local', { datos }, mockup),
+  /** Abre el proyecto local de `carpeta` (si tiene la marca de BranchBoard) con su contraseña. */
+  abrirProyectoLocal: (carpeta: string, clave: string, mockup: () => EntradaProyecto) =>
+    llamar<EntradaProyecto>('abrir_proyecto_local', { carpeta, clave }, mockup),
+  /** Proyectos locales que ya se abrieron en esta máquina ("Recientes"). */
+  listarProyectosLocales: (mockup: () => ProyectoLocal[]) =>
+    llamar<ProyectoLocal[]>('listar_proyectos_locales', undefined, mockup),
+  /** Guarda el proyecto local abierto como `.bbproyecto` ("Guardar como" lo abre el backend). `null` si se cancela. */
+  exportarProyectoLocal: () => llamar<string | null>('exportar_proyecto_local', undefined, () => null),
+  /** Pide un `.bbproyecto` y lo descomprime dentro de `carpeta`. `null` si se cancela. */
+  importarProyectoLocal: (carpeta: string) =>
+    llamar<ProyectoLocal | null>('importar_proyecto_local', { carpeta }, () => null),
 
   /**
    * Abre el explorador de carpetas del sistema (lo abre el backend) y responde la carpeta elegida, o

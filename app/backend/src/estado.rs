@@ -89,6 +89,13 @@ impl AppState {
         Ok(llave)
     }
 
+    /// Deja abierta en memoria una llave ya desbloqueada (al abrir un proyecto
+    /// local con su contraseña), para no volver a pedirla al firmar.
+    pub fn recordar_llave_firma(&self, carpeta: &std::path::Path, rol: Rol, llave: LlavePrivada) {
+        *self.llave_firma.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((carpeta.to_path_buf(), rol, llave));
+    }
+
     /// Primera línea de todo comando que depende del rol: devuelve quién lo usa
     /// si su rol (verificado por la firma) puede usar `comando` según la tabla
     /// `identidad::permisos::PERMISOS`; si no, `sin_permiso`.
