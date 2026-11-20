@@ -357,6 +357,23 @@ export interface ConfiguracionProyecto {
   imagen: string | null;
 }
 
+/** Nombre corto del repositorio de un workspace ("Proyecto/Repo@org@unity" → "Repo"); si no hay, el del workspace. */
+export const nombreDeRepo = (ws: { repo: string; nombre: string }) => ws.repo.split('@')[0]?.split('/').pop() || ws.nombre;
+
+/**
+ * Un workspace por repositorio, para no mostrar el mismo proyecto varias veces (Unity VC permite varios
+ * workspaces del mismo repo). Se queda con el abierto ahora, si es uno de ellos; si no, con el primero.
+ */
+export function unoPorRepo<T extends { repo: string; nombre: string }>(lista: T[], actual?: string | null): T[] {
+  const porRepo = new Map<string, T>();
+  for (const ws of lista) {
+    const clave = ws.repo.toLowerCase() || ws.nombre.toLowerCase();
+    const previo = porRepo.get(clave);
+    if (!previo || (ws.nombre === actual && previo.nombre !== actual)) porRepo.set(clave, ws);
+  }
+  return [...porRepo.values()];
+}
+
 export const api = {
   eliminarProyecto: (confirmacion: string, mockup: () => { repo: string; nombre: string }) =>
     llamar<{ repo: string; nombre: string }>('eliminar_proyecto', { confirmacion }, mockup),
@@ -421,6 +438,12 @@ export const api = {
    */
   elegirCarpeta: (titulo?: string) => llamar<string | null>('elegir_carpeta', { titulo }, () => null),
   /** Explorador de archivos del sistema (varios a la vez); `null` si se cancela o en el navegador. */
+  /**
+   * Ventana "Guardar como" para elegir dónde crear una carpeta nueva y su nombre. Devuelve la ruta completa
+   * (la carpeta todavía no existe) o `null` si se cancela o en el navegador.
+   */
+  elegirCarpetaNueva: (titulo?: string, nombre?: string) =>
+    llamar<string | null>('elegir_carpeta_nueva', { titulo, nombre }, () => null),
   elegirArchivos: (titulo?: string) => llamar<string[] | null>('elegir_archivos', { titulo }, () => null),
 
   /**
@@ -1072,10 +1095,11 @@ export const api = {
     llamar<ProyectoServidor[]>('listar_proyectos_servidor', undefined, mockup ?? (() => [])),
 
   /** Clona un proyecto de Unity VC Cloud (`cm workspace create` + `cm update`) en `carpeta` (#125). */
-  clonarProyecto: (repo: string, carpeta: string, mockup?: () => WorkspaceUnityVC) =>
+  /** `carpeta`: dónde crearlo; `nombreCarpeta`: nombre de la carpeta nueva (por defecto, el del proyecto). */
+  clonarProyecto: (repo: string, carpeta: string, nombreCarpeta?: string, mockup?: () => WorkspaceUnityVC) =>
     llamar<WorkspaceUnityVC>(
       'clonar_proyecto',
-      { repo, carpeta },
+      { repo, carpeta, nombreCarpeta },
       mockup ?? (() => ({ nombre: '', repo, ruta: carpeta, tiene_db_branchboard: false })),
     ),
 

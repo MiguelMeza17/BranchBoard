@@ -43,6 +43,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("hay_operacion_en_curso", Acceso::Libre),
     ("elegir_carpeta", Acceso::Libre),
     ("elegir_archivos", Acceso::Libre),
+    ("elegir_carpeta_nueva", Acceso::Libre),
     ("estado_warp", Acceso::Libre),
     ("alternar_warp", Acceso::Libre),
     ("instalar_warp", Acceso::Libre),

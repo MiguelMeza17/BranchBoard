@@ -325,18 +325,27 @@ pub fn preparar_ruta_clonado(carpeta_destino: &str, nombre_proyecto: &str) -> Re
         ));
     }
     let base = Path::new(limpia);
+    // Una ruta relativa (p. ej. solo `Pruebas`) se resolvería contra la carpeta desde donde corre la app
+    // (en desarrollo, dentro del propio código de BranchBoard): se exige la ruta completa.
+    if !base.is_absolute() {
+        return Err(Error::Validacion(
+            "Elige la carpeta de destino con el explorador o escribe la ruta completa (ej. D:\\Proyectos).".into(),
+        ));
+    }
     if base.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(Error::Validacion(
             "La carpeta de destino no puede contener `..`.".into(),
         ));
     }
     if nombre_proyecto.trim().is_empty()
-        || nombre_proyecto.contains('/')
-        || nombre_proyecto.contains('\\')
         || nombre_proyecto.contains("..")
+        || nombre_proyecto.trim_end().ends_with('.')
+        || nombre_proyecto.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
     {
         return Err(Error::Validacion(
-            "El nombre del proyecto no es válido.".into(),
+            "El nombre de la carpeta no es válido (no puede llevar / \\ : * ? \" < > |).".into(),
         ));
     }
 
@@ -431,6 +440,7 @@ pub fn clonar_proyecto_en(
     carpeta_datos: &Path,
     repo_spec: &str,
     carpeta_destino: &str,
+    nombre_carpeta: Option<&str>,
     mut al_progresar: impl FnMut(ProgresoClonado),
 ) -> Resultado<WorkspaceProyecto> {
     let _email = lectura::whoami(estado)?;
@@ -441,7 +451,13 @@ pub fn clonar_proyecto_en(
     })?;
     let spec_canonico = format!("{}@{}@unity", repo.repo, repo.org);
     let nombre = repo.nombre().to_string();
-    let ruta_ws = preparar_ruta_clonado(carpeta_destino, &nombre)?;
+    // La carpeta del workspace se crea dentro de `carpeta_destino` con el nombre que se eligió (por
+    // defecto, el del proyecto).
+    let carpeta_nueva = nombre_carpeta
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&nombre);
+    let ruta_ws = preparar_ruta_clonado(carpeta_destino, carpeta_nueva)?;
     let creamos_carpeta = !ruta_ws.exists();
     std::fs::create_dir_all(&ruta_ws)?;
 
@@ -921,6 +937,18 @@ Grupo/__DELETED__Sub|MiguelM17@unity
 
         // Traversal bloqueado.
         assert!(preparar_ruta_clonado("../escape", "VirusTF").is_err());
+        // Una ruta relativa se resolvería contra la carpeta de la app: se rechaza.
+        assert!(preparar_ruta_clonado("Pruebas", "BranchBoard-Pruebas").is_err());
+        assert!(preparar_ruta_clonado("Pruebas\\sub", "BranchBoard-Pruebas").is_err());
+        // Nombre de carpeta elegido a mano: se crea dentro de la base; caracteres prohibidos en Windows, no.
+        let base = tmp.path().to_string_lossy().to_string();
+        assert_eq!(
+            preparar_ruta_clonado(&base, "Mi carpeta").unwrap(),
+            tmp.path().join("Mi carpeta")
+        );
+        for malo in ["a:b", "a*b", "a?b", "a|b", "a<b", "termina.", "a/b"] {
+            assert!(preparar_ruta_clonado(&base, malo).is_err(), "{malo}");
+        }
     }
 
     #[test]
@@ -971,6 +999,7 @@ Grupo/__DELETED__Sub|MiguelM17@unity
             datos.path(),
             &encontrado.repo,
             &destino.path().to_string_lossy(),
+            None,
             |p| eventos.push(p),
         )
         .unwrap();
@@ -1074,6 +1103,7 @@ Grupo/__DELETED__Sub|MiguelM17@unity
             datos_traer.path(),
             &spec,
             &destino_traer.path().to_string_lossy(),
+            None,
             |_| {},
         )
         .unwrap();

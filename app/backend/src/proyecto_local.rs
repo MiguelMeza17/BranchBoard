@@ -296,12 +296,10 @@ pub fn abrir(
                 .into(),
         ));
     }
-    if clave.is_empty() {
-        return Err(Error::Validacion(
-            "Escribe la contraseña del proyecto.".into(),
-        ));
-    }
-    let llave = llaves::cargar_llave_admin(&datos, Some(clave)).map_err(|e| match e {
+    // La contraseña solo se pide si el proyecto la tiene: sin ella, una llave cifrada responde
+    // `llave_cifrada` (la interfaz muestra entonces el campo) y una sin cifrar abre directo.
+    let clave = (!clave.is_empty()).then_some(clave);
+    let llave = llaves::cargar_llave_admin(&datos, clave).map_err(|e| match e {
         Error::Validacion(_) => {
             Error::Validacion("La contraseña del proyecto no es correcta.".into())
         }
@@ -628,6 +626,10 @@ mod tests {
         let estado = AppState::default();
         let e = abrir(&estado, app.path(), &carpeta, "otra-clave", false).unwrap_err();
         assert_eq!(e.to_string(), "La contraseña del proyecto no es correcta.");
+        assert!(estado.con_db(|_| Ok(())).is_err(), "no queda abierto");
+        // Sin contraseña: como el proyecto la tiene, pide escribirla (la interfaz muestra el campo).
+        let e = abrir(&estado, app.path(), &carpeta, "", false).unwrap_err();
+        assert_eq!(e.codigo(), "llave_cifrada");
         assert!(estado.con_db(|_| Ok(())).is_err(), "no queda abierto");
 
         let entrada = abrir(&estado, app.path(), &carpeta, "clave-segura", true).unwrap();
