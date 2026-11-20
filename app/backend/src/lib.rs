@@ -36,6 +36,7 @@ pub mod proyecto_local;
 pub mod ramas;
 pub mod servidor;
 pub mod sprints;
+pub mod supabase;
 pub mod tareas;
 pub mod unity;
 pub mod warp;

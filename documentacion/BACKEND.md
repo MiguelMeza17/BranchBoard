@@ -133,6 +133,29 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
   - `compactar_eventos()` — escribe directamente el snapshot en `ops/`, no es en sí mismo un evento que otras máquinas deban "aplicar" (ya leen el snapshot como parte del escaneo normal).
   - Comandos de solo lectura (`listar_*`, `obtener_notificaciones`, `revisar_actualizaciones`, `cm whoami`, etc.) — no mutan nada.
 
+## Servidor (Supabase)
+
+**Nuevo (2026-11-20, #232)** — base de la migración decidida en #231 (hoja de ruta #248): Supabase reemplaza a Drive/OneDrive para sincronizar, con SQLite local en cada PC.
+
+**Proyectos** (organización BranchBoard, plan Free):
+
+| Proyecto | Para qué | Lo usa |
+|---|---|---|
+| `branchboard` | Producción | El instalador (build `release`) |
+| `branchboard-pruebas` | Pruebas y desarrollo | `npm run tauri dev` (build `debug`) y las pruebas reales |
+
+Los dos se crearon igual: Data API activada, **RLS automático en tablas nuevas**, **sin** exposición automática de tablas a la API (cada tabla se expone al escribir sus reglas) y sin integración con GitHub (las migraciones se aplican a mano, ver abajo).
+
+**Configuración de la app** (`app/backend/src/supabase/entorno.rs`): la URL y la clave **pública** (publishable) de cada proyecto. `Entorno::actual()` elige pruebas en `debug` y producción en `release`; la variable `BB_SUPABASE=pruebas|produccion` lo fuerza. La clave pública por sí sola no permite nada: lo que se puede leer o escribir lo deciden las reglas RLS (#234). La `sb_secret_…`, la contraseña de Postgres y los tokens de la CLI **nunca** van al repo (es público); una prueba del módulo falla si alguien pega una clave secreta.
+
+**Estructura de la base**: solo por migraciones SQL en `supabase/migrations/` (se revisan en el PR). La carpeta `supabase/` la creó la CLI (`npx supabase@2 init`); de su `config.toml` se ajustó: contraseña mínima de 8 caracteres (como la app) y **confirmación de correo obligatoria** (decisión 1 de #231). Las direcciones de retorno de los correos se definen en #236.
+
+**Aplicar migraciones** (solo el dueño de la cuenta de Supabase, desde su máquina):
+1. `npx supabase@2 login` — abre el navegador y guarda un token personal de la CLI en esa máquina (no en el repo).
+2. `npx supabase@2 link --project-ref <ref de branchboard-pruebas>` — pide la contraseña de Postgres de ese proyecto.
+3. `npx supabase@2 db push` — aplica en **pruebas** las migraciones nuevas. Se prueba.
+4. Después del merge, lo mismo con `--project-ref <ref de branchboard>` para **producción**.
+
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
 Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` con datos que vienen del usuario (nombre de rama, justificación, descripción, comentarios de checkin/merge, etc.):

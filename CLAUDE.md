@@ -54,6 +54,16 @@ Todo el desarrollo del backend se prueba contra el repositorio de pruebas de Uni
 - **Nunca** se prueba en repositorios de proyectos reales (por ejemplo VirusTF).
 - Al copiar salidas a issues o PRs: sin correos ni tokens. Las respuestas del servidor pueden traer tokens (ver `documentacion/SEGURIDAD.md`), así que se sanean antes de pegarlas.
 
+### Pruebas en el servidor de Supabase (obligatorio, desde #232)
+
+La migración a Supabase (#231, hoja de ruta #248) se prueba igual que Unity VC, pero contra el proyecto **de pruebas**:
+
+- **Dos proyectos** en la organización BranchBoard de Supabase: `branchboard` (**producción**, la usa el instalador) y `branchboard-pruebas` (**pruebas**, la usa `npm run tauri dev`). Toda migración, regla RLS o Edge Function se aplica y se prueba **primero en pruebas**; a producción solo llega después del merge.
+- **Qué va en el código**: la URL y la clave **pública** (publishable) de cada proyecto, en `app/backend/src/supabase/entorno.rs`. **Nunca** la `sb_secret_…`, la contraseña de Postgres ni un token de acceso de la CLI: el repo es público. Esas las tiene solo el dueño de la cuenta de Supabase.
+- **Estructura de la base**: solo por migraciones en `supabase/migrations/` (revisadas en el PR), no a mano desde el panel. Cómo aplicarlas: [Servidor (Supabase) en BACKEND.md](documentacion/BACKEND.md#servidor-supabase).
+- **Qué va en el PR**: la misma sección "Prueba en el entorno real", indicando qué se probó en `branchboard-pruebas`.
+- **Nunca** se prueba en producción ni con datos de proyectos reales.
+
 ### Cómo se está construyendo el backend
 
 Lo que ya existe (2026-11-14) y las reglas que se siguen al agregar algo nuevo:
@@ -87,6 +97,7 @@ Lo que ya existe (2026-11-14) y las reglas que se siguen al agregar algo nuevo:
 
    | Prueba | Qué comprueba |
    |---|---|
+   | `supabase::entorno::…::entorno_real_la_clave_publica_de_pruebas_responde` | Contra el proyecto **branchboard-pruebas** de Supabase (no Unity VC): la clave pública de `supabase/entorno.rs` responde y Auth exige confirmar el correo. Solo lee la configuración pública; no crea nada ni necesita variables |
    | `cm::ejecutor::…::entorno_real_clasificacion_sesion_caducada` | Lecturas reales de ramas de BranchBoard-Pruebas normales y con progreso; reproduce el error SSO de #203 sobre AppState temporal y verifica una reconexión sana con la CLI real. No modifica credenciales ni recursos remotos; una guarda falla si se intenta abrir el asistente/navegador. `npm run test:sesion` cubre aviso, cancelación y reconexión con backend controlado |
    | `servidor::pat::…::entorno_real_crear_usar_y_renovar_el_pat` | Crea el PAT, lo guarda en el llavero, la API responde, lo reusa, y con un token dañado (401) lo renueva |
    | `ramas::…::entorno_real_ramas_de_tareas` | Rama desde la cabeza de `dev`, subtarea y nivel 5, rechazo del nivel 6 y de la repetida, rama del padre que falte, `cm switch` y bloqueo por cambios sin check-in |
