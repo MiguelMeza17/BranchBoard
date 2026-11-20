@@ -148,13 +148,30 @@ Los dos se crearon igual: Data API activada, **RLS automático en tablas nuevas*
 
 **Configuración de la app** (`app/backend/src/supabase/entorno.rs`): la URL y la clave **pública** (publishable) de cada proyecto. `Entorno::actual()` elige pruebas en `debug` y producción en `release`; la variable `BB_SUPABASE=pruebas|produccion` lo fuerza. La clave pública por sí sola no permite nada: lo que se puede leer o escribir lo deciden las reglas RLS (#234). La `sb_secret_…`, la contraseña de Postgres y los tokens de la CLI **nunca** van al repo (es público); una prueba del módulo falla si alguien pega una clave secreta.
 
-**Estructura de la base**: solo por migraciones SQL en `supabase/migrations/` (se revisan en el PR). La carpeta `supabase/` la creó la CLI (`npx supabase@2 init`); de su `config.toml` se ajustó: contraseña mínima de 8 caracteres (como la app) y **confirmación de correo obligatoria** (decisión 1 de #231). Las direcciones de retorno de los correos se definen en #236.
+**Estructura de la base**: solo por migraciones SQL en `supabase/migrations/` (se revisan en el PR). La carpeta `supabase/` la creó la CLI (`npx supabase@2 init`); de su `config.toml` se ajustó: contraseña mínima de 8 caracteres (como la app) y **confirmación de correo obligatoria** (decisión 1 de #231). Los correos de Auth mandarán un **código de 6 números** que se escribe en la app, no un enlace (decidido en #236).
 
 **Aplicar migraciones** (solo el dueño de la cuenta de Supabase, desde su máquina):
-1. `npx supabase@2 login` — abre el navegador y guarda un token personal de la CLI en esa máquina (no en el repo).
-2. `npx supabase@2 link --project-ref <ref de branchboard-pruebas>` — pide la contraseña de Postgres de ese proyecto.
-3. `npx supabase@2 db push` — aplica en **pruebas** las migraciones nuevas. Se prueba.
-4. Después del merge, lo mismo con `--project-ref <ref de branchboard>` para **producción**.
+1. `npx supabase@2 login` — abre el navegador; la página muestra un **código de verificación** que se escribe en la terminal. Guarda un token personal de la CLI en esa máquina (no en el repo). Una sola vez.
+2. `npx supabase@2 link --project-ref freppiixmuspvozaqrxj` (**branchboard-pruebas**) — pide la contraseña de Postgres de ese proyecto (en PowerShell se pega con **clic derecho**; no se ve al escribirla). Queda anotado en `supabase/.temp/project-ref` (ignorado por git).
+3. `npx supabase@2 db push --linked` — muestra las migraciones nuevas y pregunta antes de aplicarlas en **pruebas**. Con el login ya no pide la contraseña. `--dry-run` muestra qué aplicaría sin tocar nada; `migration list --linked` compara local y servidor. (Sin `--linked` funciona hoy, pero la CLI avisa que en la próxima versión mayor apuntará a una base local.)
+4. Después del merge, lo mismo con `link --project-ref rqistwyevplwdslyuvbk` (**branchboard**, producción) y `db push --linked`; después volver a vincular pruebas.
+
+Comprobado el 2026-11-20 con la migración del esquema base (#233).
+
+### Esquema base (#233)
+
+Migración `supabase/migrations/20261120230000_esquema_base.sql`:
+
+| Tabla | Qué guarda | Equivale hoy a |
+|---|---|---|
+| `perfiles` | Una fila por cuenta de Supabase Auth: correo (en minúsculas, único), nombre, apellido. Se crea sola al registrarse (trigger sobre `auth.users`; nombre y apellido salen de los metadatos del registro). | Las cuentas locales de `cuentas.ts` |
+| `proyectos` | Nombre y, si es de Unity VC, `unity_org` + `unity_repo` (únicos: un repo es un solo proyecto aunque lo traigan dos personas). Sin Unity VC, los dos vacíos. | La marca `branchboard-proyecto.json` y la carpeta de datos `<org>-<repo>` |
+| `miembros` | (proyecto, usuario, rol, quién lo agregó, cuándo). Roles: `Administrador`, `Líder`, `Desarrollador`, `Tester`, `Colaborador externo` (los de `modelo::Rol`). Puede haber varios Administradores. | La tabla `usuarios` con sus firmas Ed25519 |
+| `eventos` | Registro de solo-agregar: `orden` (lo asigna el servidor), `id` (el que genera la app, único), proyecto, autor, `tipo`, `tarea_id`, `payload` (JSON), `creado_en_app` y **`recibido_en`** (hora del servidor, la que manda para ordenar y desempatar). | Los archivos de `ops/` |
+
+**Por qué los roles no son eventos**: hoy `crear_usuario`, `cambiar_rol`, `confirmar_usuario` y `eliminar_usuario` son eventos firmados (`TIPOS_FIRMADOS`). Sin firmas (decisión 3 de #231), cualquier miembro podría insertar un evento `cambiar_rol` y darse Administrador. Por eso los roles están en `miembros` y solo los cambiarán funciones del servidor (#234). Todo lo demás (tareas, sprints, chat, documentos, notificaciones) sigue siendo un evento con el mismo `tipo` y `payload` que hoy, así la aplicación de eventos de la app se reaprovecha (#238, #239).
+
+**Sin acceso hasta #234**: las cuatro tablas tienen RLS activado y **ninguna regla**, así que por la API (con la clave pública o con una sesión) no se puede leer ni escribir nada hasta que #234 agregue las reglas y funciones.
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
