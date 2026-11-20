@@ -116,6 +116,7 @@ pub fn run() {
             entrantes::unir_cambios_entrantes,
             sistema::hay_operacion_en_curso,
             sistema::elegir_carpeta,
+            sistema::elegir_archivos,
             comandos_warp::estado_warp,
             comandos_warp::alternar_warp,
             comandos_warp::instalar_warp,

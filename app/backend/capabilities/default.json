@@ -9,6 +9,7 @@
     "core:app:default",
     "core:event:default",
     "core:window:default",
+    "core:window:allow-close",
     "dialog:allow-open"
   ]
 }

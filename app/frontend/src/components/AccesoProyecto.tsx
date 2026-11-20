@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 import { useStore } from '../store/useStore';
 import * as fx from '../data/fixtures';
 import type { WorkspaceUnityVC } from '../types';
@@ -7,13 +7,14 @@ import {
   enTauri,
   ErrorBackend,
   mensajeDeError,
-  proyectosPadreUnity,
   type EntradaProyecto,
-  type ProyectoLocal,
   type ProyectoServidor,
 } from '../lib/api';
+import { correosRecientes, ingresar, olvidarCorreo, registrarCuenta, type Cuenta } from '../lib/cuentas';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
+import { FondoRamas } from './FondoRamas';
+import { EntradaClave } from './EntradaClave';
 import { Modal } from './Modal';
 import { Toast } from './Toast';
 import { Icono, IconoEnLinea } from './Icono';
@@ -24,17 +25,12 @@ import { Icono, IconoEnLinea } from './Icono';
 // pendiente de confirmación, sin usuario o esperar al dueño del repositorio (que
 // lo configura solo la primera vez que lo abre). En el navegador lo simula el
 // mockup y "Saltar al tablero" está siempre disponible.
-type Paso = 'inicio' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'esperar-dueno' | 'carpeta-compartida';
+type Paso = 'inicio' | 'registro' | 'recuperar' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'esperar-dueno' | 'carpeta-compartida';
 type EntradaDentro = Extract<EntradaProyecto, { estado: 'dentro' }>;
 
 export function AccesoProyecto() {
   const usuarios = useStore((s) => s.usuarios);
   const vpnOn = useStore((s) => s.vpnOn);
-  const vpnInstalado = useStore((s) => s.vpnInstalado);
-  const vpnCargando = useStore((s) => s.vpnCargando);
-  const vpnInstalando = useStore((s) => s.vpnInstalando);
-  const toggleVpn = useStore((s) => s.toggleVpn);
-  const instalarWarp = useStore((s) => s.instalarWarp);
   const cmInstalado = useStore((s) => s.cmInstalado);
   const cmInstalando = useStore((s) => s.cmInstalando);
   const instalarCm = useStore((s) => s.instalarCm);
@@ -74,162 +70,9 @@ export function AccesoProyecto() {
   const sesion = useStore((s) => s.sesionUnityVC);
   const setSesion = useStore((s) => s.setSesionUnityVC);
   const [login, setLogin] = useState(false);
-  // "Continuar sin Unity VC": se guarda también en el store, porque sin sesión de Unity VC es lo que deja
-  // pasar de la pantalla de sesión a esta (ver App.tsx).
-  const modoSinUnityVc = useStore((s) => s.modoSinUnityVc);
-  const setModoSinUnityVc = useStore((s) => s.setModoSinUnityVc);
-  const [sinUvcs, setSinUvcsLocal] = useState(modoSinUnityVc);
-  const setSinUvcs = (activo: boolean) => {
-    setSinUvcsLocal(activo);
-    setModoSinUnityVc(activo);
-  };
-  // "Crear un nuevo proyecto": nombre del proyecto y tus datos; quedas como Administrador.
-  const crearProyectoNuevo = useStore((s) => s.crearProyectoNuevo);
-  const [crear, setCrear] = useState(false);
-  // "Ingresar a un proyecto existente" sin Unity VC: abre el buscador de carpetas del equipo.
-  // La app de escritorio lo reconoce por el archivo `branchboard-proyecto-local.json` de la carpeta y pide
-  // la contraseña del proyecto; el mockup busca en los proyectos creados en esta sesión.
-  const [abrirLocal, setAbrirLocal] = useState(false);
-  const [carpetaLocal, setCarpetaLocal] = useState('');
-  const [claveLocal, setClaveLocal] = useState('');
-  const [errorLocal, setErrorLocal] = useState<string | null>(null);
-  const [ocupadoLocal, setOcupadoLocal] = useState(false);
-  const [recientes, setRecientes] = useState<ProyectoLocal[]>([]);
-  const entrarAProyectoLocal = useStore((s) => s.entrarAProyecto);
-  const proyectosDelMockup = () =>
-    workspaces.filter((w) => w.repo.endsWith('@local')).map((w) => ({ nombre: w.nombre, ruta: w.ruta }));
-  useEffect(() => {
-    if (!abrirLocal) return;
-    api
-      .listarProyectosLocales(proyectosDelMockup)
-      .then(setRecientes)
-      .catch(() => setRecientes([]));
-    // Solo al abrir la ventana.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abrirLocal]);
-  const cerrarAbrirLocal = () => {
-    setAbrirLocal(false);
-    setErrorLocal(null);
-    setClaveLocal('');
-  };
-  const abrirCarpetaLocal = async () => {
-    const ruta = carpetaLocal.trim().replace(/[\\/]+$/, '');
-    if (!ruta) {
-      setErrorLocal('Elige la carpeta del proyecto.');
-      return;
-    }
-    if (!enTauri()) {
-      const ws = workspaces.find((w) => w.repo.endsWith('@local') && w.ruta.toLowerCase() === ruta.toLowerCase());
-      if (!ws) {
-        setErrorLocal('En esa carpeta no hay un proyecto de BranchBoard.');
-        return;
-      }
-      cerrarAbrirLocal();
-      entrarAProyectoLocal(ws.nombre, ws.nombre, ws.ruta);
-      showToast(`Abriste ${ws.nombre}`);
-      return;
-    }
-    if (!claveLocal) {
-      setErrorLocal('Escribe la contraseña del proyecto.');
-      return;
-    }
-    setOcupadoLocal(true);
-    try {
-      const entrada = await api.abrirProyectoLocal(ruta, claveLocal, () => {
-        throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
-      });
-      if (entrada.estado === 'dentro') {
-        cerrarAbrirLocal();
-        terminarEntradaLocal(entrada, ruta);
-      }
-    } catch (e) {
-      setErrorLocal(mensajeDeError(e));
-    } finally {
-      setOcupadoLocal(false);
-    }
-  };
-  // Importar un `.bbproyecto`: se elige dónde descomprimirlo y queda listo para abrir con su contraseña.
-  const importarLocal = async () => {
-    setErrorLocal(null);
-    try {
-      const destino = await api.elegirCarpeta('¿En qué carpeta guardo el proyecto importado?');
-      if (!destino) return;
-      setOcupadoLocal(true);
-      const importado = await api.importarProyectoLocal(destino);
-      if (!importado) return;
-      setCarpetaLocal(importado.ruta);
-      setClaveLocal('');
-      showToast(`Proyecto ${importado.nombre} importado. Escribe su contraseña para abrirlo.`);
-    } catch (e) {
-      setErrorLocal(mensajeDeError(e));
-    } finally {
-      setOcupadoLocal(false);
-    }
-  };
-  const [nuevo, setNuevo] = useState({ carpeta: '', proyecto: '', nombre: '', correo: '', clave: '' });
-  const correoNuevoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nuevo.correo.trim());
-  const [creandoLocal, setCreandoLocal] = useState(false);
-  const [errorCrearLocal, setErrorCrearLocal] = useState<string | null>(null);
-  // Errores por campo: se marcan en cuanto sales del campo (o al pulsar "Crear", si nunca entraste).
-  type CampoNuevo = 'carpeta' | 'proyecto' | 'nombre' | 'correo' | 'clave';
-  const errorNuevo: Record<CampoNuevo, string | null> = {
-    // En el mockup no hay disco: la carpeta solo se pide en la app de escritorio.
-    carpeta: !enTauri() || nuevo.carpeta.trim() ? null : 'Elige dónde guardar el proyecto.',
-    proyecto: nuevo.proyecto.trim() ? null : 'Escribe el nombre del proyecto.',
-    nombre: nuevo.nombre.trim() ? null : 'Escribe tu nombre.',
-    correo: !nuevo.correo.trim()
-      ? 'Escribe tu correo.'
-      : correoNuevoOk
-        ? null
-        : 'El correo no es válido (ej. nombre@correo.com).',
-    clave: !nuevo.clave
-      ? 'Escribe una contraseña.'
-      : nuevo.clave.length < 8
-        ? 'La contraseña debe tener al menos 8 caracteres.'
-        : null,
-  };
-  const [tocados, setTocados] = useState<Set<CampoNuevo>>(new Set());
-  const tocar = (c: CampoNuevo) => setTocados((t) => new Set(t).add(c));
-  const errorVisible = (c: CampoNuevo) => (tocados.has(c) ? errorNuevo[c] : null);
-  const cerrarCrear = () => {
-    setCrear(false);
-    setTocados(new Set());
-    setErrorCrearLocal(null);
-  };
-  const crearLocal = async () => {
-    if (Object.values(errorNuevo).some(Boolean)) {
-      setTocados(new Set(['carpeta', 'proyecto', 'nombre', 'correo', 'clave']));
-      return;
-    }
-    const datos = {
-      carpeta: nuevo.carpeta.trim(),
-      proyecto: nuevo.proyecto.trim(),
-      nombre: nuevo.nombre.trim(),
-      correo: nuevo.correo.trim(),
-      clave: nuevo.clave,
-    };
-    if (!enTauri()) {
-      crearProyectoNuevo({ proyecto: datos.proyecto, nombre: datos.nombre, correo: datos.correo });
-      cerrarCrear();
-      setNuevo({ carpeta: '', proyecto: '', nombre: '', correo: '', clave: '' });
-      return;
-    }
-    setCreandoLocal(true);
-    setErrorCrearLocal(null);
-    try {
-      const { ruta, entrada } = await api.crearProyectoLocal(datos, () => {
-        throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
-      });
-      cerrarCrear();
-      setNuevo({ carpeta: '', proyecto: '', nombre: '', correo: '', clave: '' });
-      if (entrada.estado === 'dentro') terminarEntradaLocal(entrada, ruta);
-    } catch (e) {
-      setErrorCrearLocal(mensajeDeError(e));
-    } finally {
-      setCreandoLocal(false);
-    }
-  };
-
+  const [correoRegistrado, setCorreoRegistrado] = useState('');
+  const cuenta = useStore((s) => s.cuentaBranchBoard);
+  const entrarSinProyecto = useStore((s) => s.entrarSinProyecto);
   // Lo que decidiría el backend, con los datos de ejemplo y el correo elegido en "Demo · cm whoami".
   // En el mockup, el dueño del repositorio es el Administrador semilla.
   const entradaMockup = (ws: WorkspaceUnityVC): EntradaProyecto => {
@@ -306,69 +149,60 @@ export function AccesoProyecto() {
     );
   };
 
-  // Proyecto sin Unity VC: no hay workspace ni carpeta compartida que elegir (va dentro del proyecto).
-  const terminarEntradaLocal = (entrada: EntradaDentro, ruta: string) => {
-    if (!useStore.getState().usuarios.some((u) => u.email === entrada.email)) {
-      const [nombre, apellido = ''] = entrada.email.split('@')[0].split(/[._-]/);
-      useStore.setState((s) => ({
-        usuarios: [
-          ...s.usuarios,
-          { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '', firma: 'backend', firmado_en: null },
-        ],
-      }));
-    }
-    setEmail(entrada.email);
-    setRolActual(entrada.rol);
-    entrarAProyecto(entrada.proyecto, entrada.proyecto, ruta);
-    showToast(
-      entrada.configurado_ahora
-        ? `Proyecto ${entrada.proyecto} creado — eres su Administrador`
-        : `Abriste ${entrada.proyecto}`
-    );
-  };
-
-
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-surface p-4">
+      <FondoRamas />
+      <div className="mb-10 flex items-baseline text-5xl font-bold tracking-tight [filter:drop-shadow(0_6px_18px_rgba(74,222,128,0.35))_drop-shadow(0_2px_4px_rgba(0,0,0,0.9))]">
+        <span className="text-text">Branch</span>
+        <span className="text-green-400">Board</span>
+      </div>
       <div className="card flex w-full max-w-lg flex-col gap-5 p-8">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-baseline text-2xl font-bold tracking-tight">
-            <span className="text-text">Branch</span>
-            <span className="text-green-400">Board</span>
-          </div>
-          {(paso !== 'inicio' || sinUvcs) && (
+        {paso !== 'inicio' && paso !== 'registro' && paso !== 'recuperar' && (
+          <div className="flex justify-end">
             <button
               className="btn-ghost btn-sm"
               onClick={() =>
-                paso === 'inicio'
-                  ? setSinUvcs(false)
-                  : setPaso(paso === 'clonar' || paso === 'carpeta-compartida' ? 'workspaces' : 'inicio')
+                paso === 'workspaces' && cuenta
+                  ? setAccesoCompletado(true)
+                  : setPaso(
+                  paso === 'clonar' || paso === 'carpeta-compartida'
+                    ? 'workspaces'
+                    : 'inicio'
+                )
               }
             >
               ← Volver
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {paso === 'inicio' && (
-          <PasoInicio
-            sesion={sesion}
-            onLogin={() => setLogin(true)}
-            sinUvcs={sinUvcs}
-            onSinUvcs={() => setSinUvcs(true)}
-            vpnOn={vpnOn}
-            vpnInstalado={vpnInstalado}
-            vpnCargando={vpnCargando}
-            vpnInstalando={vpnInstalando}
-            onToggleVpn={() => void toggleVpn()}
-            onInstalarWarp={() => void instalarWarp()}
-            cmInstalado={cmInstalado}
-            cmInstalando={cmInstalando}
-            onInstalarCm={() => void instalarCm()}
-            onCrear={() => setCrear(true)}
-            // Con sesión: tus proyectos de Unity VC. Sin Unity VC: buscar en tu equipo la carpeta de un
-            // proyecto de BranchBoard que no está conectado a Unity VC.
-            onIngresar={() => (sinUvcs ? setAbrirLocal(true) : setPaso('workspaces'))}
+          <PasoLogin
+            correoInicial={correoRegistrado}
+            onIngresado={(c) => entrarSinProyecto(c)}
+            onRegistrarse={() => setPaso('registro')}
+            onUnityVc={() => setLogin(true)}
+            unityVcDeshabilitado={!cmInstalado || cmInstalando}
+            avisoCm={!cmInstalado && <AvisoInstalarCm instalando={cmInstalando} onInstalar={() => void instalarCm()} />}
+            onRecuperar={(c) => {
+              setCorreoRegistrado(c);
+              setPaso('recuperar');
+            }}
+          />
+        )}
+
+        {paso === 'recuperar' && (
+          <PasoRecuperar correoInicial={correoRegistrado} onVolver={() => setPaso('inicio')} />
+        )}
+
+        {paso === 'registro' && (
+          <PasoRegistro
+            onRegistrado={(c) => {
+              setCorreoRegistrado(c.correo);
+              showToast('Cuenta creada. Ya puedes iniciar sesión.');
+              setPaso('inicio');
+            }}
+            onIniciarSesion={() => setPaso('inicio')}
           />
         )}
 
@@ -445,203 +279,6 @@ export function AccesoProyecto() {
         )}
       </div>
 
-      <ModalCrearProyectoReal
-        open={crear && enTauri() && !sinUvcs}
-        onClose={cerrarCrear}
-        onCreado={async (ws, entrada) => {
-          setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
-          cerrarCrear();
-          if (entrada.estado !== 'dentro') {
-            const pasos = {
-              pendiente: 'pendiente',
-              no_registrado: 'no-registrado',
-              esperar_dueno: 'esperar-dueno',
-            } as const;
-            setPaso(pasos[entrada.estado]);
-            return;
-          }
-          const carpeta = await api.carpetaCompartida(() => null);
-          if (!carpeta) {
-            setPorEntrar({ ws, entrada });
-            setPaso('carpeta-compartida');
-            return;
-          }
-          terminarEntrada(ws, entrada);
-        }}
-      />
-
-      <Modal
-        open={crear && (!enTauri() || sinUvcs)}
-        onClose={cerrarCrear}
-        title="Crear un nuevo proyecto"
-        subtitle="Sin Unity VC. Quedarás como Administrador del proyecto"
-        size="sm"
-        footer={
-          <div className="flex w-full justify-end gap-2">
-            <button type="button" className="btn-ghost btn-sm" onClick={cerrarCrear} disabled={creandoLocal}>
-              Cancelar
-            </button>
-            <button type="button" className="btn-primary btn-sm" onClick={() => void crearLocal()} disabled={creandoLocal}>
-              {creandoLocal ? 'Creando…' : 'Crear'}
-            </button>
-          </div>
-        }
-      >
-        <div className="space-y-3 text-sm">
-          {enTauri() && (
-            <label className="block">
-              <span className="mb-1 block text-xs text-faint">Dónde guardarlo</span>
-              <SelectorCarpeta
-                value={nuevo.carpeta}
-                onChange={(v) => {
-                  setNuevo({ ...nuevo, carpeta: v });
-                  tocar('carpeta');
-                }}
-                placeholder="Carpeta donde se crea la del proyecto"
-                titulo="¿Dónde guardo el proyecto?"
-              />
-              {errorVisible('carpeta') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('carpeta')}</span>}
-              {nuevo.carpeta.trim() && nuevo.proyecto.trim() && (
-                <span className="mt-1 block truncate font-mono text-[11px] text-faint">
-                  {nuevo.carpeta.trim().replace(/[\\/]+$/, '')}\{nuevo.proyecto.trim()}
-                </span>
-              )}
-            </label>
-          )}
-          {/* El nombre del proyecto va destacado: más grande que tus datos. */}
-          <label className="block pb-1">
-            <span className="mb-1.5 block text-sm font-semibold text-text">Nombre del proyecto</span>
-            <input
-              className={`input h-12 text-lg font-semibold placeholder:font-normal placeholder:opacity-30 ${errorVisible('proyecto') ? 'border-red-500/70' : ''}`}
-              autoFocus
-              placeholder="Mi proyecto"
-              value={nuevo.proyecto}
-              onBlur={() => tocar('proyecto')}
-              onChange={(e) => setNuevo({ ...nuevo, proyecto: e.target.value })}
-            />
-            {errorVisible('proyecto') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('proyecto')}</span>}
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs text-faint">Tu nombre</span>
-            <input
-              className={`input ${errorVisible('nombre') ? 'border-red-500/70' : ''}`}
-              value={nuevo.nombre}
-              onBlur={() => tocar('nombre')}
-              onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })}
-            />
-            {errorVisible('nombre') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('nombre')}</span>}
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs text-faint">Tu correo</span>
-            <input
-              className={`input ${errorVisible('correo') ? 'border-red-500/70' : ''}`}
-              type="email"
-              value={nuevo.correo}
-              onBlur={() => tocar('correo')}
-              onChange={(e) => setNuevo({ ...nuevo, correo: e.target.value })}
-            />
-            {errorVisible('correo') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('correo')}</span>}
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs text-faint">Tu contraseña (mínimo 8 caracteres)</span>
-            <input
-              className={`input ${errorVisible('clave') ? 'border-red-500/70' : ''}`}
-              type="password"
-              autoComplete="new-password"
-              value={nuevo.clave}
-              onBlur={() => tocar('clave')}
-              onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })}
-            />
-            {errorVisible('clave') && <span className="mt-1 block text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorVisible('clave')}</span>}
-          </label>
-          {errorCrearLocal && <p className="text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorCrearLocal}</p>}
-        </div>
-      </Modal>
-
-      <Modal
-        open={abrirLocal}
-        onClose={cerrarAbrirLocal}
-        title="Abrir un proyecto de BranchBoard"
-        subtitle="Elige la carpeta de un proyecto sin Unity VC"
-        size="sm"
-        footer={
-          <div className="flex w-full items-center justify-between gap-2">
-            {enTauri() ? (
-              <button type="button" className="btn-ghost btn-sm" onClick={() => void importarLocal()} disabled={ocupadoLocal}>
-                Importar .bbproyecto…
-              </button>
-            ) : (
-              <span />
-            )}
-            <div className="flex gap-2">
-              <button type="button" className="btn-ghost btn-sm" onClick={cerrarAbrirLocal} disabled={ocupadoLocal}>
-                Cancelar
-              </button>
-              <button type="button" className="btn-primary btn-sm" onClick={() => void abrirCarpetaLocal()} disabled={ocupadoLocal}>
-                {ocupadoLocal ? 'Abriendo…' : 'Abrir'}
-              </button>
-            </div>
-          </div>
-        }
-      >
-        <div className="space-y-3 text-sm">
-          {recientes.length > 0 && (
-            <div>
-              <span className="mb-1 block text-xs text-faint">Recientes</span>
-              <div className="space-y-1">
-                {recientes.map((p) => (
-                  <button
-                    key={p.ruta}
-                    type="button"
-                    onClick={() => {
-                      setCarpetaLocal(p.ruta);
-                      setErrorLocal(null);
-                    }}
-                    className={`flex w-full flex-col items-start rounded-lg border px-3 py-2 text-left transition hover:border-primary ${
-                      carpetaLocal === p.ruta ? 'border-primary bg-primary-soft' : 'border-border bg-surface-2'
-                    }`}
-                  >
-                    <span className="text-sm font-medium text-text">{p.nombre}</span>
-                    <span className="w-full truncate font-mono text-[11px] text-faint">{p.ruta}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <label className="block">
-            <span className="mb-1 block text-xs text-faint">Carpeta del proyecto</span>
-            <SelectorCarpeta
-              value={carpetaLocal}
-              onChange={(v) => {
-                setCarpetaLocal(v);
-                setErrorLocal(null);
-              }}
-              placeholder="Carpeta del proyecto"
-              titulo="Carpeta del proyecto de BranchBoard"
-            />
-          </label>
-          {enTauri() && (
-            <label className="block">
-              <span className="mb-1 block text-xs text-faint">Contraseña del proyecto</span>
-              <input
-                className="input"
-                type="password"
-                autoComplete="current-password"
-                value={claveLocal}
-                onChange={(e) => {
-                  setClaveLocal(e.target.value);
-                  setErrorLocal(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void abrirCarpetaLocal();
-                }}
-              />
-            </label>
-          )}
-          {errorLocal && <p className="text-[11px] text-red-300"><IconoEnLinea nombre="alerta" sinColor />{errorLocal}</p>}
-        </div>
-      </Modal>
-
       <LoginUnityVCModal
         open={login}
         onClose={() => setLogin(false)}
@@ -652,6 +289,14 @@ export function AccesoProyecto() {
           setSesion(c);
           setCorreo(c);
           showToast(`Sesión de Unity VC iniciada como ${c}`);
+          useStore.setState({ cmSesionActiva: true });
+          if (paso === 'inicio') {
+            // Desde el login: se entra a BranchBoard sin proyecto, igual que con la cuenta de BranchBoard; los
+            // proyectos de Unity VC se eligen desde el aviso "No estás en ningún proyecto" o el menú del proyecto.
+            if (enTauri()) void cargarWorkspacesYProyectos();
+            entrarSinProyecto({ nombre: c.split('@')[0], apellido: '', correo: c });
+            return;
+          }
           // Con la sesión iniciada se pasa directo a elegir el workspace.
           setPaso('workspaces');
         }}
@@ -785,142 +430,333 @@ function AvisoInstalarCm({
   );
 }
 
-function PasoInicio({
-  sesion,
-  onLogin,
-  sinUvcs,
-  onSinUvcs,
-  vpnOn,
-  vpnInstalado,
-  vpnCargando,
-  vpnInstalando,
-  onToggleVpn,
-  onInstalarWarp,
-  cmInstalado,
-  cmInstalando,
-  onInstalarCm,
-  onCrear,
-  onIngresar,
-}: {
-  sesion: string | null;
-  onLogin: () => void;
-  sinUvcs: boolean;
-  onSinUvcs: () => void;
-  vpnOn: boolean;
-  vpnInstalado: boolean;
-  vpnCargando: boolean;
-  vpnInstalando: boolean;
-  onToggleVpn: () => void;
-  onInstalarWarp: () => void;
-  cmInstalado: boolean;
-  cmInstalando: boolean;
-  onInstalarCm: () => void;
-  onCrear: () => void;
-  onIngresar: () => void;
-}) {
+const correoValido = (c: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.trim());
+
+function Campo({
+  etiqueta,
+  error,
+  ...props
+}: { etiqueta: string; error?: string | null } & InputHTMLAttributes<HTMLInputElement>) {
   return (
-    <>
-      {/* Primero la VPN: sin ella, en algunas redes Unity VC no conecta (ni para iniciar sesión). */}
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition">
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-text">Conexión VPN (Cloudflare WARP)</div>
-          <div className="text-xs text-muted">
-            {!vpnInstalado
-              ? 'Cloudflare WARP no está instalado en este equipo.'
-              : vpnCargando
-                ? 'Actualizando conexión VPN…'
-                : 'En redes como la de la universidad, Unity VC no conecta sin la VPN activa.'}
-          </div>
-          {!vpnInstalado && (
-            <button
-              type="button"
-              onClick={onInstalarWarp}
-              disabled={vpnInstalando}
-              className="mt-1 text-xs font-medium text-primary underline hover:opacity-80 disabled:opacity-60"
-            >
-              {vpnInstalando ? 'Instalando Cloudflare WARP…' : 'Instalar Cloudflare WARP'}
-            </button>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onToggleVpn}
-          disabled={!vpnInstalado || vpnCargando || vpnInstalando}
-          title={vpnInstalado ? 'Conexión VPN (Cloudflare WARP)' : 'Cloudflare WARP no está instalado'}
-          aria-label="Conexión VPN (Cloudflare WARP)"
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-            vpnInstalado && vpnOn ? 'bg-done' : 'bg-faint'
-          }`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              vpnInstalado && vpnOn ? 'translate-x-4' : 'translate-x-0.5'
-            }`}
-          />
-        </button>
-      </div>
-
-      {!cmInstalado && !sinUvcs && (
-        <AvisoInstalarCm instalando={cmInstalando} onInstalar={onInstalarCm} />
-      )}
-
-      {/* Sesión de Unity VC: es la identidad en BranchBoard (no hay login propio). */}
-      {sinUvcs ? null : sesion ? (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-done/40 bg-done/10 px-4 py-3">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-text">Sesión de Unity VC iniciada</div>
-            <div className="truncate font-mono text-xs text-muted">{sesion}</div>
-          </div>
-          <div className="flex shrink-0 gap-1.5">
-            <button className="btn-ghost btn-sm" onClick={onLogin}>
-              Cambiar de cuenta
-            </button>
-            <button className="btn-primary btn-sm" onClick={onIngresar}>
-              Mis proyectos →
-            </button>
-          </div>
-        </div>
+    <label className="block">
+      <span className="mb-1 block text-xs text-faint">{etiqueta}</span>
+      {props.type === 'password' ? (
+        <EntradaClave className={`input ${error ? 'border-red-500/70' : ''}`} {...props} />
       ) : (
-        <button
-          onClick={onLogin}
-          disabled={!cmInstalado || cmInstalando}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Iniciar sesión con Unity VC
-        </button>
+        <input className={`input ${error ? 'border-red-500/70' : ''}`} {...props} />
       )}
-
-      {/* Proyectos sin Unity VC: con o sin sesión de Unity VC. */}
-      {!sinUvcs && (
-        <button
-          onClick={onSinUvcs}
-          className="w-full rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:border-border-strong hover:text-text"
-        >
-          Continuar sin Unity VC
-        </button>
+      {error && (
+        <span className="mt-1 block text-[11px] text-red-300">
+          <IconoEnLinea nombre="alerta" sinColor />
+          {error}
+        </span>
       )}
+    </label>
+  );
+}
 
-      {/* Las dos opciones solo salen al elegir "Continuar sin Unity VC". Con sesión, se va directo a tus
-          workspaces. */}
-      {sinUvcs && (
-      <div className="grid gap-3 sm:grid-cols-2">
-        <button
-          onClick={onCrear}
-          className="flex flex-col items-start gap-1 rounded-xl border border-border bg-surface-2 p-4 text-left transition hover:border-primary"
-        >
-          <Icono nombre="chispa" className="h-6 w-6" />
-          <span className="text-sm font-semibold text-text">Crear un nuevo proyecto</span>
-        </button>
-        <button
-          onClick={onIngresar}
-          className="flex flex-col items-start gap-1 rounded-xl border border-border bg-surface-2 p-4 text-left transition hover:border-primary"
-        >
-          <Icono nombre="carpetaAbierta" className="h-6 w-6" />
-          <span className="text-sm font-semibold text-text">Ingresar a un proyecto existente</span>
+// Inicio clásico: "Bienvenido", correo, contraseña e "Ingresar". Abajo, "¿No tienes cuenta? Regístrate".
+function PasoLogin({
+  correoInicial,
+  onIngresado,
+  onRegistrarse,
+  onUnityVc,
+  unityVcDeshabilitado,
+  avisoCm,
+  onRecuperar,
+}: {
+  correoInicial: string;
+  onIngresado: (c: Cuenta) => void;
+  onRegistrarse: () => void;
+  onUnityVc: () => void;
+  unityVcDeshabilitado: boolean;
+  avisoCm: ReactNode;
+  onRecuperar: (correo: string) => void;
+}) {
+  const [recientes, setRecientes] = useState(correosRecientes);
+  // Recién registrado: su correo. Si no, el último con el que se entró en este equipo.
+  const [correo, setCorreo] = useState(() => correoInicial || correosRecientes()[0] || '');
+  const conCorreo = Boolean(correoInicial || recientes[0]);
+  const [verRecientes, setVerRecientes] = useState(false);
+  const sugeridos = recientes.filter((c) => c !== correo.trim().toLowerCase() && c.includes(correo.trim().toLowerCase()));
+  const [clave, setClave] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  const enviar = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!correoValido(correo) || !clave) {
+      setError('Escribe tu correo y tu contraseña.');
+      return;
+    }
+    setEnviando(true);
+    setError(null);
+    try {
+      onIngresado(await ingresar(correo, clave));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : mensajeDeError(err));
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <form onSubmit={enviar} className="flex flex-col gap-4">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold text-text">Bienvenido</h2>
+        <p className="mt-1 text-sm text-faint">Ingresa tu correo y contraseña</p>
+      </div>
+      <div className="relative">
+        <Campo
+          etiqueta="Correo"
+          type="email"
+          autoFocus={!conCorreo}
+          autoComplete="off"
+          placeholder="tu@correo.com"
+          value={correo}
+          onFocus={() => {
+            setError(null);
+            setVerRecientes(true);
+          }}
+          // Se espera un poco para que el clic en una sugerencia llegue antes de ocultarlas.
+          onBlur={() => setTimeout(() => setVerRecientes(false), 150)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setVerRecientes(false);
+          }}
+          onChange={(e) => {
+            setCorreo(e.target.value);
+            setError(null);
+            setVerRecientes(true);
+          }}
+        />
+        {verRecientes && sugeridos.length > 0 && (
+          <div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-border bg-surface-2 py-1 shadow-pop">
+            <div className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-faint">Usados en este equipo</div>
+            {sugeridos.map((c) => (
+              <div key={c} className="group flex items-center hover:bg-surface-3">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setCorreo(c);
+                    setVerRecientes(false);
+                    document.getElementById('clave-login')?.focus();
+                  }}
+                  className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm text-text"
+                >
+                  {c}
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    olvidarCorreo(c);
+                    setRecientes(correosRecientes());
+                  }}
+                  title="Olvidar este correo"
+                  aria-label={`Olvidar ${c}`}
+                  className="px-3 py-2 text-xs text-faint opacity-60 transition hover:text-red-300 group-hover:opacity-100"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <Campo
+        etiqueta="Contraseña"
+        id="clave-login"
+        type="password"
+        autoFocus={conCorreo}
+        autoComplete="current-password"
+        value={clave}
+        onFocus={() => setError(null)}
+        onChange={(e) => {
+          setClave(e.target.value);
+          setError(null);
+        }}
+      />
+      <div className="-mt-2 flex justify-end">
+        <button type="button" onClick={() => onRecuperar(correo.trim())} className="text-xs text-sky-400 hover:underline">
+          ¿Olvidaste tu contraseña?
         </button>
       </div>
+      {error && (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{error}</p>
       )}
-    </>
+      <button
+        type="submit"
+        disabled={enviando}
+        className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+      >
+        {enviando ? 'Ingresando…' : 'Ingresar'}
+      </button>
+      <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-faint">
+        <span className="h-px flex-1 bg-border" />o<span className="h-px flex-1 bg-border" />
+      </div>
+      <button
+        type="button"
+        onClick={onUnityVc}
+        disabled={unityVcDeshabilitado}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm font-semibold text-text transition hover:border-border-strong hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Icono nombre="unity" className="h-4 w-4" sinColor />
+        Iniciar sesión con Unity VC
+      </button>
+      {avisoCm}
+      <p className="text-center text-sm text-muted">
+        ¿No tienes cuenta?{' '}
+        <button type="button" onClick={onRegistrarse} className="font-semibold text-sky-400 hover:underline">
+          Regístrate
+        </button>
+      </p>
+    </form>
+  );
+}
+
+// Recuperar contraseña: pide el correo. Todavía no envía nada (no hay servidor de correo ni backend de
+// cuentas): al enviar solo avisa que la recuperación aún no está disponible.
+function PasoRecuperar({ correoInicial, onVolver }: { correoInicial: string; onVolver: () => void }) {
+  const [correo, setCorreo] = useState(correoInicial);
+  const [error, setError] = useState<string | null>(null);
+  const [enviado, setEnviado] = useState(false);
+
+  const enviar = (e: FormEvent) => {
+    e.preventDefault();
+    if (!correoValido(correo)) {
+      setError(correo.trim() ? 'El correo no es válido (ej. nombre@correo.com).' : 'Escribe tu correo.');
+      return;
+    }
+    setEnviado(true);
+  };
+
+  return (
+    <form onSubmit={enviar} className="flex flex-col gap-4">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold text-text">Recuperar contraseña</h2>
+        <p className="mt-1 text-sm text-faint">Escribe el correo de tu cuenta y te enviaremos cómo cambiarla</p>
+      </div>
+      <Campo
+        etiqueta="Correo"
+        type="email"
+        autoFocus
+        autoComplete="email"
+        placeholder="tu@correo.com"
+        value={correo}
+        error={error}
+        onFocus={() => setError(null)}
+        onChange={(e) => {
+          setCorreo(e.target.value);
+          setError(null);
+          setEnviado(false);
+        }}
+      />
+      {enviado && (
+        <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-muted">
+          <IconoEnLinea nombre="alerta" />
+          La recuperación de contraseña todavía no está disponible. Pronto podrás recibir aquí un correo para cambiarla.
+        </p>
+      )}
+      <button
+        type="submit"
+        className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+      >
+        Enviar
+      </button>
+      <p className="text-center text-sm text-muted">
+        ¿La recordaste?{' '}
+        <button type="button" onClick={onVolver} className="font-semibold text-sky-400 hover:underline">
+          Inicia sesión
+        </button>
+      </p>
+    </form>
+  );
+}
+
+// Registro: nombre, apellido, correo y contraseña. Al terminar vuelve a "Bienvenido" para iniciar sesión.
+function PasoRegistro({
+  onRegistrado,
+  onIniciarSesion,
+}: {
+  onRegistrado: (c: Cuenta) => void;
+  onIniciarSesion: () => void;
+}) {
+  const [datos, setDatos] = useState({ nombre: '', apellido: '', correo: '', clave: '' });
+  type CampoR = keyof typeof datos;
+  const [tocados, setTocados] = useState<Set<CampoR>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  const errores: Record<CampoR, string | null> = {
+    nombre: datos.nombre.trim() ? null : 'Escribe tu nombre.',
+    apellido: datos.apellido.trim() ? null : 'Escribe tu apellido.',
+    correo: !datos.correo.trim()
+      ? 'Escribe tu correo.'
+      : correoValido(datos.correo)
+        ? null
+        : 'El correo no es válido (ej. nombre@correo.com).',
+    clave: !datos.clave
+      ? 'Escribe una contraseña.'
+      : datos.clave.length < 8
+        ? 'La contraseña debe tener al menos 8 caracteres.'
+        : null,
+  };
+  const campo = (c: CampoR) => ({
+    value: datos[c],
+    error: tocados.has(c) ? errores[c] : null,
+    onBlur: () => setTocados((t) => new Set(t).add(c)),
+    onFocus: () => setError(null),
+    onChange: (e: ChangeEvent<HTMLInputElement>) => {
+      setDatos({ ...datos, [c]: e.target.value });
+      setError(null);
+    },
+  });
+
+  const enviar = async (e: FormEvent) => {
+    e.preventDefault();
+    if (Object.values(errores).some(Boolean)) {
+      setTocados(new Set<CampoR>(['nombre', 'apellido', 'correo', 'clave']));
+      return;
+    }
+    setEnviando(true);
+    setError(null);
+    try {
+      onRegistrado(await registrarCuenta(datos));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : mensajeDeError(err));
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <form onSubmit={enviar} className="flex flex-col gap-4">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold text-text">Crea tu cuenta</h2>
+        <p className="mt-1 text-sm text-faint">Con ella podrás iniciar sesión en BranchBoard</p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Campo etiqueta="Nombre" autoFocus autoComplete="given-name" {...campo('nombre')} />
+        <Campo etiqueta="Apellido" autoComplete="family-name" {...campo('apellido')} />
+      </div>
+      <Campo etiqueta="Correo" type="email" autoComplete="email" placeholder="tu@correo.com" {...campo('correo')} />
+      <Campo etiqueta="Contraseña (mínimo 8 caracteres)" type="password" autoComplete="new-password" {...campo('clave')} />
+      {error && (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{error}</p>
+      )}
+      <button
+        type="submit"
+        disabled={enviando}
+        className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+      >
+        {enviando ? 'Creando cuenta…' : 'Registrarme'}
+      </button>
+      <p className="text-center text-sm text-muted">
+        ¿Ya tienes cuenta?{' '}
+        <button type="button" onClick={onIniciarSesion} className="font-semibold text-sky-400 hover:underline">
+          Inicia sesión
+        </button>
+      </p>
+    </form>
   );
 }
 
@@ -1164,183 +1000,5 @@ function PasoClonar({
         </div>
       )}
     </>
-  );
-}
-
-function ModalCrearProyectoReal({
-  open,
-  onClose,
-  onCreado,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCreado: (ws: WorkspaceUnityVC, entrada: EntradaProyecto) => void | Promise<void>;
-}) {
-  const proyectosServidor = useStore((s) => s.proyectosServidor);
-  const proyectosUnity = proyectosPadreUnity(proyectosServidor);
-  const [proyectoUnity, setProyectoUnity] = useState('');
-  const [nombre, setNombre] = useState('');
-  const [carpeta, setCarpeta] = useState('');
-  const [creando, setCreando] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const proyectoUnityEfectivo = proyectoUnity || proyectosUnity[0] || '';
-  // `cm` no puede crear proyectos padre en Unity Organizations (#205): se crean en el
-  // Dashboard y después se vuelve a pedir la lista al servidor.
-  const recargarProyectos = useStore((s) => s.cargarWorkspacesYProyectos);
-  const orgUnity = proyectosServidor[0]?.org;
-  const [recargando, setRecargando] = useState(false);
-
-  const abrirUnityCloud = async () => {
-    setError(null);
-    try {
-      await api.abrirUnityCloud(orgUnity);
-    } catch (e) {
-      setError(mensajeDeError(e));
-    }
-  };
-
-  const recargar = async () => {
-    if (recargando || creando) return;
-    setRecargando(true);
-    setError(null);
-    try {
-      await recargarProyectos();
-    } catch (e) {
-      setError(mensajeDeError(e));
-    } finally {
-      setRecargando(false);
-    }
-  };
-
-  const cerrar = () => {
-    if (creando) return;
-    setProyectoUnity('');
-    setNombre('');
-    setCarpeta('');
-    setError(null);
-    onClose();
-  };
-
-  const enviar = async () => {
-    if (!nombre.trim() || !carpeta.trim() || creando) return;
-    setCreando(true);
-    setError(null);
-    try {
-      const res = await api.crearProyecto(
-        nombre.trim(),
-        carpeta.trim(),
-        proyectoUnityEfectivo || undefined
-      );
-      setProyectoUnity('');
-      setNombre('');
-      setCarpeta('');
-      await onCreado(res.workspace, res.entrada);
-    } catch (e) {
-      setError(mensajeDeError(e));
-    } finally {
-      setCreando(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={cerrar}
-      title="Crear un nuevo proyecto"
-      subtitle="Crea el repositorio y su workspace en Unity VC Cloud; quedarás como Administrador"
-      size="sm"
-      footer={
-        <div className="flex w-full justify-end gap-2">
-          <button type="button" className="btn-ghost btn-sm" disabled={creando} onClick={cerrar}>
-            Cancelar
-          </button>
-          <button
-            type="button"
-            className="btn-primary btn-sm"
-            disabled={creando || !nombre.trim() || !carpeta.trim()}
-            onClick={() => void enviar()}
-          >
-            {creando ? 'Creando proyecto…' : 'Crear proyecto'}
-          </button>
-        </div>
-      }
-    >
-      <div className="space-y-3 text-sm">
-        {proyectosUnity.length > 0 && (
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold text-text">Proyecto en Unity Cloud</span>
-            <select
-              className="input"
-              disabled={creando}
-              value={proyectoUnityEfectivo}
-              onChange={(e) => {
-                setProyectoUnity(e.target.value);
-                setError(null);
-              }}
-            >
-              {proyectosUnity.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-          <span>
-            {proyectosUnity.length > 0
-              ? '¿Necesitas otro proyecto en Unity Cloud?'
-              : 'Unity VC no devolvió ningún proyecto: crea uno en Unity Cloud y vuelve a cargar la lista.'}
-          </span>
-          <button
-            type="button"
-            className="font-semibold text-primary hover:underline disabled:opacity-50"
-            disabled={creando}
-            onClick={() => void abrirUnityCloud()}
-          >
-            Crearlo en Unity Cloud
-          </button>
-          <button
-            type="button"
-            className="font-semibold text-primary hover:underline disabled:opacity-50"
-            disabled={creando || recargando}
-            onClick={() => void recargar()}
-          >
-            {recargando ? 'Recargando…' : 'Recargar proyectos'}
-          </button>
-        </div>
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-text">Nombre del proyecto</span>
-          <input
-            className="input"
-            autoFocus
-            disabled={creando}
-            placeholder="Mi proyecto"
-            value={nombre}
-            onChange={(e) => {
-              setNombre(e.target.value);
-              setError(null);
-            }}
-          />
-        </label>
-        <div>
-          <span className="mb-1.5 block text-xs font-semibold text-text">Carpeta de destino</span>
-          <SelectorCarpeta
-            value={carpeta}
-            onChange={(v) => {
-              setCarpeta(v);
-              setError(null);
-            }}
-            disabled={creando}
-            placeholder="Carpeta donde se creará el workspace"
-          />
-        </div>
-        {error && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-            {error}
-          </div>
-        )}
-      </div>
-    </Modal>
   );
 }

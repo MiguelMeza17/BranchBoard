@@ -1,5 +1,5 @@
 //! Gestión de la sesión de Unity Version Control (`cm whoami`,
-//! `plastic.exe --configure`, cierre de sesión, revocación de PAT y "Reconectar", #124).
+//! inicio de sesión por el navegador, cierre de sesión, revocación de PAT y "Reconectar", #124).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -163,32 +163,21 @@ pub fn iniciar_sesion_unity_vc(
     )
 }
 
-fn lanzar_plastic_configure(estado: &AppState) -> Resultado<()> {
-    // Las corridas automáticas pueden prohibir cualquier asistente interactivo.
+/// Inicio de sesión de Unity por el navegador (no abre Plastic SCM). La sesión queda guardada donde la
+/// guarda el cliente oficial, así que también vale para Plastic SCM / Unity VC (ver `sso_navegador`).
+fn lanzar_plastic_configure(_estado: &AppState) -> Resultado<()> {
+    // Las corridas automáticas pueden prohibir cualquier inicio de sesión interactivo.
     // No se compila en la aplicación publicada.
     #[cfg(test)]
     if std::env::var_os("BB_PRUEBA_SIN_ASISTENTE").is_some() {
         return Err(Error::Validacion(
-            "La prueba automática no permite abrir el asistente de Unity VC".into(),
+            "La prueba automática no permite abrir el inicio de sesión de Unity VC".into(),
         ));
     }
-    let ruta = resolver_plastic_exe().ok_or_else(|| {
-        Error::Validacion(
-            "No se encontró el asistente `plastic` de Unity Version Control para iniciar sesión."
-                .into(),
-        )
+    let carpeta = carpeta_config_plastic().ok_or_else(|| {
+        Error::Validacion("No se encontró la carpeta de configuración de Unity VC.".into())
     })?;
-    let salida = Comando::nuevo(&ruta.to_string_lossy())
-        .arg("--configure")
-        .tiempo_maximo(TIEMPO_MAXIMO_ASISTENTE)
-        .ejecutar(estado)?;
-    if salida.exito() {
-        Ok(())
-    } else {
-        Err(Error::Cm(
-            "El asistente de inicio de sesión de Unity VC no terminó correctamente.".into(),
-        ))
-    }
+    crate::cm::sso_navegador::iniciar_y_guardar(&carpeta, TIEMPO_MAXIMO_ASISTENTE).map(|_| ())
 }
 
 /// Núcleo testeable de [`iniciar_sesion_unity_vc`] (#124).

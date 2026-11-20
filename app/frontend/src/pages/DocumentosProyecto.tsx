@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { useStore } from '../store/useStore';
+import { api, enTauri, mensajeDeError } from '../lib/api';
 import { esLiderOAdmin } from '../lib/permisos';
 import type { Documento } from '../types';
 import { Icono } from '../components/Icono';
@@ -36,6 +38,9 @@ export function DocumentosProyecto() {
   const usuarios = useStore((s) => s.usuarios);
   const user = useStore((s) => s.currentUser());
   const subir = useStore((s) => s.subirDocumentos);
+  const subirRutas = useStore((s) => s.subirDocumentosRutas);
+  const cargarDocumentos = useStore((s) => s.cargarDocumentos);
+  const versionDatos = useStore((s) => s.versionDatos);
   const eliminar = useStore((s) => s.eliminarDocumento);
   const aprobar = useStore((s) => s.aprobarDocumento);
   const abrirDoc = useStore((s) => s.abrirDocumento);
@@ -57,6 +62,37 @@ export function DocumentosProyecto() {
     }
   }, [vista]);
 
+  // App de escritorio: los documentos salen del backend y se vuelven a pedir cuando llegan cambios del equipo.
+  useEffect(() => {
+    void cargarDocumentos();
+  }, [cargarDocumentos, versionDatos]);
+
+  // App de escritorio: Tauri recibe los archivos soltados en la ventana (con su ruta en el equipo); los
+  // eventos de arrastre del navegador no llegan con archivos, así que el resaltado y la subida van por aquí.
+  useEffect(() => {
+    if (!enTauri()) return;
+    let soltar: (() => void) | undefined;
+    let vivo = true;
+    void getCurrentWebview()
+      .onDragDropEvent((e) => {
+        const t = e.payload.type;
+        if (t === 'enter' || t === 'over') setArrastrando(true);
+        else if (t === 'leave') setArrastrando(false);
+        else if (t === 'drop') {
+          setArrastrando(false);
+          void subirRutas(e.payload.paths);
+        }
+      })
+      .then((fn) => {
+        if (vivo) soltar = fn;
+        else fn();
+      });
+    return () => {
+      vivo = false;
+      soltar?.();
+    };
+  }, [subirRutas]);
+
   const nombreDe = (email: string) => {
     const u = usuarios.find((x) => x.email === email);
     return u ? `${u.nombre} ${u.apellido}`.trim() : email;
@@ -71,7 +107,20 @@ export function DocumentosProyecto() {
     d.pendiente ? (
       <span className="chip border border-amber-500/40 bg-amber-500/15 text-[10px] text-amber-300">Pendiente</span>
     ) : null;
-  const cargar = () => input.current?.click();
+  // En la app de escritorio el explorador lo abre el backend (`elegir_archivos`) y devuelve rutas;
+  // en el navegador se usa el selector de archivos de la página (mockup en memoria).
+  const cargar = async () => {
+    if (!enTauri()) {
+      input.current?.click();
+      return;
+    }
+    try {
+      const rutas = await api.elegirArchivos('Cargar documentos');
+      if (rutas?.length) await subirRutas(rutas);
+    } catch (e) {
+      useStore.getState().showToast(mensajeDeError(e), 'danger');
+    }
+  };
 
   const grid =
     vista === 'medianos'
@@ -146,14 +195,14 @@ export function DocumentosProyecto() {
         <div className={`acotado p-1 ${grid} ${arrastrando ? 'rounded-xl ring-2 ring-primary ring-offset-4 ring-offset-bg' : ''}`}>
           {/* "Cargar documentos" con el mismo estilo que los documentos de la vista elegida. */}
           {vista === 'lista' ? (
-            <button type="button" onClick={cargar} className="flex items-center gap-3 px-4 py-3 text-left text-sm text-primary transition hover:bg-surface-2">
+            <button type="button" onClick={() => void cargar()} className="flex items-center gap-3 px-4 py-3 text-left text-sm text-primary transition hover:bg-surface-2">
               <span className="grid h-8 w-8 place-items-center rounded-lg border border-dashed border-primary/60"><Icono nombre="mas" className="h-4 w-4" /></span>
               Cargar documentos
             </button>
           ) : (
             <button
               type="button"
-              onClick={cargar}
+              onClick={() => void cargar()}
               className={`flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-border text-primary transition hover:border-primary hover:bg-primary-soft ${
                 vista === 'pequenos' ? 'text-xs' : 'text-sm'
               }`}

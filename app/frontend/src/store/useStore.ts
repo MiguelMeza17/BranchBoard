@@ -20,6 +20,7 @@ import { CHAT_GRUPO } from '../types';
 import * as ejemplo from '../data/fixtures';
 import { api, enTauri, ErrorBackend, mensajeDeError, type AlertaRamaAjena, type CambiosEntrantes, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
 import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
+import type { Cuenta } from '../lib/cuentas';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
 
 // Datos de ejemplo del mockup (el proyecto «VirusTF» inventado, sus usuarios, tareas, chat…): solo en el
@@ -302,6 +303,12 @@ interface State {
    * Unity VC. Ver "Proyectos sin Unity VC" en FRONTEND.md.
    */
   modoSinUnityVc: boolean;
+  /** Cuenta de BranchBoard con la que se inició sesión en "Bienvenido" (lib/cuentas.ts). */
+  cuentaBranchBoard: Cuenta | null;
+  /** Tras iniciar sesión: se entra a BranchBoard sin proyecto, sin rol y sin datos ("No estás en ningún proyecto"). */
+  entrarSinProyecto: (cuenta: Cuenta) => void;
+  /** Cerrar sesión de la cuenta de BranchBoard: sale del proyecto y vuelve a "Bienvenido". La sesión de Unity VC no se toca. */
+  cerrarSesionBranchBoard: () => void;
   setModoSinUnityVc: (activo: boolean) => void;
   /** Carpeta del proyecto local abierto (sin Unity VC), o `null` si el proyecto es de Unity VC. */
   proyectoLocal: string | null;
@@ -388,7 +395,13 @@ interface State {
   marcarChatLeido: (conversacion: string) => void;
   /** Documentos del proyecto (apartado con el nombre del proyecto). */
   documentos: Documento[];
+  /** Mockup del navegador: los archivos quedan en memoria. */
   subirDocumentos: (archivos: File[]) => void;
+  /**
+   * App de escritorio: sube los archivos por su ruta en el equipo (`subir_documentos`, #120); el backend
+   * los copia a la carpeta compartida. Las rutas salen del explorador de archivos o de soltarlos en la ventana.
+   */
+  subirDocumentosRutas: (rutas: string[]) => Promise<void>;
   /** Trae los documentos del proyecto desde el backend (#120); en el navegador no cambia nada. */
   cargarDocumentos: () => Promise<void>;
   eliminarDocumento: (id: string) => void;
@@ -580,6 +593,35 @@ export const useStore = create<State>((set, get) => {
   cmInstalando: false,
   cmSesionActiva: true,
   modoSinUnityVc: false,
+  cuentaBranchBoard: null,
+  entrarSinProyecto: (cuenta) =>
+    set({
+      cuentaBranchBoard: cuenta,
+      currentEmail: cuenta.correo,
+      usuarios: [],
+      tareas: [],
+      proyectoActual: '',
+      workspaceActual: null,
+      proyectoLocal: null,
+      accesoCompletado: true,
+      accesoIrAWorkspaces: false,
+    }),
+  cerrarSesionBranchBoard: () =>
+    set({
+      cuentaBranchBoard: null,
+      currentEmail: '',
+      usuarios: [],
+      tareas: [],
+      proyectoActual: '',
+      workspaceActual: null,
+      proyectoLocal: null,
+      proyectoAClonar: null,
+      proyectoRepoAClonar: null,
+      accesoIrAWorkspaces: false,
+      accesoCompletado: false,
+      // Sin sesión de Unity VC, esto deja ver el login de BranchBoard en vez de la pantalla de Unity VC.
+      modoSinUnityVc: true,
+    }),
   setModoSinUnityVc: (activo) => set({ modoSinUnityVc: activo }),
   proyectoLocal: null,
   sesionUnityVcCaducada: false,
@@ -746,6 +788,20 @@ export const useStore = create<State>((set, get) => {
     set({ documentos: [...nuevos, ...s.documentos] });
     const que = nuevos.length === 1 ? nuevos[0].nombre : `${nuevos.length} documentos`;
     s.showToast(nuevos[0].pendiente ? `${que}: pendiente del visto bueno de un Líder o Administrador` : `${que} subido`);
+  },
+  subirDocumentosRutas: async (rutas) => {
+    if (!rutas.length) return;
+    try {
+      const nuevos = await api.subirDocumentos(rutas);
+      await get().cargarDocumentos();
+      if (!nuevos.length) return;
+      const que = nuevos.length === 1 ? nuevos[0].nombre : `${nuevos.length} documentos`;
+      get().showToast(
+        nuevos.some((d) => d.pendiente) ? `${que}: pendiente del visto bueno de un Líder o Administrador` : `${que} subido`
+      );
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
   },
   cargarDocumentos: async () => {
     if (!enTauri()) return;

@@ -4,9 +4,9 @@ import { Modal } from './Modal';
 import { Icono } from './Icono';
 
 // "Iniciar sesión con Unity VC". BranchBoard no tiene login propio: la identidad es la sesión de
-// Unity Version Control (`cm whoami`). En escritorio llama a `iniciar_sesion_unity_vc` (que abre
-// `plastic.exe --configure` para autenticación oficial SSO en navegador); BranchBoard nunca ve ni
-// guarda la contraseña. En navegador (mockup) simula el flujo.
+// Unity Version Control (`cm whoami`). En escritorio llama a `iniciar_sesion_unity_vc`, que abre el
+// inicio de sesión de Unity en el navegador (sin Plastic SCM) y guarda la sesión donde la guarda el cliente
+// oficial, así que sirve también para Plastic SCM; BranchBoard nunca ve ni guarda la contraseña. En navegador (mockup) simula el flujo.
 type Paso = 'elegir' | 'correo' | 'esperando' | 'tauri-listo' | 'tauri-error';
 
 export function LoginUnityVCModal({
@@ -22,7 +22,7 @@ export function LoginUnityVCModal({
   onSesionIniciada: (correo: string) => void;
   /** Mockup: correo con el que "entra" la opción de cuenta de Unity. */
   correoDemo: string;
-  /** Si es `true` ("Cambiar de cuenta"), abre `plastic --configure` aunque ya exista sesión. */
+  /** Si es `true` ("Cambiar de cuenta"), abre el inicio de sesión en el navegador aunque ya exista sesión. */
   forzarNueva?: boolean;
 }) {
   const [paso, setPaso] = useState<Paso>('elegir');
@@ -60,7 +60,7 @@ export function LoginUnityVCModal({
       if (res.activa && res.email) {
         onSesionIniciada(res.email);
       } else {
-        setErrorReal('No se detectó una sesión iniciada en Unity VC. Completa el asistente e intenta verificar.');
+        setErrorReal('No se detectó una sesión iniciada en Unity VC. Completa el inicio de sesión en el navegador e intenta verificar.');
         setPaso('tauri-error');
       }
     } catch (e) {
@@ -97,8 +97,8 @@ export function LoginUnityVCModal({
         {esTauri && paso === 'tauri-listo' && (
           <div className="space-y-3">
             <p className="text-xs text-muted">
-              Se abrirá el asistente oficial de Unity Version Control (<code className="font-mono">plastic --configure</code>)
-              para iniciar sesión en tu navegador. BranchBoard nunca ve ni guarda tu contraseña.
+              Se abrirá la página oficial de Unity en tu navegador para iniciar sesión. La sesión queda también
+              iniciada en Plastic SCM / Unity VC. BranchBoard nunca ve ni guarda tu contraseña.
             </p>
             <button
               type="button"

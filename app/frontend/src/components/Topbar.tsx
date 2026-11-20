@@ -9,7 +9,13 @@ import { AbrirEnUnityModal } from './AbrirEnUnityModal';
 import { Icono } from './Icono';
 
 export function Topbar({ onMenu }: { onMenu?: () => void }) {
-  const user = useStore((s) => s.currentUser());
+  const usuarioProyecto = useStore((s) => s.currentUser());
+  const cuenta = useStore((s) => s.cuentaBranchBoard);
+  const sinProyecto = useStore((s) => !s.proyectoActual);
+  const user =
+    sinProyecto && cuenta
+      ? { ...usuarioProyecto, email: cuenta.correo, nombre: cuenta.nombre, apellido: cuenta.apellido }
+      : usuarioProyecto;
   const navigate = useNavigate();
   const vpnOn = useStore((s) => s.vpnOn);
   const vpnInstalado = useStore((s) => s.vpnInstalado);
@@ -126,6 +132,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         {/* Solo para el mockup (se quita en la app real): "Ver como". */}
         {/* Role selector (simula autenticación) */}
+        {!sinProyecto && (
         <label className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
           <span className="hidden text-faint md:inline">Ver como</span>
           <select
@@ -141,6 +148,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
             ))}
           </select>
         </label>
+        )}
 
         {/* Notifications */}
         <div className="relative" ref={notifsWrapRef}>
@@ -187,7 +195,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
             <span className="block text-xs font-semibold text-text">
               {user.nombre} {user.apellido}
             </span>
-            <span className="block font-mono text-[10px] text-faint">{user.rol}</span>
+            {!sinProyecto && <span className="block font-mono text-[10px] text-faint">{user.rol}</span>}
           </span>
         </button>
       </div>

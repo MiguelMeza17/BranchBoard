@@ -41,6 +41,32 @@ pub async fn elegir_carpeta(app: AppHandle, titulo: Option<String>) -> Resultado
     Ok(Some(ruta.to_string_lossy().to_string()))
 }
 
+/// Abre el explorador de archivos del sistema para elegir uno o varios archivos
+/// y devuelve sus rutas, o `None` si la persona cancela. Igual que
+/// [`elegir_carpeta`]: la webview solo recibe las rutas, el backend las lee.
+#[tauri::command]
+pub async fn elegir_archivos(
+    app: AppHandle,
+    titulo: Option<String>,
+) -> Resultado<Option<Vec<String>>> {
+    let mut dialogo = app.dialog().file();
+    if let Some(titulo) = titulo.filter(|t| !t.trim().is_empty()) {
+        dialogo = dialogo.set_title(titulo);
+    }
+    let Some(archivos) = dialogo.blocking_pick_files() else {
+        return Ok(None);
+    };
+    let rutas = archivos
+        .into_iter()
+        .map(|a| {
+            a.into_path()
+                .map(|r| r.to_string_lossy().to_string())
+                .map_err(|e| Error::Archivos(e.to_string()))
+        })
+        .collect::<Resultado<Vec<_>>>()?;
+    Ok(Some(rutas))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
