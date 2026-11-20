@@ -41,6 +41,31 @@ pub async fn elegir_carpeta(app: AppHandle, titulo: Option<String>) -> Resultado
     Ok(Some(ruta.to_string_lossy().to_string()))
 }
 
+/// Abre la ventana "Guardar como" del sistema para elegir dónde crear una carpeta **nueva** y escribir su
+/// nombre (el explorador de carpetas no deja elegir una que todavía no existe). Devuelve la ruta completa
+/// de la carpeta a crear, o `None` si la persona cancela; no crea nada.
+#[tauri::command]
+pub async fn elegir_carpeta_nueva(
+    app: AppHandle,
+    titulo: Option<String>,
+    nombre: Option<String>,
+) -> Resultado<Option<String>> {
+    let mut dialogo = app.dialog().file();
+    if let Some(titulo) = titulo.filter(|t| !t.trim().is_empty()) {
+        dialogo = dialogo.set_title(titulo);
+    }
+    if let Some(nombre) = nombre.filter(|n| !n.trim().is_empty()) {
+        dialogo = dialogo.set_file_name(nombre);
+    }
+    let Some(ruta) = dialogo.blocking_save_file() else {
+        return Ok(None);
+    };
+    let ruta = ruta
+        .into_path()
+        .map_err(|e| Error::Archivos(e.to_string()))?;
+    Ok(Some(ruta.to_string_lossy().to_string()))
+}
+
 /// Abre el explorador de archivos del sistema para elegir uno o varios archivos
 /// y devuelve sus rutas, o `None` si la persona cancela. Igual que
 /// [`elegir_carpeta`]: la webview solo recibe las rutas, el backend las lee.

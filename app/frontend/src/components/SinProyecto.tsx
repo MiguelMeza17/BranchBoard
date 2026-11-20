@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { useStore } from '../store/useStore';
-import { api, enTauri, ErrorBackend, mensajeDeError, type EntradaProyecto, type ProyectoLocal } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, nombreDeRepo, type EntradaProyecto, type ProyectoLocal } from '../lib/api';
+import { PasoClonar } from './AccesoProyecto';
+import type { WorkspaceUnityVC } from '../types';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { EntradaClave } from './EntradaClave';
@@ -13,12 +15,20 @@ import { Icono, IconoEnLinea } from './Icono';
 // proyecto (clic en el logo), se crea o abre un proyecto sin Unity VC o se conecta Unity VC.
 
 type EntradaDentro = Extract<EntradaProyecto, { estado: 'dentro' }>;
-type Ventana = 'crear' | 'abrir' | 'unity' | null;
+type Ventana = 'crear' | 'cargar' | 'unity' | null;
 
 /** Qué ventana de "sin proyecto" está abierta. La usan el aviso, el menú del proyecto y el Layout. */
-export const useVentanasProyecto = create<{ abierta: Ventana; abrir: (v: Ventana) => void }>((set) => ({
+export const useVentanasProyecto = create<{
+  abierta: Ventana;
+  abrir: (v: Ventana) => void;
+  /** Workspace recién clonado: el menú del proyecto (Sidebar) lo configura y entra a él ("Traer"). */
+  trasClonar: WorkspaceUnityVC | null;
+  setTrasClonar: (ws: WorkspaceUnityVC | null) => void;
+}>((set) => ({
   abierta: null,
   abrir: (abierta) => set({ abierta }),
+  trasClonar: null,
+  setTrasClonar: (trasClonar) => set({ trasClonar }),
 }));
 
 /** Hay sesión de BranchBoard pero todavía no se entró a ningún proyecto. */
@@ -47,8 +57,6 @@ function terminarEntradaLocal(entrada: EntradaDentro, ruta: string) {
 /** Aviso que reemplaza a cualquier página mientras no se está en ningún proyecto. */
 export function AvisoSinProyecto() {
   const abrir = useVentanasProyecto((s) => s.abrir);
-  const cmSesionActiva = useStore((s) => s.cmSesionActiva);
-  const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
   const tarjeta =
     'group flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-surface-2 p-6 text-center transition hover:border-primary hover:bg-primary-soft';
   return (
@@ -68,19 +76,12 @@ export function AvisoSinProyecto() {
           <span className="text-sm font-semibold text-text">Crea tu proyecto</span>
           <span className="text-[11px] text-faint">Quedas como Administrador</span>
         </button>
-        <button type="button" onClick={() => abrir('abrir')} className={tarjeta}>
+        <button type="button" onClick={() => abrir('cargar')} className={tarjeta}>
           <Icono nombre="carpetaAbierta" className="h-10 w-10 transition group-hover:scale-105" />
           <span className="text-sm font-semibold text-text">Carga un proyecto</span>
-          <span className="text-[11px] text-faint">Búscalo en una carpeta de tu equipo</span>
+          <span className="text-[11px] text-faint">De Unity VC, una carpeta o un archivo</span>
         </button>
       </div>
-      <button
-        type="button"
-        onClick={() => (cmSesionActiva && enTauri() ? cambiarDeProyecto() : abrir('unity'))}
-        className="w-full rounded-xl border border-border px-4 py-2.5 text-sm text-muted transition hover:border-border-strong hover:text-text"
-      >
-        {cmSesionActiva && enTauri() ? 'Mis proyectos de Unity VC' : 'Conectar con Unity VC'}
-      </button>
     </div>
   );
 }
@@ -97,7 +98,7 @@ export function VentanasProyecto() {
   return (
     <>
       <ModalCrearLocal open={abierta === 'crear'} onClose={cerrar} />
-      <ModalAbrirLocal open={abierta === 'abrir'} onClose={cerrar} />
+      <ModalCargarProyecto open={abierta === 'cargar'} onClose={cerrar} />
       <LoginUnityVCModal
         open={abierta === 'unity'}
         onClose={cerrar}
@@ -292,19 +293,41 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
   );
 }
 
-function ModalAbrirLocal({ open, onClose }: { open: boolean; onClose: () => void }) {
+// "Cargar proyecto": una sola ventana con las tres formas de traer un proyecto:
+// 1. De Unity VC (servidor): se clona aquí mismo, sin salir de la app.
+// 2. Una carpeta del equipo: un proyecto sin Unity VC que ya está como carpeta (se abre en su sitio).
+// 3. Un archivo .bbproyecto: se descomprime en la carpeta que se elija y queda listo para abrir.
+function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => void }) {
   const workspaces = useStore((s) => s.workspaces);
+  const proyectosServidor = useStore((s) => s.proyectosServidor);
+  const cmSesionActiva = useStore((s) => s.cmSesionActiva);
+  const setWorkspaces = useStore((s) => s.setWorkspaces);
+  const cargarWorkspacesYProyectos = useStore((s) => s.cargarWorkspacesYProyectos);
   const entrarAProyecto = useStore((s) => s.entrarAProyecto);
   const showToast = useStore((s) => s.showToast);
+  const abrirVentana = useVentanasProyecto((s) => s.abrir);
+  const [vista, setVista] = useState<'lista' | 'clonar' | 'carpeta'>('lista');
+  const [aClonar, setAClonar] = useState<string | null>(null);
   const [carpeta, setCarpeta] = useState('');
   const [clave, setClave] = useState('');
+  // Solo se pide la contraseña cuando el proyecto que se intentó abrir la tiene.
+  const [pideClave, setPideClave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [recientes, setRecientes] = useState<ProyectoLocal[]>([]);
+  const delServidor = proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
+  // Si la carpeta elegida es un workspace de Unity VC, no se pide contraseña: se ofrece entrar a él.
+  const normalizar = (r: string) => r.trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+  const wsDeUnity = carpeta.trim() ? workspaces.find((w) => normalizar(w.ruta) === normalizar(carpeta)) : undefined;
   const proyectosDelMockup = () =>
     workspaces.filter((w) => w.repo.endsWith('@local')).map((w) => ({ nombre: w.nombre, ruta: w.ruta }));
+
   useEffect(() => {
     if (!open) return;
+    setVista('lista');
+    setAClonar(null);
+    setError(null);
+    if (enTauri()) void cargarWorkspacesYProyectos();
     api
       .listarProyectosLocales(proyectosDelMockup)
       .then(setRecientes)
@@ -312,11 +335,19 @@ function ModalAbrirLocal({ open, onClose }: { open: boolean; onClose: () => void
     // Solo al abrir la ventana.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
   const cerrar = () => {
     if (ocupado) return;
     setError(null);
     setClave('');
     onClose();
+  };
+  const verCarpeta = (ruta = '') => {
+    setCarpeta(ruta);
+    setClave('');
+    setPideClave(false);
+    setError(null);
+    setVista('carpeta');
   };
   const abrirCarpeta = async () => {
     const ruta = carpeta.trim().replace(/[\\/]+$/, '');
@@ -329,7 +360,13 @@ function ModalAbrirLocal({ open, onClose }: { open: boolean; onClose: () => void
       showToast(`Abriste ${ws.nombre}`);
       return;
     }
-    if (!clave) return setError('Escribe la contraseña del proyecto.');
+    // Workspace de Unity VC: no tiene contraseña; se entra como con "Traer".
+    if (wsDeUnity) {
+      cerrar();
+      useVentanasProyecto.getState().setTrasClonar(wsDeUnity);
+      return;
+    }
+    if (pideClave && !clave) return setError('Escribe la contraseña del proyecto.');
     setOcupado(true);
     try {
       const entrada = await api.abrirProyectoLocal(ruta, clave, () => {
@@ -341,22 +378,31 @@ function ModalAbrirLocal({ open, onClose }: { open: boolean; onClose: () => void
         terminarEntradaLocal(entrada, ruta);
       }
     } catch (e) {
-      setError(mensajeDeError(e));
       setOcupado(false);
+      // El proyecto tiene contraseña: recién ahí se muestra el campo.
+      if (e instanceof ErrorBackend && e.codigo === 'llave_cifrada') {
+        setPideClave(true);
+        setError(null);
+        return;
+      }
+      setError(mensajeDeError(e));
     }
   };
-  // Importar un `.bbproyecto`: se elige dónde descomprimirlo y queda listo para abrir con su contraseña.
+  // Archivo .bbproyecto: se elige dónde descomprimirlo y queda en la vista de carpeta, listo para abrir.
   const importar = async () => {
     setError(null);
+    if (!enTauri()) {
+      showToast('Importar un .bbproyecto solo funciona en la app de escritorio', 'info');
+      return;
+    }
     try {
       const destino = await api.elegirCarpeta('¿En qué carpeta guardo el proyecto importado?');
       if (!destino) return;
       setOcupado(true);
       const importado = await api.importarProyectoLocal(destino);
       if (!importado) return;
-      setCarpeta(importado.ruta);
-      setClave('');
-      showToast(`Proyecto ${importado.nombre} importado. Escribe su contraseña para abrirlo.`);
+      verCarpeta(importado.ruta);
+      showToast(`Proyecto ${importado.nombre} importado. Pulsa Abrir.`);
     } catch (e) {
       setError(mensajeDeError(e));
     } finally {
@@ -364,23 +410,114 @@ function ModalAbrirLocal({ open, onClose }: { open: boolean; onClose: () => void
     }
   };
 
+  const fila =
+    'flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left transition hover:border-primary disabled:opacity-60';
+  const titulo = (t: string) => (
+    <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">{t}</div>
+  );
+  const avisoError = error && (
+    <p className="text-[11px] text-red-300">
+      <IconoEnLinea nombre="alerta" sinColor />
+      {error}
+    </p>
+  );
+  const volver = (
+    <button type="button" className="btn-ghost btn-sm self-start" onClick={() => setVista('lista')} disabled={ocupado}>
+      ← Volver
+    </button>
+  );
+
   return (
     <Modal
       open={open}
       onClose={cerrar}
-      title="Abrir un proyecto de BranchBoard"
-      subtitle="Elige la carpeta de un proyecto sin Unity VC"
-      size="sm"
-      footer={
-        <div className="flex w-full items-center justify-between gap-2">
-          {enTauri() ? (
-            <button type="button" className="btn-ghost btn-sm" onClick={() => void importar()} disabled={ocupado}>
-              Importar .bbproyecto…
-            </button>
-          ) : (
-            <span />
+      title="Cargar proyecto"
+      subtitle={vista === 'lista' ? 'De Unity VC, de una carpeta de tu equipo o de un archivo .bbproyecto' : undefined}
+      size="md"
+    >
+      {vista === 'clonar' && aClonar ? (
+        <div className="flex flex-col gap-4">
+          {volver}
+          <PasoClonar
+            nombre={delServidor.find((p) => p.repo === aClonar)?.nombre ?? aClonar}
+            repoInicial={aClonar}
+            proyectosServidor={delServidor}
+            onListo={(ws) => {
+              setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
+              cerrar();
+              showToast(`${nombreDeRepo(ws)} quedó en ${ws.ruta}`);
+              // Se entra directo al proyecto: el menú del proyecto lo configura (como "Traer") y pide la
+              // carpeta compartida si falta.
+              useVentanasProyecto.getState().setTrasClonar(ws);
+            }}
+          />
+        </div>
+      ) : vista === 'carpeta' ? (
+        <div className="flex flex-col gap-3 text-sm">
+          {volver}
+          {recientes.length > 0 && (
+            <div>
+              <span className="mb-1 block text-xs text-faint">Recientes</span>
+              <div className="space-y-1">
+                {recientes.map((p) => (
+                  <button
+                    key={p.ruta}
+                    type="button"
+                    onClick={() => {
+                      setCarpeta(p.ruta);
+                      setError(null);
+                      setPideClave(false);
+                    }}
+                    className={`flex w-full flex-col items-start rounded-lg border px-3 py-2 text-left transition hover:border-primary ${
+                      carpeta === p.ruta ? 'border-primary bg-primary-soft' : 'border-border bg-surface-2'
+                    }`}
+                  >
+                    <span className="text-sm font-medium text-text">{p.nombre}</span>
+                    <span className="w-full truncate font-mono text-[11px] text-faint">{p.ruta}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
-          <div className="flex gap-2">
+          <label className="block">
+            <span className="mb-1 block text-xs text-faint">Carpeta del proyecto</span>
+            <SelectorCarpeta
+              value={carpeta}
+              onChange={(v) => {
+                setCarpeta(v);
+                setError(null);
+                setPideClave(false);
+              }}
+              placeholder="Carpeta del proyecto"
+              titulo="Carpeta del proyecto de BranchBoard"
+            />
+          </label>
+          {wsDeUnity && (
+            <p className="text-[11px] text-faint">Proyecto de Unity VC: {nombreDeRepo(wsDeUnity)}</p>
+          )}
+          {/* La contraseña solo aparece si el proyecto que se intentó abrir la tiene. */}
+          {pideClave && (
+            <label className="block">
+              <span className="mb-1 block text-xs text-faint">Este proyecto tiene contraseña</span>
+              <EntradaClave
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                autoFocus
+                value={clave}
+                onFocus={() => setError(null)}
+                onChange={(e) => {
+                  setClave(e.target.value);
+                  setError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void abrirCarpeta();
+                }}
+              />
+            </label>
+          )}
+          {avisoError}
+          <div className="flex justify-end gap-2 pt-1">
             <button type="button" className="btn-ghost btn-sm" onClick={cerrar} disabled={ocupado}>
               Cancelar
             </button>
@@ -389,70 +526,67 @@ function ModalAbrirLocal({ open, onClose }: { open: boolean; onClose: () => void
             </button>
           </div>
         </div>
-      }
-    >
-      <div className="space-y-3 text-sm">
-        {recientes.length > 0 && (
+      ) : (
+        <div className="space-y-5 text-sm">
           <div>
-            <span className="mb-1 block text-xs text-faint">Recientes</span>
-            <div className="space-y-1">
-              {recientes.map((p) => (
-                <button
-                  key={p.ruta}
-                  type="button"
-                  onClick={() => {
-                    setCarpeta(p.ruta);
-                    setError(null);
-                  }}
-                  className={`flex w-full flex-col items-start rounded-lg border px-3 py-2 text-left transition hover:border-primary ${
-                    carpeta === p.ruta ? 'border-primary bg-primary-soft' : 'border-border bg-surface-2'
-                  }`}
-                >
-                  <span className="text-sm font-medium text-text">{p.nombre}</span>
-                  <span className="w-full truncate font-mono text-[11px] text-faint">{p.ruta}</span>
-                </button>
-              ))}
+            {titulo('De Unity VC')}
+            {!cmSesionActiva ? (
+              <button type="button" className={fila} onClick={() => abrirVentana('unity')}>
+                <Icono nombre="unity" className="h-5 w-5" />
+                <span className="min-w-0 flex-1 text-text">Conecta Unity VC para ver tus proyectos</span>
+              </button>
+            ) : delServidor.length === 0 ? (
+              <p className="text-[12px] text-faint">Ya tienes en este equipo todos tus proyectos de Unity VC.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {delServidor.map((p) => (
+                  <button
+                    key={p.repo}
+                    type="button"
+                    className={fila}
+                    onClick={() => {
+                      setAClonar(p.repo);
+                      setVista('clonar');
+                    }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-text">{p.nombre}</span>
+                      <span className="block truncate font-mono text-[10px] text-faint">{p.repo}</span>
+                    </span>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                        p.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
+                      }`}
+                    >
+                      {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            {titulo('Desde tu equipo')}
+            <div className="space-y-1.5">
+              <button type="button" className={fila} onClick={() => verCarpeta()} disabled={ocupado}>
+                <Icono nombre="carpetaAbierta" className="h-5 w-5" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-text">Una carpeta</span>
+                  <span className="block text-[11px] text-faint">Un proyecto que ya está como carpeta en tu equipo</span>
+                </span>
+              </button>
+              <button type="button" className={fila} onClick={() => void importar()} disabled={ocupado}>
+                <Icono nombre="descargar" className="h-5 w-5" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-text">Un archivo .bbproyecto</span>
+                  <span className="block text-[11px] text-faint">Un proyecto que alguien exportó</span>
+                </span>
+              </button>
             </div>
           </div>
-        )}
-        <label className="block">
-          <span className="mb-1 block text-xs text-faint">Carpeta del proyecto</span>
-          <SelectorCarpeta
-            value={carpeta}
-            onChange={(v) => {
-              setCarpeta(v);
-              setError(null);
-            }}
-            placeholder="Carpeta del proyecto"
-            titulo="Carpeta del proyecto de BranchBoard"
-          />
-        </label>
-        {enTauri() && (
-          <label className="block">
-            <span className="mb-1 block text-xs text-faint">Contraseña del proyecto</span>
-            <EntradaClave
-              className="input"
-              type="password"
-              autoComplete="current-password"
-              value={clave}
-              onFocus={() => setError(null)}
-              onChange={(e) => {
-                setClave(e.target.value);
-                setError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void abrirCarpeta();
-              }}
-            />
-          </label>
-        )}
-        {error && (
-          <p className="text-[11px] text-red-300">
-            <IconoEnLinea nombre="alerta" sinColor />
-            {error}
-          </p>
-        )}
-      </div>
+          {avisoError}
+        </div>
+      )}
     </Modal>
   );
 }

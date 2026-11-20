@@ -7,6 +7,8 @@ import {
   enTauri,
   ErrorBackend,
   mensajeDeError,
+  nombreDeRepo,
+  unoPorRepo,
   type EntradaProyecto,
   type ProyectoServidor,
 } from '../lib/api';
@@ -89,6 +91,10 @@ export function AccesoProyecto() {
     return { ...base, estado: 'dentro', rol: u.rol, rol_verificado: true, configurado_ahora: false };
   };
 
+  // Workspace que todavía no usa BranchBoard en este equipo: abrirlo siendo el dueño crea sus datos y una llave
+  // de Administrador nueva, así que se confirma antes.
+  const [porConfigurar, setPorConfigurar] = useState<WorkspaceUnityVC | null>(null);
+
   // Entrada ya aceptada que espera a que se elija la carpeta compartida.
   const [porEntrar, setPorEntrar] = useState<{ ws: WorkspaceUnityVC; entrada: EntradaDentro } | null>(null);
 
@@ -150,7 +156,7 @@ export function AccesoProyecto() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-surface p-4">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-surface p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <FondoRamas />
       <div className="mb-10 flex items-baseline text-5xl font-bold tracking-tight [filter:drop-shadow(0_6px_18px_rgba(74,222,128,0.35))_drop-shadow(0_2px_4px_rgba(0,0,0,0.9))]">
         <span className="text-text">Branch</span>
@@ -219,7 +225,7 @@ export function AccesoProyecto() {
               })
             }
             workspaces={workspaces}
-            onElegir={abrirWorkspace}
+            onElegir={(ws) => (enTauri() && !ws.tiene_db_branchboard ? setPorConfigurar(ws) : void abrirWorkspace(ws))}
             onClonar={() => setPaso('clonar')}
             onVaciar={() => setWorkspaces([])}
           />
@@ -278,6 +284,37 @@ export function AccesoProyecto() {
           />
         )}
       </div>
+
+      <Modal
+        open={porConfigurar !== null}
+        onClose={() => setPorConfigurar(null)}
+        title={`¿Configurar ${porConfigurar ? nombreDeRepo(porConfigurar) : ''} en BranchBoard?`}
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setPorConfigurar(null)}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              onClick={() => {
+                const ws = porConfigurar;
+                setPorConfigurar(null);
+                if (ws) void abrirWorkspace(ws);
+              }}
+            >
+              Configurar
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted">
+          Este proyecto no usa BranchBoard en este equipo. Si eres el dueño del repositorio se crean sus datos y una
+          llave de Administrador nueva. Si ya usó BranchBoard antes (en este u otro equipo), restaura sus datos en vez
+          de configurarlo de nuevo.
+        </p>
+      </Modal>
 
       <LoginUnityVCModal
         open={login}
@@ -821,7 +858,7 @@ function PasoWorkspaces({
 
       {workspaces.length > 0 ? (
         <div className="flex flex-col gap-2">
-          {workspaces.map((ws) => (
+          {unoPorRepo(workspaces).map((ws) => (
             <button
               key={ws.ruta}
               onClick={() => onElegir(ws)}
@@ -829,7 +866,7 @@ function PasoWorkspaces({
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-text">{ws.nombre}</span>
+                  <span className="truncate text-sm font-semibold text-text">{nombreDeRepo(ws)}</span>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
                       ws.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
@@ -867,7 +904,8 @@ function PasoWorkspaces({
   );
 }
 
-function PasoClonar({
+// También lo usa "Cargar proyecto" del menú (Sidebar), dentro de su ventana.
+export function PasoClonar({
   nombre,
   repoInicial,
   proyectosServidor,
@@ -881,6 +919,10 @@ function PasoClonar({
   const esTauri = enTauri();
   const [repoElegido, setRepoElegido] = useState(repoInicial ?? proyectosServidor[0]?.repo ?? '');
   const [carpeta, setCarpeta] = useState(esTauri ? '' : 'D:\\Unity');
+  // Nombre de la carpeta nueva que se crea dentro de `carpeta`: arranca con el del proyecto y sigue al
+  // proyecto elegido mientras no se escriba otro.
+  const [nombreCarpeta, setNombreCarpeta] = useState('');
+  const [nombreEditado, setNombreEditado] = useState(false);
   const [progreso, setProgreso] = useState<number | null>(null);
   const [estadoProgreso, setEstadoProgreso] = useState('Descargando archivos…');
   const [errorClon, setErrorClon] = useState<string | null>(null);
@@ -912,9 +954,15 @@ function PasoClonar({
 
   const proyectoVisible =
     proyectosServidor.find((p) => p.repo === repoElegido)?.nombre ?? nombre;
+  useEffect(() => {
+    if (!nombreEditado) setNombreCarpeta(proyectoVisible);
+  }, [proyectoVisible, nombreEditado]);
+  const nombreLimpio = nombreCarpeta.trim();
+  const nombreValido = nombreLimpio !== '' && !/[\\/:*?"<>|]/.test(nombreLimpio) && !nombreLimpio.endsWith('.');
+  const carpetaFinal = carpeta.trim() && nombreLimpio ? `${carpeta.trim().replace(/[\\/]+$/, '')}\\${nombreLimpio}` : '';
 
   const iniciarClonReal = async () => {
-    if (!repoElegido || !carpeta.trim()) return;
+    if (!repoElegido || !carpeta.trim() || !nombreValido) return;
     setErrorClon(null);
     setProgreso(5);
     setEstadoProgreso('Preparando workspace…');
@@ -923,7 +971,7 @@ function PasoClonar({
       setEstadoProgreso(ev.mensaje);
     });
     try {
-      const ws = await api.clonarProyecto(repoElegido, carpeta.trim());
+      const ws = await api.clonarProyecto(repoElegido, carpeta.trim(), nombreLimpio);
       setProgreso(100);
       onListo(ws);
     } catch (e) {
@@ -939,8 +987,7 @@ function PasoClonar({
       <div>
         <h2 className="text-base font-semibold text-text">Clonar proyecto</h2>
         <p className="mt-1 text-sm text-muted">
-          Elige dónde crear el workspace. BranchBoard corre <code className="font-mono text-xs">cm workspace create</code> y
-          descarga el proyecto ahí.
+          Elige dónde guardarlo y el nombre de la carpeta: BranchBoard la crea y descarga el proyecto ahí.
         </p>
       </div>
       {esTauri && (
@@ -965,7 +1012,7 @@ function PasoClonar({
         </div>
       )}
       <div>
-        <label className="label">Carpeta de destino</label>
+        <label className="label">Dónde guardarlo</label>
         <SelectorCarpeta
           value={carpeta}
           onChange={(v) => {
@@ -973,8 +1020,49 @@ function PasoClonar({
             setErrorClon(null);
           }}
           disabled={progreso !== null}
-          placeholder="Carpeta donde se guardará el proyecto"
+          placeholder="Elige una carpeta de tu equipo"
+          titulo="¿Dónde guardo el proyecto?"
+          // "Guardar como": se navega a donde se quiera y se escribe el nombre de la carpeta nueva (no tiene que
+          // existir); llena "Dónde guardarlo" y "Nombre de la carpeta".
+          alBuscar={async () => {
+            if (!esTauri) return;
+            try {
+              const ruta = await api.elegirCarpetaNueva('¿Dónde guardo el proyecto?', nombreLimpio || proyectoVisible);
+              if (!ruta) return;
+              const corte = Math.max(ruta.lastIndexOf('\\'), ruta.lastIndexOf('/'));
+              if (corte <= 0) return;
+              setCarpeta(ruta.slice(0, corte));
+              setNombreCarpeta(ruta.slice(corte + 1));
+              setNombreEditado(true);
+              setErrorClon(null);
+            } catch (e) {
+              setErrorClon(mensajeDeError(e));
+            }
+          }}
         />
+      </div>
+      <div>
+        <label className="label">Nombre de la carpeta</label>
+        <input
+          className={`input ${nombreLimpio && !nombreValido ? 'border-red-500/70' : ''}`}
+          value={nombreCarpeta}
+          disabled={progreso !== null}
+          onChange={(e) => {
+            setNombreCarpeta(e.target.value);
+            setNombreEditado(true);
+            setErrorClon(null);
+          }}
+        />
+        {nombreLimpio && !nombreValido ? (
+          <span className="mt-1 block text-[11px] text-red-300">
+            <IconoEnLinea nombre="alerta" sinColor />
+            No puede llevar / \ : * ? " &lt; &gt; | ni terminar en punto.
+          </span>
+        ) : (
+          carpetaFinal && (
+            <span className="mt-1 block truncate font-mono text-[11px] text-faint">Se crea: {carpetaFinal}</span>
+          )
+        )}
       </div>
       {errorClon && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
@@ -984,7 +1072,7 @@ function PasoClonar({
       {progreso === null ? (
         <button
           className="btn-primary w-full"
-          disabled={!carpeta.trim() || (esTauri && !repoElegido)}
+          disabled={!carpeta.trim() || !nombreValido || (esTauri && !repoElegido)}
           onClick={() => (esTauri ? void iniciarClonReal() : setProgreso(0))}
         >
           Clonar {proyectoVisible}

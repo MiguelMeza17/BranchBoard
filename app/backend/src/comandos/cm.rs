@@ -80,11 +80,19 @@ pub async fn clonar_proyecto(
     estado: State<'_, AppState>,
     repo: String,
     carpeta: String,
+    nombre_carpeta: Option<String>,
 ) -> Resultado<WorkspaceProyecto> {
     let datos = carpeta_datos(&app)?;
-    proyectos::clonar_proyecto_en(&estado, &datos, &repo, &carpeta, |p| {
-        let _ = app.emit(EVENTO_PROGRESO_CLONADO, &p);
-    })
+    proyectos::clonar_proyecto_en(
+        &estado,
+        &datos,
+        &repo,
+        &carpeta,
+        nombre_carpeta.as_deref(),
+        |p| {
+            let _ = app.emit(EVENTO_PROGRESO_CLONADO, &p);
+        },
+    )
 }
 
 #[tauri::command]

@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Modal } from './Modal';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { useStore } from '../store/useStore';
-import { api, enTauri, mensajeDeError, proyectosPadreUnity } from '../lib/api';
+import { api, enTauri, mensajeDeError, nombreDeRepo, proyectosPadreUnity, unoPorRepo } from '../lib/api';
 import type { Rol, WorkspaceUnityVC } from '../types';
 import * as fx from '../data/fixtures';
 import { Icono } from './Icono';
@@ -188,13 +188,9 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const [confirmarCerrarSesion, setConfirmarCerrarSesion] = useState(false);
   // "Nuevo proyecto": traer uno local de Unity VC que aún no usa BranchBoard, o crear uno nuevo.
   const [nuevoProyecto, setNuevoProyecto] = useState(false);
-  // "Cargar proyecto": proyectos del servidor de Unity VC que aún no tienes en este equipo. Al elegir uno se
-  // clona; si ya usa BranchBoard, llegan también sus tareas.
-  const [cargarProyecto, setCargarProyecto] = useState(false);
-  const irAClonar = useStore((s) => s.irAClonar);
-  const delServidorSinClonar = proyectosServidor.filter((p) => !workspaces.some((w) => w.repo === p.repo));
+  // "Cargar proyecto" es una ventana compartida (SinProyecto.tsx): Unity VC, carpeta o archivo .bbproyecto.
   const proyectosUnity = proyectosPadreUnity(proyectosServidor);
-  const sinBranchBoard = workspaces.filter((w) => !w.tiene_db_branchboard);
+  const sinBranchBoard = unoPorRepo(workspaces.filter((w) => !w.tiene_db_branchboard));
   const setWorkspaces = useStore((s) => s.setWorkspaces);
   const setRolActual = useStore((s) => s.setRolActual);
   const setCarpetaCompartida = useStore((s) => s.setCarpetaCompartida);
@@ -212,6 +208,71 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   } | null>(null);
   const [rutaCompartidaNueva, setRutaCompartidaNueva] = useState('');
   const proyectoUnityEfectivo = proyectoUnityNuevo || proyectosUnity[0] || '';
+  // Configurar en BranchBoard un proyecto de Unity VC que aún no lo usa en este equipo: crea sus datos y una
+  // llave de Administrador nueva, así que se confirma antes (un clic suelto en la lista no debe hacerlo).
+  const [porTraer, setPorTraer] = useState<WorkspaceUnityVC | null>(null);
+  // Recién clonado desde "Cargar proyecto": se configura y se entra sin preguntar (clonar ya fue la decisión).
+  const trasClonar = useVentanasProyecto((s) => s.trasClonar);
+  useEffect(() => {
+    if (!trasClonar) return;
+    const ws = trasClonar;
+    useVentanasProyecto.getState().setTrasClonar(null);
+    setErrorNuevoProyecto(null);
+    setPendienteCompartida(null);
+    setNuevoProyecto(true);
+    void traer(ws);
+    // traer() se recrea en cada render; solo importa el aviso de clonado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trasClonar]);
+  const traer = async (ws: WorkspaceUnityVC) => {
+    if (!enTauri()) {
+      cerrarNuevo();
+      cambiarDeProyecto();
+      return;
+    }
+    setOcupadoNuevo(ws.ruta);
+    setErrorNuevoProyecto(null);
+    try {
+      const res = await api.traerProyecto(ws.ruta);
+      if (res.entrada.estado !== 'dentro') {
+        const mensajes: Record<Exclude<typeof res.entrada.estado, 'dentro'>, string> = {
+          esperar_dueno:
+            'Este proyecto no usa BranchBoard todavía. Solo el dueño del repositorio en Unity VC puede traerlo primero para quedar como Administrador.',
+          no_registrado:
+            'Este proyecto ya existe en el equipo, pero tu cuenta todavía no está registrada en él.',
+          pendiente:
+            'Tu cuenta está pendiente de confirmación por el Administrador en este proyecto.',
+        };
+        setErrorNuevoProyecto(mensajes[res.entrada.estado]);
+        return;
+      }
+      setWorkspaces([
+        ...workspaces.filter((w) => normalizada(w.ruta) !== normalizada(res.workspace.ruta)),
+        res.workspace,
+      ]);
+      const carpeta = await api.carpetaCompartida(() => null);
+      if (carpeta) {
+        setCarpetaCompartida(res.entrada.proyecto, carpeta);
+        setEmail(res.entrada.email);
+        setRolActual(res.entrada.rol);
+        entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
+        showToast(`Proyecto ${res.workspace.nombre} configurado — eres su ${res.entrada.rol}`);
+        setNuevoProyecto(false);
+        setNombreNuevo('');
+      } else {
+        setPendienteCompartida({
+          workspace: res.workspace,
+          proyecto: res.entrada.proyecto,
+          rol: res.entrada.rol,
+          email: res.entrada.email,
+        });
+      }
+    } catch (e) {
+      setErrorNuevoProyecto(mensajeDeError(e));
+    } finally {
+      setOcupadoNuevo(null);
+    }
+  };
   const cerrarNuevo = () => {
     if (ocupadoNuevo) return;
     setNuevoProyecto(false);
@@ -371,16 +432,17 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
         </div>
         {menuProyecto && (
           <div
-            className={`absolute top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface-2 py-1 shadow-pop ${
+            className={`absolute top-full z-50 mt-1 w-64 overflow-hidden rounded-xl border border-border bg-surface-2 py-1 shadow-pop ${
               colapsado ? 'left-2' : 'left-3'
             }`}
           >
             {/* Tus proyectos: solo los que ya usan BranchBoard en este equipo. Los que hay que clonar o
                 configurar por primera vez van en "Nuevo proyecto". */}
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-faint">Tus proyectos</div>
-            {workspaces
-              .filter((ws) => ws.tiene_db_branchboard)
-              .map((ws) => {
+            {unoPorRepo(
+              workspaces.filter((ws) => ws.tiene_db_branchboard),
+              workspaceActual
+            ).map((ws) => {
                 const actual = ws.nombre === workspaceActual;
                 return (
                   <button
@@ -429,7 +491,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                     }}
                   >
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{ws.nombre}</span>
+                      <span className="block truncate font-medium">{nombreDeRepo(ws)}</span>
                       <span className="block truncate font-mono text-[10px] text-faint">{ws.ruta}</span>
                     </span>
                     {actual && <span className="shrink-0 text-[10px] text-primary">actual</span>}
@@ -441,8 +503,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
               onClick={() => {
                 setMenuProyecto(false);
-                if (enTauri()) void cargarWorkspacesYProyectos();
-                setCargarProyecto(true);
+                abrirVentana('cargar');
               }}
             >
               <Icono nombre="descargar" className="h-4 w-4" /> Cargar proyecto
@@ -460,27 +521,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               }}
             >
               <Icono nombre="mas" className="h-4 w-4" /> Nuevo proyecto
-            </button>
-            {/* Crear, abrir o importar un proyecto sin Unity VC. */}
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
-              onClick={() => {
-                setMenuProyecto(false);
-                abrirVentana('crear');
-              }}
-            >
-              <Icono nombre="chispa" className="h-4 w-4" /> Crear proyecto sin Unity VC
-            </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
-              onClick={() => {
-                setMenuProyecto(false);
-                abrirVentana('abrir');
-              }}
-            >
-              <Icono nombre="carpetaAbierta" className="h-4 w-4" /> Abrir proyecto sin Unity VC
             </button>
             <div className="my-1 border-t border-border" />
             <button
@@ -549,44 +589,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
           Mockup UI · datos en memoria
         </div>
       )}
-      <Modal
-        open={cargarProyecto}
-        onClose={() => setCargarProyecto(false)}
-        title="Cargar proyecto"
-        subtitle="Proyectos de Unity VC a los que tienes acceso y que aún no están en este equipo"
-        size="md"
-      >
-        {delServidorSinClonar.length === 0 ? (
-          <p className="text-sm text-faint">Ya tienes en este equipo todos tus proyectos de Unity VC.</p>
-        ) : (
-          <div className="space-y-1.5 text-sm">
-            {delServidorSinClonar.map((p) => (
-              <button
-                key={p.repo}
-                type="button"
-                className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary"
-                onClick={() => {
-                  setCargarProyecto(false);
-                  // Va al acceso, paso "Clonar": se elige la carpeta y se descarga el workspace.
-                  irAClonar(p.nombre, p.repo);
-                }}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium text-text">{p.nombre}</span>
-                  <span className="block truncate font-mono text-[10px] text-faint">{p.repo}</span>
-                </span>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
-                    p.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
-                  }`}
-                >
-                  {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </Modal>
       <Modal
         open={nuevoProyecto}
         onClose={cerrarNuevo}
@@ -687,58 +689,10 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                         type="button"
                         disabled={ocupadoNuevo !== null}
                         className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-left transition hover:border-primary disabled:opacity-60"
-                        onClick={async () => {
-                          if (!enTauri()) {
-                            cerrarNuevo();
-                            cambiarDeProyecto();
-                            return;
-                          }
-                          setOcupadoNuevo(ws.ruta);
-                          setErrorNuevoProyecto(null);
-                          try {
-                            const res = await api.traerProyecto(ws.ruta);
-                            if (res.entrada.estado !== 'dentro') {
-                              const mensajes: Record<Exclude<typeof res.entrada.estado, 'dentro'>, string> = {
-                                esperar_dueno:
-                                  'Este proyecto no usa BranchBoard todavía. Solo el dueño del repositorio en Unity VC puede traerlo primero para quedar como Administrador.',
-                                no_registrado:
-                                  'Este proyecto ya existe en el equipo, pero tu cuenta todavía no está registrada en él.',
-                                pendiente:
-                                  'Tu cuenta está pendiente de confirmación por el Administrador en este proyecto.',
-                              };
-                              setErrorNuevoProyecto(mensajes[res.entrada.estado]);
-                              return;
-                            }
-                            setWorkspaces([
-                              ...workspaces.filter((w) => normalizada(w.ruta) !== normalizada(res.workspace.ruta)),
-                              res.workspace,
-                            ]);
-                            const carpeta = await api.carpetaCompartida(() => null);
-                            if (carpeta) {
-                              setCarpetaCompartida(res.entrada.proyecto, carpeta);
-                              setEmail(res.entrada.email);
-                              setRolActual(res.entrada.rol);
-                              entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
-                              showToast(`Proyecto ${res.workspace.nombre} configurado — eres su ${res.entrada.rol}`);
-                              setNuevoProyecto(false);
-                              setNombreNuevo('');
-                            } else {
-                              setPendienteCompartida({
-                                workspace: res.workspace,
-                                proyecto: res.entrada.proyecto,
-                                rol: res.entrada.rol,
-                                email: res.entrada.email,
-                              });
-                            }
-                          } catch (e) {
-                            setErrorNuevoProyecto(mensajeDeError(e));
-                          } finally {
-                            setOcupadoNuevo(null);
-                          }
-                        }}
+                        onClick={() => setPorTraer(ws)}
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium text-text">{ws.nombre}</span>
+                          <span className="block truncate font-medium text-text">{nombreDeRepo(ws)}</span>
                           <span className="block truncate font-mono text-[10px] text-faint">{ws.ruta}</span>
                         </span>
                         <span className="shrink-0 text-[11px] text-primary">
@@ -870,6 +824,35 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
             </div>
           </div>
         )}
+      </Modal>
+      <Modal
+        open={porTraer !== null}
+        onClose={() => setPorTraer(null)}
+        title={`¿Configurar ${porTraer ? nombreDeRepo(porTraer) : ''} en BranchBoard?`}
+        size="sm"
+        footer={
+          <div className="flex w-full justify-end gap-2">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setPorTraer(null)}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              onClick={() => {
+                const ws = porTraer;
+                setPorTraer(null);
+                if (ws) void traer(ws);
+              }}
+            >
+              Configurar
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted">
+          Se crean sus datos de BranchBoard en este equipo y una llave de Administrador nueva. Si este proyecto ya
+          usó BranchBoard antes (en este u otro equipo), restaura sus datos en vez de configurarlo de nuevo.
+        </p>
       </Modal>
       <Modal
         open={confirmarCerrarSesion}

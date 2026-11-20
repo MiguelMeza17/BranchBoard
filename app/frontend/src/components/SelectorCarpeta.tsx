@@ -11,6 +11,7 @@ export function SelectorCarpeta({
   disabled,
   placeholder = 'Carpeta',
   titulo,
+  alBuscar,
 }: {
   value: string;
   onChange: (ruta: string) => void;
@@ -18,9 +19,12 @@ export function SelectorCarpeta({
   placeholder?: string;
   /** Título de la ventana del explorador de carpetas. */
   titulo?: string;
+  /** Reemplaza lo que hace el botón (p. ej. elegir una carpeta nueva con "Guardar como"). */
+  alBuscar?: () => void | Promise<void>;
 }) {
   const showToast = useStore((s) => s.showToast);
   const buscar = async () => {
+    if (alBuscar) return alBuscar();
     if (!enTauri()) {
       showToast('En la app de escritorio aquí se abre el explorador de carpetas', 'info');
       return;
