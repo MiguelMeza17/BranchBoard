@@ -5,5 +5,6 @@ pub mod instalacion;
 pub mod lectura;
 pub mod proyectos;
 pub mod sesion;
+pub mod sso_navegador;
 
 pub use ejecutor::{Comando, Salida};

@@ -420,6 +420,8 @@ export const api = {
    * `null` si se cancela. En el navegador no hay acceso al disco: responde `null`.
    */
   elegirCarpeta: (titulo?: string) => llamar<string | null>('elegir_carpeta', { titulo }, () => null),
+  /** Explorador de archivos del sistema (varios a la vez); `null` si se cancela o en el navegador. */
+  elegirArchivos: (titulo?: string) => llamar<string[] | null>('elegir_archivos', { titulo }, () => null),
 
   /**
    * Carpeta compartida del proyecto abierto (Drive/OneDrive) en esta máquina, donde viven los eventos de

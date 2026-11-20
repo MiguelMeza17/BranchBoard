@@ -5,6 +5,7 @@ import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { Toast } from './Toast';
 import { AlertaRamaAjena } from './AlertaRamaAjena';
+import { AvisoSinProyecto, useSinProyecto, VentanasProyecto } from './SinProyecto';
 
 const CLAVE_SIDEBAR = 'branchboard.sidebarColapsado';
 
@@ -23,6 +24,7 @@ export function Layout() {
   const angosta = useMediaQuery(PANTALLA_ANGOSTA);
   const [menuAbierto, setMenuAbierto] = useState(false);
   const { pathname } = useLocation();
+  const sinProyecto = useSinProyecto();
   useEffect(() => setMenuAbierto(false), [pathname, angosta]);
 
   const toggleSidebar = () => {
@@ -56,11 +58,19 @@ export function Layout() {
         <main className="flex-1 overflow-y-auto">
           {/* Con el menú contraído, el contenido gana el ancho que liberó el menú (240px). */}
           <div className={`mx-auto px-3 py-4 sm:px-6 sm:py-6 ${colapsado ? 'max-w-[1640px]' : 'max-w-[1400px]'}`}>
-            <AlertaRamaAjena />
-            <Outlet />
+            {/* Sin proyecto todas las páginas dicen lo mismo: entra a uno o créalo. */}
+            {sinProyecto ? (
+              <AvisoSinProyecto />
+            ) : (
+              <>
+                <AlertaRamaAjena />
+                <Outlet />
+              </>
+            )}
           </div>
         </main>
       </div>
+      <VentanasProyecto />
       <Toast />
     </div>
   );

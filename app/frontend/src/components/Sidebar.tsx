@@ -7,6 +7,7 @@ import { api, enTauri, mensajeDeError, proyectosPadreUnity } from '../lib/api';
 import type { Rol, WorkspaceUnityVC } from '../types';
 import * as fx from '../data/fixtures';
 import { Icono } from './Icono';
+import { useVentanasProyecto } from './SinProyecto';
 import logoB from '../assets/logo-b.png';
 
 interface NavItem {
@@ -176,8 +177,10 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   // Menú del proyecto (click en BranchBoard): se cierra al hacer click fuera.
   const cambiarDeProyecto = useStore((s) => s.cambiarDeProyecto);
   const entrarAProyecto = useStore((s) => s.entrarAProyecto);
-  const cerrarSesion = useStore((s) => s.cerrarSesion);
+  const cerrarSesion = useStore((s) => s.cerrarSesionBranchBoard);
   const reconectarUnityVc = useStore((s) => s.reconectarUnityVc);
+  const cmSesionActiva = useStore((s) => s.cmSesionActiva);
+  const abrirVentana = useVentanasProyecto((s) => s.abrir);
   const workspaces = useStore((s) => s.workspaces);
   const proyectosServidor = useStore((s) => s.proyectosServidor);
   const cargarWorkspacesYProyectos = useStore((s) => s.cargarWorkspacesYProyectos);
@@ -232,10 +235,20 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
     document.addEventListener('mousedown', fuera);
     return () => document.removeEventListener('mousedown', fuera);
   }, [menuProyecto]);
-  const salir = () => {
+  const salir = async () => {
     setConfirmarSalir(false);
-    // En la app de escritorio (Tauri) se cierra la ventana. En el navegador, el mockup solo puede
-    // cerrar la pestaña si la abrió un script; si no, avisa.
+    // En la app de escritorio se pide cerrar la ventana a Tauri: pasa por el mismo control del backend
+    // que la X (con una operación de Unity VC en curso no se cierra y se avisa). En el navegador, el
+    // mockup solo puede cerrar la pestaña si la abrió un script; si no, avisa.
+    if (enTauri()) {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        await getCurrentWindow().close();
+      } catch (e) {
+        showToast(mensajeDeError(e), 'danger');
+      }
+      return;
+    }
     window.close();
     showToast('En la app de escritorio, aquí se cierra BranchBoard', 'info');
   };
@@ -337,7 +350,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                 <div className="text-lg font-bold text-text">
                   Branch<span className="text-green-400">Board</span>
                 </div>
-                <div className="truncate font-mono text-xs text-faint">{proyectoActual}</div>
+                <div className="truncate font-mono text-xs text-faint">{proyectoActual || 'Sin proyecto'}</div>
               </div>
               {/* La flecha va centrada en altura respecto a toda la cabecera (logo + nombre + proyecto). */}
               <svg
@@ -448,16 +461,26 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
             >
               <Icono nombre="mas" className="h-4 w-4" /> Nuevo proyecto
             </button>
-            {/* Crear, abrir o importar un proyecto sin Unity VC (vuelve a la pantalla de acceso, en esas opciones). */}
+            {/* Crear, abrir o importar un proyecto sin Unity VC. */}
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
               onClick={() => {
                 setMenuProyecto(false);
-                useStore.setState({ modoSinUnityVc: true, accesoCompletado: false, accesoIrAWorkspaces: false });
+                abrirVentana('crear');
               }}
             >
-              <Icono nombre="carpetaAbierta" className="h-4 w-4" /> Proyectos sin Unity VC
+              <Icono nombre="chispa" className="h-4 w-4" /> Crear proyecto sin Unity VC
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"
+              onClick={() => {
+                setMenuProyecto(false);
+                abrirVentana('abrir');
+              }}
+            >
+              <Icono nombre="carpetaAbierta" className="h-4 w-4" /> Abrir proyecto sin Unity VC
             </button>
             <div className="my-1 border-t border-border" />
             <button
@@ -465,10 +488,11 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text transition hover:bg-surface-3"
               onClick={() => {
                 setMenuProyecto(false);
-                void reconectarUnityVc();
+                if (cmSesionActiva) void reconectarUnityVc();
+                else abrirVentana('unity');
               }}
             >
-              Reconectar con Unity VC
+              {cmSesionActiva ? 'Reconectar con Unity VC' : 'Conectar con Unity VC'}
             </button>
             <button
               type="button"
@@ -862,7 +886,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               className="btn-danger btn-sm"
               onClick={() => {
                 setConfirmarCerrarSesion(false);
-                void cerrarSesion();
+                cerrarSesion();
               }}
             >
               Cerrar sesión
@@ -871,8 +895,8 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
         }
       >
         <p className="text-sm text-muted">
-          BranchBoard usa tu sesión de Unity Version Control para saber quién eres. Al cerrarla, tendrás que volver a
-          iniciar sesión en Unity VC para entrar.
+          Saldrás del proyecto y volverás a la pantalla de inicio de sesión de BranchBoard. Tu sesión de Unity VC en
+          este equipo no se cierra.
         </p>
       </Modal>
       <Modal

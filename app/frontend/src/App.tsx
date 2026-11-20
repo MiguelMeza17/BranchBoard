@@ -6,7 +6,6 @@ import { useSincronizacionEventos } from './lib/useSincronizacionEventos';
 import { ConflictoMergeModal } from './components/ConflictoMergeModal';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
-import { SesionUnityVCRequerida } from './components/SesionUnityVCRequerida';
 import { AccesoProyecto } from './components/AccesoProyecto';
 import { ScrumBoard } from './pages/ScrumBoard';
 import { Resumen } from './pages/Resumen';
@@ -30,7 +29,6 @@ export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
-  const modoSinUnityVc = useStore((s) => s.modoSinUnityVc);
   const showToast = useStore((s) => s.showToast);
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
   const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
@@ -78,16 +76,7 @@ export function App() {
   // interfaz de BranchBoard antes de iniciar sesión.
   const splash = showSplash && <SplashScreen onDone={() => setShowSplash(false)} />;
 
-  // "Continuar sin Unity VC" deja pasar sin sesión: los proyectos locales no la necesitan.
-  if (!cmSesionActiva && !modoSinUnityVc) {
-    return (
-      <>
-        {splash}
-        <SesionUnityVCRequerida />
-      </>
-    );
-  }
-
+  // Sin pantalla previa de Unity VC: lo primero es el login de BranchBoard (que también ofrece Unity VC).
   if (!accesoCompletado) {
     return (
       <>
