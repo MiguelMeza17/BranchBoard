@@ -149,6 +149,19 @@ Para que alguien pueda usar BranchBoard en un proyecto, además de crearlo en [U
 - Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, crear usuario o cambiar rol) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
 - **Resuelto (hallazgo C1 de auditoría)**: el `rol` en la tabla `usuarios` no bastaba como ancla de confianza porque el `.db` se sincroniza por Drive/OneDrive con lectura/escritura para todo el equipo — cualquiera podía editarlo a mano. Ver [Firma criptográfica del rol en BACKEND.md](./BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac): cada fila de rol se firma con Ed25519 (llave privada solo en la máquina del Administrador, nunca sincronizada; llave pública embebida en la app) y se verifica al leer. Adicionalmente, **eliminar el proyecto** exige también permiso real `rmrepository` en Unity Version Control (ver [Verificación adicional sobre Unity Version Control en BACKEND.md](./BACKEND.md#verificación-adicional-sobre-unity-version-control-para-eliminar-el-proyecto)) — doble candado, no solo la firma local.
 
+## Servidor (Supabase): reglas de acceso (#234)
+
+Con la migración a Supabase (#231), los permisos que hoy revisa la app de cada uno pasan a revisarse **también en el servidor**, con reglas RLS y funciones (detalle en [Reglas RLS y funciones de roles en BACKEND.md](./BACKEND.md#reglas-rls-y-funciones-de-roles-234)):
+
+- **La clave pública sola no da acceso a nada** (rol `anon` sin permisos). Por eso puede ir en el repo y en el instalador.
+- Cada cuenta solo **ve** los proyectos de los que es miembro, sus miembros y sus eventos; de los demás no ve ni que existen.
+- Los **roles no son eventos**: viven en `miembros` y solo los cambian funciones del servidor que revisan el rol de quien lo pide (Admin, o Líder dentro de los roles base). Puede haber **varios Administradores**, pero nunca cero.
+- Los **eventos** se insertan solo a nombre propio, con la hora y el orden del servidor, y no se editan ni se borran.
+- Los **correos** de los miembros solo los ve un Administrador o un Líder del proyecto (`miembros_de_proyecto`); la tabla de perfiles no los expone.
+- **Quién puede saltarse todo esto**: el **dueño de la cuenta de Supabase** (panel web, clave `sb_secret_…`, contraseña de Postgres). No es un rol de BranchBoard ni Administrador de ningún proyecto por serlo (decisiones 2 y 5 de #231). Esas credenciales nunca van al repo.
+- **Riesgo**: una regla mal escrita expone datos de otros equipos. Toda regla nueva va con su caso en `supabase/tests/reglas_rls_y_roles.sql`.
+- **Pendiente (#247)**: qué tipos de evento puede insertar cada rol (hoy, cualquier miembro puede insertar cualquier tipo; la app de cada uno sigue revisando el rol al aplicarlos).
+
 ## Allowlist de capabilities de Tauri (resuelto)
 
 Enumerado a partir de todo lo ya documentado en [BACKEND.md](./BACKEND.md) — nada de acceso "abierto" a shell o filesystem, solo lo que cada funcionalidad ya descrita necesita:

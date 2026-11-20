@@ -171,7 +171,40 @@ Migración `supabase/migrations/20261120230000_esquema_base.sql`:
 
 **Por qué los roles no son eventos**: hoy `crear_usuario`, `cambiar_rol`, `confirmar_usuario` y `eliminar_usuario` son eventos firmados (`TIPOS_FIRMADOS`). Sin firmas (decisión 3 de #231), cualquier miembro podría insertar un evento `cambiar_rol` y darse Administrador. Por eso los roles están en `miembros` y solo los cambiarán funciones del servidor (#234). Todo lo demás (tareas, sprints, chat, documentos, notificaciones) sigue siendo un evento con el mismo `tipo` y `payload` que hoy, así la aplicación de eventos de la app se reaprovecha (#238, #239).
 
-**Sin acceso hasta #234**: las cuatro tablas tienen RLS activado y **ninguna regla**, así que por la API (con la clave pública o con una sesión) no se puede leer ni escribir nada hasta que #234 agregue las reglas y funciones.
+**Sin acceso hasta #234**: ~~las cuatro tablas tienen RLS activado y ninguna regla~~ — **resuelto en #234**, ver abajo.
+
+### Reglas RLS y funciones de roles (#234)
+
+Migración `supabase/migrations/20261121000000_reglas_rls_y_roles.sql`. Pruebas: `supabase/tests/reglas_rls_y_roles.sql` (48 casos, dentro de una transacción que se deshace al final).
+
+**Qué puede hacer cada cuenta** (`anon` = clave pública sin sesión: **nada**):
+
+| Tabla | Leer | Escribir |
+|---|---|---|
+| `perfiles` | El propio y los de quienes comparten algún proyecto. **Sin la columna `correo`** (se lee con `miembros_de_proyecto`) | Solo su propio `nombre` y `apellido` |
+| `proyectos` | Los proyectos de los que es miembro | Solo con `crear_proyecto` |
+| `miembros` | Los de sus proyectos | Solo con `agregar_miembro`, `cambiar_rol`, `quitar_miembro` |
+| `eventos` | Los de sus proyectos | Insertar en sus proyectos y **a su nombre** (`autor = auth.uid()`); `orden` y `recibido_en` los pone el servidor; **sin editar ni borrar** |
+
+**Funciones** (`security definer`, se llaman por RPC: `POST /rest/v1/rpc/<nombre>`):
+
+| Función | Quién | Qué hace |
+|---|---|---|
+| `crear_proyecto(p_nombre)` | Cualquier cuenta | Proyecto **sin Unity VC**; quien lo crea queda Administrador. Los de Unity VC (primer Admin = dueño del repo) los creará la Edge Function de #237 |
+| `agregar_miembro(p_proyecto, p_correo, p_rol)` | Admin: cualquier rol. Líder: Desarrollador, Tester, Colaborador externo | Solo cuentas ya registradas (`no_existe_cuenta`, `ya_es_miembro`) |
+| `cambiar_rol(p_proyecto, p_usuario, p_rol)` | Admin: cualquier rol, también Administrador. Líder: entre roles base y sobre roles base | `ultimo_admin` si dejaría el proyecto sin Administradores |
+| `quitar_miembro(p_proyecto, p_usuario)` | Admin: a cualquiera. Líder: Desarrollador y Colaborador externo (como `equipo::puede_eliminar`) | `ultimo_admin` igual que arriba |
+| `miembros_de_proyecto(p_proyecto)` | Miembros | Nombre, rol y fecha; el **correo solo para Administrador y Líder** (como `equipo::listar`) |
+| `mi_rol(p_proyecto)` / `es_miembro(p_proyecto)` | Cualquier cuenta | Su propio rol (o null) |
+
+- **Cambios respecto a `equipo::roles_asignables` / `puede_eliminar`** (decisión 5 de #231): un Administrador puede nombrar, degradar y quitar Administradores, siempre que quede al menos uno.
+- **Errores**: el mensaje empieza por un código (`no_autenticado`, `sin_permiso`, `ultimo_admin`, `no_existe_cuenta`, `no_es_miembro`, `ya_es_miembro`, `validacion`) para que la app los traduzca.
+- **Carrera "dos Administradores se degradan a la vez"**: las funciones bloquean las filas de Administradores del proyecto (`select … for update`) antes de contar. Comprobado con dos sesiones simultáneas: la segunda espera, ve un solo Admin y responde `ultimo_admin`.
+- **Pendiente para #247**: hoy cualquier miembro puede insertar cualquier `tipo` de evento; qué tipos valida el servidor según el rol se decide allí.
+
+**Correr las pruebas**:
+- En `branchboard-pruebas` (como `postgres`, con la cadena de conexión que tiene solo el dueño de la cuenta): `psql "$BB_DB_PRUEBAS" -v ON_ERROR_STOP=1 -f supabase/tests/reglas_rls_y_roles.sql`. Termina con `TODAS LAS PRUEBAS PASARON` y no deja nada.
+- En un Postgres local sin Supabase: `supabase/tests/supabase_simulado_local.sql` crea `anon`, `authenticated`, `auth.users` y `auth.uid()` (y da por defecto todos los permisos a anon/authenticated, para comprobar que la migración los quita); después las migraciones y las pruebas (instrucciones en ese archivo).
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
