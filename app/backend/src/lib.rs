@@ -131,6 +131,7 @@ pub fn run() {
         .on_window_event(manejar_evento_ventana)
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
+            comandos::logs_unity::logs_unity_para_terminar,
             comandos::diff::diff_rama,
             comandos::diff::diff_changeset,
             comandos::diff::diff_archivo,

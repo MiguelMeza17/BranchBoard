@@ -19,6 +19,7 @@ import { TaskCard } from '../components/TaskCard';
 import { esTareaRoja } from '../components/CambiosDirectos';
 import { PageHeader } from '../components/primitives';
 import { ConfirmLock } from '../components/ConfirmLock';
+import { TerminarRevisionModal } from '../components/TerminarRevisionModal';
 import { BorrarProgresoModal } from '../components/BorrarProgresoModal';
 import { ConfirmarSaltoModal } from '../components/ConfirmarSaltoModal';
 import { Modal } from '../components/Modal';
@@ -400,25 +401,28 @@ export function CategoriaScrum() {
         </DndContext>
       </div>
 
-      {/* Confirmación: mandar a revisar / autorizar (doble candado) */}
+      {/* Terminar: mismo aviso de logs en los tableros. */}
+      {pendingMove?.to === 'terminada' && tareasAll.find((t) => t.id === pendingMove.id) && (
+        <TerminarRevisionModal
+          key={pendingMove.id}
+          tarea={tareasAll.find((t) => t.id === pendingMove.id)!}
+          onClose={() => setPendingMove(null)}
+          onConfirm={async () => { await autorizarMerge(pendingMove.id); setPendingMove(null); }}
+        />
+      )}
       <ConfirmLock
-        open={!!pendingMove}
+        open={!!pendingMove && pendingMove.to !== 'terminada'}
         onClose={() => setPendingMove(null)}
         onConfirm={() => {
-          if (!pendingMove) return;
-          if (pendingMove.to === 'terminada') autorizarMerge(pendingMove.id);
-          else moverTarea(pendingMove.id, pendingMove.to);
+          if (!pendingMove || pendingMove.to === 'terminada') return;
+          moverTarea(pendingMove.id, pendingMove.to);
           setPendingMove(null);
         }}
-        title={pendingMove?.to === 'terminada' ? 'Autorizar merge a dev' : 'Mandar a revisión'}
+        title="Mandar a revisión"
         tone="primary"
-        palabra={pendingMove?.to === 'terminada' ? 'autorizar' : 'mandar a revisar'}
-        confirmLabel={pendingMove?.to === 'terminada' ? 'Autorizar y mergear' : 'Mandar a revisar'}
-        description={
-          pendingMove?.to === 'terminada'
-            ? 'Vas a mergear esta rama directamente a dev. Es una acción delicada sobre Unity Version Control.'
-            : 'La tarea pasará a "en revisión" y aparecerá en la carpeta "Tareas grandes" de Revisión, visible para todo el equipo. Autorizan Líder/Administrador.'
-        }
+        palabra="mandar a revisar"
+        confirmLabel="Mandar a revisar"
+        description='La tarea pasará a "en revisión" y aparecerá en Revisión, visible para todo el equipo. Autorizan Líder/Administrador.'
       />
 
       {/* Salto de estados: se confirma y luego sigue el flujo normal de la columna destino */}
