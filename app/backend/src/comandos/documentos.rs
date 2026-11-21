@@ -18,7 +18,7 @@ use crate::supabase::storage::Storage;
 use crate::supabase::{ClienteSupabase, Entorno};
 
 /// Carpeta local (de este equipo) donde se guardan los documentos bajados del servidor para abrirlos.
-const CACHE_DOCUMENTOS: &str = "documentos-servidor";
+use crate::exportacion::CACHE_DOCUMENTOS;
 
 /// Id del proyecto en el servidor, si ya está vinculado (#240). Sin él no se pueden guardar ni abrir archivos.
 pub(crate) fn proyecto_en_servidor(estado: &AppState) -> Resultado<Option<String>> {
@@ -135,6 +135,16 @@ pub fn eliminar_documento_en(estado: &AppState, id: &str) -> Resultado<Documento
 pub fn resolver_documento_en(estado: &AppState, id: &str) -> Resultado<PathBuf> {
     estado.exigir_permiso("abrir_documento")?;
     let doc = estado.con_db(|db| crate::db::documentos::obtener(db.conexion(), id.trim()))?;
+    let carpeta = carpeta_abierta(estado)?;
+    if proyecto_en_servidor(estado)?.is_none() && crate::exportacion::es_recuperado(&carpeta) {
+        return documentos::Almacen::archivo_local(
+            &documentos::CarpetaCompartida {
+                carpeta_docs: &carpeta.join(CACHE_DOCUMENTOS),
+            },
+            &doc.ruta,
+            &doc.nombre,
+        );
+    }
     con_almacen(estado, |almacen| {
         almacen.archivo_local(&doc.ruta, &doc.nombre)
     })

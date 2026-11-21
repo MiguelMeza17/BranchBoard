@@ -45,7 +45,7 @@ pub const FORMATO: u32 = 1;
 /// Lista de proyectos locales abiertos en esta máquina, en la carpeta de datos de la app.
 const ARCHIVO_RECIENTES: &str = "proyectos-locales.json";
 /// Tope de lo que se descomprime al importar (protege de archivos manipulados).
-const MAXIMO_IMPORTADO: u64 = 4 * 1024 * 1024 * 1024;
+pub(crate) const MAXIMO_IMPORTADO: u64 = 4 * 1024 * 1024 * 1024;
 const NOMBRE_APP: &str = "BranchBoard";
 const TIPO_LOCAL: &str = "local";
 
@@ -59,6 +59,9 @@ pub struct MarcaLocal {
     pub id: String,
     pub nombre: String,
     pub creado_en: String,
+    /// En un respaldo del servidor, abre la copia con el Administrador que la exportó.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub administrador_recuperacion: Option<String>,
 }
 
 /// Un proyecto local que esta máquina conoce ("Recientes").
@@ -112,7 +115,7 @@ fn validar_marca(texto: &str) -> Resultado<MarcaLocal> {
 }
 
 /// Nombre válido como carpeta de Windows a partir del nombre del proyecto.
-fn nombre_carpeta(proyecto: &str) -> Resultado<String> {
+pub(crate) fn nombre_carpeta(proyecto: &str) -> Resultado<String> {
     let limpio: String = proyecto
         .trim()
         .chars()
@@ -236,6 +239,7 @@ fn crear_en(
         id: id_nuevo(),
         nombre: proyecto.to_string(),
         creado_en: ahora.to_string(),
+        administrador_recuperacion: None,
     };
     let json = serde_json::to_string_pretty(&marca).map_err(|e| Error::Interno(e.to_string()))?;
     let mut archivo = std::fs::OpenOptions::new()
@@ -267,7 +271,15 @@ pub fn abrir(
     let db = Db::abrir_con_respaldo(&datos)?;
     let admin = usuarios::listar(db.conexion())?
         .into_iter()
-        .find(|u| u.rol == Rol::Administrador)
+        .find(|u| {
+            u.rol == Rol::Administrador
+                && marca
+                    .administrador_recuperacion
+                    .as_ref()
+                    .map_or(true, |email| {
+                        normalizar_email(email) == normalizar_email(&u.email)
+                    })
+        })
         .ok_or_else(|| Error::Validacion("El proyecto no tiene un Administrador".into()))?;
     let email = admin.email.clone();
     let proyecto =
@@ -345,13 +357,13 @@ pub fn exportar(estado: &AppState, destino: &Path) -> Resultado<()> {
 }
 
 /// Carpeta temporal oculta junto a `base` (mismo disco que el destino).
-fn tempdir_en(base: &Path) -> Resultado<PathBuf> {
+pub(crate) fn tempdir_en(base: &Path) -> Resultado<PathBuf> {
     let ruta = base.join(format!(".branchboard-exportando-{}", id_nuevo()));
     std::fs::create_dir_all(&ruta)?;
     Ok(ruta)
 }
 
-fn escribir_zip(carpeta: &Path, copia_db: &Path, destino: &Path) -> Resultado<()> {
+pub(crate) fn escribir_zip(carpeta: &Path, copia_db: &Path, destino: &Path) -> Resultado<()> {
     let zip_err = |e: zip::result::ZipError| Error::Archivos(e.to_string());
     let mut zip = zip::ZipWriter::new(File::create(destino)?);
     let opciones = zip::write::SimpleFileOptions::default()
@@ -464,7 +476,14 @@ pub fn importar(archivo: &Path, carpeta: &str) -> Resultado<ProyectoLocal> {
     if total > MAXIMO_IMPORTADO {
         return Err(Error::Validacion("El archivo es demasiado grande".into()));
     }
-    let destino = ruta_libre(&padre, &nombre_carpeta(&marca.nombre)?);
+    let nombre = nombre_carpeta(&marca.nombre).or_else(|e| {
+        if marca.administrador_recuperacion.is_some() {
+            Ok("Proyecto recuperado".to_string())
+        } else {
+            Err(e)
+        }
+    })?;
+    let destino = ruta_libre(&padre, &nombre);
     let temporal = padre.join(format!(".branchboard-importando-{}", id_nuevo()));
     let resultado = (|| -> Resultado<()> {
         for i in 0..zip.len() {

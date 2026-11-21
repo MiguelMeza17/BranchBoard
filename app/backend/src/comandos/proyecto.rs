@@ -16,7 +16,7 @@ use crate::supabase::storage::{self, Carpeta, Storage};
 use crate::supabase::{ClienteSupabase, Entorno};
 
 /// Carpeta local (de este equipo) con la copia de la imagen del proyecto bajada del servidor (#242).
-const CACHE_IMAGEN: &str = "proyecto-servidor";
+use crate::exportacion::CACHE_IMAGEN;
 
 #[tauri::command]
 pub async fn eliminar_proyecto(
@@ -53,7 +53,10 @@ pub fn obtener_configuracion_proyecto_en(estado: &AppState) -> Resultado<Configu
         }
         return estado.con_db(|db| proyecto::leer(db.conexion(), Some(&cache)));
     }
-    // Sin servidor: la imagen de antes, si quedó en la carpeta compartida (solo se lee, #244).
+    if crate::exportacion::es_recuperado(&local) {
+        return estado.con_db(|db| proyecto::leer(db.conexion(), Some(&local.join(CACHE_IMAGEN))));
+    }
+    // Compatibilidad con proyectos anteriores a #244.
     let carpeta = eventos::carpeta_imagen_proyecto(&local).ok();
     estado.con_db(|db| proyecto::leer(db.conexion(), carpeta.as_deref()))
 }

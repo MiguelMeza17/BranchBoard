@@ -20,7 +20,7 @@ export function Ajustes() {
       <div className="space-y-3">
         <SeccionActualizar />
         {puedeEliminarProyecto(user.rol) && <SeccionSubirAlServidor />}
-        {proyectoLocal && puedeEliminarProyecto(user.rol) && <SeccionExportarProyecto carpeta={proyectoLocal} />}
+        {puedeEliminarProyecto(user.rol) && <SeccionExportarProyecto carpeta={proyectoLocal} />}
         <SeccionBackups />
         {puedeEliminarProyecto(user.rol) && !proyectoLocal && <SeccionProyecto />}
         {!esLiderOAdmin(user.rol) && (
@@ -34,7 +34,7 @@ export function Ajustes() {
 // Exportar proyecto (solo Administrador, proyectos sin Unity VC): guarda todo el proyecto en un archivo
 // `.bbproyecto` que se abre en otro equipo con "Ingresar a un proyecto existente" → "Importar". Sin
 // contraseña desde #243.
-function SeccionExportarProyecto({ carpeta }: { carpeta: string }) {
+function SeccionExportarProyecto({ carpeta }: { carpeta: string | null }) {
   const showToast = useStore((s) => s.showToast);
   const [exportando, setExportando] = useState(false);
 
@@ -58,8 +58,10 @@ function SeccionExportarProyecto({ carpeta }: { carpeta: string }) {
     <Seccion title="Exportar proyecto">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-sm">
-          <div className="text-muted">Carpeta del proyecto</div>
-          <div className="truncate font-mono text-xs text-text">{carpeta}</div>
+          <div className="text-muted">{carpeta ? 'Carpeta del proyecto' : 'Respaldo del proyecto'}</div>
+          <div className="truncate text-xs text-text">
+            {carpeta ?? 'Incluye los datos, documentos e imagen. Necesita conexión al servidor.'}
+          </div>
         </div>
         <button className="btn-outline btn-sm" disabled={exportando} onClick={() => void exportar()}>
           {exportando ? 'Exportando…' : 'Exportar .bbproyecto'}
