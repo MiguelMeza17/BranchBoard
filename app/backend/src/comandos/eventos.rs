@@ -373,8 +373,22 @@ pub fn revisar_actualizaciones_en(
             let changesets = cliente
                 .changesets_de_rama(&repo.repo, &rama)?
                 .unwrap_or_default();
-            let cerrada = ramas::rama_cerrada_hacia_padre(estado, &repo_cm, &rama, &rama_padre)
-                .unwrap_or(false);
+            // Cerrada solo si después del merge no hubo trabajo (#283): ni check-ins ni cambios
+            // sin check-in en esta PC. Si no, una rama unida a dev y que se sigue usando se
+            // cerraría en cada vuelta.
+            let ultimo_merge =
+                ramas::ultimo_merge_hacia_padre(estado, &repo_cm, &rama, &rama_padre)
+                    .unwrap_or(None);
+            let con_pendientes_aqui = !pendientes_ws.is_empty()
+                && resumen
+                    .rama_actual
+                    .as_deref()
+                    .is_some_and(|r| r.eq_ignore_ascii_case(&rama));
+            let cerrada = ramas::cerrada_sin_trabajo_despues(
+                ultimo_merge,
+                changesets.iter().map(|c| c.changeset_id).max(),
+                con_pendientes_aqui,
+            );
             let mut diffs_prestamos = Vec::new();
             if let Some(piso_min) = piso_prestamos {
                 for cs in &changesets {
