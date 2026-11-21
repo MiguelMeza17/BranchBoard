@@ -189,7 +189,7 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
 | Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
 
-**Ojo con la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red y reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). Hoy la bandeja, ante un lote que falla "sin permiso", se para y no deja pasar a los siguientes; y como manda lotes de 50, un solo evento rechazado tumba el lote entero. **Pendiente**: que la bandeja aparte el evento rechazado en vez de quedarse atascada.
+**Ojo con la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red y reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). Hoy la bandeja, ante un lote que falla "sin permiso", se para y no deja pasar a los siguientes; y como manda lotes de 50, un solo evento rechazado tumba el lote entero. **Resuelto (2026-11-21)**: la bandeja aparta el evento rechazado y sigue con los demás (ver [Bandeja de salida](#bandeja-de-salida-238)).
 
 Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`, `puede_publicar`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
 
@@ -295,13 +295,43 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 - **Subida**: el temporizador de 15 s (`disparar_polling` en `lib.rs`) llama a `subir_bandeja_en`.
   - Manda lotes de 50 en orden de llegada a `POST /rest/v1/eventos?on_conflict=id` con `Prefer: resolution=ignore-duplicates` (`ClienteSupabase::insertar_eventos`). Un evento que ya estaba (la respuesta se perdió y se reintenta) se ignora, sin error ni duplicado.
   - Al confirmarse, se borra de la bandeja.
-  - Si un lote falla (sin internet, sin sesión, sin permiso), se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
+  - Si un lote falla por la red o la sesión, se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
+  - **Rechazo definitivo** (`SinPermiso` por la regla de #247, `Validacion` por una regla del servidor, o HTTP 400/403/409/422): reintentar no sirve. El lote se reenvía de a uno. El rechazado pasa a la tabla local `bandeja_rechazados` (migración 12, con `motivo` y `rechazado_en`) y los demás siguen subiendo. Pasa, por ejemplo, si a alguien le bajaron el rol mientras tenía cambios esperando. Ese cambio queda aplicado en el SQLite de ese equipo pero no en el servidor.
   - La base solo se presta para leer y borrar, nunca durante la red.
 - **Qué manda la app**: `id, proyecto_id, tipo, tarea_id, payload, creado_en_app`. El servidor pone `autor` (la cuenta de la sesión), `orden` y `recibido_en`.
-- **Interfaz**: comando `eventos_por_subir()` (libre; 0 sin proyecto abierto) y evento Tauri `bandeja-salida` (`{ pendientes, subidos, error }`) después de cada intento. El Topbar muestra **"N cambios pendientes de enviar"** mientras haya alguno; al pasar el mouse dice el motivo.
+- **Interfaz**: comando `eventos_por_subir()` (libre; 0 sin proyecto abierto) y evento Tauri `bandeja-salida` (`{ pendientes, subidos, rechazados, error }`) después de cada intento. El Topbar muestra **"N cambios pendientes de enviar"** y/o **"N cambios rechazados por el servidor"** mientras haya alguno; al pasar el mouse dice el motivo.
 - **Pruebas**:
-  - 6 unitarias: sin vincular no encola; roles no; sin duplicar; orden y lotes; sin red esperan; un lote que falla frena; sobrevive a cerrar.
+  - 9 unitarias: sin vincular no encola; roles no; sin duplicar; orden y lotes; sin red esperan; un lote que falla frena; sobrevive a cerrar; un rechazado se aparta y los demás suben en orden; un rechazado solo no se reenvía; si se cae la red al reenviar de a uno, se para ahí.
+  - Real, `eventos::bandeja::…::entorno_real_un_rechazado_por_el_servidor_no_frena_a_los_demas`: con las reglas de #247, un `cambiar_rol` metido a mano entre dos cambios (el servidor no lo acepta de nadie) se aparta con `SinPermiso` y los otros dos suben. Deja el proyecto "Prueba rechazados #238" y la cuenta: borrarlos después.
   - Real, `eventos::bandeja::…::entorno_real_sin_red_esperan_y_al_volver_se_suben`: contra branchboard-pruebas, entrando con la sesión de Unity VC del equipo (#237). Crea un proyecto en el servidor, vincula una base local, publica dos cambios, y sin red esperan (dirección que no resuelve, misma sesión). Al volver la red suben en orden con el autor de la sesión, y reenviar uno no duplica. Deja la cuenta y el proyecto "Prueba bandeja #238": borrarlos después con `delete from public.proyectos where nombre = 'Prueba bandeja #238'` y `delete from auth.users where lower(email) = '<correo>'`.
+
+### Documentos e imagen en Storage (#242)
+
+**Nuevo (2026-11-21)** — los archivos de documentos y la imagen del proyecto pasan de la carpeta compartida a **Supabase Storage** (migración `20261121042000_storage_documentos.sql`, módulo `app/backend/src/supabase/storage.rs`).
+
+- **Bucket** `proyectos`, privado, **50 MB por archivo** (el máximo del plan gratis). Una carpeta por proyecto: `<proyecto_id>/documentos/D-<uuid>[.ext]` y `<proyecto_id>/proyecto/icono-<uuid>.png`. Los nombres los sigue generando el backend; `ruta_objeto` rechaza ids que no son uuid y nombres con `/`, `\`, `..` o caracteres raros.
+- **Reglas** (las mismas que `identidad/permisos.rs`, detalle en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234)): leer, cualquier miembro; documentos, los sube cualquier miembro y los borra Líder o Administrador; imagen, solo Administrador. Nada se sobrescribe.
+- **Cuándo se usa**: si el proyecto tiene `proyecto_servidor_id` en `configuracion_proyecto` (lo fija #240). Si no, todo sigue como antes en la carpeta compartida (se quita en #244). Lo decide el comando (`comandos/documentos.rs::con_almacen`); `documentos.rs` trabaja con el trait `Almacen` (`CarpetaCompartida` o `AlmacenServidor`).
+- **Más de 50 MB** se rechaza **antes de subir nada** (decisión de #242). Si se eligieron varios archivos y uno se pasa, no se sube ninguno. En la carpeta compartida no hay límite.
+- **Subir**: primero se suben los archivos (sin bloquear la base: 50 MB pueden tardar), después se publica `subir_documentos`; si publicar falla, se borran los recién subidos. **Eliminar**: se publica `eliminar_documento` y después se borra el archivo de Storage (si eso falla, solo ocupa espacio).
+- **Abrir**: el documento se baja la primera vez a `<carpeta del proyecto>/documentos-servidor/` (temporal y renombre) y después se abre desde ahí, también sin red. Sin red y sin copia: `servidor_sin_conexion`.
+- **Imagen**: `subir_imagen_proyecto` la procesa igual (256×256 PNG), la sube, publica `icono_proyecto`, borra la anterior en Storage y guarda copia en `<carpeta del proyecto>/proyecto-servidor/`. `obtener_configuracion_proyecto` lee esa copia y la baja si falta; sin red se ve sin imagen.
+- **Sesión**: la de `ClienteSupabase` (`sesion_vigente`); si Storage no reconoce el token, renueva y repite una vez.
+- **Respuestas reales de Storage** (branchboard-pruebas, 2026-11-21). Casi todas llegan con **HTTP 400** y el código de verdad en el cuerpo, así que la app mira `code`:
+
+| Caso | Respuesta | Error de la app |
+|---|---|---|
+| Subir sin permiso (regla RLS) | `{"statusCode":"403","error":"Unauthorized","message":"new row violates row-level security policy","code":"AccessDenied"}` | `SinPermiso` |
+| Ruta que ya existe (`x-upsert: false`) | `{"statusCode":"409","error":"Duplicate","message":"The resource already exists","code":"KeyAlreadyExists"}` | `Validacion` |
+| No existe **o las reglas no lo dejan ver** | `{"statusCode":"404","error":"not_found","message":"Object not found","code":"NoSuchKey"}` | `NoEncontrado` |
+| Token con la firma dañada | `{"statusCode":"404","error":"Bucket not found","message":"Bucket not found","code":"NoSuchBucket"}` (**no** da 401) | `SinSesionServidor` → renovar y repetir |
+| Borrar sin permiso | `200 []` (no borró nada) | `SinPermiso` (se revisa que la lista no venga vacía) |
+
+- **Pruebas**:
+  - 5 unitarias en `supabase::storage` y 2 en `documentos` con un Storage en memoria (subir/abrir/eliminar, copia local sin red, más de 50 MB sin subir nada).
+  - SQL, `supabase/tests/03_storage.test.sql` (27 casos): `npx supabase@3 db query --remote --yes --file supabase/tests/03_storage.test.sql`; `fallidas` tiene que ser 0. Usa `set local storage.allow_delete_query = 'true'` porque Supabase no deja borrar filas de `storage.objects` por SQL.
+  - Real, `supabase::storage::…::entorno_real_storage_documentos_e_imagen`, por la API HTTP: necesita las cuentas confirmadas `storage-a|b|c@prueba.branchboard` con la clave de `BB_PRUEBA_SUPABASE_CLAVE`. Se crean como la de [Cliente de Supabase](#cliente-de-supabase-235) (las tres en un `insert … select … from unnest(array['a','b','c'])`) y se borran al terminar: `delete from public.proyectos where nombre = 'bb-prueba-242'` y `delete from auth.users where email like 'storage-_@prueba.branchboard'`. La prueba borra sus archivos.
+  - **Falta**: probarlo de punta a punta en la app con un proyecto vinculado (depende de #240).
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
@@ -885,7 +915,7 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 
 ## Documentos del proyecto
 
-**Nuevo (2026-11-07, según el frontend)** — ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos). Archivos del proyecto (no versionados en Unity VC) que se guardan en la carpeta compartida del proyecto (ej. `proyecto/documentos/`) y viajan por Drive/OneDrive como el resto.
+**Nuevo (2026-11-07, según el frontend)** — ver [FRONTEND.md → Apartado del proyecto](./FRONTEND.md#apartado-del-proyecto-documentos). Archivos del proyecto (no versionados en Unity VC) que se guardan en la carpeta compartida del proyecto (ej. `proyecto/documentos/`) y viajan por Drive/OneDrive como el resto. **Con el proyecto en el servidor van a Supabase Storage** (#242, ver [Documentos e imagen en Storage](#documentos-e-imagen-en-storage-242)).
 
 - `subir_documentos(archivos)` — todos los roles. Lo que sube un Líder o Administrador queda publicado; lo que sube cualquier otro rol queda **pendiente** (sale en [Pendientes](./PLANNING.md#pendientes) y con un punto en el menú). Mismas reglas de [validación de rutas](#validación-de-rutas-de-archivoadjuntos-resuelto-previene-path-traversal): el backend genera su propio nombre de archivo y guarda el original solo como dato.
 - `aprobar_documento(id)` — Líder/Administrador (visto bueno a un documento pendiente).

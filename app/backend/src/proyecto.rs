@@ -390,6 +390,64 @@ fn leer_imagen(carpeta: &Path, icono: &str) -> Option<String> {
     fs::read(&canon).ok().map(|b| data_url_png(&b))
 }
 
+// ---------- Con el proyecto en el servidor (#242) ----------
+//
+// La imagen va a Supabase Storage (`<proyecto>/proyecto/icono-<uuid>.png`) y cada equipo guarda una copia
+// en una carpeta local para leerla sin red. El comando hace la red fuera del bloqueo de la base:
+// `preparar_imagen` → subir → `publicar_imagen` → borrar la anterior → `guardar_en_cache`.
+
+/// Procesa la imagen elegida (las mismas reglas que [`subir_imagen`]) y le da un nombre nuevo.
+pub fn preparar_imagen(ruta_origen: &str) -> Resultado<(String, Vec<u8>)> {
+    let png = procesar_imagen(ruta_origen)?;
+    let nombre = format!("{PREFIJO_ICONO}{}{EXTENSION_ICONO}", eventos::uuid());
+    Ok((nombre, png))
+}
+
+/// Publica `icono_proyecto = nombre` (solo Administrador). Devuelve el ícono anterior, para borrarlo.
+pub fn publicar_imagen(
+    c: &Connection,
+    ops: &Path,
+    actor: &str,
+    rol: Rol,
+    nombre: &str,
+    ahora: &str,
+) -> Resultado<Option<String>> {
+    exigir_admin(Some(rol))?;
+    let anterior = configuracion::leer(c, CLAVE_ICONO_PROYECTO)?;
+    publicar_ajuste(c, ops, actor, rol, CLAVE_ICONO_PROYECTO, nombre, ahora)?;
+    Ok(anterior.filter(|a| a != nombre && es_nombre_icono(a)))
+}
+
+/// El ícono configurado si todavía no está en la carpeta local `cache` (hay que bajarlo).
+pub fn icono_sin_copia(c: &Connection, cache: &Path) -> Resultado<Option<String>> {
+    let Some(icono) = configuracion::leer(c, CLAVE_ICONO_PROYECTO)? else {
+        return Ok(None);
+    };
+    let base = base_canonica(cache)?;
+    Ok(ruta_icono(&base, &icono)
+        .filter(|r| !r.is_file())
+        .map(|_| icono))
+}
+
+/// Guarda la copia local del ícono (escribe en un temporal y renombra: nunca queda uno a medias).
+pub fn guardar_en_cache(cache: &Path, nombre: &str, png: &[u8]) -> Resultado<()> {
+    let base = base_canonica(cache)?;
+    let destino = ruta_icono(&base, nombre)
+        .ok_or_else(|| Error::Validacion("El nombre de la imagen no es válido".into()))?;
+    let temporal = base.join(format!("{nombre}.bajando"));
+    fs::write(&temporal, png)?;
+    if let Err(e) = fs::rename(&temporal, &destino) {
+        let _ = fs::remove_file(&temporal);
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+/// La imagen como `data:image/png;base64,…` (lo que devuelve `subir_imagen_proyecto`).
+pub fn imagen_como_data_url(png: &[u8]) -> String {
+    data_url_png(png)
+}
+
 // ---------- En las demás máquinas (al leer `ops/`) ----------
 
 /// Reproduce un evento de ajustes del proyecto con las mismas reglas que en la

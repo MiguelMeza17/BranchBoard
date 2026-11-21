@@ -4,12 +4,19 @@
 use tauri::State;
 
 use crate::comandos::datos::carpeta_abierta;
+use crate::comandos::documentos::proyecto_en_servidor;
 use crate::db::configuracion::Ajuste;
 use crate::error::Resultado;
 use crate::estado::AppState;
 use crate::eventos;
 use crate::modelo::ahora_iso;
 use crate::proyecto::{self, ConfiguracionProyecto};
+use crate::servidor::pat::LlaveroSistema;
+use crate::supabase::storage::{self, Carpeta, Storage};
+use crate::supabase::{ClienteSupabase, Entorno};
+
+/// Carpeta local (de este equipo) con la copia de la imagen del proyecto bajada del servidor (#242).
+const CACHE_IMAGEN: &str = "proyecto-servidor";
 
 #[tauri::command]
 pub async fn eliminar_proyecto(
@@ -30,8 +37,24 @@ pub fn obtener_configuracion_proyecto(
 /// Versión sin envoltorio Tauri de [`obtener_configuracion_proyecto`].
 pub fn obtener_configuracion_proyecto_en(estado: &AppState) -> Resultado<ConfiguracionProyecto> {
     estado.exigir_permiso("obtener_configuracion_proyecto")?;
+    let local = carpeta_abierta(estado)?;
+    if let Some(proyecto_id) = proyecto_en_servidor(estado)? {
+        // En el servidor (#242): se lee la copia local; la primera vez (o si cambió) se baja. Sin red se
+        // muestra el proyecto sin imagen, como antes sin la carpeta compartida.
+        let cache = local.join(CACHE_IMAGEN);
+        if let Some(icono) = estado.con_db(|db| proyecto::icono_sin_copia(db.conexion(), &cache))? {
+            let supabase = Entorno::actual().proyecto();
+            let cliente = ClienteSupabase::new(supabase, LlaveroSistema);
+            let bajada = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &icono)
+                .and_then(|r| Storage::new(&cliente, supabase).bajar(&r));
+            if let Ok(png) = bajada {
+                let _ = proyecto::guardar_en_cache(&cache, &icono, &png);
+            }
+        }
+        return estado.con_db(|db| proyecto::leer(db.conexion(), Some(&cache)));
+    }
     // Sin carpeta compartida configurada todavía no hay imagen que leer.
-    let carpeta = eventos::carpeta_imagen_proyecto(&carpeta_abierta(estado)?).ok();
+    let carpeta = eventos::carpeta_imagen_proyecto(&local).ok();
     estado.con_db(|db| proyecto::leer(db.conexion(), carpeta.as_deref()))
 }
 
@@ -93,6 +116,39 @@ pub fn subir_imagen_proyecto_en(estado: &AppState, ruta: &str) -> Resultado<Stri
     let yo = estado.exigir_permiso("subir_imagen_proyecto")?;
     let carpeta = carpeta_abierta(estado)?;
     let ops = eventos::carpeta_ops(&carpeta)?;
+    if let Some(proyecto_id) = proyecto_en_servidor(estado)? {
+        let supabase = Entorno::actual().proyecto();
+        let cliente = ClienteSupabase::new(supabase, LlaveroSistema);
+        let storage = Storage::new(&cliente, supabase);
+        let (nombre, png) = proyecto::preparar_imagen(ruta)?;
+        let nueva = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &nombre)?;
+        storage.subir(&nueva, &png)?;
+        let publicado = estado.con_db(|db| {
+            proyecto::publicar_imagen(
+                db.conexion(),
+                &ops,
+                &yo.email,
+                yo.rol,
+                &nombre,
+                &ahora_iso(),
+            )
+        });
+        let anterior = match publicado {
+            Ok(a) => a,
+            Err(e) => {
+                let _ = storage.borrar(&nueva);
+                return Err(e);
+            }
+        };
+        // La anterior ya no la usa nadie. Si no se puede borrar, solo ocupa espacio.
+        if let Some(vieja) = anterior {
+            if let Ok(r) = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &vieja) {
+                let _ = storage.borrar(&r);
+            }
+        }
+        let _ = proyecto::guardar_en_cache(&carpeta.join(CACHE_IMAGEN), &nombre, &png);
+        return Ok(proyecto::imagen_como_data_url(&png));
+    }
     let imagen = eventos::carpeta_imagen_proyecto(&carpeta)?;
     estado.con_db(|db| {
         proyecto::subir_imagen(

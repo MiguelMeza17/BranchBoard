@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 11;
+pub const VERSION_ESQUEMA: u32 = 12;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -245,6 +245,19 @@ fn migraciones() -> Vec<String> {
             creado_en         TEXT NOT NULL,
             intentos          INTEGER NOT NULL DEFAULT 0,
             ultimo_error      TEXT
+        ) STRICT;"
+            .to_string(),
+        // 12 — eventos que el servidor rechazó de forma definitiva (sin permiso por el rol, #247):
+        // se apartan de `bandeja_salida` para no frenar a los demás (#238).
+        "CREATE TABLE bandeja_rechazados (
+            id                TEXT PRIMARY KEY,
+            proyecto_servidor TEXT NOT NULL,
+            tipo              TEXT NOT NULL,
+            tarea_id          TEXT,
+            payload           TEXT NOT NULL,
+            creado_en         TEXT NOT NULL,
+            motivo            TEXT NOT NULL,
+            rechazado_en      TEXT NOT NULL
         ) STRICT;"
             .to_string(),
     ]

@@ -41,6 +41,13 @@
   - Cualquiera puede salirse de un proyecto (salvo el último Administrador).
 - Probado con 42 casos contra el proyecto de pruebas (ver BACKEND.md → Reglas RLS y funciones de roles); con los de #247 (eventos según el rol, abajo) son 63.
 
+**Archivos en Storage (#242)**: documentos e imagen del proyecto van al bucket privado `proyectos`, en `<proyecto_id>/documentos/…` y `<proyecto_id>/proyecto/…` (migración `20261121042000_storage_documentos.sql`). Reglas sobre `storage.objects`:
+- **Leer**: solo miembros del proyecto. Sin sesión o de otro proyecto no se ve nada, ni siquiera que existe ("no encontrado").
+- **Documentos**: los sube cualquier miembro; los borra un Líder o Administrador (un Desarrollador no borra ni los suyos).
+- **Imagen**: la sube y la borra solo un Administrador.
+- **Nada se sobrescribe** (no hay regla de `update`). Solo se acepta exactamente `<uuid>/documentos|proyecto/<archivo>`. Máximo 50 MB por archivo (el bucket lo rechaza y la app lo revisa antes).
+- Probado con 27 casos (`supabase/tests/03_storage.test.sql`) y por la API con tres cuentas (BACKEND.md → Documentos e imagen en Storage). Con el proyecto en el servidor, quitar a alguien le quita también los archivos (antes había que revocar Drive a mano, pendiente N3).
+
 **Login con Unity VC y primer Administrador (#237)**: las Edge Functions `login-unity` y `vincular-repo-unity` no le creen a la app. Con el token de Unity que reciben, le preguntan al servidor de Unity VC el correo de la cuenta y el `owner` del repo; solo hablan con servidores `https://*.plasticscm.com`. El token no se guarda ni se registra. Las funciones SQL que usan (`cuenta_por_correo`, `vincular_repo_unity`) solo las ejecuta `service_role`: nadie con sesión normal puede preguntar si un correo tiene cuenta ni darse Administrador de un repo. Si ya había una cuenta **sin confirmar** con ese correo, se confirma y se le cambia la contraseña por una aleatoria, para que quien la registró sin ser dueño del correo no entre con ella. Detalle en BACKEND.md → Login con Unity VC y primer Administrador.
 
 **Quién se lo puede saltar**: el **dueño de la cuenta de Supabase** (panel, clave secreta, contraseña de Postgres). Es el nuevo ancla de confianza en lugar de `admin.key` (decisión 2 y 3 de #231); riesgo aceptado.

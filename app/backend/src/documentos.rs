@@ -1,4 +1,8 @@
-//! Documentos del proyecto en la carpeta compartida (no versionados en Unity VC, issue #120).
+//! Documentos del proyecto (no versionados en Unity VC, issue #120).
+//!
+//! Dónde viven los archivos lo decide un [`Almacen`]: en Supabase Storage si el proyecto ya está en el
+//! servidor (#242, [`AlmacenServidor`]) o, mientras no, en la carpeta compartida ([`CarpetaCompartida`],
+//! se quita en #244). Los metadatos viajan igual en los dos casos, como eventos.
 //!
 //! - El backend genera siempre su propio nombre de archivo interno (`D-<uuid>[.ext]`)
 //!   y valida de forma canónica que toda lectura, escritura o borrado permanezca
@@ -18,6 +22,7 @@ use crate::db::documentos::{self as db_docs, Documento};
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::{normalizar_email, Rol};
+use crate::supabase::storage;
 use crate::tareas::rol_verificado_de;
 
 /// Tipos de evento de documentos manejados desde `ops/`.
@@ -138,49 +143,188 @@ fn destino_seguro_en(base_canonica: &Path, ruta_interna: &str) -> Resultado<Path
     Ok(destino)
 }
 
-fn copiar_a_carpeta_segura(
-    origen_raw: &str,
-    base_canonica: &Path,
-) -> Resultado<(String, String, u64, PathBuf)> {
+/// Un archivo elegido, ya validado, con su id y su nombre interno nuevos.
+struct Preparado {
+    origen: PathBuf,
+    id: String,
+    nombre: String,
+    ruta_interna: String,
+    tamano: u64,
+}
+
+fn preparar(origen_raw: &str) -> Resultado<Preparado> {
     let ruta_txt = origen_raw.trim();
     if ruta_txt.is_empty() {
         return Err(Error::Validacion("Selecciona al menos un archivo".into()));
     }
-    let origen_canon = fs::canonicalize(Path::new(ruta_txt))
+    let origen = fs::canonicalize(Path::new(ruta_txt))
         .map_err(|e| Error::NoEncontrado(format!("el archivo {ruta_txt} ({e})")))?;
-    let meta = fs::metadata(&origen_canon)?;
+    let meta = fs::metadata(&origen)?;
     if !meta.is_file() {
         return Err(Error::Validacion(format!(
             "{ruta_txt} no es un archivo regular"
         )));
     }
-    let nombre = nombre_visible_seguro(&origen_canon)?;
+    let nombre = nombre_visible_seguro(&origen)?;
     let id = format!("D-{}", eventos::uuid());
-    let ext = extension_segura(&origen_canon);
+    let ext = extension_segura(&origen);
     let ruta_interna = if ext.is_empty() {
         id.clone()
     } else {
         format!("{id}.{ext}")
     };
-    let destino = destino_seguro_en(base_canonica, &ruta_interna)?;
+    validar_ruta_interna(&ruta_interna)?;
+    Ok(Preparado {
+        origen,
+        id,
+        nombre,
+        ruta_interna,
+        tamano: meta.len(),
+    })
+}
 
-    let mut lector = fs::File::open(&origen_canon)?;
-    let mut escritor = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&destino)?;
-    let escrito = io::copy(&mut lector, &mut escritor)?;
-    escritor.sync_all()?;
-
-    // Revalidamos de forma canónica que el archivo creado sigue dentro de `base_canonica`.
-    let destino_canon = fs::canonicalize(&destino)?;
-    if !destino_canon.starts_with(base_canonica) {
-        let _ = fs::remove_file(&destino);
-        return Err(Error::Validacion(
-            "El archivo resuelto quedó fuera de la carpeta de documentos".into(),
-        ));
+/// Dónde se guardan los archivos de los documentos.
+pub trait Almacen {
+    /// Rechaza un archivo antes de guardar nada (p. ej. el límite de 50 MB del servidor).
+    fn revisar(&self, _nombre_visible: &str, _tamano: u64) -> Resultado<()> {
+        Ok(())
     }
-    Ok((id, nombre, escrito, destino))
+    /// Guarda una copia de `origen` como `ruta_interna` (nunca sobrescribe). Devuelve los bytes guardados.
+    fn guardar(&self, ruta_interna: &str, origen: &Path) -> Resultado<u64>;
+    /// Borra el archivo; si no se puede, no es un error (el documento ya no aparece en la lista).
+    fn borrar(&self, ruta_interna: &str);
+    /// Ruta en este equipo para abrir el archivo (bajándolo antes si hace falta).
+    fn archivo_local(&self, ruta_interna: &str, nombre_visible: &str) -> Resultado<PathBuf>;
+}
+
+/// `<carpeta compartida>/documentos/` (Drive/OneDrive): el modo de antes del servidor (#120).
+pub struct CarpetaCompartida<'a> {
+    pub carpeta_docs: &'a Path,
+}
+
+impl Almacen for CarpetaCompartida<'_> {
+    fn guardar(&self, ruta_interna: &str, origen: &Path) -> Resultado<u64> {
+        let base = base_canonica_documentos(self.carpeta_docs)?;
+        let destino = destino_seguro_en(&base, ruta_interna)?;
+        let mut lector = fs::File::open(origen)?;
+        let mut escritor = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destino)?;
+        let escrito = (|| -> Resultado<u64> {
+            let escrito = io::copy(&mut lector, &mut escritor)?;
+            escritor.sync_all()?;
+            // Revalidamos de forma canónica que el archivo creado sigue dentro de `base`.
+            if !fs::canonicalize(&destino)?.starts_with(&base) {
+                return Err(Error::Validacion(
+                    "El archivo resuelto quedó fuera de la carpeta de documentos".into(),
+                ));
+            }
+            Ok(escrito)
+        })();
+        if escrito.is_err() {
+            let _ = fs::remove_file(&destino);
+        }
+        escrito
+    }
+
+    fn borrar(&self, ruta_interna: &str) {
+        borrar_copia_fisica(self.carpeta_docs, ruta_interna);
+    }
+
+    fn archivo_local(&self, ruta_interna: &str, nombre_visible: &str) -> Resultado<PathBuf> {
+        let base = base_canonica_documentos(self.carpeta_docs)?;
+        let esperado = destino_seguro_en(&base, ruta_interna)?;
+        let canon = fs::canonicalize(&esperado).map_err(|_| {
+            Error::NoEncontrado(format!(
+                "El archivo de \"{nombre_visible}\" aún no está sincronizado en esta máquina"
+            ))
+        })?;
+        if !canon.starts_with(&base) || !canon.is_file() {
+            return Err(Error::Validacion(
+                "La ruta del documento quedó fuera de la carpeta compartida".into(),
+            ));
+        }
+        Ok(canon)
+    }
+}
+
+/// Lo que se usa de Supabase Storage (así las pruebas sin red usan uno en memoria).
+pub trait ArchivosServidor {
+    fn subir(&self, ruta: &str, bytes: &[u8]) -> Resultado<()>;
+    fn bajar(&self, ruta: &str) -> Resultado<Vec<u8>>;
+    fn borrar(&self, ruta: &str) -> Resultado<()>;
+}
+
+impl<L: crate::servidor::pat::Llavero> ArchivosServidor for storage::Storage<'_, L> {
+    fn subir(&self, ruta: &str, bytes: &[u8]) -> Resultado<()> {
+        storage::Storage::subir(self, ruta, bytes)
+    }
+    fn bajar(&self, ruta: &str) -> Resultado<Vec<u8>> {
+        storage::Storage::bajar(self, ruta)
+    }
+    fn borrar(&self, ruta: &str) -> Resultado<()> {
+        storage::Storage::borrar(self, ruta)
+    }
+}
+
+/// Supabase Storage (#242): `<proyecto>/documentos/<ruta interna>` en el bucket `proyectos`. Para abrir
+/// un documento se baja a `cache` (una carpeta local del proyecto) la primera vez.
+pub struct AlmacenServidor<'a, S: ArchivosServidor> {
+    pub servidor: &'a S,
+    pub proyecto_id: &'a str,
+    pub cache: &'a Path,
+}
+
+impl<S: ArchivosServidor> AlmacenServidor<'_, S> {
+    fn ruta(&self, ruta_interna: &str) -> Resultado<String> {
+        let limpia = validar_ruta_interna(ruta_interna)?;
+        storage::ruta_objeto(self.proyecto_id, storage::Carpeta::Documentos, &limpia)
+    }
+
+    fn cache(&self) -> CarpetaCompartida<'_> {
+        CarpetaCompartida {
+            carpeta_docs: self.cache,
+        }
+    }
+}
+
+impl<S: ArchivosServidor> Almacen for AlmacenServidor<'_, S> {
+    fn revisar(&self, nombre_visible: &str, tamano: u64) -> Resultado<()> {
+        storage::revisar_tamano(nombre_visible, tamano)
+    }
+
+    fn guardar(&self, ruta_interna: &str, origen: &Path) -> Resultado<u64> {
+        let ruta = self.ruta(ruta_interna)?;
+        let bytes = fs::read(origen)?;
+        storage::revisar_tamano(ruta_interna, bytes.len() as u64)?;
+        self.servidor.subir(&ruta, &bytes)?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn borrar(&self, ruta_interna: &str) {
+        if let Ok(ruta) = self.ruta(ruta_interna) {
+            let _ = self.servidor.borrar(&ruta);
+        }
+        self.cache().borrar(ruta_interna);
+    }
+
+    fn archivo_local(&self, ruta_interna: &str, nombre_visible: &str) -> Resultado<PathBuf> {
+        if let Ok(ya) = self.cache().archivo_local(ruta_interna, nombre_visible) {
+            return Ok(ya);
+        }
+        let bytes = self.servidor.bajar(&self.ruta(ruta_interna)?)?;
+        // Se escribe en un temporal y se renombra: un archivo a medias nunca queda con el nombre final.
+        let base = base_canonica_documentos(self.cache)?;
+        let destino = destino_seguro_en(&base, ruta_interna)?;
+        let temporal = destino_seguro_en(&base, &format!("{ruta_interna}.bajando"))?;
+        fs::write(&temporal, &bytes)?;
+        if let Err(e) = fs::rename(&temporal, &destino) {
+            let _ = fs::remove_file(&temporal);
+            return Err(e.into());
+        }
+        self.cache().archivo_local(ruta_interna, nombre_visible)
+    }
 }
 
 /// Lista todos los documentos del proyecto (#120). `ruta` interna nunca sale serializada.
@@ -188,9 +332,7 @@ pub fn listar(c: &Connection) -> Resultado<Vec<Documento>> {
     db_docs::listar(c)
 }
 
-/// Sube uno o varios archivos a `<compartida>/documentos/` con nombre interno único
-/// y publica el evento `subir_documentos` en `ops/` (#120).
-/// Líder o Administrador publica directo (`pendiente = false`); otros roles quedan `pendiente = true`.
+/// Sube archivos a `<compartida>/documentos/` (ver [`subir_en`]).
 #[allow(clippy::too_many_arguments)]
 pub fn subir(
     c: &Connection,
@@ -202,46 +344,89 @@ pub fn subir(
     ahora: &str,
     hoy: &str,
 ) -> Resultado<Vec<Documento>> {
+    let almacen = CarpetaCompartida { carpeta_docs };
+    subir_en(c, ops, &almacen, emisor, rol_emisor, archivos, ahora, hoy)
+}
+
+/// Sube uno o varios archivos al almacén con nombre interno único y publica el evento
+/// `subir_documentos` (#120). Antes de guardar nada los revisa todos (en el servidor, más de 50 MB se
+/// rechaza, #242). Líder o Administrador publica directo (`pendiente = false`); otros roles quedan
+/// `pendiente = true`.
+#[allow(clippy::too_many_arguments)]
+pub fn subir_en(
+    c: &Connection,
+    ops: &Path,
+    almacen: &dyn Almacen,
+    emisor: &str,
+    rol_emisor: Rol,
+    archivos: &[String],
+    ahora: &str,
+    hoy: &str,
+) -> Resultado<Vec<Documento>> {
+    let creados = guardar_archivos(almacen, emisor, rol_emisor, archivos, hoy)?;
+    publicar_subida(c, ops, almacen, emisor, rol_emisor, creados, ahora)
+}
+
+/// Primera mitad de [`subir_en`]: valida y guarda los archivos, sin tocar la base. Con el servidor es
+/// la parte lenta (la red), así que el comando la hace sin bloquear la base de datos.
+pub fn guardar_archivos(
+    almacen: &dyn Almacen,
+    emisor: &str,
+    rol_emisor: Rol,
+    archivos: &[String],
+    hoy: &str,
+) -> Resultado<Vec<Documento>> {
     if archivos.is_empty() {
         return Err(Error::Validacion(
             "Selecciona al menos un archivo para subir".into(),
         ));
     }
     let emisor_norm = normalizar_email(emisor);
-    let base = base_canonica_documentos(carpeta_docs)?;
     let pendiente = !rol_emisor.es_lider_o_admin();
 
-    let mut creados = Vec::with_capacity(archivos.len());
-    let mut destinos_creados: Vec<PathBuf> = Vec::with_capacity(archivos.len());
+    let preparados = archivos
+        .iter()
+        .map(|a| preparar(a))
+        .collect::<Resultado<Vec<_>>>()?;
+    for p in &preparados {
+        almacen.revisar(&p.nombre, p.tamano)?;
+    }
 
-    for ruta_origen in archivos {
-        match copiar_a_carpeta_segura(ruta_origen, &base) {
-            Ok((id, nombre, tamano, destino)) => {
-                let ruta_rel = destino
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default()
-                    .to_string();
-                destinos_creados.push(destino);
-                creados.push(Documento {
-                    id,
-                    nombre,
-                    tamano,
-                    subido_por: emisor_norm.clone(),
-                    fecha: hoy.to_string(),
-                    pendiente,
-                    ruta: ruta_rel,
-                });
-            }
+    let mut creados: Vec<Documento> = Vec::with_capacity(preparados.len());
+    for p in preparados {
+        match almacen.guardar(&p.ruta_interna, &p.origen) {
+            Ok(tamano) => creados.push(Documento {
+                id: p.id,
+                nombre: p.nombre,
+                tamano,
+                subido_por: emisor_norm.clone(),
+                fecha: hoy.to_string(),
+                pendiente,
+                ruta: p.ruta_interna,
+            }),
             Err(e) => {
-                for p in destinos_creados {
-                    let _ = fs::remove_file(p);
+                for d in &creados {
+                    almacen.borrar(&d.ruta);
                 }
                 return Err(e);
             }
         }
     }
+    Ok(creados)
+}
 
+/// Segunda mitad de [`subir_en`]: publica `subir_documentos` con lo que ya se guardó. Si no se puede,
+/// borra los archivos guardados para no dejar huérfanos.
+pub fn publicar_subida(
+    c: &Connection,
+    ops: &Path,
+    almacen: &dyn Almacen,
+    emisor: &str,
+    rol_emisor: Rol,
+    creados: Vec<Documento>,
+    ahora: &str,
+) -> Resultado<Vec<Documento>> {
+    let emisor_norm = normalizar_email(emisor);
     let payload = PayloadSubirDocumentos {
         documentos: creados.iter().map(PayloadDocumentoEvento::from).collect(),
     };
@@ -257,8 +442,8 @@ pub fn subir(
     if let Err(e) = eventos::publicar(c, ops, &ev, |tx| {
         aplicar_subir_documentos(tx, &emisor_norm, Some(rol_emisor), &payload)
     }) {
-        for p in destinos_creados {
-            let _ = fs::remove_file(p);
+        for d in &creados {
+            almacen.borrar(&d.ruta);
         }
         return Err(e);
     }
@@ -297,12 +482,41 @@ pub fn aprobar(
     db_docs::obtener(c, id_limpio)
 }
 
-/// Elimina un documento del proyecto (Líder o Administrador), publica en `ops/`
-/// y borra su copia segura de `<compartida>/documentos/` (#120).
+/// Elimina un documento de `<compartida>/documentos/` (ver [`eliminar_en`]).
 pub fn eliminar(
     c: &Connection,
     ops: &Path,
     carpeta_docs: &Path,
+    actor: &str,
+    rol_actor: Rol,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Documento> {
+    let almacen = CarpetaCompartida { carpeta_docs };
+    eliminar_en(c, ops, &almacen, actor, rol_actor, id, ahora)
+}
+
+/// Elimina un documento del proyecto (Líder o Administrador), publica el evento y borra su archivo del
+/// almacén (#120, #242).
+pub fn eliminar_en(
+    c: &Connection,
+    ops: &Path,
+    almacen: &dyn Almacen,
+    actor: &str,
+    rol_actor: Rol,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Documento> {
+    let doc = eliminar_registro(c, ops, actor, rol_actor, id, ahora)?;
+    almacen.borrar(&doc.ruta);
+    Ok(doc)
+}
+
+/// Primera mitad de [`eliminar_en`]: publica `eliminar_documento` y lo quita de la base. Devuelve el
+/// documento para borrar después su archivo (con el servidor, fuera del bloqueo de la base).
+pub fn eliminar_registro(
+    c: &Connection,
+    ops: &Path,
     actor: &str,
     rol_actor: Rol,
     id: &str,
@@ -332,9 +546,7 @@ pub fn eliminar(
         eliminado = Some(doc);
         Ok(())
     })?;
-    let doc = eliminado.expect("documento borrado en transacción");
-    borrar_copia_fisica(carpeta_docs, &doc.ruta);
-    Ok(doc)
+    Ok(eliminado.expect("documento borrado en transacción"))
 }
 
 fn borrar_copia_fisica(carpeta_docs: &Path, ruta_interna: &str) {
@@ -351,21 +563,13 @@ fn borrar_copia_fisica(carpeta_docs: &Path, ruta_interna: &str) {
 
 /// Resuelve y valida de forma canónica la ruta en disco de un documento para abrirlo localmente (#120).
 pub fn resolver_archivo(c: &Connection, carpeta_docs: &Path, id: &str) -> Resultado<PathBuf> {
+    resolver_archivo_en(c, &CarpetaCompartida { carpeta_docs }, id)
+}
+
+/// Ruta en este equipo del archivo de un documento; en el servidor lo baja la primera vez (#242).
+pub fn resolver_archivo_en(c: &Connection, almacen: &dyn Almacen, id: &str) -> Resultado<PathBuf> {
     let doc = db_docs::obtener(c, id.trim())?;
-    let base = base_canonica_documentos(carpeta_docs)?;
-    let esperado = destino_seguro_en(&base, &doc.ruta)?;
-    let canon = fs::canonicalize(&esperado).map_err(|_| {
-        Error::NoEncontrado(format!(
-            "El archivo de \"{}\" aún no está sincronizado en esta máquina",
-            doc.nombre
-        ))
-    })?;
-    if !canon.starts_with(&base) || !canon.is_file() {
-        return Err(Error::Validacion(
-            "La ruta del documento quedó fuera de la carpeta compartida".into(),
-        ));
-    }
-    Ok(canon)
+    almacen.archivo_local(&doc.ruta, &doc.nombre)
 }
 
 fn aplicar_subir_documentos(
@@ -724,6 +928,206 @@ mod tests {
         assert_eq!(en_b.len(), 1);
         assert_eq!(en_b[0].id, d_dev.id);
         assert!(!en_b[0].pendiente);
+    }
+
+    /// Storage en memoria: guarda por ruta y cuenta cuántas veces se bajó cada archivo.
+    #[derive(Default)]
+    struct ServidorFalso {
+        archivos: std::cell::RefCell<std::collections::HashMap<String, Vec<u8>>>,
+        bajadas: std::cell::Cell<usize>,
+        sin_red: std::cell::Cell<bool>,
+    }
+
+    impl ArchivosServidor for ServidorFalso {
+        fn subir(&self, ruta: &str, bytes: &[u8]) -> Resultado<()> {
+            if self.sin_red.get() {
+                return Err(Error::ServidorSinConexion);
+            }
+            let mut a = self.archivos.borrow_mut();
+            if a.contains_key(ruta) {
+                return Err(Error::Validacion("ya existe".into()));
+            }
+            a.insert(ruta.to_string(), bytes.to_vec());
+            Ok(())
+        }
+        fn bajar(&self, ruta: &str) -> Resultado<Vec<u8>> {
+            if self.sin_red.get() {
+                return Err(Error::ServidorSinConexion);
+            }
+            self.bajadas.set(self.bajadas.get() + 1);
+            self.archivos
+                .borrow()
+                .get(ruta)
+                .cloned()
+                .ok_or_else(|| Error::NoEncontrado("el archivo en el servidor".into()))
+        }
+        fn borrar(&self, ruta: &str) -> Resultado<()> {
+            self.archivos.borrow_mut().remove(ruta);
+            Ok(())
+        }
+    }
+
+    const PROYECTO: &str = "11111111-2222-4333-8444-555555555555";
+
+    #[test]
+    fn documentos_en_el_servidor_subir_abrir_y_eliminar() {
+        let e = setup();
+        let servidor = ServidorFalso::default();
+        let cache_a = e.tmp.path().join("cache_a");
+        let cache_b = e.tmp.path().join("cache_b");
+        let alm_a = AlmacenServidor {
+            servidor: &servidor,
+            proyecto_id: PROYECTO,
+            cache: &cache_a,
+        };
+        let alm_b = AlmacenServidor {
+            servidor: &servidor,
+            proyecto_id: PROYECTO,
+            cache: &cache_b,
+        };
+        let origen = e.tmp.path().join("origen");
+        fs::create_dir_all(&origen).unwrap();
+        let gdd = origen.join("GDD.pdf");
+        fs::write(&gdd, b"%PDF gdd").unwrap();
+
+        // El Desarrollador sube: queda pendiente y el archivo está en el servidor, no en la carpeta compartida.
+        let subidos = subir_en(
+            e.db_a.conexion(),
+            &e.ops,
+            &alm_a,
+            DEV,
+            Rol::Desarrollador,
+            &[gdd.to_string_lossy().into()],
+            AHORA,
+            HOY,
+        )
+        .unwrap();
+        let doc = &subidos[0];
+        assert!(doc.pendiente);
+        assert_eq!(doc.tamano, 8);
+        let en_servidor = format!("{PROYECTO}/documentos/{}", doc.ruta);
+        assert_eq!(
+            servidor.archivos.borrow().get(&en_servidor).unwrap(),
+            b"%PDF gdd"
+        );
+        assert!(!e.docs.join(&doc.ruta).exists());
+
+        // Abrir lo baja una sola vez a la copia local; la segunda vez no usa la red.
+        let ruta = resolver_archivo_en(e.db_a.conexion(), &alm_a, &doc.id).unwrap();
+        assert_eq!(fs::read(&ruta).unwrap(), b"%PDF gdd");
+        assert!(ruta.starts_with(fs::canonicalize(&cache_a).unwrap()));
+        servidor.sin_red.set(true);
+        assert_eq!(
+            resolver_archivo_en(e.db_a.conexion(), &alm_a, &doc.id).unwrap(),
+            ruta
+        );
+        assert_eq!(servidor.bajadas.get(), 1);
+        // Sin red y sin copia local: se avisa, no se inventa un archivo.
+        let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
+            lectura::aplicar_evento(c, &e.publica, ev)
+        })
+        .unwrap();
+        assert!(matches!(
+            resolver_archivo_en(e.db_b.conexion(), &alm_b, &doc.id),
+            Err(Error::ServidorSinConexion)
+        ));
+        servidor.sin_red.set(false);
+        assert_eq!(
+            fs::read(resolver_archivo_en(e.db_b.conexion(), &alm_b, &doc.id).unwrap()).unwrap(),
+            b"%PDF gdd"
+        );
+
+        // Sin red al subir: no se publica nada.
+        servidor.sin_red.set(true);
+        assert!(matches!(
+            subir_en(
+                e.db_a.conexion(),
+                &e.ops,
+                &alm_a,
+                LIDER,
+                Rol::Lider,
+                &[gdd.to_string_lossy().into()],
+                AHORA,
+                HOY,
+            ),
+            Err(Error::ServidorSinConexion)
+        ));
+        servidor.sin_red.set(false);
+        assert_eq!(listar(e.db_a.conexion()).unwrap().len(), 1);
+
+        // El Líder elimina: se borra del servidor y de la copia local.
+        eliminar_en(
+            e.db_a.conexion(),
+            &e.ops,
+            &alm_a,
+            LIDER,
+            Rol::Lider,
+            &doc.id,
+            AHORA,
+        )
+        .unwrap();
+        assert!(servidor.archivos.borrow().is_empty());
+        assert!(!ruta.exists());
+        assert!(listar(e.db_a.conexion()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn en_el_servidor_mas_de_50_mb_se_rechaza_antes_de_subir_nada() {
+        let e = setup();
+        let servidor = ServidorFalso::default();
+        let cache = e.tmp.path().join("cache");
+        let alm = AlmacenServidor {
+            servidor: &servidor,
+            proyecto_id: PROYECTO,
+            cache: &cache,
+        };
+        let origen = e.tmp.path().join("origen");
+        fs::create_dir_all(&origen).unwrap();
+        let chico = origen.join("notas.txt");
+        fs::write(&chico, b"ok").unwrap();
+        let grande = origen.join("personaje.fbx");
+        // Archivo disperso: ocupa casi nada en disco pero mide 50 MB + 1 byte.
+        fs::File::create(&grande)
+            .unwrap()
+            .set_len(storage::LIMITE_POR_ARCHIVO + 1)
+            .unwrap();
+
+        let r = subir_en(
+            e.db_a.conexion(),
+            &e.ops,
+            &alm,
+            ADMIN,
+            Rol::Administrador,
+            &[
+                chico.to_string_lossy().into(),
+                grande.to_string_lossy().into(),
+            ],
+            AHORA,
+            HOY,
+        );
+        assert!(
+            matches!(&r, Err(Error::Validacion(m)) if m.contains("personaje.fbx") && m.contains("50 MB")),
+            "{r:?}"
+        );
+        // Ni el chico se subió: se revisan todos antes de empezar.
+        assert!(servidor.archivos.borrow().is_empty());
+        assert!(listar(e.db_a.conexion()).unwrap().is_empty());
+
+        // En la carpeta compartida no hay límite (no cambia lo de antes).
+        assert!(subir(
+            e.db_a.conexion(),
+            &e.ops,
+            &e.docs,
+            ADMIN,
+            Rol::Administrador,
+            &[grande.to_string_lossy().into()],
+            AHORA,
+            HOY,
+        )
+        .is_ok());
     }
 
     /// **Prueba en el entorno real** (CLAUDE.md, issue #120): contra
