@@ -412,6 +412,33 @@ Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_p
 
     y se comprueba que quedan 0 cuentas `usuarios-%`, 0 perfiles, 0 proyectos `bb-prueba-241%` y 0 invitaciones.
 
+### Proyectos en el servidor (#240)
+
+**Nuevo (2026-11-21), primera parte** — los proyectos de Unity VC quedan **vinculados** con su fila de `proyectos` del servidor (`app/backend/src/supabase/proyectos.rs`). El id se guarda en `configuracion_proyecto` como `proyecto_servidor_id`: es lo que activa la bandeja (#238), la recepción (#239), Storage (#242) y los usuarios por el servidor (#241).
+
+- **Cuándo**: al entrar a un proyecto de Unity VC (`comandos/acceso.rs::entrar_con`, después de abrir la base), sin frenar la entrada. Sin internet o sin sesión no se vincula y se reintenta la próxima vez que se entre. También con el comando `vincular_proyecto_servidor()` (todos los roles, proyecto abierto), que devuelve `{ estado: "vinculado", proyecto_id, ahora } | { estado: "no_es_miembro" } | { estado: "con_equipo_local" }`.
+- **Cómo** (`proyectos::vincular_unity`):
+  1. Si ya tiene `proyecto_servidor_id`, no toca la red.
+  2. Si la base local tiene **más de un usuario**, no se vincula (`con_equipo_local`). Con #241, la tabla local `usuarios` pasa a ser copia de `miembros` y se reemplaza entera, así que quien no esté en el servidor desaparecería de esa PC. Esos proyectos se suben con #245.
+  3. Busca el proyecto: `GET /rest/v1/proyectos?select=id&unity_org=eq.<org>&unity_repo=eq.<Proyecto%2FRepo>`. Las reglas RLS solo lo muestran si la cuenta es miembro.
+  4. Si no aparece y quien entra es **Administrador local**, lo trae con la Edge Function `vincular-repo-unity` (#237) y el token de Unity de `tokens.conf`: ella comprueba que sea el **dueño del repo**, crea el proyecto y lo deja como Administrador. Si el repo ya lo había traído otra persona, devuelve el mismo proyecto (si ya es miembro) o `409`: **un repo es un solo proyecto**. Si Unity rechaza el token (venció), se renueva con `cm repo list <org>@unity` y se reintenta una vez.
+  5. Si no aparece y no es Administrador: `no_es_miembro` (lo agrega un Administrador, #241).
+- **Listar**: `listar_proyectos_del_servidor()` (libre; hace falta la sesión del servidor) → `[{ id, nombre, unity_org, unity_repo, rol }]`, con `GET /rest/v1/miembros?select=rol,proyectos(id,nombre,unity_org,unity_repo)&usuario_id=eq.<cuenta>`. `listar_proyectos_servidor()` ("Cargar proyecto") lo usa para marcar como "Con tareas" los repos que ya son proyectos de la cuenta, con su `rol_servidor`. Sin internet, la lista sale igual que antes.
+- **Cliente**: `ClienteSupabase::llamar_funcion(nombre, cuerpo)` hace `POST /functions/v1/<nombre>` con la sesión.
+- **Falta (siguientes partes de #240)**:
+  - Entrar por primera vez en una PC como miembro que no es el dueño (necesita los roles del servidor, #241).
+  - Proyectos sin Unity VC en el servidor y abrirlos desde otra PC. La contraseña de esos proyectos la quita #243.
+  - Crear un proyecto sin internet (que espere en la bandeja).
+  - Usar un proyecto vinculado sin carpeta compartida: hoy `publicar` escribe en `ops/` y la entrada pide la carpeta; eso se quita en #244.
+- **Pruebas**:
+  - 7 unitarias en `supabase::proyectos`: si el servidor lo muestra se guarda sin traerlo; el Administrador lo trae; quien no lo es, no; ya vinculado no toca la red; sin internet no guarda nada; con equipo local no se vincula; rutas y respuestas.
+  - Real, `comandos::acceso::…::entorno_real_vincular_repo_y_listar` (`BB_PRUEBA_ORG=MiguelM17 BB_PRUEBA_REPO=BranchBoard-Pruebas/BranchBoard-Pruebas cargo test --lib entorno_real_vincular -- --ignored --nocapture`), contra branchboard-pruebas con la sesión de Unity VC de la dueña del repo:
+    - la PC A trae el repo con la Edge Function;
+    - la PC B lo encuentra y guarda el **mismo** id sin traerlo otra vez;
+    - volver a vincular A no toca la red;
+    - la lista de la cuenta lo muestra como Administrador.
+    - Deja el proyecto: borrarlo con `delete from public.proyectos where unity_repo = 'BranchBoard-Pruebas/BranchBoard-Pruebas'`.
+
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
 Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` con datos que vienen del usuario (nombre de rama, justificación, descripción, comentarios de checkin/merge, etc.):
@@ -745,7 +772,7 @@ Pruebas de #203: `entorno_real_clasificacion_sesion_caducada` hace lecturas real
 - **Actualizado (2026-11-20)**: "Cerrar sesión" del menú ahora solo cierra la **cuenta de BranchBoard** (frontend, `cerrarSesionBranchBoard`) y **no** llama a `cerrar_sesion_unity_vc`, que queda disponible pero sin uso en la interfaz (borraba la sesión compartida con Plastic SCM).
 - **"Cerrar sesión"** (menú del proyecto, antes de 2026-11-20): revoca los PAT de BranchBoard en Unity VC (`cm accesstoken revoke`), los borra del llavero, limpia `tokens.conf` / `cloudedition.token` / `<SecurityConfig>` en `plastic4` y cierra el proyecto en memoria (`cerrar_sesion_unity_vc()`); la app queda en "No se detectó una sesión de Unity VC" y al volver a entrar pasa otra vez por el acceso al proyecto.
 - **"Tus proyectos"**: los workspaces locales que ya usan BranchBoard (`cm workspace list` + si tienen datos de BranchBoard); elegir uno entra a ese proyecto (`entrar_a_proyecto`). (**Implementado #125** en `app/backend/src/cm/proyectos.rs` y `comandos/cm.rs`: `listar_workspaces_locales`, `listar_tus_proyectos`.)
-- **"Cargar proyecto"**: lista los repositorios del servidor de Unity VC a los que la persona tiene acceso y que todavía no están en ese equipo (`listar_proyectos_servidor()`, vía `cm repo list`), con la etiqueta "Con tareas" si ya usan BranchBoard. Elegir uno lleva a [Clonar proyecto](#clonar-proyecto-in-app). (**Implementado #125**.)
+- **"Cargar proyecto"**: lista los repositorios del servidor de Unity VC a los que la persona tiene acceso y que todavía no están en ese equipo (`listar_proyectos_servidor()`, vía `cm repo list`), con la etiqueta "Con tareas" si ya usan BranchBoard. Elegir uno lleva a [Clonar proyecto](#clonar-proyecto-in-app). (**Implementado #125**.) **Desde #240** también cuenta como "Con tareas" un repo que ya es proyecto de la cuenta en el servidor, y trae `rol_servidor` (ver [Proyectos en el servidor](#proyectos-en-el-servidor-240)).
 - **"Nuevo proyecto"**: (a) **traer** un proyecto de Unity VC que ya está en el equipo pero nunca se configuró con BranchBoard (`traer_proyecto(carpeta)` — se configura como dice [Identidad](#identidad-de-usuario) y asegura `/main/dev`), o (b) **crear** uno nuevo: se crea su repositorio y su workspace en Unity VC (`crear_proyecto(nombre, carpeta, proyecto_unity?, org?)`, `cm repo create` dentro del proyecto padre existente en Unity Organizations + `cm workspace create` + rama base `/main/dev`) y quien lo crea queda como Administrador. La lista `cm repo list` filtra automáticamente los repositorios marcados como `__DELETED__*`. **Implementado (2026-11-16, #205)**: como `cm` no puede crear proyectos padre en Unity Organizations, el modal ofrece **"Crearlo en Unity Cloud"** (`abrir_unity_cloud(org?)`: abre en el navegador `https://cloud.unity.com/home/organizations/<id>/projects`, con el id numérico de la organización leído de `cloudregions.conf`; si la organización está anotada por nombre, se usa el id que esté en el mismo `server` cuando ese servidor tiene un solo nombre y un solo id, y si no, la portada del Dashboard) y **"Recargar proyectos"** (vuelve a correr `listar_proyectos_servidor`). El comando es libre (no exige proyecto abierto) y la URL pasa por la misma validación HTTPS que las descargas.
 - **"Salir de la app"**: cierra la ventana (respetando [Bloquear el cierre durante una operación](#bloquear-el-cierre-de-la-app-durante-una-operación)).
 - **Proyectos sin Unity VC ("Continuar sin Unity VC")** — **implementado (2026-11-19)**, módulo `proyecto_local.rs`:

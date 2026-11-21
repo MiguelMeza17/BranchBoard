@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { useStore } from '../store/useStore';
-import { api, enTauri, ErrorBackend, mensajeDeError, nombreDeRepo, type EntradaProyecto, type ProyectoLocal } from '../lib/api';
+import {
+  api,
+  enTauri,
+  ErrorBackend,
+  etiquetaProyectoServidor,
+  mensajeDeError,
+  nombreDeRepo,
+  type EntradaProyecto,
+  type ProyectoLocal,
+} from '../lib/api';
 import { PasoClonar } from './AccesoProyecto';
 import type { WorkspaceUnityVC } from '../types';
 import { SelectorCarpeta } from './SelectorCarpeta';
@@ -558,7 +567,7 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
                         p.tiene_db_branchboard ? 'bg-primary-soft text-primary' : 'bg-surface-3 text-faint'
                       }`}
                     >
-                      {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
+                      {etiquetaProyectoServidor(p)}
                     </span>
                   </button>
                 ))}

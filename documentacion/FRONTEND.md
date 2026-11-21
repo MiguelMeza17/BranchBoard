@@ -337,7 +337,7 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Actuali
 
 2. **Pantalla de solicitud de ingreso**: **quitada (2026-11-07)**, queda para la versión 2 (ver issue #57; invitar por correo con código: #58). El alta la hace un Líder o Administrador desde [Usuarios](#usuarios).
 
-**"Cargar proyecto"** (menú de proyectos, clic en el logo, encima de "Nuevo proyecto"): lista los proyectos del servidor de Unity VC a los que tienes acceso y que aún no están en este equipo, con la etiqueta "Con tareas" (ya usan BranchBoard: llegan con sus tareas) o "Sin tareas". Al elegir uno se va al paso "Clonar proyecto".
+**"Cargar proyecto"** (menú de proyectos, clic en el logo, encima de "Nuevo proyecto"): lista los proyectos del servidor de Unity VC a los que tienes acceso y que aún no están en este equipo, con la etiqueta "Con tareas" (ya usan BranchBoard: llegan con sus tareas) o "Sin tareas". **Desde #240**, si el repo ya es un proyecto de tu cuenta en el servidor de BranchBoard, la etiqueta lleva tu rol allí: "Con tareas · Administrador" (`etiquetaProyectoServidor` en `lib/api.ts`; también en el desplegable de `AccesoProyecto`). Al elegir uno se va al paso "Clonar proyecto".
 
 ## Roles y permisos (UI)
 
