@@ -96,7 +96,7 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 | Leer proyectos, miembros, eventos y perfiles | `select` normal por la API de datos; solo devuelve lo de los proyectos de los que se es miembro |
 | Editar el propio nombre y apellido | `update perfiles set nombre, apellido` (el correo no) |
 | Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en`. Si el `tipo` está en `privado.permisos_evento` y el rol de quien lo manda no está en sus roles, se rechaza con `42501` (#247, tabla en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234)) |
-| Crear un proyecto sin Unity VC | `rpc/crear_proyecto(p_nombre)` → id; quien lo crea queda Administrador |
+| Crear un proyecto sin Unity VC | UUID v4 local; al sincronizar `rpc/crear_proyecto(p_nombre, p_id)` confirma ese mismo id y deja al creador como Administrador |
 | Agregar a alguien (o invitarlo si aún no tiene cuenta, #241) | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` → id, o `null` si quedó invitado |
 | Cancelar una invitación | `rpc/quitar_invitacion(p_proyecto, p_correo)` (#241) |
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
@@ -278,6 +278,12 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 
 ### Recepción desde el servidor (#239)
 
+**Refresco de la pantalla sin Unity VC (2026-11-21)**: `App` monta `useEventosServidor(accesoCompletado && !!proyectoActual)` por separado de la sincronización de Unity. Antes la escucha de `eventos-recibidos` estaba detrás de `cmSesionActiva`: los datos podían llegar a SQLite sin actualizar la pantalla en un proyecto sin Unity. Ahora un cambio aplicado incrementa `versionDatos` y las pantallas recargan desde el backend; al desmontar se retira la escucha, también si su registro termina tarde en React StrictMode. La recepción y la escritura de eventos no cambian.
+
+**Prueba reproducible de interfaz**: `examples/probar_refresco_239.rs` crea dos cuentas reales y un proyecto en `branchboard-pruebas`, con sesiones solo en memoria y bases locales separadas. Su recepción utiliza los mismos módulos `bandeja`/`recepcion` y el evento Tauri de la app, con cadencia de 5 s; no usa el llavero del usuario. La WebView carga la `App` y lista de tareas reales. `scripts/probar-refresco-servidor.mjs green` comprueba creación y edición desde la otra cuenta visibles sin recargar, `versionDatos` sin suscripciones duplicadas y dos vueltas adicionales sin tareas duplicadas. No llama a una recarga o sincronización manual de la pantalla durante esas comprobaciones. Los datos y las cuentas de prueba se conservan identificados; las sesiones se cierran al salir del auxiliar.
+
+Para ejecutarla: Vite en `127.0.0.7:4300`, `BB239_DATOS` apuntando a una carpeta nueva de pruebas, un perfil WebView propio y `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9457`; ejecutar `cargo run --example probar_refresco_239 --locked` y, desde el frontend, `node scripts/probar-refresco-servidor.mjs green`. Cerrar el auxiliar con el modo `close` del mismo script.
+
 **Nuevo (2026-11-21)** — los cambios del resto del equipo bajan de la tabla `eventos` del servidor y se aplican con el aplicador común de eventos (`app/backend/src/eventos/recepcion.rs`). Solo en proyectos con `proyecto_servidor_id` (lo fija #240).
 
 - **Cuándo** (decisión del 2026-11-20 en #239: consulta periódica, Realtime después si hace falta): cada **5 s** mientras la app está abierta (un hilo aparte en `lib.rs`), al volver la ventana a primer plano y cuando el frontend llama a `sincronizar_eventos` (al entrar al proyecto y cada 2 minutos). Sin internet, sin sesión o con el proyecto pausado, la vuelta simplemente no baja nada y se reintenta en 5 s; como cada vuelta pide "lo nuevo desde el último", al volver la conexión llega todo lo que faltaba.
@@ -345,13 +351,16 @@ Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_p
   - Si el servidor no lo muestra (o no hay red): como antes, el dueño configura y los demás ven "espera a que lo abra su dueño".
   - Desde #244 se entra directo, sin elegir carpeta compartida.
 - **Proyectos sin Unity VC en el servidor** (`proyecto_servidor.rs`, `comandos/proyecto_servidor.rs`, tercera parte, 2026-11-21). Nada va por Drive: el proyecto vive en el servidor y se abre desde cualquier PC con la cuenta.
-  - `crear_proyecto_servidor(nombre)` (libre): con la sesión de BranchBoard, `rpc/crear_proyecto(p_nombre)`; quien lo crea queda Administrador (#234). Sin carpeta que elegir, sin contraseña ni llaves. Deja el proyecto abierto (`configurado_ahora: true`).
+  - `crear_proyecto_servidor(nombre)` (libre, #269): usa la sesión **guardada**, incluso con token vencido y sin red. Genera el UUID v4 definitivo en la app, crea SQLite y la copia del creador como Administrador, y persiste el alta pendiente en la misma transacción. Abre el proyecto inmediatamente (`configurado_ahora: true`), sin carpeta que elegir ni contraseña. No guarda tokens en SQLite.
+  - Antes de subir cualquier evento, la sincronización automática confirma el alta con `rpc/crear_proyecto(p_nombre, p_id)`. Conserva el UUID de todas las tareas y eventos creados sin conexión. Si falla, no envía ni aparta eventos como rechazados: todo queda pendiente incluso al reiniciar. La petición de red no mantiene bloqueada la base local. Solo la cuenta que lo creó puede subirlo; cambiar de cuenta no transfiere su autoría.
+  - El RPC conserva la versión anterior de un argumento. La versión con UUID no sobrescribe proyectos ni otorga roles por colisión; permite reintentar únicamente el mismo nombre, creador y Administrador de un proyecto sin Unity VC, para recuperar una respuesta perdida sin duplicar. El alta cuenta como un cambio pendiente en el indicador, incluso antes de crear tareas.
+  - `listar_proyectos_del_servidor` combina la lista remota con los proyectos creados **por esta cuenta en esta PC**, sin duplicar UUID. Si falla la red, siguen disponibles para abrirlos y trabajar, incluso si el alta ya se confirmó y todavía quedan tareas por subir. Conserva solo los metadatos del origen y la copia del rol; una PC distinta necesita que el alta ya haya llegado al servidor. Al abrir un alta pendiente no consulta la red; una confirmada usa el refresco habitual del equipo y su copia si no hay conexión.
   - `abrir_proyecto_servidor(id)` (libre): uno de los de `listar_proyectos_del_servidor` sin `unity_repo`. Se sabe quién es con la sesión guardada (también sin red). El nombre viene del servidor si hay red.
   - **Datos locales**: `<datos de la app>/proyectos/servidor-<id>/`, con `proyecto_servidor_id`, el nombre y la copia del equipo (`equipo_servidor::refrescar`, #241). Entra con su rol de la copia, sin firmas; si no está, `no_registrado`. Una PC nueva sin red no puede abrirlo (no sabe el rol); una que ya lo tenía, abre con la última copia.
   - **Eventos**: `publicar` aplica localmente y encola; no crea `eventos-locales/` ni `ops/`.
   - Los proyectos "por carpeta" de antes (`proyecto_local`) se siguen abriendo como estaban; subirlos al servidor es de #245.
+- Crear sin internet está implementado en #269; la sesión de BranchBoard debe haberse iniciado antes en esta PC.
 - **Falta (siguientes partes de #240)**:
-  - Crear un proyecto sin internet (que espere en la bandeja).
 - **Pruebas**:
   - 7 unitarias en `supabase::proyectos`: si el servidor lo muestra se guarda sin traerlo; el Administrador lo trae; quien no lo es, no; ya vinculado no toca la red; sin internet no guarda nada; con equipo local no se vincula; rutas y respuestas.
   - Real, `comandos::acceso::…::entorno_real_vincular_repo_y_listar` (`BB_PRUEBA_ORG=MiguelM17 BB_PRUEBA_REPO=BranchBoard-Pruebas/BranchBoard-Pruebas cargo test --lib entorno_real_vincular -- --ignored --nocapture`), contra branchboard-pruebas con la sesión de Unity VC de la dueña del repo:
@@ -1391,7 +1400,6 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | "Crearlo en Unity Cloud" / "Recargar proyectos" (modal Nuevo proyecto) | `abrir_unity_cloud(org?)` (local, abre el navegador) / `listar_proyectos_servidor` | todos, sin proyecto abierto (#205) |
 | `toggleVpn` | `estado_warp` / `alternar_warp` / `instalar_warp` | todos |
 | Ajustes → "Actualizar versión" (`lib/api.ts`) | `buscar_actualizacion` / `instalar_actualizacion` (locales) | todos |
-| Ajustes → "Carpeta compartida" (`lib/api.ts`) | `carpeta_compartida` / `configurar_carpeta_compartida` (locales) / `compactar_eventos` | todos / todos / Administrador |
 
 Las acciones `setRolActual` ("Ver como"), `setEmail` y `toggleCmSesion` son **solo del mockup** (demo) y no tienen comando: en la app real el rol viene de la tabla `usuarios` firmada y la identidad de `cm whoami`.
 

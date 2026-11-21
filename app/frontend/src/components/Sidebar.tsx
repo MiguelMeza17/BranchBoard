@@ -503,7 +503,7 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{p.nombre}</span>
-                    <span className="block truncate text-[10px] text-faint">En el servidor · {p.rol}</span>
+                    <span className="block truncate text-[10px] text-faint">BranchBoard · {p.rol}</span>
                   </span>
                   {actual && <span className="shrink-0 text-[10px] text-primary">actual</span>}
                 </button>

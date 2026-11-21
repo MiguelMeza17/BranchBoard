@@ -5,6 +5,8 @@
 
 ## Contexto completo del proyecto
 
+**Actualización automática de los proyectos del servidor (#239, 2026-11-21)**: con un proyecto abierto, la App escucha `eventos-recibidos` aunque Unity VC esté desconectado o el proyecto no use Unity. Al llegar cambios aplicados sube `versionDatos` y la lista de tareas vuelve a leer sus datos; no hay que recargar ni volver a entrar. La escucha del servidor es independiente de la sincronización de Unity y se retira al salir del proyecto. Probado en Tauri con dos cuentas reales en `branchboard-pruebas`, creación y edición remotas, y React StrictMode.
+
 - **Nombre**: BranchBoard
 - **Qué es**: herramienta de gestión de tareas y producción para un equipo pequeño de desarrollo de un videojuego en Unity.
 - **Principio central**: todo el trabajo del equipo se organiza y visualiza a través de **tareas**. Cada tarea puede ser de tipo (ver [BACKEND.md](./BACKEND.md#contexto-completo-del-proyecto)):
@@ -343,9 +345,10 @@ Pantallas de entrada a la aplicación, antes de llegar a los tableros. **Actuali
 **"Subir este proyecto al servidor" (#245, app de escritorio)** — `components/SubirProyecto.tsx`, en **Ajustes**, solo para el Administrador y solo si el proyecto todavía no está en el servidor (`proyecto_en_el_servidor`). Sección **"Servidor"** con el texto "Este proyecto todavía no está en el servidor." y el botón **"Subir este proyecto al servidor"**. El botón abre una confirmación que explica qué se sube (tareas, sprints, chat, documentos y el equipo con sus roles) y que, si otra persona ya lo subió, no se mezcla nada. Al terminar, aviso "Proyecto subido al servidor: N del equipo agregados, M invitados…" y la sección desaparece. Si falla, el error queda en la confirmación.
 
 **Proyectos sin Unity VC en el servidor (#240, app de escritorio)** — `components/ProyectosDelServidor.tsx`. Nada va por Drive: el proyecto vive en el servidor y se abre desde cualquier PC con la cuenta de BranchBoard.
-- **"Cargar proyecto"**, arriba de "De Unity VC": sección **"En el servidor"** con tus proyectos sin Unity VC (nombre y tu rol). Un clic lo abre (`abrir_proyecto_servidor`); en una PC sin sus datos se crean solos y el historial llega en segundos. No aparece sin sesión del servidor, sin red ni si no tienes ninguno.
+- **"Cargar proyecto"**, arriba de "De Unity VC": sección **"Tus proyectos de BranchBoard"** con tus proyectos sin Unity VC (nombre y tu rol), incluyendo los creados en esta PC que todavía esperan subir (#269). Un clic lo abre (`abrir_proyecto_servidor`); los pendientes se pueden reabrir sin internet tras reiniciar. En otra PC, primero deben llegar al servidor; entonces sus datos se crean solos y el historial llega en segundos. No aparece sin sesión guardada ni si no tienes ninguno.
 - **"Crear un nuevo proyecto"**, arriba de todo: bloque **"En el servidor"** con solo el **nombre del proyecto** y "Crear" (`crear_proyecto_servidor`). Quedas como Administrador y el proyecto se abre. Sin carpeta ni contraseña. El formulario de abajo (proyecto por carpeta) queda hasta que se suban esos proyectos (#245).
-- **"Tus proyectos"** (menú del logo en el Sidebar): debajo de los workspaces de este equipo salen también tus proyectos sin Unity VC del servidor, con "En el servidor · <rol>" (`useProyectosDelServidor`). Un clic cambia a ese proyecto, sin pedir carpeta compartida.
+- **"Tus proyectos"** (menú del logo en el Sidebar): debajo de los workspaces de este equipo salen también tus proyectos sin Unity VC, con "BranchBoard · <rol>" (`useProyectosDelServidor`), incluidos los pendientes de subir de esta cuenta en esta PC. Un clic cambia a ese proyecto, sin pedir carpeta compartida.
+- **Crear sin internet (#269)**: el mismo formulario abre el proyecto al instante con su UUID definitivo y permite crear tareas, sin otro botón ni elegir carpeta. Necesita una sesión de BranchBoard guardada previamente, pero no renovarla en línea. El indicador de cambios pendientes incluye el alta del proyecto; al volver la red, el temporizador registra primero el proyecto y luego envía las tareas automáticamente. Un fallo conserva todo para reintentar. Cambiar de cuenta no permite subir el proyecto como otra persona.
 - Al entrar se usa lo mismo que con un proyecto local (`terminarEntradaLocal`): rol, correo y aviso "Proyecto X creado — eres su Administrador" / "Abriste X".
 
 ## Roles y permisos (UI)
@@ -385,4 +388,4 @@ Cuando un Desarrollador, Tester o Colaborador externo crea una tarea, la interfa
 - Estado de carga/error al "tomar" una tarea mientras el backend crea la rama (llamada async a un comando Tauri)
 - ~~Qué pasa si alguien intenta "crear un nuevo proyecto" antes de que esa pantalla esté implementada~~ — **resuelto (2026-11-07)**: ya está implementada (ver [Autenticación / acceso al proyecto](#autenticación--acceso-al-proyecto)).
 
-**Limpieza #244**: documentos e imagen se guardan en Storage; sin vincular, el backend pide subir primero el proyecto. Se retiraron `carpetaCompartida`, `configurarCarpetaCompartida` y `carpetasCompartidas` del cliente/store. Exportar desde el servidor sigue pendiente aparte y crear sin internet sigue en #269.
+**Limpieza #244**: documentos e imagen se guardan en Storage; sin vincular, el backend pide subir primero el proyecto. Se retiraron `carpetaCompartida`, `configurarCarpetaCompartida` y `carpetasCompartidas` del cliente/store. Exportar desde el servidor sigue pendiente aparte y crear sin internet quedó implementado en #269.

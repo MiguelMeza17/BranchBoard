@@ -80,6 +80,11 @@ fn sincronizar_con_servidor_sin_guardia(estado: &AppState) -> Resultado<ResumenS
         bandeja,
         ..Default::default()
     };
+    if estado
+        .con_db(|db| Ok(crate::proyecto_servidor::pendientes::leer(db.conexion())?.is_some()))?
+    {
+        return Ok(resumen);
+    }
     let Some(proyecto) = proyecto else {
         return Ok(resumen);
     };
@@ -163,6 +168,29 @@ pub fn subir_bandeja_en(estado: &AppState) -> Resultado<eventos::bandeja::Estado
         crate::supabase::Entorno::actual().proyecto(),
         LlaveroSistema,
     );
+    subir_bandeja_con(estado, &cliente)
+}
+
+/// Mismo recorrido que el temporizador, con cliente aislado para pruebas de reconexión.
+pub fn subir_bandeja_con<L: crate::servidor::pat::Llavero>(
+    estado: &AppState,
+    cliente: &crate::supabase::ClienteSupabase<L>,
+) -> Resultado<eventos::bandeja::EstadoBandeja> {
+    // Un alta local todavía no tiene miembro ni proyecto remoto: no enviar sus eventos hasta confirmarla.
+    if let Err(e) = crate::proyecto_servidor::pendientes::subir(
+        |f| estado.con_db(|db| f(db.conexion())),
+        cliente,
+    ) {
+        return estado.con_db(|db| {
+            Ok(eventos::bandeja::EstadoBandeja {
+                pendientes: eventos::bandeja::pendientes(db.conexion())? + 1,
+                rechazados: eventos::bandeja::rechazados(db.conexion())?,
+                error: Some(e.to_string()),
+                servidor_pausado: matches!(e, Error::ServidorPausado),
+                ..Default::default()
+            })
+        });
+    }
     eventos::bandeja::subir(
         |f| estado.con_db(|db| f(db.conexion())),
         |filas| cliente.insertar_eventos(filas),
@@ -172,7 +200,10 @@ pub fn subir_bandeja_en(estado: &AppState) -> Resultado<eventos::bandeja::Estado
 /// Cuántos cambios del proyecto abierto esperan subir al servidor (#238). Sin proyecto abierto, 0.
 #[tauri::command]
 pub async fn eventos_por_subir(estado: State<'_, AppState>) -> Resultado<u64> {
-    match estado.con_db(|db| eventos::bandeja::pendientes(db.conexion())) {
+    match estado.con_db(|db| {
+        Ok(eventos::bandeja::pendientes(db.conexion())?
+            + u64::from(crate::proyecto_servidor::pendientes::leer(db.conexion())?.is_some()))
+    }) {
         Err(Error::Validacion(_)) => Ok(0),
         otro => otro,
     }

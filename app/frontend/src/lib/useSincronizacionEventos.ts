@@ -8,6 +8,23 @@ import { api, enTauri } from './api';
  */
 export const INTERVALO_SINCRONIZACION_MS = 2 * 60 * 1000;
 
+/** Los proyectos del servidor reciben cambios aunque no exista sesión ni workspace de Unity. */
+export function useEventosServidor(activo: boolean) {
+  const subirVersionDatos = useStore((s) => s.subirVersionDatos);
+  useEffect(() => {
+    if (!activo || !enTauri()) return;
+    let cancelado = false;
+    let dejar: (() => void) | undefined;
+    void api.alEventosRecibidos((resumen) => {
+      if (!cancelado && resumen.aplicados > 0) subirVersionDatos();
+    }).then((limpiar) => {
+      if (cancelado) limpiar();
+      else dejar = limpiar;
+    });
+    return () => { cancelado = true; dejar?.(); };
+  }, [activo, subirVersionDatos]);
+}
+
 /**
  * Trae los cambios de las demás máquinas (`sincronizar_eventos`, #92): al entrar al proyecto, al volver
  * a la ventana y cada 2 minutos. Si llegó algo nuevo, sube `versionDatos` en el store: las pantallas
@@ -25,7 +42,6 @@ export function useSincronizacionEventos(activo: boolean) {
     let cancelado = false;
     let dejarUnity: (() => void) | undefined;
     let dejarAlerta: (() => void) | undefined;
-    let dejarRecibidos: (() => void) | undefined;
     const revisar = async () => {
       try {
         const resumen = await api.sincronizarEventos();
@@ -50,18 +66,6 @@ export function useSincronizacionEventos(activo: boolean) {
             dejarUnity = dejar;
           }
         });
-      // Cambios del equipo que llegaron del servidor (#239).
-      void api
-        .alEventosRecibidos((resumen) => {
-          if (!cancelado && resumen.aplicados > 0) subirVersionDatos();
-        })
-        .then((dejar) => {
-          if (cancelado) {
-            dejar();
-          } else {
-            dejarRecibidos = dejar;
-          }
-        });
       // Cambios en main, dev o la rama de otra persona en este workspace (#111).
       void api
         .alAlertaRamaAjena((alerta) => {
@@ -84,7 +88,6 @@ export function useSincronizacionEventos(activo: boolean) {
       cancelado = true;
       dejarUnity?.();
       dejarAlerta?.();
-      dejarRecibidos?.();
       window.clearInterval(temporizador);
       window.removeEventListener('focus', alVolver);
       document.removeEventListener('visibilitychange', alVolver);

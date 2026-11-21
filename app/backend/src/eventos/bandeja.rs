@@ -674,14 +674,19 @@ mod tests {
         )
         .unwrap();
 
-        encolar(c, "rechazo-238-a", &evento("crear_tarea")).unwrap();
+        // Los ids son únicos en todo el servidor, también entre proyectos de otras corridas.
+        let sufijo = crate::eventos::uuid();
+        let id_a = format!("rechazo-238-a-{sufijo}");
+        let id_b = format!("rechazo-238-b-{sufijo}");
+        let id_c = format!("rechazo-238-c-{sufijo}");
+        encolar(c, &id_a, &evento("crear_tarea")).unwrap();
         c.execute(
             "INSERT INTO bandeja_salida (id, proyecto_servidor, tipo, payload, creado_en)
-             VALUES ('rechazo-238-b', ?1, 'cambiar_rol', '{}', '2026-11-21T00:00:00.000Z')",
-            [&proyecto],
+             VALUES (?1, ?2, 'cambiar_rol', '{}', '2026-11-21T00:00:00.000Z')",
+            params![id_b, proyecto],
         )
         .unwrap();
-        encolar(c, "rechazo-238-c", &evento("crear_tarea")).unwrap();
+        encolar(c, &id_c, &evento("crear_tarea")).unwrap();
 
         let r = subir(subir_en(c), |f| servidor.insertar_eventos(f)).unwrap();
         assert_eq!(
@@ -690,8 +695,8 @@ mod tests {
         );
         let motivo: String = c
             .query_row(
-                "SELECT motivo FROM bandeja_rechazados WHERE id = 'rechazo-238-b'",
-                [],
+                "SELECT motivo FROM bandeja_rechazados WHERE id = ?1",
+                [&id_b],
                 |f| f.get(0),
             )
             .unwrap();
@@ -699,10 +704,7 @@ mod tests {
 
         let ruta = format!("/rest/v1/eventos?select=id&proyecto_id=eq.{proyecto}&order=orden");
         let filas = servidor.llamar("GET", &ruta, None).unwrap();
-        assert_eq!(
-            filas,
-            serde_json::json!([{ "id": "rechazo-238-a" }, { "id": "rechazo-238-c" }])
-        );
+        assert_eq!(filas, serde_json::json!([{ "id": id_a }, { "id": id_c }]));
         servidor.cerrar_sesion().unwrap();
     }
 }

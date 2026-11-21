@@ -203,11 +203,23 @@ pub async fn vincular_proyecto_servidor(estado: State<'_, AppState>) -> Resultad
 /// `listar_proyectos_del_servidor()`: los proyectos de los que la cuenta de BranchBoard es miembro, con
 /// su rol en el servidor (#240). Libre: no hace falta un proyecto abierto, sí la sesión del servidor.
 #[tauri::command]
-pub async fn listar_proyectos_del_servidor() -> Resultado<Vec<ProyectoDeLaCuenta>> {
-    proyectos::listar_mios(&ClienteSupabase::new(
-        Entorno::actual().proyecto(),
-        LlaveroSistema,
-    ))
+pub async fn listar_proyectos_del_servidor(app: AppHandle) -> Resultado<Vec<ProyectoDeLaCuenta>> {
+    let cliente = ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema);
+    let sesion = cliente.sesion_guardada()?.ok_or(Error::SinSesionServidor)?;
+    let locales =
+        crate::proyecto_servidor::pendientes::listar(&carpeta_datos(&app)?, &sesion.usuario_id)?;
+    let mut lista = match proyectos::listar_mios(&cliente) {
+        Ok(lista) => lista,
+        Err(_) if !locales.is_empty() => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    for local in locales {
+        if !lista.iter().any(|p| p.id == local.id) {
+            lista.push(local);
+        }
+    }
+    lista.sort_by_key(|p| p.nombre.to_lowercase());
+    Ok(lista)
 }
 
 /// `true` si `email` es el dueño (`owner`) del repositorio según la API.

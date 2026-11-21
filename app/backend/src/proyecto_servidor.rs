@@ -1,8 +1,8 @@
 //! Proyectos sin Unity VC en el servidor de Supabase (#240). Reemplazan, para lo nuevo, a los proyectos
 //! "por carpeta" de `proyecto_local` (que siguen abriéndose hasta que se suban, #245): nada va por Drive.
 //!
-//! - **Crear**: con la sesión de BranchBoard, `rpc/crear_proyecto(nombre)`; quien lo crea queda como
-//!   Administrador en el servidor (#234). Sin carpeta que elegir, sin contraseña, sin llaves.
+//! - **Crear**: con la sesión guardada, UUID definitivo y alta local durable (#269). Al recuperar
+//!   conexión, `rpc/crear_proyecto(nombre, id)` confirma al creador como Administrador antes de eventos.
 //! - **Datos locales**: `<datos de la app>/proyectos/servidor-<id>/`, con `proyecto_servidor_id`, el nombre
 //!   y la copia del equipo (`miembros`, #241). Así la bandeja (#238), la recepción (#239), Storage (#242)
 //!   y los roles por el servidor (#241) funcionan igual que en un proyecto de Unity VC.
@@ -12,6 +12,8 @@
 //!   privada** (`eventos-locales/`, dentro de los datos del proyecto), que no se sincroniza con nada.
 
 use std::path::{Path, PathBuf};
+
+pub mod pendientes;
 
 use crate::db::configuracion::{self, CLAVE_NOMBRE_PROYECTO, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::{carpeta_proyecto, usuarios, vistos, Db};

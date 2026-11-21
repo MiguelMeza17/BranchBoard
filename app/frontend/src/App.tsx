@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
 import { api, EVENTO_SESION_CADUCADA } from './lib/api';
-import { useSincronizacionEventos } from './lib/useSincronizacionEventos';
+import { useEventosServidor, useSincronizacionEventos } from './lib/useSincronizacionEventos';
 import { ConflictoMergeModal } from './components/ConflictoMergeModal';
 import { Layout } from './components/Layout';
 import { SplashScreen } from './components/SplashScreen';
@@ -29,6 +29,7 @@ export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
+  const proyectoActual = useStore((s) => s.proyectoActual);
   const showToast = useStore((s) => s.showToast);
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
   const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
@@ -80,8 +81,9 @@ export function App() {
     return () => dejarDeEscuchar?.();
   }, [showToast]);
 
-  // Dentro de un proyecto, los cambios de las demás máquinas llegan solos (ops/, #92).
+  // Dentro de un proyecto, los cambios de las demás máquinas llegan del servidor (#239).
   useSincronizacionEventos(cmSesionActiva && accesoCompletado);
+  useEventosServidor(accesoCompletado && !!proyectoActual);
 
   // Debajo de la pantalla de carga va siempre lo que sigue después de ella: sin sesión o sin haber
   // entrado a un proyecto, la pantalla de acceso. Así, al desvanecerse la carga, nunca se ve la
