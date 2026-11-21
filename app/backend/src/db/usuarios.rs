@@ -146,6 +146,17 @@ pub fn actualizar_certificado(
     exigir_una(cambiadas, email)
 }
 
+/// Deja la tabla igual a `filas` (la copia de `miembros` del servidor, #241), todo o nada.
+pub fn reemplazar_todos(c: &Connection, filas: &[Usuario]) -> Resultado<()> {
+    let tx = c.unchecked_transaction()?;
+    tx.execute("DELETE FROM usuarios", [])?;
+    for u in filas {
+        insertar(&tx, u)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Quita a la persona del proyecto.
 pub fn eliminar(c: &Connection, email: &str) -> Resultado<()> {
     let cambiadas = c.execute(

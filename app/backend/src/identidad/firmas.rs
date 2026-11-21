@@ -173,7 +173,14 @@ impl Verificador {
     }
 
     /// Estado de la firma de una fila.
+    ///
+    /// Sin llave del Administrador (proyecto en el servidor, ver `estado::llave_publica_del_proyecto`)
+    /// toda fila vale: la tabla es la copia de `miembros` y los roles los hace cumplir el servidor
+    /// (#234, #247). Igual que `tareas::rol_verificado_de` con la llave vacía.
     pub fn verificar_firma(&self, usuario: &Usuario) -> Verificacion {
+        if self.publica_admin.is_empty() {
+            return Verificacion::Verificado;
+        }
         if usuario
             .firma
             .as_deref()

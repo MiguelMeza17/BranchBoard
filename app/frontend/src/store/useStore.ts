@@ -546,7 +546,6 @@ interface State {
   // usuarios / ajustes
   /** Crea el usuario con su correo y rol (la identidad es `cm whoami`, sin contraseña). Devuelve false si ya existe. */
   crearUsuario: (correo: string, rol: Rol) => boolean;
-  confirmarUsuario: (email: string) => void;
   /** Antes de restaurar, el estado actual se guarda como una copia más, tal cual estaba. */
   restaurarBackup: (id: string) => void;
   eliminarUsuario: (email: string) => void;
@@ -566,6 +565,13 @@ interface State {
   // El sprint toma de una vez todas las tareas de un backlog (o las sin backlog, con null) que no estén
   // en otro sprint.
   asignarBacklogASprint: (backlogId: string | null, sprintId: string) => void;
+}
+
+// `true` si quitar a `email` (rol `null`) o darle `rol` deja al proyecto sin Administrador (#241).
+function quedariaSinAdministrador(usuarios: Usuario[], email: string, rol: Rol | null): boolean {
+  const admins = usuarios.filter((u) => u.rol === 'Administrador' && !u.invitado);
+  const esAdmin = admins.some((u) => u.email === email);
+  return esAdmin && rol !== 'Administrador' && admins.length === 1;
 }
 
 export const useStore = create<State>((set, get) => {
@@ -2118,20 +2124,20 @@ export const useStore = create<State>((set, get) => {
       .split('@')[0]
       .split(/[._-]+/)
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1));
-    // Lo firma quien lo crea: el Administrador o un Líder (cada Líder tiene su propia llave, certificada
-    // por el Administrador). Así la persona entra a trabajar de una vez.
-    const firmante = s.currentUser();
+    // Con el servidor (#241): si la persona ya tiene cuenta entra de una vez; si no, queda invitada y
+    // entra al registrarse con ese correo. El mockup no sabe quién tiene cuenta: la muestra invitada.
     const nuevo: Usuario = {
       email: c,
       nombre,
       apellido,
       rol,
       fecha_alta: today(),
-      firma: `firma-${firmante.email}`,
-      firmado_en: today(),
+      firma: null,
+      firmado_en: null,
+      invitado: true,
     };
     set({ usuarios: [...s.usuarios, nuevo] });
-    s.showToast(`Usuario ${c} creado como ${rol}`);
+    s.showToast(`${c} invitado como ${rol}: entra al registrarse con ese correo`);
     return true;
   },
 
@@ -2151,18 +2157,15 @@ export const useStore = create<State>((set, get) => {
     s.showToast(`Copia del ${b.fecha} restaurada — la anterior quedó guardada`);
   },
 
-  confirmarUsuario: (email) => {
-    set((s) => ({
-      usuarios: s.usuarios.map((u) =>
-        u.email === email ? { ...u, firma: 'sig_ok', firmado_en: new Date().toISOString() } : u
-      ),
-    }));
-    get().showToast('Usuario confirmado');
-  },
-
   eliminarUsuario: (email) => {
-    set((s) => ({ usuarios: s.usuarios.filter((u) => u.email !== email) }));
-    get().showToast('Usuario eliminado', 'danger');
+    const s = get();
+    const quien = s.usuarios.find((u) => u.email === email);
+    if (quien && quedariaSinAdministrador(s.usuarios, email, null)) {
+      s.showToast('El proyecto tiene que tener al menos un Administrador', 'danger');
+      return;
+    }
+    set({ usuarios: s.usuarios.filter((u) => u.email !== email) });
+    s.showToast(quien?.invitado ? 'Invitación quitada' : 'Usuario eliminado', 'danger');
   },
 
   renombrarProyecto: (nombre) => {
@@ -2200,14 +2203,12 @@ export const useStore = create<State>((set, get) => {
 
   cambiarRol: (email, rol) => {
     const s = get();
-    const firmante = s.currentUser();
-    set({
-      usuarios: s.usuarios.map((u) =>
-        u.email === email
-          ? { ...u, rol, firma: `firma-${firmante.email}`, firmado_en: today() }
-          : u
-      ),
-    });
+    // El servidor nunca deja degradar al último Administrador (#241).
+    if (quedariaSinAdministrador(s.usuarios, email, rol)) {
+      s.showToast('El proyecto tiene que tener al menos un Administrador', 'danger');
+      return;
+    }
+    set({ usuarios: s.usuarios.map((u) => (u.email === email ? { ...u, rol } : u)) });
     s.showToast(`Rol cambiado a ${rol}`);
   },
 

@@ -151,9 +151,9 @@ export function PerfilUsuario() {
             <p className="truncate font-mono text-xs text-faint">{u.email}</p>
           </div>
           <span className="chip border border-primary/40 bg-primary-soft text-indigo-200">{u.rol}</span>
-          {u.firma === null && (
+          {u.invitado && (
             <span className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300">
-              <IconoEnLinea nombre="reloj" sinColor />Pendiente de confirmar
+              <IconoEnLinea nombre="reloj" sinColor />Invitado · aún sin cuenta
             </span>
           )}
           <span className="chip border border-border bg-surface-2 text-muted">Desde {u.fecha_alta}</span>
