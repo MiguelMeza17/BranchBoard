@@ -34,7 +34,20 @@ pub struct AppState {
 }
 
 /// Llave pública del Administrador que esta máquina fijó para el proyecto de `db`.
+///
+/// **Vacía** si el proyecto está en el servidor (#241): ahí los roles los da el servidor (`miembros`) y
+/// la tabla `usuarios` es su copia, sin firmas; con la llave vacía la verificación la toma tal cual
+/// (`firmas::Verificador`, `tareas::rol_verificado_de`). Aunque esta máquina conserve `admin.pub` de
+/// cuando el proyecto iba por Drive/OneDrive, ya no se usa.
 pub fn llave_publica_del_proyecto(db: &Db) -> Resultado<String> {
+    if crate::db::configuracion::leer(
+        db.conexion(),
+        crate::db::configuracion::CLAVE_PROYECTO_SERVIDOR,
+    )?
+    .is_some_and(|id| !id.trim().is_empty())
+    {
+        return Ok(String::new());
+    }
     let carpeta = db
         .carpeta()
         .ok_or_else(|| Error::Validacion("El proyecto abierto no tiene carpeta de datos".into()))?;

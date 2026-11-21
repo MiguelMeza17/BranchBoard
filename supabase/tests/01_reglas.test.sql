@@ -171,7 +171,7 @@ create function pg_temp.o(c text) returns text language sql as $$ select valor f
 
 insert into _r (linea) select is(pg_temp.o('a_agrega_b'), 'ok', 'el Administrador agrega un Desarrollador');
 insert into _r (linea) select is(pg_temp.o('a_agrega_l'), 'ok', 'el Administrador agrega un Líder (el correo da igual en mayúsculas)');
-insert into _r (linea) select is(pg_temp.o('a_agrega_sin_cuenta'), 'P0001', 'no se agrega a alguien sin cuenta (invitaciones en #241)');
+insert into _r (linea) select is(pg_temp.o('a_agrega_sin_cuenta'), 'ok', 'a alguien sin cuenta se le invita (detalle en 04_invitaciones, #241)');
 insert into _r (linea) select is(pg_temp.o('a_ve_proyectos'), '1', 'el Administrador ve su proyecto');
 insert into _r (linea) select is(pg_temp.o('a_degrada_al_ultimo_admin'), 'P0001', 'no se puede degradar al último Administrador');
 insert into _r (linea) select is(pg_temp.o('a_se_quita_siendo_ultimo_admin'), 'P0001', 'el último Administrador no se puede quitar');

@@ -4,10 +4,12 @@
 //! - `cliente` — iniciar, renovar y cerrar sesión (guardada en el llavero) y llamadas autenticadas (#235).
 //! - `login_unity` — al iniciar sesión con Unity VC, abrir también la del servidor (#237).
 //! - `storage` — documentos e imagen del proyecto en Supabase Storage (#242).
+//! - `miembros` — usuarios, roles e invitaciones del proyecto en el servidor (#241).
 
 pub mod cliente;
 pub mod entorno;
 pub mod login_unity;
+pub mod miembros;
 pub mod storage;
 
 pub use cliente::{ClienteSupabase, Sesion};

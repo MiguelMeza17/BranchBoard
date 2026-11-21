@@ -2,6 +2,7 @@
 
 pub mod acceso;
 pub mod equipo;
+pub mod equipo_servidor;
 pub mod firmas;
 pub mod llaves;
 pub mod permisos;

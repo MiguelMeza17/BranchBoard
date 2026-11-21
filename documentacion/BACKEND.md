@@ -185,7 +185,8 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 | Editar el propio nombre y apellido | `update perfiles set nombre, apellido` (el correo no) |
 | Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en`. Si el `tipo` está en `privado.permisos_evento` y el rol de quien lo manda no está en sus roles, se rechaza con `42501` (#247, tabla en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234)) |
 | Crear un proyecto sin Unity VC | `rpc/crear_proyecto(p_nombre)` → id; quien lo crea queda Administrador |
-| Agregar a alguien con cuenta | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` |
+| Agregar a alguien (o invitarlo si aún no tiene cuenta, #241) | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` → id, o `null` si quedó invitado |
+| Cancelar una invitación | `rpc/quitar_invitacion(p_proyecto, p_correo)` (#241) |
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
 | Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
 
@@ -383,6 +384,33 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 - **Pruebas**:
   - 7 unitarias en `eventos::recepcion` (historial por páginas, correo del autor y sin perfil, orden y hora del servidor y saltar los propios, tipo desconocido, sin conexión, proyectos aparte, rutas) y 2 de doble toma en `tareas` (gana la que llegó antes al servidor aunque el reloj diga otra cosa; la propia aún en la bandeja pierde).
   - Real, `eventos::recepcion::…::entorno_real_dos_pcs_reciben_lo_del_otro` (`cargo test --lib entorno_real_dos_pcs -- --ignored --nocapture`): contra branchboard-pruebas con la sesión de Unity VC del equipo y **dos bases locales como dos PCs**. La PC A crea dos tareas y las sube; la PC B, nueva, baja todo el historial y las aplica con el creador correcto; A crea una tercera y B baja solo esa; A no aplica dos veces lo suyo. Deja el proyecto "Prueba recepción #239": borrarlo con `delete from public.proyectos where nombre = 'Prueba recepción #239'` (los eventos se borran en cascada).
+
+### Usuarios y roles por el servidor (#241)
+
+Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_proyecto`, lo fija #240), la pantalla Usuarios y los comandos `listar_usuarios`, `crear_usuario`, `cambiar_rol`, `confirmar_usuario` y `eliminar_usuario` (`comandos/usuarios.rs`) van por `identidad/equipo_servidor.rs` y `supabase/miembros.rs`, **sin firmas**. Sin `proyecto_servidor_id` (proyectos por Drive/OneDrive) siguen el camino de antes, con eventos firmados por `ops/` (hasta #243/#244).
+
+| Comando | Con el servidor |
+|---|---|
+| `listar_usuarios` | Lee `miembros` (con su perfil) e `invitaciones`, rehace la copia local y lista. Sin red lista la última copia. Las invitaciones (llevan correos) solo las ven Líder y Administrador |
+| `crear_usuario(email, rol)` | `rpc/agregar_miembro`: si la persona tiene cuenta entra de una vez; si no, queda **invitada** y entra sola al registrarse (o entrar con Unity VC) con ese correo |
+| `cambiar_rol(email, rol)` | `rpc/cambiar_rol`. El Administrador **puede nombrar otros Administradores**; el servidor nunca deja degradar al último. A un invitado no se le cambia el rol: se quita la invitación y se vuelve a invitar |
+| `eliminar_usuario(email)` | `rpc/quitar_miembro` (pierde el acceso de inmediato, también a los documentos de Storage, #242) o `rpc/quitar_invitacion` |
+| `confirmar_usuario` | Ya no existe: responde `validacion` ("ya no hace falta confirmar usuarios") |
+
+- **Copia local**: `usuarios` queda igual a `miembros` (`db::usuarios::reemplazar_todos`, todo o nada) después de cada cambio y al listar, sin firmas. **Borra las filas locales que no están en `miembros`**: si un proyecto que ya tenía equipo local (por Drive) queda vinculado al servidor sin haber subido antes ese equipo, esa PC pierde de su copia a quienes falten en el servidor (siguen en `ops/` y en las otras PCs). Por eso esos proyectos se suben con #245 antes de vincularse. Con el proyecto en el servidor, `estado::llave_publica_del_proyecto` devuelve la llave **vacía** aunque la PC conserve `admin.pub`, y con la llave vacía `firmas::Verificador` y `tareas::rol_verificado_de` toman la copia tal cual: los roles los hace cumplir el servidor (#234, #247). En un proyecto por Drive sin llave sigue dando error, como antes.
+- **Permiso en la app**: si la copia local todavía no tiene a quien pide (primera vez en esa PC, o el rol cambió en el servidor), se rehace una vez y se vuelve a revisar. El servidor igual revisa todo.
+- **Invitaciones** (migración `20261121061500_invitaciones.sql`): tabla `invitaciones` (proyecto, correo, rol, quién invitó), que leen solo Líder y Administrador del proyecto. `agregar_miembro` ahora invita en vez de fallar con "todavía no tiene cuenta" (devuelve `null`); invitar dos veces el mismo correo da "Esa persona ya está invitada al proyecto". `quitar_invitacion` la cancela quien podría haberla hecho con ese rol. El trigger `tras_confirmar_aceptar_invitaciones` (sobre `auth.users`, después de crear el perfil) convierte las invitaciones de ese correo en membresías cuando la cuenta queda confirmada. **Desde #236 eso pasa al registrarse** (no se confirma el correo): ver el riesgo en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234).
+- **Frontend**: la pantalla Usuarios del frontend todavía **no llama** a estos comandos (también antes: `crearUsuario`, `cambiarRol` y `eliminarUsuario` del store solo cambian datos en memoria). En #241 el mockup pasó al modelo nuevo (invitar, Administrador asignable, sin "Confirmar"); conectarla al backend queda para cuando los proyectos estén en el servidor (#240).
+- **Pruebas**:
+  - 8 unitarias sin red en `supabase::miembros` y `identidad::equipo_servidor` (servidor en memoria con las reglas de `puede_asignar` y del último Administrador; sin red; la copia local vale con la llave vacía y no con una llave de Drive).
+  - SQL: `supabase/tests/04_invitaciones.test.sql` (igual que las reglas de #234, se deshace al final) y el caso de `01_reglas` que antes esperaba "sin cuenta" y ahora espera la invitación.
+  - Real, `identidad::equipo_servidor::…::entorno_real_usuarios_por_el_servidor` (`cargo test --no-default-features --lib entorno_real_usuarios_por_el_servidor -- --ignored --nocapture`): registra sus cuentas `usuarios-a|b|invitado-<hora>@prueba.branchboard` y crea `bb-prueba-241-<hora>`. A agrega a B como Desarrollador e invita a un correo sin cuenta; **el servidor le rechaza a B** cambiar roles, darse Administrador y agregar (`sin_permiso`) y B no ve invitaciones; el invitado se registra y entra solo como Tester; A nombra Administrador a B y se degrada a Líder; B, último Administrador, no se puede degradar; B quita al invitado y a A, y A deja de ver el proyecto. La API pública no borra cuentas ni proyectos; al terminar:
+
+    ```
+    npx --yes supabase@3 db query --remote --yes "delete from public.proyectos where nombre like 'bb-prueba-241%'; delete from auth.users where email like 'usuarios-%@prueba.branchboard'"
+    ```
+
+    y se comprueba que quedan 0 cuentas `usuarios-%`, 0 perfiles, 0 proyectos `bb-prueba-241%` y 0 invitaciones.
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
@@ -945,9 +973,9 @@ Ver diseño en [FRONTEND.md → Usuarios](./FRONTEND.md#usuarios) y [FRONTEND.md
 
 - `listar_usuarios()` — **todos los roles**; a quien no es Líder/Administrador solo se le devuelven nombre y rol (sin correo).
 - `crear_usuario(email, rol)` — Líder/Administrador. **Sin contraseña** (decidido 2026-11-07): la identidad es `cm whoami`, igual que siempre. Valida el rol según quién invoca (`rolesAsignablesA` en el frontend): el Líder solo Desarrollador/Tester/Colaborador externo. La fila nace **firmada por quien la crea** (Administrador o Líder, ver [Firma de los Líderes](#firma-de-los-líderes-nuevo-2026-11-07)). **Actualizado (2026-11-12)**: `crear_usuario` **no invita a nadie en Unity Cloud** — la app no lo hace (no hay API para eso con el PAT y la invitación es del Dashboard). Hay que invitarlo aparte con el rol de proyecto que corresponde a su rol en BranchBoard (ver [Rol en Unity Cloud según el rol en BranchBoard en SEGURIDAD.md](./SEGURIDAD.md#rol-en-unity-cloud-según-el-rol-en-branchboard-2026-11-12)); sin eso, `cm whoami` le funciona pero no ve el repositorio y su PAT no sirve para ese proyecto.
-- `cambiar_rol(email, rol_nuevo)` — **actualizado**: reemplaza a `ascender_a_lider`. Administrador: cualquier rol menos Administrador, sobre cualquiera menos otro Administrador. Líder: solo entre Desarrollador/Tester/Colaborador externo, y lo firma él mismo con su llave — la persona sigue entrando y trabajando sin interrupción.
+- `cambiar_rol(email, rol_nuevo)` — **actualizado**: reemplaza a `ascender_a_lider`. Administrador: cualquier rol menos Administrador, sobre cualquiera menos otro Administrador (**con el proyecto en el servidor, #241, también nombra Administradores**: ver [Usuarios y roles por el servidor](#usuarios-y-roles-por-el-servidor-241)). Líder: solo entre Desarrollador/Tester/Colaborador externo, y lo firma él mismo con su llave — la persona sigue entrando y trabajando sin interrupción.
 - `eliminar_usuario(email)` — Administrador: cualquiera; Líder: Desarrolladores y Colaboradores externos.
-- `confirmar_usuario(email)` — exclusivo Administrador; ahora solo hace falta para filas **sin firma** (escritas a mano o anteriores a este cambio), ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto).
+- `confirmar_usuario(email)` — exclusivo Administrador (con el proyecto en el servidor, #241, ya no existe); ahora solo hace falta para filas **sin firma** (escritas a mano o anteriores a este cambio), ver [Confirmación de usuarios nuevos](#confirmación-de-usuarios-nuevos-resuelto).
 - `renombrar_proyecto(nombre)` — exclusivo Administrador; cambia el nombre en BranchBoard (clave `nombre_proyecto` en [`configuracion_proyecto`](#modelo-de-datos-tabla-configuracion_proyecto)), no el repositorio de Unity VC.
 - `enviar_mensaje(para, texto)` — todos los roles; crea una notificación de tipo `mensaje` para `para` (máx. 500 caracteres). Es un aviso suelto desde el perfil, distinto del [Chat](#chat).
 - `solicitar_accion_bd(motivo)` — Líder y Desarrollador (botón "Reportar problema con la base de datos" en Ajustes); notifica a todos los Administradores (notificación #9).

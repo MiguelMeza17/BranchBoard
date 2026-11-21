@@ -9,11 +9,11 @@ export const puedeEliminarProyecto = (rol: Rol) => rol === 'Administrador';
 export const puedeRestaurarBackup = (rol: Rol) => rol === 'Administrador';
 export const puedeCompactarEventos = (rol: Rol) => rol === 'Administrador';
 // Roles a los que `actor` puede cambiar a `objetivo` (vacío = no puede cambiarlo). El Administrador
-// cambia a cualquiera menos a otro Administrador (y no da el rol Administrador); el Líder solo mueve
-// entre Desarrollador, Tester y Colaborador externo.
+// da cualquier rol, también Administrador (puede haber varios, #241); el servidor no deja degradar ni
+// quitar al último. El Líder solo mueve entre Desarrollador, Tester y Colaborador externo.
 const ROLES_BASE: Rol[] = ['Desarrollador', 'Tester', 'Colaborador externo'];
 export function rolesAsignablesA(actor: Rol, objetivo: Rol): Rol[] {
-  if (actor === 'Administrador') return objetivo === 'Administrador' ? [] : ['Líder', ...ROLES_BASE];
+  if (actor === 'Administrador') return ['Administrador', 'Líder', ...ROLES_BASE];
   if (actor === 'Líder') return ROLES_BASE.includes(objetivo) ? ROLES_BASE : [];
   return [];
 }
@@ -49,8 +49,4 @@ export function puedeEliminarUsuario(actor: Rol, objetivo: Rol): boolean {
   if (actor === 'Administrador') return true;
   if (actor === 'Líder') return objetivo === 'Desarrollador' || objetivo === 'Colaborador externo';
   return false;
-}
-
-export function puedeConfirmarUsuario(rol: Rol): boolean {
-  return rol === 'Administrador';
 }

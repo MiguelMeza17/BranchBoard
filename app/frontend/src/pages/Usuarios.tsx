@@ -5,7 +5,6 @@ import {
   esLiderOAdmin,
   puedeCrearUsuarios,
   puedeEliminarUsuario,
-  puedeConfirmarUsuario,
   rolesAsignablesA,
 } from '../lib/permisos';
 import { ROLES, type Rol } from '../types';
@@ -14,8 +13,9 @@ import { ConfirmLock } from '../components/ConfirmLock';
 import { Seccion } from '../components/Seccion';
 
 // Usuarios del proyecto. Todos ven la lista (nombre y rol) y pueden entrar al perfil de cada uno.
-// Líder y Administrador además ven el correo, crean usuarios, cambian roles, confirman y eliminan,
-// con las restricciones de lib/permisos.ts.
+// Líder y Administrador además ven el correo, agregan (o invitan, si la persona aún no tiene cuenta),
+// cambian roles y quitan, con las restricciones de lib/permisos.ts. Los roles los guarda y revisa el
+// servidor (#241): ya no hay usuarios "pendientes de confirmar".
 export function Usuarios() {
   const user = useStore((s) => s.currentUser());
   const gestiona = esLiderOAdmin(user.rol);
@@ -24,7 +24,7 @@ export function Usuarios() {
     <div>
       <PageHeader
         title="Usuarios"
-        desc={gestiona ? 'Quiénes están en el proyecto, con qué rol, y altas o cambios de rol.' : 'Quiénes están en el proyecto y con qué rol. Entra a un perfil para ver sus tareas.'}
+        desc={gestiona ? 'Quiénes están en el proyecto, con qué rol, e invitaciones o cambios de rol.' : 'Quiénes están en el proyecto y con qué rol. Entra a un perfil para ver sus tareas.'}
       />
       <div className="space-y-3">
         {puedeCrearUsuarios(user.rol) && <SeccionCrearUsuario />}
@@ -41,11 +41,11 @@ function SeccionCrearUsuario() {
   const [correo, setCorreo] = useState('');
   const [rol, setRol] = useState<Rol>('Desarrollador');
   const correoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo.trim());
-  // Un Líder no puede crear Líderes ni Administradores.
+  // Un Líder no puede agregar Líderes ni Administradores; el Administrador puede agregar otros Administradores.
   const rolesAsignables = ROLES.filter((r) => (user.rol === 'Líder' ? r !== 'Líder' && r !== 'Administrador' : true));
 
   return (
-    <Seccion title="Crear usuario">
+    <Seccion title="Agregar usuario">
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-[14rem] flex-1">
           <label className="label">Correo</label>
@@ -72,7 +72,7 @@ function SeccionCrearUsuario() {
             }
           }}
         >
-          Crear usuario
+          Agregar
         </button>
       </div>
     </Seccion>
@@ -84,7 +84,6 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
   const usuarios = useStore((s) => s.usuarios);
   const eliminar = useStore((s) => s.eliminarUsuario);
   const cambiarRol = useStore((s) => s.cambiarRol);
-  const confirmar = useStore((s) => s.confirmarUsuario);
   const navigate = useNavigate();
   const [target, setTarget] = useState<string | null>(null);
   const verPerfil = (email: string) => navigate(`/perfil/${encodeURIComponent(email)}`);
@@ -103,8 +102,9 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
           </thead>
           <tbody>
             {usuarios.map((u) => {
-              const pendienteConfirmar = u.firma === null;
-              const rolesPosibles = !gestiona || u.email === user.email ? [] : rolesAsignablesA(user.rol, u.rol);
+              const invitado = !!u.invitado;
+              // A un invitado no se le cambia el rol: se quita la invitación y se vuelve a invitar.
+              const rolesPosibles = !gestiona || invitado || u.email === user.email ? [] : rolesAsignablesA(user.rol, u.rol);
               return (
                 <tr key={u.email} className="border-b border-border/50 last:border-0">
                   <td className="px-4 py-2.5">
@@ -119,8 +119,8 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
                         {u.nombre} {u.apellido}
                       </button>
                       {u.email === user.email && <span className="text-[11px] text-faint">(tú)</span>}
-                      {gestiona && pendienteConfirmar && (
-                        <span className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300">Pendiente de confirmar</span>
+                      {gestiona && invitado && (
+                        <span className="chip border border-amber-500/40 bg-amber-500/15 text-amber-300">Invitado · aún sin cuenta</span>
                       )}
                     </div>
                   </td>
@@ -142,11 +142,10 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
                   {gestiona && (
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-end gap-2">
-                        {pendienteConfirmar && puedeConfirmarUsuario(user.rol) && (
-                          <button className="btn-primary btn-sm" onClick={() => confirmar(u.email)}>Confirmar</button>
-                        )}
                         {u.email !== user.email && puedeEliminarUsuario(user.rol, u.rol) && (
-                          <button className="btn-danger btn-sm" onClick={() => setTarget(u.email)}>Eliminar</button>
+                          <button className="btn-danger btn-sm" onClick={() => setTarget(u.email)}>
+                            {invitado ? 'Quitar invitación' : 'Eliminar'}
+                          </button>
                         )}
                       </div>
                     </td>
@@ -166,7 +165,7 @@ function ListaUsuarios({ gestiona }: { gestiona: boolean }) {
         tone="danger"
         palabra="eliminar"
         confirmLabel="Eliminar del equipo"
-        description={`Se revocará el acceso de ${target} a BranchBoard de inmediato. Recuerda quitarle también el acceso a la carpeta de Drive/OneDrive del proyecto: BranchBoard no puede hacerlo por ti.`}
+        description={`${target} pierde el acceso al proyecto y a sus documentos de inmediato.`}
       />
     </Card>
   );

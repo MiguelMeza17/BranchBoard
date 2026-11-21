@@ -133,6 +133,9 @@ pub struct UsuarioVisible {
     pub rol_efectivo: Option<Rol>,
     pub verificacion: Verificacion,
     pub fecha_alta: String,
+    /// Proyecto en el servidor (#241): invitado por correo, todavía sin cuenta. Solo lo ven Líder y
+    /// Administrador; no tiene rol efectivo hasta que se registre.
+    pub invitado: bool,
 }
 
 /// `listar_usuarios`: todos los roles; solo Líder y Administrador ven correos.
@@ -152,6 +155,7 @@ pub fn listar(
             rol_efectivo: v.rol_efectivo,
             verificacion: v.verificacion,
             fecha_alta: v.usuario.fecha_alta,
+            invitado: false,
         })
         .collect())
 }

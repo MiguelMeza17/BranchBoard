@@ -234,6 +234,12 @@ En el Tablero Scrum, arrastrar una tarjeta no es un simple cambio visual — dis
 - **Eliminar**: Administrador a cualquiera; Líder solo a Desarrolladores y Colaboradores externos. **Se deja así por ahora** (el Líder no puede eliminar Testers); revisar más adelante.
   - **Actualizado (2026-11-10)**: la confirmación recuerda quitarle a la persona el acceso a la carpeta de Drive/OneDrive del proyecto (BranchBoard no puede hacerlo), como pide [BACKEND.md → Identidad de usuario](./BACKEND.md#identidad-de-usuario). Nadie puede eliminar al Administrador ni eliminarse a sí mismo.
 - **Punto azul en el menú**: se enciende cuando hay un usuario nuevo o un cambio de rol que no has visto, y se apaga al entrar a Usuarios. Lo ven todos los roles.
+- **Proyecto en el servidor (#241)** — lo que muestra hoy el mockup:
+  - **"Agregar usuario"** (antes "Crear usuario"): si la persona ya tiene cuenta entra de una vez; si no, queda **invitada** (etiqueta "Invitado · aún sin cuenta", también en su perfil) y entra sola al registrarse con ese correo. Aviso: "<correo> invitado como <rol>: entra al registrarse con ese correo".
+  - El Administrador puede dar el rol **Administrador** (puede haber varios); nadie puede quitar ni degradar al último ("El proyecto tiene que tener al menos un Administrador").
+  - **Sin "Confirmar" ni "Pendiente de confirmar"**: no hay firmas.
+  - A un invitado no se le cambia el rol; su botón es **"Quitar invitación"**. Quitar a alguien le quita el acceso al proyecto y a sus documentos de inmediato (ya no hace falta quitarle la carpeta de Drive).
+  - La pantalla todavía no llama al backend (solo cambia datos en memoria): se conecta cuando los proyectos estén en el servidor (#240). Ver [Usuarios y roles por el servidor en BACKEND.md](./BACKEND.md#usuarios-y-roles-por-el-servidor-241).
 - Ya **no hay "solicitar ingreso"**: quien no tiene cuenta le pide a un Líder o Administrador que lo cree. Solicitar ingreso queda para la versión 2 (ver issue #57; invitar por correo con código: #58).
 
 ## Perfil de usuario
