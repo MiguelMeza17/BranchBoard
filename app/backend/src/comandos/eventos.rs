@@ -140,6 +140,31 @@ pub fn compactar_eventos(
     compactar_eventos_en(&estado, passphrase.as_deref())
 }
 
+/// Evento Tauri con el estado de la bandeja de salida después de cada intento de subida (#238).
+pub const EVENTO_BANDEJA_SALIDA: &str = "bandeja-salida";
+
+/// Sube al servidor lo que espera en la bandeja de salida del proyecto abierto (#238). Lo llama el
+/// temporizador de 15 s. Sin proyecto abierto da error (no hay bandeja).
+pub fn subir_bandeja_en(estado: &AppState) -> Resultado<eventos::bandeja::EstadoBandeja> {
+    let cliente = crate::supabase::ClienteSupabase::new(
+        crate::supabase::Entorno::actual().proyecto(),
+        LlaveroSistema,
+    );
+    eventos::bandeja::subir(
+        |f| estado.con_db(|db| f(db.conexion())),
+        |filas| cliente.insertar_eventos(filas),
+    )
+}
+
+/// Cuántos cambios del proyecto abierto esperan subir al servidor (#238). Sin proyecto abierto, 0.
+#[tauri::command]
+pub async fn eventos_por_subir(estado: State<'_, AppState>) -> Resultado<u64> {
+    match estado.con_db(|db| eventos::bandeja::pendientes(db.conexion())) {
+        Err(Error::Validacion(_)) => Ok(0),
+        otro => otro,
+    }
+}
+
 /// Evento Tauri emitido al detectar cambios nuevos o cierres en Unity VC (#104).
 pub const EVENTO_UNITY_ACTUALIZADO: &str = "unity-vc-actualizado";
 

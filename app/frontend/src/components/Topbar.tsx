@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../lib/api';
 import { avatarColor, iniciales } from '../lib/ui';
 import { useStore } from '../store/useStore';
 import { ROLES, type Rol } from '../types';
@@ -7,6 +8,46 @@ import { Avatar } from './primitives';
 import { NotificationsPanel } from './NotificationsPanel';
 import { AbrirEnUnityModal } from './AbrirEnUnityModal';
 import { Icono } from './Icono';
+
+/**
+ * "N cambios pendientes de enviar" (#238): los cambios de este equipo que todavía no llegaron al
+ * servidor (sin internet, sin sesión…). Se actualiza con cada intento de subida del backend. Con 0 no se
+ * muestra.
+ */
+function CambiosPendientes() {
+  const [pendientes, setPendientes] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let activo = true;
+    api
+      .eventosPorSubir()
+      .then((n) => activo && setPendientes(n))
+      .catch(() => {});
+    const dejar = api.alBandejaSalida((estado) => {
+      setPendientes(estado.pendientes);
+      setError(estado.error);
+    });
+    return () => {
+      activo = false;
+      void dejar.then((f) => f());
+    };
+  }, []);
+
+  if (pendientes === 0) return null;
+  const texto = `${pendientes} ${pendientes === 1 ? 'cambio pendiente' : 'cambios pendientes'} de enviar`;
+  return (
+    <span
+      className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted"
+      title={error ? `${texto}: ${error}` : `${texto}. Se envían solos cuando hay conexión.`}
+      role="status"
+    >
+      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
+      <span className="hidden sm:inline">{texto}</span>
+      <span className="sm:hidden">{pendientes}</span>
+    </span>
+  );
+}
 
 export function Topbar({ onMenu }: { onMenu?: () => void }) {
   const usuarioProyecto = useStore((s) => s.currentUser());
@@ -130,6 +171,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        {!sinProyecto && <CambiosPendientes />}
         {/* Solo para el mockup (se quita en la app real): "Ver como". */}
         {/* Role selector (simula autenticación) */}
         {!sinProyecto && (

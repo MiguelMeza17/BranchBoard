@@ -252,11 +252,34 @@ impl<L: Llavero> ClienteSupabase<L> {
     /// JSON de la respuesta (`Null` si no trae cuerpo). Si el token resulta vencido (401), renueva y
     /// reintenta una vez.
     pub fn llamar(&self, metodo: &str, ruta: &str, cuerpo: Option<&Value>) -> Resultado<Value> {
+        self.llamar_prefiriendo(metodo, ruta, cuerpo, None)
+    }
+
+    /// Sube eventos a la tabla `eventos` del servidor (#238). Los que ya estaban (mismo `id`) se ignoran,
+    /// así un reintento después de una respuesta perdida no duplica ni falla.
+    pub fn insertar_eventos(&self, filas: &Value) -> Resultado<()> {
+        self.llamar_prefiriendo(
+            "POST",
+            "/rest/v1/eventos?on_conflict=id",
+            Some(filas),
+            Some("resolution=ignore-duplicates,return=minimal"),
+        )
+        .map(|_| ())
+    }
+
+    /// Como [`Self::llamar`], con la cabecera `Prefer` de PostgREST si se pide.
+    fn llamar_prefiriendo(
+        &self,
+        metodo: &str,
+        ruta: &str,
+        cuerpo: Option<&Value>,
+        prefer: Option<&str>,
+    ) -> Resultado<Value> {
         let sesion = self.sesion_vigente()?;
-        match self.llamar_con(&sesion, metodo, ruta, cuerpo) {
+        match self.llamar_con(&sesion, metodo, ruta, cuerpo, prefer) {
             Err(Error::SinSesionServidor) => {
                 let renovada = self.renovar(&sesion)?;
-                self.llamar_con(&renovada, metodo, ruta, cuerpo)
+                self.llamar_con(&renovada, metodo, ruta, cuerpo, prefer)
             }
             otro => otro,
         }
@@ -268,12 +291,16 @@ impl<L: Llavero> ClienteSupabase<L> {
         metodo: &str,
         ruta: &str,
         cuerpo: Option<&Value>,
+        prefer: Option<&str>,
     ) -> Resultado<Value> {
-        let peticion = self
+        let mut peticion = self
             .agente
             .request(metodo, &self.url(ruta))
             .set("apikey", self.proyecto.clave_publica)
             .set("Authorization", &format!("Bearer {}", sesion.access_token));
+        if let Some(p) = prefer {
+            peticion = peticion.set("Prefer", p);
+        }
         let respuesta = match cuerpo {
             Some(c) => peticion.send_json(c.clone()),
             None => peticion.call(),

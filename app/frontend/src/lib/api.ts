@@ -55,6 +55,15 @@ export interface CambiosEntrantes {
 export const enTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 export const EVENTO_SESION_CADUCADA = 'sesion-unity-vc-caducada';
+export const EVENTO_BANDEJA_SALIDA = 'bandeja-salida';
+
+/** Estado de la bandeja de salida hacia el servidor después de cada intento de subida (#238). */
+export interface EstadoBandeja {
+  pendientes: number;
+  subidos: number;
+  /** Por qué quedaron pendientes (sin internet, sin sesión…). */
+  error: string | null;
+}
 
 /** Códigos de error del backend (`app/backend/src/error.rs`). */
 export type CodigoError =
@@ -410,6 +419,15 @@ export const api = {
   alSesionUnityVcCaducada: async (avisar: () => void): Promise<() => void> => {
     if (!enTauri()) return () => {};
     return listen(EVENTO_SESION_CADUCADA, () => avisar());
+  },
+
+  /** Cuántos cambios del proyecto abierto esperan subir al servidor (#238). En el mockup, 0. */
+  eventosPorSubir: () => llamar<number>('eventos_por_subir', undefined, () => 0),
+
+  /** Estado de la bandeja de salida después de cada intento de subida del backend (cada 15 s, #238). */
+  alBandejaSalida: async (avisar: (estado: EstadoBandeja) => void): Promise<() => void> => {
+    if (!enTauri()) return () => {};
+    return listen<EstadoBandeja>(EVENTO_BANDEJA_SALIDA, (e) => avisar(e.payload));
   },
 
   /**

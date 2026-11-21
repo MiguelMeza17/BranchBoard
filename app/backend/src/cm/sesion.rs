@@ -169,7 +169,9 @@ pub fn iniciar_sesion_unity_vc(
     // Iniciar sesión con Unity = entrar a BranchBoard (#237): también la sesión del servidor. Si falla
     // (sin internet, servidor pausado…), la de Unity sigue valiendo y se avisa.
     if let Some(email) = resultado.email.as_deref() {
-        if let Err(e) = crate::supabase::login_unity::asegurar_sesion_servidor_del_equipo(email) {
+        if let Err(e) =
+            crate::supabase::login_unity::asegurar_sesion_servidor_del_equipo(estado, email)
+        {
             resultado.aviso_servidor = Some(e.to_string());
         }
     }

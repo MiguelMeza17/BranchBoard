@@ -16,6 +16,7 @@
 //! Leer y aplicar los de otras máquinas (#92): ver [`lectura`].
 //! Compactar con un snapshot firmado por el Administrador (#94): ver [`snapshot`].
 
+pub mod bandeja;
 pub mod lectura;
 pub mod snapshot;
 
@@ -163,7 +164,9 @@ pub fn carpeta_imagen_proyecto(carpeta_proyecto: &Path) -> Resultado<PathBuf> {
 /// Aplica un cambio compartido y lo publica como evento, todo o nada:
 /// 1. `aplicar` escribe en la base, dentro de una transacción;
 /// 2. se escribe el archivo del evento en `ops/`;
-/// 3. se anota en `eventos_aplicados` y se confirma la transacción.
+/// 3. se anota en `eventos_aplicados`;
+/// 4. si el proyecto está vinculado al servidor, se guarda en la bandeja de salida (#238);
+/// 5. se confirma la transacción.
 ///
 /// Si `aplicar` o la escritura fallan, la base queda como estaba y no hay archivo.
 /// Devuelve el id del evento (el nombre de su archivo).
@@ -177,6 +180,7 @@ pub fn publicar(
     aplicar(&tx)?;
     let id = escribir_evento(ops, evento)?;
     marcar_aplicado(&tx, &id, &evento.timestamp)?;
+    bandeja::encolar(&tx, &id, evento)?;
     tx.commit()?;
     Ok(id)
 }
