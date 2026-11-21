@@ -462,6 +462,33 @@ Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_p
     - B crea otra tarea y la sube; A la baja y ve las dos.
     - Borrar después: `delete from public.proyectos where nombre like 'bb-prueba-240-%'` y `delete from auth.users where email like 'sin-unity-%@prueba.branchboard'`.
 
+### Subir al servidor los proyectos que ya existen (#245)
+
+**Nuevo (2026-11-21)** — "Subir este proyecto al servidor" (Ajustes, solo Administrador) pasa a Supabase un proyecto de antes (de Unity VC o por carpeta) sin perder sus datos (`comandos/subir_proyecto.rs`, `eventos/importacion.rs`).
+
+- **Decisión del 2026-11-21 en #245: una foto del estado, no el historial.** El historial vive solo en `ops/` (Drive, se quita en #244). El servidor pone como autor de cada evento a quien lo sube (#234), así que subirlo uno por uno dejaría todo a nombre del Administrador, y los proyectos compactados no lo tienen completo. Se manda **un solo evento `importar_proyecto`** con las filas de las tablas compartidas de la base local, tal cual: los autores originales van dentro.
+- **Qué va en la foto** (`importacion::TABLAS`): `configuracion_proyecto` (sin `proyecto_servidor_id` ni `subida_pendiente_id`), `sprints`, `tareas`, `ediciones_pendientes`, `reportes_sprint`, `commits`, `cambios_prestados`, `cambios_directos`, `documentos`, `notificaciones` (llegan **leídas**) y `grupos_chat` / `mensajes_chat`. No van las tablas de cada PC (lecturas del chat, paneles vistos, bandeja, copia del servidor, `eventos_aplicados`, changesets revisados) ni `usuarios`: el equipo se sube aparte.
+- **Al aplicarla** (`importacion::aplicar`, desde `lectura::aplicar_evento`): solo en un proyecto **vacío** (sin tareas, sprints, mensajes ni documentos); si no, se descarta. Copia por nombre de columna. Una columna, tabla o formato que esta versión no conoce deja el evento **pendiente** hasta actualizar la app.
+- **Servidor**: `importar_proyecto` es **solo de Administrador** en `privado.permisos_evento` (migración `20261122090000_importar_proyecto.sql`, regla de #247). Lo prueban dos casos en `01_reglas.test.sql`.
+- **Comando `subir_proyecto_al_servidor()`** (solo Administrador; la sesión de BranchBoard tiene que ser la de ese Administrador) → `{ proyecto_id, miembros, invitados, filas, documentos, documentos_sin_archivo }`:
+  1. **Crea el proyecto**: de Unity VC con `vincular-repo-unity` (revisa que sea el dueño del repo); por carpeta con `rpc/crear_proyecto(nombre)`.
+  2. **Gana el primero** (decisión del 2026-11-20 en #245): si el repo ya lo trajo otra persona (`409`) o el proyecto del servidor ya tiene eventos, no se mezcla nada: "Este proyecto ya está en el servidor (lo subió otra persona). Pídele acceso a uno de sus Administradores.".
+  3. **Equipo**: cada usuario con rol válido en la base (verificado como hasta ahora) se agrega con su rol (`rpc/agregar_miembro`, #241). Quien no tiene cuenta queda **invitado**.
+  4. **Archivos**: los documentos y la imagen del proyecto se copian de la carpeta compartida de esa PC a Storage (#242) con el mismo nombre interno. Si un documento no está en esa PC, queda en la lista sin archivo (`documentos_sin_archivo`).
+  5. **Foto y vínculo**: manda `importar_proyecto`, guarda `proyecto_servidor_id` y marca la foto como aplicada en esa base. Desde ahí, bandeja (#238) y recepción (#239). Los demás la reciben al abrir el proyecto desde el servidor (#240).
+  - Si algo falla a medias se puede repetir: el id del proyecto creado queda en `subida_pendiente_id` y se reutiliza; quien ya está en el equipo o ya fue invitado no se agrega otra vez; un archivo que ya está en Storage no es error.
+- **Comando `proyecto_en_el_servidor()`** (todos los roles): el id del proyecto abierto en el servidor o `null`. Lo usa Ajustes para mostrar la sección.
+- **Límite**: la foto va en un solo pedido. Un proyecto muy grande (mucho chat o muchas tareas) podría superar el tamaño que acepta el servidor; si pasa, la subida da error y se puede repetir.
+- **Pruebas**:
+  - 3 unitarias en `eventos::importacion`: se aplica en un proyecto vacío con los autores originales y las notificaciones leídas; con datos se descarta; columna, formato o tabla desconocidos quedan pendientes.
+  - SQL: `01_reglas.test.sql` (65 casos, `fallidas` 0): el Administrador manda `importar_proyecto` y el Líder no.
+  - Real, `comandos::subir_proyecto::…::entorno_real_subir_proyecto_por_carpeta` (`cargo test --lib entorno_real_subir_proyecto_por_carpeta -- --ignored --nocapture`). Es un **proyecto de prueba** por carpeta, con llaves y filas firmadas como los de antes, y cuentas `subir-245-a|b|c-<hora>@prueba.branchboard`:
+    - A lo sube: B queda miembro, C invitada (no tiene cuenta) y el documento en Storage.
+    - B, en una PC sin datos, lo abre desde el servidor y recibe la foto: ve las dos tareas **con sus autores originales** y el documento, que baja de Storage.
+    - Subirlo otra vez dice que ya está en el servidor.
+  - Real, `…::entorno_real_gana_el_primero` (`BB_PRUEBA_ORG=MiguelM17 BB_PRUEBA_REPO=BranchBoard-Pruebas/BranchBoard-Pruebas cargo test --lib entorno_real_gana_el_primero -- --ignored --nocapture`): el mismo repo de Unity VC en dos PCs de su dueña, con datos distintos. La primera lo sube; la segunda recibe "ya está en el servidor" y no queda vinculada; en el servidor queda **solo** la foto de la primera.
+  - Borrar después: `begin; set local storage.allow_delete_query = 'true'; delete from storage.objects where bucket_id = 'proyectos' and name like '<id>/%'; delete from public.proyectos where id in (…); delete from auth.users where email like 'subir-245-%@prueba.branchboard'; delete from public.invitaciones where lower(correo) like 'subir-245-%'; commit;`.
+
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
 Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` con datos que vienen del usuario (nombre de rama, justificación, descripción, comentarios de checkin/merge, etc.):

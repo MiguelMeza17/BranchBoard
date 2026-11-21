@@ -166,6 +166,9 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     // Proyectos sin Unity VC en el servidor (#240): todavía no hay proyecto ni rol.
     ("crear_proyecto_servidor", Acceso::Libre),
     ("abrir_proyecto_servidor", Acceso::Libre),
+    // Subir al servidor un proyecto que ya existía (#245): solo su Administrador.
+    ("subir_proyecto_al_servidor", Acceso::Roles(SOLO_ADMIN)),
+    ("proyecto_en_el_servidor", Acceso::Roles(TODOS)),
     ("abrir_proyecto_local", Acceso::Libre),
     ("listar_proyectos_locales", Acceso::Libre),
     ("importar_proyecto_local", Acceso::Libre),

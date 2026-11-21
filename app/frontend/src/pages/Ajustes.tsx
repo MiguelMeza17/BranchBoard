@@ -11,6 +11,7 @@ import { Seccion } from '../components/Seccion';
 import { ConfirmLock } from '../components/ConfirmLock';
 import { Modal } from '../components/Modal';
 import { SelectorCarpeta } from '../components/SelectorCarpeta';
+import { SeccionSubirAlServidor } from '../components/SubirProyecto';
 import { api, enTauri, mensajeDeError, type InfoActualizacion } from '../lib/api';
 
 export function Ajustes() {
@@ -24,6 +25,7 @@ export function Ajustes() {
       <PageHeader title="Ajustes" desc="Acciones administrativas del proyecto. Cada sección aparece según tu rol." />
       <div className="space-y-3">
         <SeccionActualizar />
+        {puedeEliminarProyecto(user.rol) && <SeccionSubirAlServidor />}
         {proyectoLocal ? (
           puedeEliminarProyecto(user.rol) && <SeccionExportarProyecto carpeta={proyectoLocal} />
         ) : (
