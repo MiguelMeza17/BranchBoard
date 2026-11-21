@@ -18,6 +18,7 @@ pub mod proyecto_local;
 pub mod proyecto_servidor;
 pub mod sistema;
 pub mod sprints;
+pub mod subir_proyecto;
 pub mod tareas;
 pub mod usuarios;
 pub mod vistos;

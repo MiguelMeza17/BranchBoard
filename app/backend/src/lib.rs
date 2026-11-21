@@ -254,6 +254,8 @@ pub fn run() {
             comandos_proyecto_local::crear_proyecto_local,
             comandos_proyecto_servidor::crear_proyecto_servidor,
             comandos_proyecto_servidor::abrir_proyecto_servidor,
+            comandos::subir_proyecto::subir_proyecto_al_servidor,
+            comandos::subir_proyecto::proyecto_en_el_servidor,
             comandos_proyecto_local::abrir_proyecto_local,
             comandos_proyecto_local::listar_proyectos_locales,
             comandos_proyecto_local::exportar_proyecto_local,

@@ -270,6 +270,16 @@ export interface ProyectoLocal {
   ruta: string;
 }
 
+/** Cómo quedó "Subir este proyecto al servidor" (`subir_proyecto_al_servidor`, #245). */
+export interface ResumenSubida {
+  proyecto_id: string;
+  miembros: number;
+  invitados: number;
+  filas: number;
+  documentos: number;
+  documentos_sin_archivo: number;
+}
+
 /** Datos de "Crear un nuevo proyecto" sin Unity VC (`crear_proyecto_local`). */
 export interface NuevoProyectoLocal {
   /** Carpeta donde se crea la carpeta del proyecto (con el nombre del proyecto). */
@@ -490,6 +500,13 @@ export const api = {
   /** Abre un proyecto del servidor de la cuenta; en una PC sin sus datos los crea (#240). */
   abrirProyectoServidor: (id: string, mockup: () => EntradaProyecto) =>
     llamar<EntradaProyecto>('abrir_proyecto_servidor', { id }, mockup),
+  /** Id del proyecto abierto en el servidor, o `null` si todavía no está (#245). */
+  proyectoEnElServidor: () => llamar<string | null>('proyecto_en_el_servidor', undefined, () => null),
+  /** Sube al servidor el proyecto abierto con su equipo, sus datos y sus documentos (solo Administrador, #245). */
+  subirProyectoAlServidor: () =>
+    llamar<ResumenSubida>('subir_proyecto_al_servidor', undefined, () => {
+      throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
+    }),
   /** Proyectos locales que ya se abrieron en esta máquina ("Recientes"). */
   listarProyectosLocales: (mockup: () => ProyectoLocal[]) =>
     llamar<ProyectoLocal[]>('listar_proyectos_locales', undefined, mockup),

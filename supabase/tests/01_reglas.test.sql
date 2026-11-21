@@ -134,6 +134,7 @@ insert into _o values ('l_publica_eliminar_documento', pg_temp.publicar('ev-l-do
 insert into _o values ('l_publica_cerrar_sprint', pg_temp.publicar('ev-l-cs', 'cerrar_sprint'));
 insert into _o values ('l_publica_configuracion', pg_temp.publicar('ev-l-cfg', 'actualizar_configuracion_proyecto'));
 insert into _o values ('l_publica_confirmar_usuario', pg_temp.publicar('ev-l-conf', 'confirmar_usuario'));
+insert into _o values ('l_publica_importar_proyecto', pg_temp.publicar('ev-l-imp', 'importar_proyecto'));
 
 -- ---------------------------------------------------------------- C ya es Tester de P: ahora ve B
 select set_config('request.jwt.claims', '{"sub":"c0000000-0000-4000-8000-000000000003","role":"authenticated"}', true);
@@ -148,6 +149,7 @@ insert into _o values ('a_publica_configuracion', pg_temp.publicar('ev-a-cfg', '
 insert into _o values ('a_publica_cambiar_rol', pg_temp.publicar('ev-a-rol', 'cambiar_rol'));
 insert into _o values ('a_publica_crear_usuario', pg_temp.publicar('ev-a-usr', 'crear_usuario'));
 insert into _o values ('a_publica_compactar', pg_temp.publicar('ev-a-comp', 'compactar_eventos'));
+insert into _o values ('a_publica_importar_proyecto', pg_temp.publicar('ev-a-imp', 'importar_proyecto'));
 insert into _o values ('a_nombra_admin_a_l', pg_temp.intentar(format(
     $q$select public.cambiar_rol(%L, 'd0000000-0000-4000-8000-000000000004', 'Administrador')$q$, (select valor from _o where clave = 'p'))));
 insert into _o values ('a_se_degrada_con_otro_admin', pg_temp.intentar(format(
@@ -212,8 +214,8 @@ insert into _r (linea) select is(pg_temp.o('a_se_degrada_con_otro_admin'), 'ok',
 insert into _r (linea) select is(pg_temp.o('l_se_quita_siendo_ultima_admin'), 'P0001', 'la nueva última Administradora tampoco se puede quitar');
 -- Eventos según el rol (#247)
 insert into _r (linea) select is(
-    (select count(*)::int from privado.permisos_evento), 25,
-    'la tabla de permisos tiene los 25 tipos de la decisión de #247');
+    (select count(*)::int from privado.permisos_evento), 26,
+    'la tabla de permisos tiene los 25 tipos de la decisión de #247 más importar_proyecto (#245)');
 insert into _r (linea) select is(pg_temp.o('b_lee_permisos_evento'), '42501', 'nadie con sesión lee la tabla de permisos');
 insert into _r (linea) select is(pg_temp.o('c_puede_publicar_aprobar_en_p'), 'false', 'quien no es miembro no tiene rol para un tipo restringido (false, no null)');
 insert into _r (linea) select is(pg_temp.o('b_publica_aprobar_tarea'), '42501', 'un Desarrollador no puede insertar un evento de aprobación');
@@ -234,6 +236,8 @@ insert into _r (linea) select is(pg_temp.o('a_publica_configuracion'), 'ok', 'el
 insert into _r (linea) select is(pg_temp.o('a_publica_cambiar_rol'), '42501', 'ni el Administrador inserta cambiar_rol (los roles van por funciones)');
 insert into _r (linea) select is(pg_temp.o('a_publica_crear_usuario'), '42501', 'crear_usuario se rechaza siempre');
 insert into _r (linea) select is(pg_temp.o('a_publica_compactar'), '42501', 'compactar_eventos se rechaza siempre (sin compactación con Supabase)');
+insert into _r (linea) select is(pg_temp.o('a_publica_importar_proyecto'), 'ok', 'el Administrador sube la foto de un proyecto (#245)');
+insert into _r (linea) select is(pg_temp.o('l_publica_importar_proyecto'), '42501', 'el Líder no sube la foto de un proyecto (solo Administrador, #245)');
 insert into _r (linea) select is(pg_temp.o('anon_lee_proyectos'), '42501', 'sin sesión no se leen proyectos');
 insert into _r (linea) select is(pg_temp.o('anon_lee_eventos'), '42501', 'sin sesión no se leen eventos');
 insert into _r (linea) select is(pg_temp.o('anon_crea_proyecto'), '42501', 'sin sesión no se crean proyectos');

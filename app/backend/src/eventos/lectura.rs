@@ -323,6 +323,14 @@ pub fn aplicar_evento(
     publica_admin: &str,
     evento: &Evento,
 ) -> Resultado<Aplicacion> {
+    // Foto del estado de un proyecto que se subió al servidor (#245). Solo la manda un Administrador
+    // (lo revisa el servidor, `permisos_evento`) y solo se aplica en un proyecto vacío.
+    if evento.tipo == super::importacion::TIPO {
+        return match super::importacion::aplicar(c, evento) {
+            Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+            otro => otro,
+        };
+    }
     let rol_firmante = if evento.exige_firma() {
         match equipo::firmante_del_evento(c, publica_admin, evento)? {
             Some(rol) => Some(rol),

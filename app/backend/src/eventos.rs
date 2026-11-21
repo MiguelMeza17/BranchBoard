@@ -17,6 +17,7 @@
 //! Compactar con un snapshot firmado por el Administrador (#94): ver [`snapshot`].
 
 pub mod bandeja;
+pub mod importacion;
 pub mod lectura;
 pub mod recepcion;
 pub mod snapshot;
