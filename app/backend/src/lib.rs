@@ -135,6 +135,7 @@ pub fn run() {
         .on_window_event(manejar_evento_ventana)
         .invoke_handler(tauri::generate_handler![
             sistema::ping,
+            comandos::logs_unity::logs_unity_para_terminar,
             comandos::diff::diff_rama,
             comandos::diff::diff_changeset,
             comandos::diff::diff_archivo,
@@ -252,6 +253,8 @@ pub fn run() {
             comandos_proyecto_local::crear_proyecto_local,
             comandos_proyecto_servidor::crear_proyecto_servidor,
             comandos_proyecto_servidor::abrir_proyecto_servidor,
+            comandos::subir_proyecto::subir_proyecto_al_servidor,
+            comandos::subir_proyecto::proyecto_en_el_servidor,
             comandos_proyecto_local::abrir_proyecto_local,
             comandos_proyecto_local::listar_proyectos_locales,
             comandos_proyecto_local::exportar_proyecto_local,

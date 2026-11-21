@@ -60,7 +60,7 @@
 
 | Quién | Tipos de evento |
 |---|---|
-| Solo Administrador | `cerrar_sprint`, `actualizar_configuracion_proyecto` (renombrar, ajustes e imagen viajan con este tipo) |
+| Solo Administrador | `cerrar_sprint`, `actualizar_configuracion_proyecto` (renombrar, ajustes e imagen viajan con este tipo), `importar_proyecto` (la foto del estado al subir un proyecto que ya existía, #245; solo se aplica en un proyecto vacío) |
 | Líder o Administrador | Tareas: `asignar_tarea`, `aprobar_tarea`, `aprobar_tareas`, `editar_y_aprobar_tarea`, `advertir_tarea_pendiente`, `eliminar_tarea`, `eliminar_definitivamente`. Ediciones: `aprobar_modificacion`, `aprobar_modificaciones`, `rechazar_modificacion`. Revisión: `asignar_revision`, `trasladar_cambios_directos`. Sprints: `crear_sprint`, `asignar_tarea_a_sprint`, `asignar_tarea_a_backlog`, `asignar_backlog_a_sprint`. Documentos: `aprobar_documento`, `eliminar_documento` |
 | Nadie (rechazados siempre) | `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario` (los roles van por las funciones de arriba) y `compactar_eventos` (con Supabase no hay compactación) |
 | Cualquier miembro | El resto, incluidos los automáticos que genera la app de cualquiera (`tarea_cerrada_por_deteccion`, `cerrar_sprint_automatico`, `reporte_sprint_fecha_fin`, `detectar_cambios_directos`, `agregar_cambios_directos`, `crear_en_espera`, `quitar_en_espera`, `crear_notificacion(es)`) |

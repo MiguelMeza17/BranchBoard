@@ -17,6 +17,7 @@
 //! Desde #243 no hay eventos firmados ni compactación con snapshots.
 
 pub mod bandeja;
+pub mod importacion;
 pub mod lectura;
 pub mod recepcion;
 

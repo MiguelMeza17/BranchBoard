@@ -30,7 +30,15 @@ import type {
   WorkspaceUnityVC,
 } from '../types';
 
-/** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
+/** Fragmento local de Editor.log; no se guarda ni se envía al servidor. */
+export interface LogsUnity {
+  archivo: string | null;
+  modificado: string | null;
+  contenido: string;
+  recortado: boolean;
+  aviso: string | null;
+}
+
 /** Un changeset de la rama que el workspace todavía no tiene (#110). */
 export interface ChangesetEntrante {
   changeset: number;
@@ -254,6 +262,16 @@ export interface ProyectoLocal {
   ruta: string;
 }
 
+/** Cómo quedó "Subir este proyecto al servidor" (`subir_proyecto_al_servidor`, #245). */
+export interface ResumenSubida {
+  proyecto_id: string;
+  miembros: number;
+  invitados: number;
+  filas: number;
+  documentos: number;
+  documentos_sin_archivo: number;
+}
+
 /** Datos de "Crear un nuevo proyecto" sin Unity VC (`crear_proyecto_local`). */
 export interface NuevoProyectoLocal {
   /** Carpeta donde se crea la carpeta del proyecto (con el nombre del proyecto). */
@@ -473,6 +491,13 @@ export const api = {
   /** Abre un proyecto del servidor de la cuenta; en una PC sin sus datos los crea (#240). */
   abrirProyectoServidor: (id: string, mockup: () => EntradaProyecto) =>
     llamar<EntradaProyecto>('abrir_proyecto_servidor', { id }, mockup),
+  /** Id del proyecto abierto en el servidor, o `null` si todavía no está (#245). */
+  proyectoEnElServidor: () => llamar<string | null>('proyecto_en_el_servidor', undefined, () => null),
+  /** Sube al servidor el proyecto abierto con su equipo, sus datos y sus documentos (solo Administrador, #245). */
+  subirProyectoAlServidor: () =>
+    llamar<ResumenSubida>('subir_proyecto_al_servidor', undefined, () => {
+      throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
+    }),
   /** Proyectos locales que ya se abrieron en esta máquina ("Recientes"). */
   listarProyectosLocales: (mockup: () => ProyectoLocal[]) =>
     llamar<ProyectoLocal[]>('listar_proyectos_locales', undefined, mockup),
@@ -643,6 +668,11 @@ export const api = {
    * padre (subtarea), del lado del servidor (#107). Si hay conflicto, la tarea no cambia y
    * `conflicto` trae los archivos para la alerta; si no, `tareas` ya viene con ella terminada.
    */
+  logsUnityParaTerminar: (tareaId: string) =>
+    llamar<LogsUnity>('logs_unity_para_terminar', { tareaId }, () => ({
+      archivo: null, modificado: null, contenido: '', recortado: false, aviso: null,
+    })),
+
   autorizarMerge: (id: string, mockup: () => ResultadoAutorizacion) =>
     llamar<ResultadoAutorizacion>('autorizar_merge', { id }, mockup),
 

@@ -296,6 +296,14 @@ pub(super) fn registrar(carpeta_proyecto: &Path, ahora: DateTime<Utc>, avisos: &
 ///    base detiene el escaneo.
 /// 3. Un tipo que no está aquí lo escribió una versión más nueva: queda pendiente.
 pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<Aplicacion> {
+    // Foto del estado de un proyecto que se subió al servidor (#245). Solo la manda un Administrador
+    // (lo revisa el servidor, `permisos_evento`) y solo se aplica en un proyecto vacío.
+    if evento.tipo == super::importacion::TIPO {
+        return match super::importacion::aplicar(c, evento) {
+            Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+            otro => otro,
+        };
+    }
     if TIPOS_RETIRADOS.contains(&evento.tipo.as_str()) {
         return Ok(Aplicacion::Descartado(
             "los cambios de equipo y la compactación ya no viajan como eventos (#243)".into(),
