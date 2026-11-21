@@ -302,7 +302,7 @@ export function Branches() {
     // esa misma rama en distintos momentos. Va detrás de todo (zIndex -1) y no recibe el mouse.
     // soloCabeza: historial cerrado por completo; el panel se pinta igual que la cabeza (borde
     // de su color), para que se lea como una sola pieza.
-    const contenedor = (id: string, nombre: string, color: string, x: number, derecha: number, y: number, soloCabeza = false) => {
+    const contenedor = (id: string, nombre: string, color: string, x: number, derecha: number, y: number, soloCabeza = false): number => {
       // Ancho mínimo: que el nombre del panel quepa sobre el borde con aire a los lados
       // (probado hasta números de 4 cifras, ej. T-9999).
       const minimo = anchoRama(nombre) + 2 * MARGEN_GRUPO;
@@ -324,6 +324,21 @@ export function Branches() {
           pointerEvents: 'none',
         },
       });
+      return x - MARGEN_GRUPO + ancho;
+    };
+    // Puerta de salida de un panel: igual que la de entrada, un punto SOBRE el borde derecho
+    // (metido SOLAPE_BORDE px). La cabeza llega a él con un tramo y las flechas de las hijas salen
+    // de él, así no nacen adentro del panel ni se abren justo encima del borde.
+    const salidaDePanel = (id: string, cabeza: string, bordeDerecho: number, y: number, color: string, grosor: number) => {
+      nodes.push({
+        id,
+        type: 'punto',
+        position: { x: bordeDerecho - SOLAPE_BORDE, y: y + (ALTO_RAMA - PUNTO) / 2 },
+        data: {} satisfies PuntoData,
+        style: estiloPunto(color),
+      });
+      tramo(cabeza, id, color, grosor);
+      return id;
     };
     // Tramo de una línea de tiempo: recto y sin flecha (es la misma rama avanzando).
     const tramo = (source: string, target: string, color: string, grosor: number) =>
@@ -406,6 +421,7 @@ export function Branches() {
     // Nace en un punto (sobre el borde de su panel), pasa por un recuadro gris por cada
     // tarea general ya fusionada (en orden) y termina en el último merge: su presente.
     const historialDev = !cerrados.has('dev');
+    let bordeDev: number | null = null; // borde derecho del panel de dev en el presente
     const merges = tareas
       .filter((t) => !padreEnGrafo(t) && terminada(t))
       .sort((a, b) => (a.fecha_completada ?? '').localeCompare(b.fecha_completada ?? '') || a.id.localeCompare(b.id));
@@ -477,7 +493,7 @@ export function Branches() {
         });
         tramo(anterior, 'dev', '#2dd4bf', GROSOR_MAIN_DEV);
       }
-      contenedor('grupo-dev', 'dev', '#2dd4bf', DEV_CONTENIDO_X, devX + anchoCabeza, DEV_Y, !historialDev);
+      bordeDev = contenedor('grupo-dev', 'dev', '#2dd4bf', DEV_CONTENIDO_X, devX + anchoCabeza, DEV_Y, !historialDev);
     }
 
 
@@ -510,6 +526,7 @@ export function Branches() {
 
       let x = izquierda; // posición del recuadro de la tarea (su presente)
       let derecha: number;
+      let bordePanel: number | null = null; // con historial: borde derecho de su panel
       if (historia.length) {
         // Igual que dev: punto de entrada sobre el borde del panel, recuadros grises de las
         // subtareas ya fusionadas y la tarea al final. Click en la tarea cierra/abre su historial.
@@ -549,7 +566,7 @@ export function Branches() {
         }
         x = contenidoX + (abierto ? historia.length : 0) * PUNTO_X;
         tramo(ant, t.id, m.dot, grosor);
-        contenedor(`grupo-${t.id}`, t.id, m.dot, contenidoX, x + anchoRama(t.id), y, !abierto);
+        bordePanel = contenedor(`grupo-${t.id}`, t.id, m.dot, contenidoX, x + anchoRama(t.id), y, !abierto);
         derecha = x + anchoRama(t.id) + MARGEN_GRUPO;
         edges.push({ id: `e-${origen}-${entrada}`, source: origen, sourceHandle: salida, target: entrada, targetHandle: llegada, animated: t.estado === 'en producción', style: { stroke: m.dot, strokeWidth: grosor }, type: 'flecha' });
       } else {
@@ -580,7 +597,10 @@ export function Branches() {
       // Subtareas: columna adelante de la tarea (la tarea queda centrada entre ellas). REGLA DE
       // ESCALA: son hijas, así que la flecha SALE POR ADELANTE del padre (costado derecho) y
       // entra por la izquierda de la hija.
-      hijosVisibles(t).forEach((h) => ubicar(h, nivel + 1, colDe.get(h.id)!, t.id, 'derecha', 'izquierda'));
+      const hijas = hijosVisibles(t);
+      const origenHijas =
+        hijas.length && bordePanel !== null ? salidaDePanel(`salida-${t.id}`, t.id, bordePanel, y, m.dot, grosor) : t.id;
+      hijas.forEach((h) => ubicar(h, nivel + 1, colDe.get(h.id)!, origenHijas, 'derecha', 'izquierda'));
     };
     // Ramas de dev: una columna adelante de dev (dev centrado entre ellas, ver DEV_Y), en vez de
     // alargarse hacia la derecha. La columna empieza ADELANTO después del borde derecho de dev,
@@ -766,7 +786,11 @@ export function Branches() {
     raicesActual.forEach((r) => colocar(r, columnaX));
     raicesPasado.forEach((r) => colocar(r, xMerge(origen.get(r.id)!) + ADELANTO));
 
-    raicesActual.forEach((t) => ubicar(t, 1, columnaX, cabezaId, 'derecha', 'izquierda'));
+    const origenDev =
+      raicesActual.length && bordeDev !== null
+        ? salidaDePanel('dev-salida', cabezaId, bordeDev, DEV_Y, '#2dd4bf', GROSOR_MAIN_DEV)
+        : cabezaId;
+    raicesActual.forEach((t) => ubicar(t, 1, columnaX, origenDev, 'derecha', 'izquierda'));
     // La flecha sale por abajo o por arriba del recuadro gris (según el lado al que va la rama):
     // por su costado derecho pasa la línea de dev.
     raicesPasado.forEach((t) =>
