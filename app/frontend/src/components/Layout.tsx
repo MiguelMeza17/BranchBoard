@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { PANTALLA_ANGOSTA, useMediaQuery } from '../lib/useMediaQuery';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { useStore } from '../store/useStore';
 import { Toast } from './Toast';
 import { AlertaRamaAjena } from './AlertaRamaAjena';
 import { AvisoSinProyecto, useSinProyecto, VentanasProyecto } from './SinProyecto';
@@ -55,6 +56,7 @@ export function Layout() {
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar onMenu={angosta ? () => setMenuAbierto((v) => !v) : undefined} />
+        <AvisoUnityCaducada />
         <main className="flex-1 overflow-y-auto">
           {/* Con el menú contraído, el contenido gana el ancho que liberó el menú (240px). */}
           <div className={`mx-auto px-3 py-4 sm:px-6 sm:py-6 ${colapsado ? 'max-w-[1640px]' : 'max-w-[1400px]'}`}>
@@ -72,6 +74,40 @@ export function Layout() {
       </div>
       <VentanasProyecto />
       <Toast />
+    </div>
+  );
+}
+
+/**
+ * La sesión de Unity VC caducó (~1 h) mientras se trabajaba (#124): la persona sigue en el proyecto y
+ * este aviso le ofrece reconectar. Lo que necesita Unity VC falla con su mensaje hasta entonces.
+ */
+function AvisoUnityCaducada() {
+  const caducada = useStore((s) => s.sesionUnityVcCaducada);
+  const proyectoLocal = useStore((s) => s.proyectoLocal);
+  const reconectar = useStore((s) => s.reconectarUnityVc);
+  const [reconectando, setReconectando] = useState(false);
+  if (!caducada || proyectoLocal) return null;
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-2 text-xs sm:px-5"
+    >
+      <span className="text-muted">
+        <span className="font-medium text-text">Tu sesión de Unity VC caducó.</span> Puedes seguir con tus
+        tareas; las ramas, el check-in y el merge esperan hasta que reconectes.
+      </span>
+      <button
+        type="button"
+        className="btn-primary btn-sm shrink-0"
+        disabled={reconectando}
+        onClick={() => {
+          setReconectando(true);
+          void reconectar().finally(() => setReconectando(false));
+        }}
+      >
+        {reconectando ? 'Reconectando…' : 'Reconectar'}
+      </button>
     </div>
   );
 }
