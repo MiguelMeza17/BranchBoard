@@ -33,7 +33,7 @@ pub async fn logs_unity_para_terminar(
     estado: State<'_, AppState>,
     tarea_id: String,
 ) -> Resultado<LogsUnity> {
-    let yo = estado.exigir_permiso("autorizar_merge")?;
+    let yo = estado.exigir_permiso("logs_unity_para_terminar")?;
     estado.con_db(|db| {
         tareas::plan_de_autorizacion(
             db.conexion(),
