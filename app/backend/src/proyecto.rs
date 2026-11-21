@@ -33,7 +33,7 @@ use crate::tareas::rol_de;
 
 pub mod eliminacion;
 
-/// Tipos de evento de los ajustes del proyecto que viajan por `ops/`.
+/// Tipos de evento de los ajustes del proyecto que viajan por el servidor.
 pub const TIPOS: &[&str] = &["actualizar_configuracion_proyecto"];
 
 /// Largo máximo del nombre del proyecto (en caracteres).
@@ -63,7 +63,7 @@ pub struct ConfiguracionProyecto {
     /// Nombre dentro de BranchBoard; `None` si nunca se configuró.
     pub nombre: Option<String>,
     /// La imagen como `data:image/png;base64,…`; `None` si no hay imagen o si su
-    /// archivo todavía no llegó a esta máquina por Drive/OneDrive.
+    /// archivo no está disponible.
     pub imagen: Option<String>,
 }
 

@@ -28,7 +28,7 @@ import { Icono, IconoEnLinea } from './Icono';
 // pendiente de confirmación, sin usuario o esperar al dueño del repositorio (que
 // lo configura solo la primera vez que lo abre). En el navegador lo simula el
 // mockup y "Saltar al tablero" está siempre disponible.
-type Paso = 'inicio' | 'registro' | 'recuperar' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'esperar-dueno' | 'carpeta-compartida';
+type Paso = 'inicio' | 'registro' | 'recuperar' | 'workspaces' | 'clonar' | 'pendiente' | 'no-registrado' | 'esperar-dueno';
 type EntradaDentro = Extract<EntradaProyecto, { estado: 'dentro' }>;
 
 export function AccesoProyecto() {
@@ -95,9 +95,6 @@ export function AccesoProyecto() {
   // de Administrador nueva, así que se confirma antes.
   const [porConfigurar, setPorConfigurar] = useState<WorkspaceUnityVC | null>(null);
 
-  // Entrada ya aceptada que espera a que se elija la carpeta compartida.
-  const [porEntrar, setPorEntrar] = useState<{ ws: WorkspaceUnityVC; entrada: EntradaDentro } | null>(null);
-
   const abrirWorkspace = async (ws: WorkspaceUnityVC) => {
     setElegido(ws);
     setErrorAcceso(null);
@@ -117,18 +114,6 @@ export function AccesoProyecto() {
     if (respuesta.estado !== 'dentro') {
       const pasos = { pendiente: 'pendiente', no_registrado: 'no-registrado', esperar_dueno: 'esperar-dueno' } as const;
       return setPaso(pasos[respuesta.estado]);
-    }
-    // Sin carpeta compartida no se puede guardar ningún cambio del equipo: se pide antes del tablero.
-    let carpeta: string | null;
-    try {
-      carpeta = await api.carpetaCompartida(() => useStore.getState().carpetasCompartidas[ws.nombre] ?? null);
-    } catch (e) {
-      showToast(mensajeDeError(e), 'danger');
-      return;
-    }
-    if (!carpeta) {
-      setPorEntrar({ ws, entrada: respuesta });
-      return setPaso('carpeta-compartida');
     }
     terminarEntrada(ws, respuesta);
   };
@@ -171,7 +156,7 @@ export function AccesoProyecto() {
                 paso === 'workspaces' && cuenta
                   ? setAccesoCompletado(true)
                   : setPaso(
-                  paso === 'clonar' || paso === 'carpeta-compartida'
+                  paso === 'clonar'
                     ? 'workspaces'
                     : 'inicio'
                 )
@@ -273,16 +258,6 @@ export function AccesoProyecto() {
           </Aviso>
         )}
 
-        {paso === 'carpeta-compartida' && porEntrar && (
-          <PasoCarpetaCompartida
-            entrada={porEntrar.entrada}
-            onListo={() => {
-              const { ws, entrada } = porEntrar;
-              setPorEntrar(null);
-              terminarEntrada(ws, entrada);
-            }}
-          />
-        )}
       </div>
 
       <Modal
@@ -370,64 +345,6 @@ export function AccesoProyecto() {
       )}
 
       <Toast />
-    </div>
-  );
-}
-
-// Carpeta compartida (Drive/OneDrive) del proyecto en esta máquina: obligatoria antes del tablero, porque
-// por ahí viajan todos los cambios del equipo (`ops/`). El Administrador elige o crea la carpeta y la comparte;
-// los demás eligen la que les compartió (el backend comprueba que sea la de este proyecto).
-function PasoCarpetaCompartida({ entrada, onListo }: { entrada: EntradaDentro; onListo: () => void }) {
-  const setCarpetaCompartida = useStore((s) => s.setCarpetaCompartida);
-  const [ruta, setRuta] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [guardando, setGuardando] = useState(false);
-  const esAdmin = entrada.rol === 'Administrador';
-
-  const guardar = async () => {
-    if (!ruta.trim()) return setError('Elige una carpeta.');
-    setGuardando(true);
-    try {
-      const guardada = await api.configurarCarpetaCompartida(ruta.trim(), () => ruta.trim());
-      setCarpetaCompartida(entrada.proyecto, guardada);
-      onListo();
-    } catch (e) {
-      setError(mensajeDeError(e));
-    }
-    setGuardando(false);
-  };
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary-soft">
-          <Icono nombre="carpeta" className="h-7 w-7" />
-        </div>
-        <h2 className="text-base font-semibold text-text">Carpeta compartida de {entrada.proyecto}</h2>
-        <p className="text-sm text-muted">
-          {esAdmin
-            ? 'Elige una carpeta de tu Drive/OneDrive para este proyecto y compártela con el equipo.'
-            : 'Elige la carpeta del proyecto que te compartió el Administrador.'}
-        </p>
-      </div>
-      <SelectorCarpeta
-        value={ruta}
-        onChange={(v) => {
-          setRuta(v);
-          setError(null);
-        }}
-        placeholder="Carpeta de Drive/OneDrive"
-        titulo={`Carpeta compartida de ${entrada.proyecto}`}
-      />
-      {error && (
-        <p className="text-[11px] text-red-300">
-          <IconoEnLinea nombre="alerta" sinColor />
-          {error}
-        </p>
-      )}
-      <button className="btn-primary w-full" disabled={guardando} onClick={() => void guardar()}>
-        {guardando ? 'Guardando…' : 'Continuar'}
-      </button>
     </div>
   );
 }

@@ -1,6 +1,4 @@
-//! Carpeta compartida del proyecto (Drive/OneDrive) en esta máquina, donde vive `ops/` (issue #91),
-//! escaneo de `ops/` (#92) y sincronización con el servidor (#238, #239). La compactación con
-//! snapshots firmados (#94) se quitó con las firmas en #243.
+//! Sincronización de eventos con el servidor (#238/#239). Desde #244 no se escanean carpetas.
 
 use chrono::Utc;
 use serde::Serialize;

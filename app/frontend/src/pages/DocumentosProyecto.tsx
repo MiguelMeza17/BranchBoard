@@ -31,7 +31,7 @@ const tamanoLegible = (bytes: number) =>
 
 // Apartado con el nombre del proyecto (estilo perfil de GitHub): a la izquierda el ícono grande del
 // proyecto y su nombre; a la derecha sus documentos en cuadros (medianos, pequeños) o en lista.
-// En el mockup los archivos viven en memoria; en la app real irían a la carpeta compartida.
+// En el mockup los archivos viven en memoria; en la app real se guardan en Storage.
 export function DocumentosProyecto() {
   const proyecto = useStore((s) => s.proyectoActual);
   const documentos = useStore((s) => s.documentos);

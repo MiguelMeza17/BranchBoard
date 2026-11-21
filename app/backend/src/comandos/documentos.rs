@@ -1,5 +1,5 @@
 //! Comandos Tauri para gestionar documentos del proyecto (#120). Los archivos van a Supabase Storage si
-//! el proyecto ya está en el servidor (#242); si no, a la carpeta compartida (se quita en #244).
+//! el proyecto ya está en el servidor (#242); si no, pide vincularlo primero (#244).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,7 +20,7 @@ use crate::supabase::{ClienteSupabase, Entorno};
 /// Carpeta local (de este equipo) donde se guardan los documentos bajados del servidor para abrirlos.
 const CACHE_DOCUMENTOS: &str = "documentos-servidor";
 
-/// Id del proyecto en el servidor, si ya está vinculado (#240). Sin él se usa la carpeta compartida.
+/// Id del proyecto en el servidor, si ya está vinculado (#240). Sin él no se pueden guardar ni abrir archivos.
 pub(crate) fn proyecto_en_servidor(estado: &AppState) -> Resultado<Option<String>> {
     let id = estado.con_db(|db| configuracion::leer(db.conexion(), CLAVE_PROYECTO_SERVIDOR))?;
     Ok(id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))

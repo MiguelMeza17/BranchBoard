@@ -80,8 +80,8 @@ interface Conversacion {
 }
 
 // Chat del proyecto: el grupo general (todo el equipo, con el nombre del proyecto) siempre existe y va
-// arriba; debajo los grupos que cree el equipo y los privados. Sin servidor: en la app real cada mensaje viaja como un evento por la carpeta compartida
-// (llega cuando sincroniza Drive/OneDrive, con la app abierta).
+// arriba; debajo los grupos que cree el equipo y los privados. En la app real cada mensaje viaja como un evento por el servidor
+// mediante la bandeja de salida y la recepción, con la app abierta.
 export function Chat() {
   const { email: param } = useParams();
   const navigate = useNavigate();

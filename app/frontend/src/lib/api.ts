@@ -521,25 +521,7 @@ export const api = {
     llamar<string | null>('elegir_carpeta_nueva', { titulo, nombre }, () => null),
   elegirArchivos: (titulo?: string) => llamar<string[] | null>('elegir_archivos', { titulo }, () => null),
 
-  /**
-   * Carpeta compartida del proyecto abierto (Drive/OneDrive) en esta máquina, donde viven los eventos de
-   * `ops/`; `null` si todavía no se configuró. En el mockup responde `mockup()`.
-   */
-  carpetaCompartida: (mockup: () => string | null) =>
-    llamar<string | null>('carpeta_compartida', undefined, mockup),
-
-  /**
-   * Guarda la carpeta compartida del proyecto abierto en esta máquina y responde la ruta completa guardada.
-   * El backend exige que sea la de este proyecto (archivo `branchboard-proyecto.json`); si la carpeta no
-   * tiene esa marca, solo el Administrador la puede dejar como la del proyecto.
-   */
-  configurarCarpetaCompartida: (ruta: string, mockup: () => string) =>
-    llamar<string>('configurar_carpeta_compartida', { ruta }, mockup),
-
-  /**
-   * Escanea `ops/` y aplica los cambios de las demás máquinas (#92). En el mockup no hay otras máquinas:
-   * responde que no llegó nada.
-   */
+  /** Recibe los eventos del servidor y los aplica a la base local. */
   sincronizarEventos: () =>
     llamar<ResumenSincronizacion>('sincronizar_eventos', undefined, () => ({
       aplicados: 0,
@@ -1006,7 +988,7 @@ export const api = {
   eliminarChat: (conversacion: string, mockup?: () => void) =>
     llamar<void>('eliminar_chat', { conversacion }, mockup ?? (() => undefined)),
 
-  /** Documentos del proyecto en la carpeta compartida (#120). */
+  /** Documentos del proyecto en Storage (#242). */
   listarDocumentos: (mockup?: () => Documento[]) =>
     llamar<Documento[]>('listar_documentos', undefined, mockup ?? (() => [])),
 

@@ -316,7 +316,7 @@ pub fn carpeta_abierta(estado: &AppState) -> Resultado<PathBuf> {
         .filter(|p| datos.file_name().is_some_and(|n| n == CARPETA_DATOS) && p.join(ARCHIVO_MARCA).is_file())
         .ok_or_else(|| {
             Error::Validacion(
-                "Solo se pueden exportar los proyectos sin Unity VC: los de Unity VC ya están en su repositorio y en la carpeta compartida."
+                "Solo se pueden exportar los proyectos locales. Exportar desde el servidor todavía no está disponible."
                     .into(),
             )
         })?;
