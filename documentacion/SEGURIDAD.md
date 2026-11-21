@@ -39,13 +39,24 @@
   - Líder: solo da Desarrollador, Tester o Colaborador externo, y solo a gente que tiene uno de esos roles (o a alguien nuevo); solo quita Desarrolladores y Colaboradores externos. Igual que `roles_asignables` y `puede_eliminar` de la app.
   - **Nunca se puede quitar ni degradar al último Administrador** de un proyecto.
   - Cualquiera puede salirse de un proyecto (salvo el último Administrador).
-- Probado con 42 casos contra el proyecto de pruebas (ver BACKEND.md → Reglas RLS y funciones de roles).
+- Probado con 42 casos contra el proyecto de pruebas (ver BACKEND.md → Reglas RLS y funciones de roles); con los de #247 (eventos según el rol, abajo) son 63.
 
 **Login con Unity VC y primer Administrador (#237)**: las Edge Functions `login-unity` y `vincular-repo-unity` no le creen a la app. Con el token de Unity que reciben, le preguntan al servidor de Unity VC el correo de la cuenta y el `owner` del repo; solo hablan con servidores `https://*.plasticscm.com`. El token no se guarda ni se registra. Las funciones SQL que usan (`cuenta_por_correo`, `vincular_repo_unity`) solo las ejecuta `service_role`: nadie con sesión normal puede preguntar si un correo tiene cuenta ni darse Administrador de un repo. Si ya había una cuenta **sin confirmar** con ese correo, se confirma y se le cambia la contraseña por una aleatoria, para que quien la registró sin ser dueño del correo no entre con ella. Detalle en BACKEND.md → Login con Unity VC y primer Administrador.
 
 **Quién se lo puede saltar**: el **dueño de la cuenta de Supabase** (panel, clave secreta, contraseña de Postgres). Es el nuevo ancla de confianza en lugar de `admin.key` (decisión 2 y 3 de #231); riesgo aceptado.
 
-**Pendiente**: hoy, cualquier miembro puede insertar eventos de cualquier tipo (p. ej. aprobar una tarea siendo Desarrollador). Qué eventos valida el servidor según el rol se decide en #247.
+**Eventos según el rol (#247, decidido 2026-11-20)**: una app modificada podría insertar en `eventos` acciones que su rol no permite. Por eso el servidor revisa el **tipo** del evento contra la tabla `privado.permisos_evento` (migración `20261121020000_permisos_evento.sql`), copiada de `identidad/permisos.rs`. La regla de inserción de `eventos` agrega: si el tipo está en la tabla, el rol de quien lo inserta tiene que estar en sus roles; si no está, lo inserta cualquier miembro.
+
+| Quién | Tipos de evento |
+|---|---|
+| Solo Administrador | `cerrar_sprint`, `actualizar_configuracion_proyecto` (renombrar, ajustes e imagen viajan con este tipo) |
+| Líder o Administrador | Tareas: `asignar_tarea`, `aprobar_tarea`, `aprobar_tareas`, `editar_y_aprobar_tarea`, `advertir_tarea_pendiente`, `eliminar_tarea`, `eliminar_definitivamente`. Ediciones: `aprobar_modificacion`, `aprobar_modificaciones`, `rechazar_modificacion`. Revisión: `asignar_revision`, `trasladar_cambios_directos`. Sprints: `crear_sprint`, `asignar_tarea_a_sprint`, `asignar_tarea_a_backlog`, `asignar_backlog_a_sprint`. Documentos: `aprobar_documento`, `eliminar_documento` |
+| Nadie (rechazados siempre) | `crear_usuario`, `cambiar_rol`, `confirmar_usuario`, `eliminar_usuario` (los roles van por las funciones de arriba) y `compactar_eventos` (con Supabase no hay compactación) |
+| Cualquier miembro | El resto, incluidos los automáticos que genera la app de cualquiera (`tarea_cerrada_por_deteccion`, `cerrar_sprint_automatico`, `reporte_sprint_fecha_fin`, `detectar_cambios_directos`, `agregar_cambios_directos`, `crear_en_espera`, `quitar_en_espera`, `crear_notificacion(es)`) |
+
+- **No cubre** (sigue en la app al aplicar el evento): reglas finas por persona o estado, como "solo el creador edita su tarea", "solo el revisor asignado autoriza el merge" o "el Líder reabre hasta 3 veces". Riesgo aceptado por ahora.
+- **Mantenimiento**: si se agrega un comando de Líder/Administrador que publica evento, se agrega su fila a `privado.permisos_evento` (en una migración nueva) y un caso en `supabase/tests/01_reglas.test.sql`.
+- La tabla está en `privado` y nadie con sesión la lee ni la escribe; la usa solo `privado.puede_publicar(proyecto, tipo)`, que da `false` (no `null`) si quien pregunta no tiene rol en el proyecto.
 
 ### Administrador
 - Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo

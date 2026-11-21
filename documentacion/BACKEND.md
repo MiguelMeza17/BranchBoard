@@ -181,15 +181,17 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 |---|---|
 | Leer proyectos, miembros, eventos y perfiles | `select` normal por la API de datos; solo devuelve lo de los proyectos de los que se es miembro |
 | Editar el propio nombre y apellido | `update perfiles set nombre, apellido` (el correo no) |
-| Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en` |
+| Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en`. Si el `tipo` está en `privado.permisos_evento` y el rol de quien lo manda no está en sus roles, se rechaza con `42501` (#247, tabla en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234)) |
 | Crear un proyecto sin Unity VC | `rpc/crear_proyecto(p_nombre)` → id; quien lo crea queda Administrador |
 | Agregar a alguien con cuenta | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` |
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
 | Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
 
-Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
+**Para la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red; reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). La bandeja no debe quedarse atascada reintentándolo.
 
-**Pruebas de las reglas** (`supabase/tests/01_reglas.test.sql`, 42 casos): crean cuentas, proyectos y eventos de mentira dentro de una transacción que se deshace al final, así que no dejan nada en la base. No usan `supabase test db` (necesita Docker) sino la CLI v3:
+Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`, `puede_publicar`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
+
+**Pruebas de las reglas** (`supabase/tests/01_reglas.test.sql`, 63 casos; 21 de ellos de eventos según el rol, #247): crean cuentas, proyectos y eventos de mentira dentro de una transacción que se deshace al final, así que no dejan nada en la base. No usan `supabase test db` (necesita Docker) sino la CLI v3:
 
 ```
 npx supabase@3 db query --remote --yes --file supabase/tests/01_reglas.test.sql
