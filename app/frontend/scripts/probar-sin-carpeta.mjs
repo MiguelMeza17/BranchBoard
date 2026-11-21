@@ -86,7 +86,7 @@ try {
 
   await evaluar(`location.hash='#/ajustes';`);
   await esperar(`document.querySelector('h1')?.textContent==='Ajustes'`);
-  for (const rol of ['Administrador', 'Líder', 'Desarrollador', 'Tester']) {
+  for (const rol of ['Administrador', 'Líder', 'Desarrollador', 'Tester', 'Colaborador externo']) {
     await evaluar(`
       const email=__prueba244.store.getState().currentEmail;
       __prueba244.store.setState({usuarios:[{email,nombre:'Prueba',apellido:'244',rol:${JSON.stringify(rol)},fecha_alta:''}]});
@@ -101,7 +101,7 @@ try {
   await esperar(`document.body.textContent.includes('Exportar .bbproyecto')`);
   const retirados = await evaluar(`return __prueba244.comandos.filter(c=>c==='carpeta_compartida'||c==='configurar_carpeta_compartida');`);
   assert.deepEqual(retirados, []);
-  console.log('OK Tauri: Ajustes sin carpeta en cuatro roles y exportación local conservada; cero comandos retirados');
+  console.log('OK Tauri: Ajustes sin carpeta en cinco roles y exportación local conservada; cero comandos retirados');
 } finally {
   void evaluar(`await window.__TAURI_INTERNALS__.invoke('terminar_prueba');`).catch(() => {});
   await new Promise((resolve) => setTimeout(resolve, 1000));
