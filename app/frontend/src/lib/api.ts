@@ -61,6 +61,8 @@ export const EVENTO_BANDEJA_SALIDA = 'bandeja-salida';
 export interface EstadoBandeja {
   pendientes: number;
   subidos: number;
+  /** Cambios que el servidor rechazó (p. ej. sin permiso por el rol) y quedaron apartados. */
+  rechazados: number;
   /** Por qué quedaron pendientes (sin internet, sin sesión…). */
   error: string | null;
 }
