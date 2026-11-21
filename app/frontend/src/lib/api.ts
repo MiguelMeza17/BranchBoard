@@ -149,7 +149,7 @@ export interface ProgresoActualizacion {
 }
 
 /** Versión que muestra el mockup en el navegador. */
-const VERSION_MOCKUP = '0.1.0';
+const VERSION_MOCKUP = '0.1.1';
 
 /** Resultado de un escaneo de `ops/` (`sincronizar_eventos`). */
 export interface ResumenSincronizacion {
