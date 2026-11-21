@@ -27,6 +27,14 @@ end;
 $$;
 grant execute on function pg_temp.intentar(text) to authenticated, anon;
 
+-- Inserta un evento de `tipo` en el proyecto P con el rol actual (#247) y devuelve 'ok' o el código de error.
+create function pg_temp.publicar(p_id text, p_tipo text) returns text language sql as $$
+    select pg_temp.intentar(format(
+        'insert into public.eventos (id, proyecto_id, tipo) values (%L, %L, %L)',
+        p_id, (select valor from _o where clave = 'p'), p_tipo));
+$$;
+grant execute on function pg_temp.publicar(text, text) to authenticated;
+
 -- Cuentas de mentira (el trigger de #233 les crea el perfil).
 insert into auth.users (id, email, raw_user_meta_data, aud, role) values
     ('a0000000-0000-4000-8000-000000000001', 'a@prueba.branchboard', '{"nombre":"Ana","apellido":"Admin"}', 'authenticated', 'authenticated'),
@@ -70,6 +78,7 @@ insert into _o values ('c_se_agrega_a_p', pg_temp.intentar(format(
     $q$select public.agregar_miembro(%L, 'c@prueba.branchboard', 'Administrador')$q$, (select valor from _o where clave = 'p'))));
 insert into _o values ('c_inserta_evento_en_p', pg_temp.intentar(format(
     $q$insert into public.eventos (id, proyecto_id, tipo) values ('ev-c', %L, 'crear_tarea')$q$, (select valor from _o where clave = 'p'))));
+insert into _o values ('c_puede_publicar_aprobar_en_p', (select privado.puede_publicar(valor::uuid, 'aprobar_tarea')::text from _o where clave = 'p'));
 
 -- ---------------------------------------------------------------- B (Desarrollador de P)
 select set_config('request.jwt.claims', '{"sub":"b0000000-0000-4000-8000-000000000002","role":"authenticated"}', true);
@@ -92,6 +101,14 @@ insert into _o values ('b_inserta_en_q', pg_temp.intentar(format(
 insert into _o values ('b_edita_evento', pg_temp.intentar($q$update public.eventos set tipo = 'otro' where id = 'ev-b'$q$));
 insert into _o values ('b_borra_evento', pg_temp.intentar($q$delete from public.eventos where id = 'ev-b'$q$));
 insert into _o values ('b_ve_eventos_de_p', (select count(*)::text from public.eventos where proyecto_id = (select valor::uuid from _o where clave = 'p')));
+-- Eventos según el rol (#247): B es Desarrollador.
+insert into _o values ('b_publica_aprobar_tarea', pg_temp.publicar('ev-b-apr', 'aprobar_tarea'));
+insert into _o values ('b_publica_cerrar_sprint', pg_temp.publicar('ev-b-cs', 'cerrar_sprint'));
+insert into _o values ('b_publica_cambiar_rol', pg_temp.publicar('ev-b-rol', 'cambiar_rol'));
+insert into _o values ('b_publica_editar_tarea', pg_temp.publicar('ev-b-ed', 'editar_tarea'));
+insert into _o values ('b_publica_cierre_por_deteccion', pg_temp.publicar('ev-b-det', 'tarea_cerrada_por_deteccion'));
+insert into _o values ('b_publica_cierre_automatico', pg_temp.publicar('ev-b-csa', 'cerrar_sprint_automatico'));
+insert into _o values ('b_lee_permisos_evento', pg_temp.intentar('select * from privado.permisos_evento'));
 insert into _o values ('b_ve_perfiles', (select count(*)::text from public.perfiles where correo like '%@prueba.branchboard'));
 insert into _o values ('b_edita_su_nombre', pg_temp.intentar($q$update public.perfiles set nombre = 'Beto B' where id = 'b0000000-0000-4000-8000-000000000002'$q$));
 insert into _o values ('b_edita_su_correo', pg_temp.intentar($q$update public.perfiles set correo = 'x@x.x' where id = 'b0000000-0000-4000-8000-000000000002'$q$));
@@ -110,13 +127,27 @@ insert into _o values ('l_quita_tester', pg_temp.intentar(format(
     $q$select public.quitar_miembro(%L, 'c0000000-0000-4000-8000-000000000003')$q$, (select valor from _o where clave = 'p'))));
 insert into _o values ('l_cambia_b_a_tester', pg_temp.intentar(format(
     $q$select public.cambiar_rol(%L, 'b0000000-0000-4000-8000-000000000002', 'Tester')$q$, (select valor from _o where clave = 'p'))));
+-- Eventos según el rol (#247): L es Líder.
+insert into _o values ('l_publica_aprobar_tarea', pg_temp.publicar('ev-l-apr', 'aprobar_tarea'));
+insert into _o values ('l_publica_crear_sprint', pg_temp.publicar('ev-l-sp', 'crear_sprint'));
+insert into _o values ('l_publica_eliminar_documento', pg_temp.publicar('ev-l-doc', 'eliminar_documento'));
+insert into _o values ('l_publica_cerrar_sprint', pg_temp.publicar('ev-l-cs', 'cerrar_sprint'));
+insert into _o values ('l_publica_configuracion', pg_temp.publicar('ev-l-cfg', 'actualizar_configuracion_proyecto'));
+insert into _o values ('l_publica_confirmar_usuario', pg_temp.publicar('ev-l-conf', 'confirmar_usuario'));
 
 -- ---------------------------------------------------------------- C ya es Tester de P: ahora ve B
 select set_config('request.jwt.claims', '{"sub":"c0000000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 insert into _o values ('c_ve_perfil_de_b_tras_unirse', (select count(*)::text from public.perfiles where id = 'b0000000-0000-4000-8000-000000000002'));
+insert into _o values ('c_tester_publica_aprobar_tarea', pg_temp.publicar('ev-c-apr', 'aprobar_tarea'));
 
 -- ---------------------------------------------------------------- A nombra a L Administradora y se degrada
 select set_config('request.jwt.claims', '{"sub":"a0000000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+-- Eventos según el rol (#247): A todavía es Administrador.
+insert into _o values ('a_publica_cerrar_sprint', pg_temp.publicar('ev-a-cs', 'cerrar_sprint'));
+insert into _o values ('a_publica_configuracion', pg_temp.publicar('ev-a-cfg', 'actualizar_configuracion_proyecto'));
+insert into _o values ('a_publica_cambiar_rol', pg_temp.publicar('ev-a-rol', 'cambiar_rol'));
+insert into _o values ('a_publica_crear_usuario', pg_temp.publicar('ev-a-usr', 'crear_usuario'));
+insert into _o values ('a_publica_compactar', pg_temp.publicar('ev-a-comp', 'compactar_eventos'));
 insert into _o values ('a_nombra_admin_a_l', pg_temp.intentar(format(
     $q$select public.cambiar_rol(%L, 'd0000000-0000-4000-8000-000000000004', 'Administrador')$q$, (select valor from _o where clave = 'p'))));
 insert into _o values ('a_se_degrada_con_otro_admin', pg_temp.intentar(format(
@@ -179,6 +210,30 @@ insert into _r (linea) select is(pg_temp.o('c_ve_perfil_de_b_tras_unirse'), '1',
 insert into _r (linea) select is(pg_temp.o('a_nombra_admin_a_l'), 'ok', 'un Administrador nombra a otro Administrador (decisión 5 de #231)');
 insert into _r (linea) select is(pg_temp.o('a_se_degrada_con_otro_admin'), 'ok', 'con otro Administrador, uno se puede degradar');
 insert into _r (linea) select is(pg_temp.o('l_se_quita_siendo_ultima_admin'), 'P0001', 'la nueva última Administradora tampoco se puede quitar');
+-- Eventos según el rol (#247)
+insert into _r (linea) select is(
+    (select count(*)::int from privado.permisos_evento), 25,
+    'la tabla de permisos tiene los 25 tipos de la decisión de #247');
+insert into _r (linea) select is(pg_temp.o('b_lee_permisos_evento'), '42501', 'nadie con sesión lee la tabla de permisos');
+insert into _r (linea) select is(pg_temp.o('c_puede_publicar_aprobar_en_p'), 'false', 'quien no es miembro no tiene rol para un tipo restringido (false, no null)');
+insert into _r (linea) select is(pg_temp.o('b_publica_aprobar_tarea'), '42501', 'un Desarrollador no puede insertar un evento de aprobación');
+insert into _r (linea) select is(pg_temp.o('b_publica_cerrar_sprint'), '42501', 'un Desarrollador no cierra sprints');
+insert into _r (linea) select is(pg_temp.o('b_publica_cambiar_rol'), '42501', 'un Desarrollador no inserta cambiar_rol');
+insert into _r (linea) select is(pg_temp.o('b_publica_editar_tarea'), 'ok', 'un tipo que no está en la tabla lo inserta cualquier miembro');
+insert into _r (linea) select is(pg_temp.o('b_publica_cierre_por_deteccion'), 'ok', 'los automáticos (tarea_cerrada_por_deteccion) los inserta cualquier miembro');
+insert into _r (linea) select is(pg_temp.o('b_publica_cierre_automatico'), 'ok', 'cerrar_sprint_automatico lo inserta cualquier miembro');
+insert into _r (linea) select is(pg_temp.o('l_publica_aprobar_tarea'), 'ok', 'el Líder aprueba tareas');
+insert into _r (linea) select is(pg_temp.o('l_publica_crear_sprint'), 'ok', 'el Líder crea sprints');
+insert into _r (linea) select is(pg_temp.o('l_publica_eliminar_documento'), 'ok', 'el Líder elimina documentos');
+insert into _r (linea) select is(pg_temp.o('l_publica_cerrar_sprint'), '42501', 'el Líder no cierra sprints (solo Administrador)');
+insert into _r (linea) select is(pg_temp.o('l_publica_configuracion'), '42501', 'el Líder no cambia la configuración del proyecto');
+insert into _r (linea) select is(pg_temp.o('l_publica_confirmar_usuario'), '42501', 'confirmar_usuario se rechaza siempre');
+insert into _r (linea) select is(pg_temp.o('c_tester_publica_aprobar_tarea'), '42501', 'un Tester no puede insertar un evento de aprobación');
+insert into _r (linea) select is(pg_temp.o('a_publica_cerrar_sprint'), 'ok', 'el Administrador cierra sprints');
+insert into _r (linea) select is(pg_temp.o('a_publica_configuracion'), 'ok', 'el Administrador cambia la configuración del proyecto');
+insert into _r (linea) select is(pg_temp.o('a_publica_cambiar_rol'), '42501', 'ni el Administrador inserta cambiar_rol (los roles van por funciones)');
+insert into _r (linea) select is(pg_temp.o('a_publica_crear_usuario'), '42501', 'crear_usuario se rechaza siempre');
+insert into _r (linea) select is(pg_temp.o('a_publica_compactar'), '42501', 'compactar_eventos se rechaza siempre (sin compactación con Supabase)');
 insert into _r (linea) select is(pg_temp.o('anon_lee_proyectos'), '42501', 'sin sesión no se leen proyectos');
 insert into _r (linea) select is(pg_temp.o('anon_lee_eventos'), '42501', 'sin sesión no se leen eventos');
 insert into _r (linea) select is(pg_temp.o('anon_crea_proyecto'), '42501', 'sin sesión no se crean proyectos');
