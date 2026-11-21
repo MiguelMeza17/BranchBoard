@@ -476,6 +476,12 @@ export const api = {
   /** Abre el proyecto local de `carpeta` (si tiene la marca de BranchBoard) con su contraseña. */
   abrirProyectoLocal: (carpeta: string, clave: string, mockup: () => EntradaProyecto) =>
     llamar<EntradaProyecto>('abrir_proyecto_local', { carpeta, clave }, mockup),
+  /** Crea un proyecto sin Unity VC en el servidor (la cuenta queda Administradora) y lo abre (#240). */
+  crearProyectoServidor: (nombre: string, mockup: () => EntradaProyecto) =>
+    llamar<EntradaProyecto>('crear_proyecto_servidor', { nombre }, mockup),
+  /** Abre un proyecto del servidor de la cuenta; en una PC sin sus datos los crea (#240). */
+  abrirProyectoServidor: (id: string, mockup: () => EntradaProyecto) =>
+    llamar<EntradaProyecto>('abrir_proyecto_servidor', { id }, mockup),
   /** Proyectos locales que ya se abrieron en esta máquina ("Recientes"). */
   listarProyectosLocales: (mockup: () => ProyectoLocal[]) =>
     llamar<ProyectoLocal[]>('listar_proyectos_locales', undefined, mockup),
