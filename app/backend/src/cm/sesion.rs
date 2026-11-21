@@ -23,6 +23,9 @@ pub struct EstadoSesionUnityVc {
     pub activa: bool,
     pub email: Option<String>,
     pub abrio_asistente: bool,
+    /// Si se inició sesión con Unity pero no se pudo abrir la del servidor de BranchBoard (#237), por qué.
+    /// La sesión de Unity sigue sirviendo; lo que necesita el servidor espera.
+    pub aviso_servidor: Option<String>,
 }
 
 /// Resultado de intentar reconectar sesión y PAT con Unity VC (#124).
@@ -132,6 +135,7 @@ pub fn sesion_unity_vc(estado: &AppState) -> Resultado<EstadoSesionUnityVc> {
                 activa: true,
                 email: Some(email),
                 abrio_asistente: false,
+                aviso_servidor: None,
             })
         }
         Err(Error::SinSesionUnityVc) => {
@@ -140,6 +144,7 @@ pub fn sesion_unity_vc(estado: &AppState) -> Resultado<EstadoSesionUnityVc> {
                 activa: false,
                 email: None,
                 abrio_asistente: false,
+                aviso_servidor: None,
             })
         }
         Err(e) => Err(e),
@@ -155,12 +160,20 @@ pub fn iniciar_sesion_unity_vc(
     if !crate::cm::instalacion::estado_cm().instalado {
         return Err(Error::CmNoInstalado);
     }
-    iniciar_sesion_unity_vc_con(
+    let mut resultado = iniciar_sesion_unity_vc_con(
         forzar_nueva,
         || lectura::whoami(estado),
         || lanzar_plastic_configure(estado),
         |email| estado.fijar_usuario(email),
-    )
+    )?;
+    // Iniciar sesión con Unity = entrar a BranchBoard (#237): también la sesión del servidor. Si falla
+    // (sin internet, servidor pausado…), la de Unity sigue valiendo y se avisa.
+    if let Some(email) = resultado.email.as_deref() {
+        if let Err(e) = crate::supabase::login_unity::asegurar_sesion_servidor_del_equipo(email) {
+            resultado.aviso_servidor = Some(e.to_string());
+        }
+    }
+    Ok(resultado)
 }
 
 /// Inicio de sesión de Unity por el navegador (no abre Plastic SCM). La sesión queda guardada donde la
@@ -195,6 +208,7 @@ pub fn iniciar_sesion_unity_vc_con(
                     activa: true,
                     email: Some(email),
                     abrio_asistente: false,
+                    aviso_servidor: None,
                 });
             }
             Err(Error::SinSesionUnityVc) => {}
@@ -210,6 +224,7 @@ pub fn iniciar_sesion_unity_vc_con(
                 activa: true,
                 email: Some(email),
                 abrio_asistente: true,
+                aviso_servidor: None,
             })
         }
         Err(Error::SinSesionUnityVc) => {

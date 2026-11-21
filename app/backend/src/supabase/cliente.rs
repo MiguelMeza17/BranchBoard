@@ -76,6 +76,23 @@ struct UsuarioAuth {
     email: Option<String>,
 }
 
+/// Respuesta de la Edge Function `login-unity` (#237).
+#[derive(Deserialize)]
+struct RespuestaLoginUnity {
+    access_token: String,
+    refresh_token: String,
+    expires_in: i64,
+    #[serde(default)]
+    expires_at: Option<i64>,
+    usuario: UsuarioLoginUnity,
+}
+
+#[derive(Deserialize)]
+struct UsuarioLoginUnity {
+    id: String,
+    correo: String,
+}
+
 fn sesion_desde(r: RespuestaToken, ahora: i64) -> Sesion {
     Sesion {
         expira_en: r.expires_at.unwrap_or(ahora + r.expires_in),
@@ -143,6 +160,40 @@ impl<L: Llavero> ClienteSupabase<L> {
             );
         let token: RespuestaToken = leer_json(respuesta, error_auth)?;
         let sesion = sesion_desde(token, Utc::now().timestamp());
+        self.guardar(&sesion)?;
+        Ok(sesion)
+    }
+
+    /// "Iniciar sesión con Unity VC" (#237): la Edge Function `login-unity` le pregunta a Unity VC de quién
+    /// es `token_unity` y devuelve la sesión de esa cuenta (la misma si el correo ya tenía cuenta). Se
+    /// guarda en el llavero igual que la de correo y contraseña. `servidor` es el `webserver` de `org`.
+    pub fn iniciar_sesion_con_unity(
+        &self,
+        token_unity: &str,
+        org: &str,
+        servidor: &str,
+    ) -> Resultado<Sesion> {
+        let respuesta = self
+            .agente
+            .post(&self.url("/functions/v1/login-unity"))
+            .set("apikey", self.proyecto.clave_publica)
+            .send_json(
+                serde_json::json!({ "token": token_unity, "org": org, "servidor": servidor }),
+            );
+        let r: RespuestaLoginUnity = leer_json(respuesta, error_funcion)?;
+        let sesion = sesion_desde(
+            RespuestaToken {
+                access_token: r.access_token,
+                refresh_token: r.refresh_token,
+                expires_in: r.expires_in,
+                expires_at: r.expires_at,
+                user: UsuarioAuth {
+                    id: r.usuario.id,
+                    email: Some(r.usuario.correo),
+                },
+            },
+            Utc::now().timestamp(),
+        );
         self.guardar(&sesion)?;
         Ok(sesion)
     }
@@ -280,6 +331,18 @@ fn error_auth(status: u16, cuerpo: &str) -> Error {
     }
 }
 
+/// Errores de nuestras Edge Functions (`{"error":"…"}` con el mensaje en español, #237).
+fn error_funcion(status: u16, cuerpo: &str) -> Error {
+    let json: Value = serde_json::from_str(cuerpo).unwrap_or(Value::Null);
+    let mensaje = campo(&json, "error").unwrap_or("sin detalle");
+    match status {
+        // Unity VC rechazó el token: hay que volver a iniciar sesión con Unity.
+        401 => Error::SesionUnityVcCaducada,
+        400 | 403 | 404 | 409 => Error::Validacion(mensaje.to_string()),
+        _ => Error::Servidor(format!("HTTP {status}: {mensaje}")),
+    }
+}
+
 /// Errores de la API de datos (`{"code":"…","message":"…"}`).
 fn error_datos(status: u16, cuerpo: &str) -> Error {
     let json: Value = serde_json::from_str(cuerpo).unwrap_or(Value::Null);
@@ -414,6 +477,22 @@ mod tests {
         assert_eq!(e.to_string(), "Confirma tu correo antes de iniciar sesión.");
         assert_eq!(error_auth(429, "").codigo(), "validacion");
         assert_eq!(error_auth(500, r#"{"msg":"boom"}"#).codigo(), "servidor");
+    }
+
+    #[test]
+    fn errores_de_las_edge_functions() {
+        assert!(matches!(
+            error_funcion(401, r#"{"error":"La sesión de Unity VC no es válida"}"#),
+            Error::SesionUnityVcCaducada
+        ));
+        match error_funcion(409, r#"{"error":"Ese repositorio ya está en BranchBoard"}"#) {
+            Error::Validacion(m) => assert_eq!(m, "Ese repositorio ya está en BranchBoard"),
+            otro => panic!("{otro:?}"),
+        }
+        assert!(matches!(
+            error_funcion(502, r#"{"error":"No se pudo hablar con Unity VC"}"#),
+            Error::Servidor(m) if m.starts_with("HTTP 502")
+        ));
     }
 
     #[test]

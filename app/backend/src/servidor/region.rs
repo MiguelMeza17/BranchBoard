@@ -19,10 +19,14 @@ use crate::servidor::nombre_organizacion;
 /// `https://…:7178/api/v1/organizations/<org>` para la organización `org`
 /// (acepta `org`, `org@unity` u `org@cloud`).
 pub fn url_api(org: &str) -> Resultado<String> {
+    Ok(armar_url_api(&webserver(org)?, org))
+}
+
+/// `https://…:7178`, el servidor de la región de `org` (lo pide la Edge Function `login-unity`, #237).
+pub fn webserver(org: &str) -> Resultado<String> {
     let ruta = ruta_cloudregions().ok_or_else(sin_region)?;
     let texto = std::fs::read_to_string(&ruta).map_err(|_| sin_region())?;
-    let base = interpretar_regiones(&texto, org).ok_or_else(sin_region)?;
-    Ok(armar_url_api(&base, org))
+    interpretar_regiones(&texto, org).ok_or_else(sin_region)
 }
 
 /// Lista las organizaciones presentes en `%LOCALAPPDATA%\plastic4\cloudregions.conf` (#124).
