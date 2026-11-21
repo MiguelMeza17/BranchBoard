@@ -170,7 +170,9 @@ Lo que ya existe (2026-11-14) y las reglas que se siguen al agregar algo nuevo:
 
 | Prueba vigente | Qué comprueba |
 |---|---|
-| `supabase::storage::tests::entorno_real_storage_documentos_e_imagen` | Contra **branchboard-pruebas**, con `BB_PRUEBA_SUPABASE_CLAVE` y tres cuentas de prueba: documentos, imagen, permisos, aislamiento y renovación de sesión. Sustituye las pruebas antiguas por carpeta de #120 y #127 |
+| `supabase::storage::tests::entorno_real_storage_documentos_e_imagen` | Contra **branchboard-pruebas**, con `BB_PRUEBA_SUPABASE_CLAVE` y tres cuentas de prueba: documentos, imagen, permisos, aislamiento, renovación de sesión y revocación de acceso tras quitar al miembro (incluida una descarga antes permitida). Sustituye las pruebas antiguas por carpeta de #120 y #127 |
 | `eventos::recepcion::tests::entorno_real_dos_pcs_reciben_lo_del_otro` | Dos bases locales intercambian cambios mediante el servidor real; descarga incremental, identidad y ausencia de duplicados (#239) |
 | `eventos::bandeja::tests::entorno_real_sin_red_esperan_y_al_volver_se_suben` | Los eventos esperan sin red y se suben al recuperarla, sin duplicados (#238) |
 | `eventos::bandeja::tests::entorno_real_un_rechazado_por_el_servidor_no_frena_a_los_demas` | Un evento rechazado no bloquea los demás en la bandeja (#238) |
+
+**Interfaz #244**: `examples/probar_sin_carpeta_244.rs` + `scripts/probar-sin-carpeta.mjs` ejecutan el acceso por IPC real en una WebView oculta y comprueban Ajustes en cuatro roles sin carpeta compartida. La carpeta `BB244_DATOS` debe ser nueva y estar fuera del repositorio. Ver instrucciones en BACKEND.md.

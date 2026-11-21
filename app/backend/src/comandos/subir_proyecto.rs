@@ -303,6 +303,15 @@ mod tests {
         for (email, rol) in equipo {
             usuarios::insertar(c, &usuario(email, *rol)).unwrap();
         }
+        // Este fixture representa un proyecto anterior a #244. La app nueva solo lee esta
+        // configuración para migrarlo; ya no existe un comando para crearla.
+        let compartida = carpeta.join("compartida-anterior");
+        std::fs::create_dir_all(&compartida).unwrap();
+        std::fs::write(
+            carpeta.join(eventos::ARCHIVO_LOCAL),
+            serde_json::json!({ "carpeta_compartida": compartida }).to_string(),
+        )
+        .unwrap();
         estado.cerrar_proyecto();
         estado.fijar_usuario(Some(admin));
         estado.abrir_proyecto(db);

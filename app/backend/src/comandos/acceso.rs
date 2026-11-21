@@ -521,6 +521,16 @@ mod tests {
             .unwrap();
 
         let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let estaba_en_servidor = buscar_en_servidor(
+                &estado,
+                &ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema),
+                &RepoUnityVc {
+                    repo: repo.clone(),
+                    org: org.clone(),
+                },
+                &whoami(&estado).unwrap(),
+            )
+            .is_some();
             let primera = entrar_en(&estado, datos.path(), ws.path()).unwrap();
             println!(
                 "primera vez: {}",
@@ -532,9 +542,9 @@ mod tests {
                 primera,
                 Entrada::Dentro {
                     rol: Rol::Administrador,
-                    configurado_ahora: true,
+                    configurado_ahora,
                     ..
-                }
+                } if configurado_ahora != estaba_en_servidor
             ));
             // Con el proyecto abierto, los comandos del Administrador ya pasan el chequeo de rol.
             assert!(estado.exigir_permiso("listar_usuarios").is_ok());

@@ -210,7 +210,15 @@ impl<'a, L: Llavero> Storage<'a, L> {
 
     /// Baja el archivo de `ruta`.
     pub fn bajar(&self, ruta: &str) -> Resultado<Vec<u8>> {
-        self.con_sesion(|s| leer(self.peticion("GET", ruta, s).call()))
+        // Storage puede servir desde la CDN un archivo recién borrado o un permiso anterior.
+        // Cada descarga debe comprobar el estado y los permisos actuales en el origen.
+        self.con_sesion(|s| {
+            leer(
+                self.peticion("GET", ruta, s)
+                    .query("cacheNonce", &crate::eventos::uuid())
+                    .call(),
+            )
+        })
     }
 
     /// Borra el archivo de `ruta`. Storage responde 200 aunque las reglas no dejen borrar (no hay fila
@@ -469,6 +477,23 @@ mod tests {
                 .unwrap()
                 .access_token
                 .ends_with(".firmaFalsa"));
+
+            // N3 (#244): retirar a B revoca también una descarga que antes pudo hacer.
+            assert_eq!(sb.bajar(&doc).unwrap(), b"GDD de prueba");
+            a.llamar(
+                "POST",
+                "/rest/v1/rpc/quitar_miembro",
+                Some(&serde_json::json!({
+                    "p_proyecto": p,
+                    "p_usuario": b.sesion_guardada().unwrap().unwrap().usuario_id,
+                })),
+            )
+            .unwrap();
+            assert!(matches!(
+                sb.bajar(&doc),
+                Err(Error::NoEncontrado(_) | Error::SinPermiso)
+            ));
+            assert!(matches!(sb.subir(&icono_b, b"png"), Err(Error::SinPermiso)));
 
             // A borra; ya no está.
             sa.borrar(&doc).unwrap();

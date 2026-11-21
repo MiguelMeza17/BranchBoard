@@ -1145,10 +1145,26 @@ Grupo/__DELETED__Sub|MiguelM17@unity
                 Entrada::Dentro {
                     rol: crate::modelo::Rol::Administrador,
                     rol_verificado: true,
-                    configurado_ahora: true,
                     ..
                 }
             ));
+            if matches!(
+                traido.entrada,
+                Entrada::Dentro {
+                    configurado_ahora: false,
+                    ..
+                }
+            ) {
+                // En una PC nueva, un proyecto que ya existe en el servidor se abre con
+                // sus miembros; no se configura de nuevo como si fuera un proyecto vacío.
+                assert!(estado
+                    .con_db(|db| crate::db::configuracion::leer(
+                        db.conexion(),
+                        crate::db::configuracion::CLAVE_PROYECTO_SERVIDOR,
+                    ))
+                    .unwrap()
+                    .is_some());
+            }
             // Si ya tiene `.db` en esta máquina, rechaza traerlo otra vez.
             assert!(
                 traer_proyecto_en(&estado, datos_traer.path(), Path::new(&clonado.ruta)).is_err()

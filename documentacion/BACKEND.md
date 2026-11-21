@@ -240,6 +240,8 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 | Token con la firma dañada | `{"statusCode":"404","error":"Bucket not found","message":"Bucket not found","code":"NoSuchBucket"}` (**no** da 401) | `SinSesionServidor` → renovar y repetir |
 | Borrar sin permiso | `200 []` (no borró nada) | `SinPermiso` (se revisa que la lista no venga vacía) |
 
+- **Descargas actualizadas (#244)**: cada GET lleva un `cacheNonce` único para comprobar el estado y los permisos en el origen. En la prueba real, la CDN devolvía contenido después del borrado; con este cambio el borrado y la retirada de un miembro se verifican en la siguiente descarga. Ver [caché de Storage](https://supabase.com/docs/guides/storage/cdn/smart-cdn).
+
 - **Pruebas**:
   - 5 unitarias en `supabase::storage` y 2 en `documentos` con un Storage en memoria (subir/abrir/eliminar, copia local sin red, más de 50 MB sin subir nada).
   - SQL, `supabase/tests/03_storage.test.sql` (27 casos): `npx supabase@3 db query --remote --yes --file supabase/tests/03_storage.test.sql`; `fallidas` tiene que ser 0. Usa `set local storage.allow_delete_query = 'true'` porque Supabase no deja borrar filas de `storage.objects` por SQL.
@@ -1392,3 +1394,7 @@ Cada fila de las tres secciones abre su detalle al hacer click, con **"Abrir en 
 | Ajustes → "Carpeta compartida" (`lib/api.ts`) | `carpeta_compartida` / `configurar_carpeta_compartida` (locales) / `compactar_eventos` | todos / todos / Administrador |
 
 Las acciones `setRolActual` ("Ver como"), `setEmail` y `toggleCmSesion` son **solo del mockup** (demo) y no tienen comando: en la app real el rol viene de la tabla `usuarios` firmada y la identidad de `cm whoami`.
+
+### Verificación de la retirada de carpetas (#244)
+
+`cargo run --example probar_sin_carpeta_244 --locked` abre una WebView oculta y crea un workspace propio de **BranchBoard-Pruebas**. Requiere `BB244_DATOS` con una carpeta nueva fuera del repositorio, Vite en `127.0.0.8:4300`, perfil WebView propio y `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9461`. Desde el frontend, `node scripts/probar-sin-carpeta.mjs` abre el workspace con el IPC real, comprueba entrada directa y Ajustes sin carpeta compartida para Administrador, Líder, Desarrollador y Tester, y conserva la opción de exportación local. Los otros paneles reciben datos controlados. El auxiliar elimina únicamente el registro de su workspace; conserva los archivos de evidencia.

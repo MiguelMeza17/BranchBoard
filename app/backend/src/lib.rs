@@ -7,8 +7,8 @@
 //! - `cm` — Unity Version Control (subproceso `cm`).
 //! - `ramas` — ramas de tareas y sus protecciones.
 //! - `servidor` — API REST del servidor de Unity VC (con PAT).
-//! - `eventos` — sincronización por `ops/`.
-//! - `identidad` — quién es el usuario, firmas y permisos.
+//! - `eventos` — bandeja de salida y recepción del servidor.
+//! - `identidad` — quién es el usuario, equipo y permisos.
 //! - `proyecto` — ajustes del proyecto entero: nombre, configuración e imagen.
 //! - `modelo` — tipos del dominio (roles, estados…), iguales a los del frontend.
 //! - `error` — error común `{ codigo, mensaje }`.
