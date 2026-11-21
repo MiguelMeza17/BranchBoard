@@ -132,6 +132,16 @@ pub struct ClienteSupabase<L: Llavero> {
 }
 
 impl<L: Llavero> ClienteSupabase<L> {
+    /// Aísla la caída de red a este cliente de pruebas, sin cambiar la conexión del equipo.
+    #[cfg(test)]
+    pub(crate) fn probar_sin_red(&mut self, sin_red: bool) {
+        let mut builder = ureq::AgentBuilder::new().timeout(TIEMPO_POR_PETICION);
+        if sin_red {
+            builder = builder.proxy(ureq::Proxy::new("http://127.0.0.1:1").unwrap());
+        }
+        self.agente = builder.build();
+    }
+
     pub fn new(proyecto: &'static ProyectoSupabase, llavero: L) -> Self {
         Self {
             proyecto,
@@ -310,6 +320,35 @@ impl<L: Llavero> ClienteSupabase<L> {
     /// reintenta una vez.
     pub fn llamar(&self, metodo: &str, ruta: &str, cuerpo: Option<&Value>) -> Resultado<Value> {
         self.llamar_prefiriendo(metodo, ruta, cuerpo, None)
+    }
+
+    /// Fija la identidad del alta incluso si se cambia de cuenta mientras la petición está en curso.
+    pub(crate) fn llamar_como(
+        &self,
+        usuario: &str,
+        metodo: &str,
+        ruta: &str,
+        cuerpo: Option<&Value>,
+    ) -> Resultado<Value> {
+        let sesion = self.sesion_vigente()?;
+        let comprobar = |s: &Sesion| {
+            if s.usuario_id == usuario {
+                Ok(())
+            } else {
+                Err(Error::Validacion(
+                    "Inicia sesión con la cuenta que creó este proyecto para subirlo.".into(),
+                ))
+            }
+        };
+        comprobar(&sesion)?;
+        match self.llamar_con(&sesion, metodo, ruta, cuerpo, None) {
+            Err(Error::SinSesionServidor) => {
+                let renovada = self.renovar(&sesion)?;
+                comprobar(&renovada)?;
+                self.llamar_con(&renovada, metodo, ruta, cuerpo, None)
+            }
+            otro => otro,
+        }
     }
 
     /// Sube eventos a la tabla `eventos` del servidor (#238). Los que ya estaban (mismo `id`) se ignoran,

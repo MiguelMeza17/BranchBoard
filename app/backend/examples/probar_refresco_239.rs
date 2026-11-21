@@ -162,6 +162,10 @@ fn preparar(datos: &Path) -> Resultado<(AppState, Ensayo)> {
     let proyecto = autor
         .con_db(|db| proyectos::proyecto_guardado(db.conexion()))?
         .ok_or_else(|| Error::Interno("proyecto sin vincular".into()))?;
+    branchboard_lib::proyecto_servidor::pendientes::subir(
+        |f| autor.con_db(|db| f(db.conexion())),
+        &a,
+    )?;
     miembros::agregar(&a, &proyecto, &correo_b, Rol::Administrador)?;
     let receptor = AppState::default();
     proyecto_servidor::abrir_en(&receptor, &datos.join("b"), &b, &proyecto)?;

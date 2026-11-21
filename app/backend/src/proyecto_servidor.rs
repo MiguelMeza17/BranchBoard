@@ -1,8 +1,8 @@
 //! Proyectos sin Unity VC en el servidor de Supabase (#240). Reemplazan, para lo nuevo, a los proyectos
 //! "por carpeta" de `proyecto_local` (que siguen abriéndose hasta que se suban, #245): nada va por Drive.
 //!
-//! - **Crear**: con la sesión de BranchBoard, `rpc/crear_proyecto(nombre)`; quien lo crea queda como
-//!   Administrador en el servidor (#234). Sin carpeta que elegir, sin contraseña, sin llaves.
+//! - **Crear**: con la sesión guardada, UUID definitivo y alta local durable (#269). Al recuperar
+//!   conexión, `rpc/crear_proyecto(nombre, id)` confirma al creador como Administrador antes de eventos.
 //! - **Datos locales**: `<datos de la app>/proyectos/servidor-<id>/`, con `proyecto_servidor_id`, el nombre
 //!   y la copia del equipo (`miembros`, #241). Así la bandeja (#238), la recepción (#239), Storage (#242)
 //!   y los roles por el servidor (#241) funcionan igual que en un proyecto de Unity VC.
@@ -12,6 +12,8 @@
 //!   privada** (`eventos-locales/`, dentro de los datos del proyecto), que no se sincroniza con nada.
 
 use std::path::{Path, PathBuf};
+
+pub mod pendientes;
 
 use crate::db::configuracion::{self, CLAVE_NOMBRE_PROYECTO, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::{carpeta_proyecto, usuarios, vistos, Db};
@@ -117,11 +119,24 @@ mod tests {
         let datos = tempfile::tempdir().unwrap();
         let db = preparar_con(
             datos.path(),
-            &[("ana@virustf.dev", Rol::Administrador), ("beto@virustf.dev", Rol::Tester)],
+            &[
+                ("ana@virustf.dev", Rol::Administrador),
+                ("beto@virustf.dev", Rol::Tester),
+            ],
         );
         let c = db.conexion();
-        assert_eq!(configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR).unwrap().as_deref(), Some(ID));
-        assert_eq!(configuracion::leer(c, CLAVE_NOMBRE_PROYECTO).unwrap().as_deref(), Some("Juego"));
+        assert_eq!(
+            configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR)
+                .unwrap()
+                .as_deref(),
+            Some(ID)
+        );
+        assert_eq!(
+            configuracion::leer(c, CLAVE_NOMBRE_PROYECTO)
+                .unwrap()
+                .as_deref(),
+            Some("Juego")
+        );
         let carpeta = carpeta_datos(datos.path(), ID).unwrap();
         assert!(carpeta.ends_with(format!("servidor-{ID}")));
         // `publicar` tiene dónde escribir, y es una carpeta local de este proyecto.
@@ -131,7 +146,11 @@ mod tests {
         );
         assert!(matches!(
             decidir(&db, "Beto@VirusTF.dev", false).unwrap(),
-            Entrada::Dentro { rol: Rol::Tester, rol_verificado: true, .. }
+            Entrada::Dentro {
+                rol: Rol::Tester,
+                rol_verificado: true,
+                ..
+            }
         ));
         assert!(matches!(
             decidir(&db, "nadie@virustf.dev", false).unwrap(),
@@ -152,18 +171,26 @@ mod tests {
     #[test]
     fn sin_red_se_abre_con_la_ultima_copia() {
         let datos = tempfile::tempdir().unwrap();
-        drop(preparar_con(datos.path(), &[("ana@virustf.dev", Rol::Administrador)]));
+        drop(preparar_con(
+            datos.path(),
+            &[("ana@virustf.dev", Rol::Administrador)],
+        ));
         let db = preparar(datos.path(), ID, "", "ana@virustf.dev", HOY, |_| {
             Err(Error::ServidorSinConexion)
         })
         .unwrap();
         assert!(matches!(
             decidir(&db, "ana@virustf.dev", false).unwrap(),
-            Entrada::Dentro { rol: Rol::Administrador, .. }
+            Entrada::Dentro {
+                rol: Rol::Administrador,
+                ..
+            }
         ));
         // Un nombre vacío no pisa el que ya tenía.
         assert_eq!(
-            configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO).unwrap().as_deref(),
+            configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO)
+                .unwrap()
+                .as_deref(),
             Some("Juego")
         );
     }

@@ -15,8 +15,8 @@ use crate::servidor::pat::Llavero;
 use crate::servidor::LlaveroSistema;
 use crate::supabase::{proyectos, ClienteSupabase, Entorno};
 
-/// `crear_proyecto_servidor(nombre)`: crea un proyecto sin Unity VC en el servidor, con la cuenta de la
-/// sesión como Administrador, y lo deja abierto. Libre: todavía no hay proyecto ni rol.
+/// `crear_proyecto_servidor(nombre)`: crea localmente con UUID definitivo y cuenta guardada como
+/// Administrador; el temporizador registra el proyecto antes de enviar eventos al recuperar la red.
 #[tauri::command]
 pub async fn crear_proyecto_servidor(
     app: AppHandle,
@@ -50,17 +50,14 @@ pub fn crear_en<L: Llavero>(
     if nombre.is_empty() {
         return Err(Error::Validacion("Escribe el nombre del proyecto.".into()));
     }
-    let sesion = cliente.sesion_vigente()?;
-    let id = cliente
-        .llamar(
-            "POST",
-            "/rest/v1/rpc/crear_proyecto",
-            Some(&serde_json::json!({ "p_nombre": nombre })),
-        )?
-        .as_str()
-        .map(String::from)
-        .ok_or_else(|| Error::Interno("crear_proyecto no devolvió el proyecto".into()))?;
-    abrir_con(estado, datos_app, cliente, &id, nombre, &sesion.correo, true)
+    let sesion = cliente.sesion_guardada()?.ok_or(Error::SinSesionServidor)?;
+    let db = proyecto_servidor::pendientes::crear(datos_app, nombre, &sesion)?;
+    let entrada = proyecto_servidor::decidir(&db, &sesion.correo, true)?;
+    estado.cerrar_proyecto();
+    estado.fijar_usuario(Some(&sesion.correo));
+    estado.abrir_proyecto(db);
+    estado.fijar_workspace(None, None);
+    Ok(entrada)
 }
 
 /// Lo mismo que [`abrir_proyecto_servidor`], sin Tauri.
@@ -72,13 +69,35 @@ pub fn abrir_en<L: Llavero>(
 ) -> Resultado<Entrada> {
     // La sesión guardada alcanza para saber quién es, también sin red.
     let sesion = cliente.sesion_guardada()?.ok_or(Error::SinSesionServidor)?;
+    if proyecto_servidor::pendientes::listar(datos_app, &sesion.usuario_id)?
+        .iter()
+        .any(|p| p.id == id)
+    {
+        let db = crate::db::Db::abrir(&proyecto_servidor::carpeta_datos(datos_app, id)?)?;
+        if proyecto_servidor::pendientes::leer(db.conexion())?.is_some() {
+            let entrada = proyecto_servidor::decidir(&db, &sesion.correo, false)?;
+            estado.cerrar_proyecto();
+            estado.fijar_usuario(Some(&sesion.correo));
+            estado.abrir_proyecto(db);
+            estado.fijar_workspace(None, None);
+            return Ok(entrada);
+        }
+    }
     // El nombre, del servidor si hay red; si no, el que ya tenía la base.
     let nombre = proyectos::listar_mios(cliente)
         .ok()
         .and_then(|l| l.into_iter().find(|p| p.id == id))
         .map(|p| p.nombre)
         .unwrap_or_default();
-    abrir_con(estado, datos_app, cliente, id, &nombre, &sesion.correo, false)
+    abrir_con(
+        estado,
+        datos_app,
+        cliente,
+        id,
+        &nombre,
+        &sesion.correo,
+        false,
+    )
 }
 
 fn abrir_con<L: Llavero>(
@@ -112,6 +131,222 @@ mod tests {
     use crate::tareas::{self, AutorTarea, DatosNuevaTarea};
     use std::cell::RefCell;
     use std::collections::HashMap;
+
+    #[test]
+    fn alta_offline_no_necesita_token_vigente_y_no_cambia_de_cuenta() {
+        use crate::proyecto_servidor::pendientes;
+        use crate::supabase::{entorno::PRUEBAS, Sesion};
+        let sesion = Sesion {
+            access_token: "solo-prueba".into(),
+            refresh_token: "solo-prueba".into(),
+            expira_en: 0,
+            usuario_id: "cuenta-a".into(),
+            correo: "ana@virustf.dev".into(),
+            nombre: "Ana".into(),
+            apellido: String::new(),
+        };
+        let llavero = LlaveroMemoria::default();
+        llavero
+            .guardar(
+                "supabase-branchboard-pruebas",
+                &serde_json::to_string(&sesion).unwrap(),
+            )
+            .unwrap();
+        let mut cliente = ClienteSupabase::new(&PRUEBAS, llavero);
+        cliente.probar_sin_red(true);
+        let datos = tempfile::tempdir().unwrap();
+        let estado = AppState::default();
+        crear_en(&estado, datos.path(), &cliente, "  Juego  ").unwrap();
+        let listado = pendientes::listar(datos.path(), &sesion.usuario_id).unwrap();
+        assert_eq!(listado.len(), 1);
+        assert_eq!(listado[0].nombre, "Juego");
+        let id = &listado[0].id;
+        assert_eq!(id.len(), 36);
+        assert_eq!(&id[14..15], "4");
+        estado.cerrar_proyecto();
+        abrir_en(&estado, datos.path(), &cliente, id).unwrap();
+        let otro = LlaveroMemoria::default();
+        let otra_sesion = Sesion {
+            usuario_id: "cuenta-b".into(),
+            ..sesion
+        };
+        otro.guardar(
+            "supabase-branchboard-pruebas",
+            &serde_json::to_string(&otra_sesion).unwrap(),
+        )
+        .unwrap();
+        let cliente_otro = ClienteSupabase::new(&PRUEBAS, otro);
+        assert!(matches!(
+            pendientes::subir(|f| estado.con_db(|db| f(db.conexion())), &cliente_otro),
+            Err(Error::Validacion(_))
+        ));
+        assert!(estado
+            .con_db(|db| pendientes::leer(db.conexion()))
+            .unwrap()
+            .is_some());
+        assert!(crear_en(&estado, datos.path(), &cliente, "  ").is_err());
+    }
+
+    /// Cuentas nuevas, llavero en memoria y caída de red solo en este cliente.
+    /// Conserva recursos remotos para inspección; no toca credenciales de la máquina.
+    #[test]
+    #[ignore = "requiere branchboard-pruebas"]
+    fn entorno_real_crear_sin_red_269() {
+        use crate::proyecto_servidor::pendientes;
+        use crate::supabase::entorno::PRUEBAS;
+        let hora = chrono::Utc::now().timestamp_millis();
+        let mut cliente = ClienteSupabase::new(&PRUEBAS, LlaveroMemoria::default());
+        let sesion = cliente
+            .registrar(
+                "Prueba",
+                "Offline",
+                &format!("offline-{hora}@prueba.branchboard"),
+                &format!("Prueba-269-{hora}-Aa!"),
+            )
+            .unwrap();
+        let estado = AppState::default();
+        let datos = tempfile::tempdir().unwrap();
+        cliente.probar_sin_red(true);
+        let entrada = crear_en(&estado, datos.path(), &cliente, "Proyecto sin red").unwrap();
+        assert!(matches!(
+            entrada,
+            Entrada::Dentro {
+                rol: Rol::Administrador,
+                ..
+            }
+        ));
+        let id = estado
+            .con_db(|db| proyectos::proyecto_guardado(db.conexion()))
+            .unwrap()
+            .unwrap();
+        let carpeta = proyecto_servidor::carpeta_datos(datos.path(), &id).unwrap();
+        let ops = crate::eventos::carpeta_ops(&carpeta).unwrap();
+        let autor = AutorTarea {
+            email: &sesion.correo,
+            rol: Rol::Administrador,
+        };
+        let tarea = estado
+            .con_db(|db| {
+                tareas::crear(
+                    db.conexion(),
+                    &ops,
+                    &autor,
+                    &DatosNuevaTarea {
+                        titulo: "Creada sin conexión".into(),
+                        detalles: "Historia conservada".into(),
+                        tipo: TipoTarea::Scripting,
+                        tarea_padre_id: None,
+                        sprint_id: None,
+                        backlog_id: None,
+                        con_fecha: false,
+                        fecha_limite: None,
+                    },
+                    &crate::modelo::ahora_iso(),
+                    &hoy_local(),
+                )
+            })
+            .unwrap();
+        let cantidad = estado
+            .con_db(|db| bandeja::pendientes(db.conexion()))
+            .unwrap();
+        assert!(cantidad > 0);
+        let sin_red = crate::comandos::eventos::subir_bandeja_con(&estado, &cliente).unwrap();
+        assert!(sin_red.error.is_some());
+        assert_eq!(sin_red.pendientes, cantidad + 1);
+        assert_eq!(sin_red.rechazados, 0);
+        assert_eq!(
+            estado
+                .con_db(|db| bandeja::pendientes(db.conexion()))
+                .unwrap(),
+            cantidad
+        );
+        estado.cerrar_proyecto();
+        assert_eq!(
+            pendientes::listar(datos.path(), &sesion.usuario_id).unwrap()[0].id,
+            id
+        );
+        assert!(pendientes::listar(datos.path(), "otra-cuenta")
+            .unwrap()
+            .is_empty());
+        abrir_en(&estado, datos.path(), &cliente, &id).unwrap();
+        assert_eq!(
+            estado
+                .con_db(|db| crate::db::tareas::listar(db.conexion()))
+                .unwrap()[0]
+                .id,
+            tarea.id
+        );
+        cliente.probar_sin_red(false);
+        // Simula una respuesta perdida: el servidor ya creó, pero SQLite sigue pendiente.
+        let respuesta = cliente
+            .llamar(
+                "POST",
+                "/rest/v1/rpc/crear_proyecto",
+                Some(&serde_json::json!({"p_nombre":"Proyecto sin red", "p_id":id})),
+            )
+            .unwrap();
+        assert_eq!(respuesta.as_str(), Some(id.as_str()));
+        let subida = crate::comandos::eventos::subir_bandeja_con(&estado, &cliente).unwrap();
+        assert_eq!(subida.error, None);
+        assert_eq!(subida.rechazados, 0);
+        assert_eq!(subida.pendientes, 0);
+        assert_eq!(subida.subidos, cantidad);
+        assert_eq!(
+            pendientes::listar(datos.path(), &sesion.usuario_id).unwrap()[0].id,
+            id
+        );
+        assert!(estado
+            .con_db(|db| pendientes::leer(db.conexion()))
+            .unwrap()
+            .is_none());
+        let otra_pc = AppState::default();
+        let otros_datos = tempfile::tempdir().unwrap();
+        abrir_en(&otra_pc, otros_datos.path(), &cliente, &id).unwrap();
+        let filas = cliente
+            .llamar("GET", &recepcion::ruta_eventos(&id, 0), None)
+            .and_then(recepcion::filas_desde_json)
+            .unwrap();
+        assert_eq!(filas.len() as u64, cantidad);
+        recepcion::bajar(
+            |f| otra_pc.con_db(|db| f(db.conexion())),
+            &id,
+            |desde| {
+                cliente
+                    .llamar("GET", &recepcion::ruta_eventos(&id, desde), None)
+                    .and_then(recepcion::filas_desde_json)
+            },
+            |ids| {
+                cliente
+                    .llamar("GET", &recepcion::ruta_perfiles(ids), None)
+                    .and_then(recepcion::correos_desde_json)
+            },
+        )
+        .unwrap();
+        otra_pc
+            .con_db(|db| {
+                recepcion::aplicar(
+                    db.conexion(),
+                    &id,
+                    None,
+                    chrono::Utc::now(),
+                    lectura::aplicar_evento,
+                    |_| Ok(false),
+                )
+            })
+            .unwrap();
+        let recibidas = otra_pc
+            .con_db(|db| crate::db::tareas::listar(db.conexion()))
+            .unwrap();
+        assert_eq!(recibidas.len(), 1);
+        assert_eq!(recibidas[0].id, tarea.id);
+        assert_eq!(recibidas[0].titulo, "Creada sin conexión");
+        assert!(proyectos::listar_mios(&cliente)
+            .unwrap()
+            .iter()
+            .any(|p| p.id == id));
+        cliente.cerrar_sesion().unwrap();
+        println!("#269 OK: crear offline, tarea durable, reabrir offline, reintentar alta y subir sin duplicados; proyecto {id} en branchboard-pruebas");
+    }
 
     #[derive(Default)]
     struct LlaveroMemoria(RefCell<HashMap<String, String>>);
@@ -158,7 +393,14 @@ mod tests {
             };
             self.estado
                 .con_db(|db| {
-                    tareas::crear(db.conexion(), &ops, &autor, &datos, &crate::modelo::ahora_iso(), &hoy_local())
+                    tareas::crear(
+                        db.conexion(),
+                        &ops,
+                        &autor,
+                        &datos,
+                        &crate::modelo::ahora_iso(),
+                        &hoy_local(),
+                    )
                 })
                 .unwrap()
                 .id
@@ -243,7 +485,9 @@ mod tests {
         let pc = |quien: &str, nombre: &str| {
             let correo = format!("sin-unity-{quien}-{hora}@prueba.branchboard");
             let cliente = ClienteSupabase::new(&PRUEBAS, LlaveroMemoria::default());
-            cliente.registrar(nombre, "Prueba", &correo, &clave).unwrap();
+            cliente
+                .registrar(nombre, "Prueba", &correo, &clave)
+                .unwrap();
             Pc {
                 estado: AppState::default(),
                 datos: tempfile::tempdir().unwrap(),
@@ -254,9 +498,22 @@ mod tests {
         let (a, b) = (pc("a", "Ana"), pc("b", "Beto"));
 
         // 1. A crea el proyecto y agrega a B.
-        let entrada = crear_en(&a.estado, a.datos.path(), &a.cliente, &format!("bb-prueba-240-{hora}")).unwrap();
+        let entrada = crear_en(
+            &a.estado,
+            a.datos.path(),
+            &a.cliente,
+            &format!("bb-prueba-240-{hora}"),
+        )
+        .unwrap();
         assert!(
-            matches!(entrada, Entrada::Dentro { rol: Rol::Administrador, configurado_ahora: true, .. }),
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Administrador,
+                    configurado_ahora: true,
+                    ..
+                }
+            ),
             "{entrada:?}"
         );
         let proyecto = a
@@ -264,7 +521,13 @@ mod tests {
             .con_db(|db| proyectos::proyecto_guardado(db.conexion()))
             .unwrap()
             .expect("vinculado");
-        crate::supabase::miembros::agregar(&a.cliente, &proyecto, &b.correo, Rol::Desarrollador).unwrap();
+        proyecto_servidor::pendientes::subir(
+            |f| a.estado.con_db(|db| f(db.conexion())),
+            &a.cliente,
+        )
+        .unwrap();
+        crate::supabase::miembros::agregar(&a.cliente, &proyecto, &b.correo, Rol::Desarrollador)
+            .unwrap();
 
         // 2. A crea una tarea y la sube.
         a.crear_tarea("De Ana");
@@ -273,7 +536,14 @@ mod tests {
         // 3. B abre desde el servidor en una PC sin datos y ve la tarea de A.
         let entrada = abrir_en(&b.estado, b.datos.path(), &b.cliente, &proyecto).unwrap();
         assert!(
-            matches!(entrada, Entrada::Dentro { rol: Rol::Desarrollador, configurado_ahora: false, .. }),
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Desarrollador,
+                    configurado_ahora: false,
+                    ..
+                }
+            ),
             "{entrada:?}"
         );
         assert_eq!(b.sincronizar(&proyecto), 1);
@@ -283,10 +553,15 @@ mod tests {
         b.crear_tarea("De Beto");
         b.sincronizar(&proyecto);
         assert_eq!(a.sincronizar(&proyecto), 1);
-        assert_eq!(a.titulos(), vec!["De Ana".to_string(), "De Beto".to_string()]);
+        assert_eq!(
+            a.titulos(),
+            vec!["De Ana".to_string(), "De Beto".to_string()]
+        );
 
         a.cliente.cerrar_sesion().unwrap();
         b.cliente.cerrar_sesion().unwrap();
-        println!("proyecto sin Unity VC sincronizado entre dos PCs: {proyecto} de branchboard-pruebas");
+        println!(
+            "proyecto sin Unity VC sincronizado entre dos PCs: {proyecto} de branchboard-pruebas"
+        );
     }
 }
