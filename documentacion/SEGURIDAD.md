@@ -28,6 +28,23 @@
 
 5 roles: Administrador, Líder, Desarrollador, **Tester** y **Colaborador externo** (nuevo 2026-11-07).
 
+### Reglas del servidor (Supabase, #234)
+
+**Nuevo (2026-11-20)** — con la migración a Supabase (#231, hoja de ruta #248) los roles los aplica **el servidor**, no solo la app (`supabase/migrations/20261121000000_reglas_rls_y_roles.sql` y `…000100_ajustes_seguridad.sql`):
+
+- **Leer**: un proyecto, sus miembros y sus eventos los ven solo sus miembros. Perfiles: el propio y los de quienes comparten algún proyecto contigo. **Sin sesión no se lee nada.**
+- **Eventos**: se insertan solo en proyectos donde eres miembro; **el autor y la hora los pone el servidor** (no se puede escribir a nombre de otro ni cambiar el orden). No se editan ni se borran.
+- **Roles**: viven en la tabla `miembros`, que **nadie escribe directo**; solo las funciones `crear_proyecto`, `agregar_miembro`, `cambiar_rol` y `quitar_miembro`, que revisan el rol de quien lo pide:
+  - Administrador: asigna cualquier rol, **incluido Administrador** (puede haber varios, decisión 5 de #231), y quita a cualquiera.
+  - Líder: solo da Desarrollador, Tester o Colaborador externo, y solo a gente que tiene uno de esos roles (o a alguien nuevo); solo quita Desarrolladores y Colaboradores externos. Igual que `roles_asignables` y `puede_eliminar` de la app.
+  - **Nunca se puede quitar ni degradar al último Administrador** de un proyecto.
+  - Cualquiera puede salirse de un proyecto (salvo el último Administrador).
+- Probado con 42 casos contra el proyecto de pruebas (ver BACKEND.md → Reglas RLS y funciones de roles).
+
+**Quién se lo puede saltar**: el **dueño de la cuenta de Supabase** (panel, clave secreta, contraseña de Postgres). Es el nuevo ancla de confianza en lugar de `admin.key` (decisión 2 y 3 de #231); riesgo aceptado.
+
+**Pendiente**: hoy, cualquier miembro puede insertar eventos de cualquier tipo (p. ej. aprobar una tarea siendo Desarrollador). Qué eventos valida el servidor según el rol se decide en #247.
+
 ### Administrador
 - Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo
 - Es el único que puede asignar el rol de **Líder** a otro usuario, o **degradarlo**/reasignar entre Desarrollador, Tester y Colaborador externo (`cambiar_rol`, que reemplaza a `ascender_a_lider`) — ver [BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes)

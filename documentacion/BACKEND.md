@@ -173,6 +173,30 @@ Migración `supabase/migrations/20261120230000_esquema_base.sql`:
 
 **Sin acceso hasta #234**: las cuatro tablas tienen RLS activado y **ninguna regla**, así que por la API (con la clave pública o con una sesión) no se puede leer ni escribir nada hasta que #234 agregue las reglas y funciones.
 
+### Reglas RLS y funciones de roles (#234)
+
+Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_seguridad.sql`. El detalle de quién puede qué está en [SEGURIDAD.md → Reglas del servidor](./SEGURIDAD.md#reglas-del-servidor-supabase-234). Lo que la app puede usar con su sesión (rol `authenticated`):
+
+| Qué | Cómo |
+|---|---|
+| Leer proyectos, miembros, eventos y perfiles | `select` normal por la API de datos; solo devuelve lo de los proyectos de los que se es miembro |
+| Editar el propio nombre y apellido | `update perfiles set nombre, apellido` (el correo no) |
+| Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en` |
+| Crear un proyecto sin Unity VC | `rpc/crear_proyecto(p_nombre)` → id; quien lo crea queda Administrador |
+| Agregar a alguien con cuenta | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` |
+| Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
+| Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
+
+Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
+
+**Pruebas de las reglas** (`supabase/tests/01_reglas.test.sql`, 42 casos): crean cuentas, proyectos y eventos de mentira dentro de una transacción que se deshace al final, así que no dejan nada en la base. No usan `supabase test db` (necesita Docker) sino la CLI v3:
+
+```
+npx supabase@3 db query --remote --yes --file supabase/tests/01_reglas.test.sql
+```
+
+Devuelve las líneas TAP y `fallidas` (tiene que ser 0). Con una expectativa cambiada a propósito sale `not ok`, así que las pruebas detectan errores. Además, `npx supabase@3 db advisors --linked --type security` revisa la seguridad: los únicos avisos que quedan son las 4 funciones `rpc/…` de arriba, a propósito (la app las llama con su sesión y cada una revisa el rol por dentro).
+
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
 Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` con datos que vienen del usuario (nombre de rama, justificación, descripción, comentarios de checkin/merge, etc.):
