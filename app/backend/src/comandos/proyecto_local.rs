@@ -63,11 +63,18 @@ pub async fn exportar_proyecto_local(
     estado: State<'_, AppState>,
 ) -> Resultado<Option<String>> {
     estado.exigir_permiso("exportar_proyecto_local")?;
-    let carpeta = proyecto_local::carpeta_abierta(&estado)?;
-    let nombre = carpeta
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
+    let en_servidor = estado
+        .con_db(|db| crate::supabase::proyectos::proyecto_guardado(db.conexion()))?
+        .is_some();
+    let nombre = estado
+        .con_db(|db| {
+            crate::db::configuracion::leer(
+                db.conexion(),
+                crate::db::configuracion::CLAVE_NOMBRE_PROYECTO,
+            )
+        })?
         .unwrap_or_else(|| "proyecto".into());
+    let nombre = proyecto_local::nombre_carpeta(&nombre).unwrap_or_else(|_| "proyecto".into());
     let Some(destino) = app
         .dialog()
         .file()
@@ -82,7 +89,14 @@ pub async fn exportar_proyecto_local(
         .into_path()
         .map_err(|e| Error::Archivos(e.to_string()))?;
     let _operacion = estado.iniciar_operacion();
-    proyecto_local::exportar(&estado, &ruta)?;
+    if en_servidor {
+        let entorno = crate::supabase::Entorno::actual().proyecto();
+        let cliente =
+            crate::supabase::ClienteSupabase::new(entorno, crate::servidor::LlaveroSistema);
+        crate::exportacion::exportar(&estado, &cliente, entorno, &ruta)?;
+    } else {
+        proyecto_local::exportar(&estado, &ruta)?;
+    }
     Ok(Some(ruta.to_string_lossy().to_string()))
 }
 

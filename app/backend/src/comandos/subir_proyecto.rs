@@ -170,7 +170,12 @@ pub fn subir_en<L: Llavero>(
 
     // 3. Documentos e imagen, de la carpeta compartida a Storage.
     let servidor = Storage::new(cliente, supabase);
-    if let Ok(docs) = eventos::carpeta_documentos(&carpeta) {
+    let documentos_locales = if crate::exportacion::es_recuperado(&carpeta) {
+        Some(carpeta.join(crate::exportacion::CACHE_DOCUMENTOS))
+    } else {
+        eventos::carpeta_documentos(&carpeta).ok()
+    };
+    if let Some(docs) = documentos_locales {
         let lista = estado.con_db(|db| db_documentos::listar(db.conexion()))?;
         for d in lista {
             let origen = docs.join(&d.ruta);
@@ -184,10 +189,12 @@ pub fn subir_en<L: Llavero>(
         }
     }
     let icono = estado.con_db(|db| configuracion::leer(db.conexion(), CLAVE_ICONO_PROYECTO))?;
-    if let (Some(icono), Ok(dir)) = (
-        icono.filter(|i| !i.is_empty()),
-        eventos::carpeta_imagen_proyecto(&carpeta),
-    ) {
+    let imagen_local = if crate::exportacion::es_recuperado(&carpeta) {
+        Some(carpeta.join(crate::exportacion::CACHE_IMAGEN))
+    } else {
+        eventos::carpeta_imagen_proyecto(&carpeta).ok()
+    };
+    if let (Some(icono), Some(dir)) = (icono.filter(|i| !i.is_empty()), imagen_local) {
         if let Ok(bytes) = std::fs::read(dir.join(&icono)) {
             let ruta = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &icono)?;
             subir_si_falta(&servidor, &ruta, &bytes)?;

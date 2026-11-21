@@ -27,6 +27,7 @@ pub mod entrantes;
 pub mod error;
 pub mod estado;
 pub mod eventos;
+pub mod exportacion;
 pub mod identidad;
 pub mod instalacion;
 pub mod modelo;
