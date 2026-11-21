@@ -363,7 +363,7 @@ export function CategoriaScrum() {
                               className="btn-primary btn-sm"
                               onClick={() => puedeAvanzar(t.id, 'terminada') && setPendingMove({ id: t.id, to: 'terminada' })}
                             >
-                              <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Autorizar (merge a dev)
+                              <Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Terminar (mergear a dev)
                             </button>
                           )}
                         </div>
