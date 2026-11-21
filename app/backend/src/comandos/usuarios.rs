@@ -14,19 +14,16 @@ use crate::estado::AppState;
 use crate::identidad::equipo::{self, UsuarioVisible};
 use crate::identidad::equipo_servidor::{self as servidor, EnSupabase};
 use crate::modelo::{hoy_local, Rol};
-use crate::servidor::pat::LlaveroSistema;
+use crate::servidor::pat::{Llavero, LlaveroSistema};
 use crate::supabase::{ClienteSupabase, Entorno};
 
 /// Con el proyecto en el servidor (#241), corre `f` con el equipo remoto y la función que guarda la copia
 /// local; si no, `None`. La red va fuera del bloqueo de la base.
-fn en_servidor<T>(
+fn en_servidor<T, L: Llavero>(
     estado: &AppState,
+    cliente: &ClienteSupabase<L>,
     comando: &str,
-    f: impl FnOnce(
-        &EnSupabase<'_, LlaveroSistema>,
-        &dyn Fn(&[Usuario]) -> Resultado<()>,
-        Rol,
-    ) -> Resultado<T>,
+    f: impl FnOnce(&EnSupabase<'_, L>, &dyn Fn(&[Usuario]) -> Resultado<()>, Rol) -> Resultado<T>,
 ) -> Option<Resultado<T>> {
     let proyecto = match proyecto_en_servidor(estado) {
         Ok(Some(p)) => p,
@@ -34,13 +31,21 @@ fn en_servidor<T>(
         Err(e) => return Some(Err(e)),
     };
     Some((|| {
-        let cliente = ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema);
         let remoto = EnSupabase {
-            cliente: &cliente,
+            cliente,
             proyecto: &proyecto,
         };
         let guardar = |filas: &[Usuario]| {
-            estado.con_db(|db| usuarios::reemplazar_todos(db.conexion(), filas))
+            estado.con_db(|db| {
+                if crate::supabase::proyectos::proyecto_guardado(db.conexion())?.as_deref()
+                    != Some(proyecto.as_str())
+                {
+                    return Err(Error::Validacion(
+                        "El proyecto abierto cambió durante la operación".into(),
+                    ));
+                }
+                usuarios::reemplazar_todos(db.conexion(), filas)
+            })
         };
         // Sin la copia local al día (primera vez en esta PC, o el rol cambió en el servidor) se rehace y
         // se vuelve a revisar una vez. El servidor igual revisa todo lo que se le pide.
@@ -65,32 +70,79 @@ fn solo_con_servidor() -> Error {
 /// Todos los del proyecto. Sin correos para quien no es Líder ni Administrador.
 #[tauri::command]
 pub fn listar_usuarios(estado: State<'_, AppState>) -> Resultado<Vec<UsuarioVisible>> {
-    if let Some(r) = en_servidor(&estado, "listar_usuarios", |remoto, guardar, rol| {
-        servidor::listar(
-            remoto,
-            guardar,
-            || estado.con_db(|db| equipo::listar(db.conexion(), rol)),
-            rol,
-        )
-    }) {
+    listar_en(
+        &estado,
+        &ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema),
+    )
+}
+
+pub fn listar_en<L: Llavero>(
+    estado: &AppState,
+    cliente: &ClienteSupabase<L>,
+) -> Resultado<Vec<UsuarioVisible>> {
+    if let Some(r) = en_servidor(
+        estado,
+        cliente,
+        "listar_usuarios",
+        |remoto, guardar, rol| {
+            servidor::listar(
+                remoto,
+                guardar,
+                || {
+                    // El refresco puede haber cambiado el rol propio o quitado nuestra membresía.
+                    let yo = estado.exigir_permiso("listar_usuarios")?;
+                    estado.con_db(|db| equipo::listar_para(db.conexion(), yo.rol, Some(&yo.email)))
+                },
+                rol,
+            )
+        },
+    ) {
         return r;
     }
     let yo = estado.exigir_permiso("listar_usuarios")?;
-    estado.con_db(|db| equipo::listar(db.conexion(), yo.rol))
+    estado.con_db(|db| equipo::listar_para(db.conexion(), yo.rol, Some(&yo.email)))
 }
 
 #[tauri::command]
 pub fn crear_usuario(estado: State<'_, AppState>, email: String, rol: Rol) -> Resultado<Usuario> {
-    en_servidor(&estado, "crear_usuario", |remoto, guardar, _| {
-        servidor::crear(remoto, guardar, &email, rol, &hoy_local())
+    crear_en(
+        &estado,
+        &ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema),
+        &email,
+        rol,
+    )
+}
+
+pub fn crear_en<L: Llavero>(
+    estado: &AppState,
+    cliente: &ClienteSupabase<L>,
+    email: &str,
+    rol: Rol,
+) -> Resultado<Usuario> {
+    en_servidor(estado, cliente, "crear_usuario", |remoto, guardar, _| {
+        servidor::crear(remoto, guardar, email, rol, &hoy_local())
     })
     .unwrap_or_else(|| Err(solo_con_servidor()))
 }
 
 #[tauri::command]
 pub fn cambiar_rol(estado: State<'_, AppState>, email: String, rol: Rol) -> Resultado<()> {
-    en_servidor(&estado, "cambiar_rol", |remoto, guardar, _| {
-        servidor::cambiar_rol(remoto, guardar, &email, rol)
+    cambiar_rol_en(
+        &estado,
+        &ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema),
+        &email,
+        rol,
+    )
+}
+
+pub fn cambiar_rol_en<L: Llavero>(
+    estado: &AppState,
+    cliente: &ClienteSupabase<L>,
+    email: &str,
+    rol: Rol,
+) -> Resultado<()> {
+    en_servidor(estado, cliente, "cambiar_rol", |remoto, guardar, _| {
+        servidor::cambiar_rol(remoto, guardar, email, rol)
     })
     .unwrap_or_else(|| Err(solo_con_servidor()))
 }
@@ -98,8 +150,20 @@ pub fn cambiar_rol(estado: State<'_, AppState>, email: String, rol: Rol) -> Resu
 /// Lo quita del proyecto (pierde el acceso de inmediato) o cancela su invitación.
 #[tauri::command]
 pub fn eliminar_usuario(estado: State<'_, AppState>, email: String) -> Resultado<()> {
-    en_servidor(&estado, "eliminar_usuario", |remoto, guardar, _| {
-        servidor::eliminar(remoto, guardar, &email)
+    eliminar_en(
+        &estado,
+        &ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema),
+        &email,
+    )
+}
+
+pub fn eliminar_en<L: Llavero>(
+    estado: &AppState,
+    cliente: &ClienteSupabase<L>,
+    email: &str,
+) -> Resultado<()> {
+    en_servidor(estado, cliente, "eliminar_usuario", |remoto, guardar, _| {
+        servidor::eliminar(remoto, guardar, email)
     })
     .unwrap_or_else(|| Err(solo_con_servidor()))
 }

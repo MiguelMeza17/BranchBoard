@@ -25,6 +25,7 @@ import type {
   Rol,
   Sprint,
   Tarea,
+  Usuario,
   TipoTarea,
   /** Mismos tipos del frontend (`WorkspaceUnityVC`, #125). */
   WorkspaceUnityVC,
@@ -76,6 +77,12 @@ export interface EstadoBandeja {
   error: string | null;
   /** El proyecto de Supabase está pausado (plan gratis, una semana sin uso; #246). */
   servidor_pausado: boolean;
+}
+
+/** Lista de Usuarios: solo Líder/Administrador reciben correos ajenos. */
+export interface UsuarioVisible extends Omit<Usuario, 'email'> {
+  email: string | null;
+  propio: boolean;
 }
 
 /** Códigos de error del backend (`app/backend/src/error.rs`). */
@@ -428,6 +435,10 @@ export function unoPorRepo<T extends { repo: string; nombre: string }>(lista: T[
 const cuentasMockup = new Map<string, { cuenta: Cuenta; clave: string }>();
 
 export const api = {
+  listarUsuarios: (mockup: () => UsuarioVisible[]) => llamar<UsuarioVisible[]>('listar_usuarios', undefined, mockup),
+  crearUsuario: (email: string, rol: Rol) => llamar<Usuario>('crear_usuario', { email, rol }, () => { throw new Error('Solo en la app de escritorio'); }),
+  cambiarRol: (email: string, rol: Rol) => llamar<void>('cambiar_rol', { email, rol }, () => undefined),
+  eliminarUsuario: (email: string) => llamar<void>('eliminar_usuario', { email }, () => undefined),
   eliminarProyecto: (confirmacion: string, mockup: () => { repo: string; nombre: string }) =>
     llamar<{ repo: string; nombre: string }>('eliminar_proyecto', { confirmacion }, mockup),
   diffRama: (tareaId: string) => llamar<Diferencias>('diff_rama', { tareaId }, diffEjemplo),

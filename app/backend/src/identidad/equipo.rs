@@ -58,6 +58,8 @@ pub fn puede_eliminar(actor: Rol, objetivo: Rol) -> bool {
 /// Una fila de la pantalla Usuarios. Sin correo para quien no es Líder ni Administrador.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct UsuarioVisible {
+    /// Identifica la fila propia sin revelar los correos de otras personas.
+    pub propio: bool,
     pub email: Option<String>,
     pub nombre: String,
     pub apellido: String,
@@ -70,10 +72,19 @@ pub struct UsuarioVisible {
 
 /// `listar_usuarios`: todos los roles; solo Líder y Administrador ven correos.
 pub fn listar(c: &Connection, rol_de_quien_pide: Rol) -> Resultado<Vec<UsuarioVisible>> {
+    listar_para(c, rol_de_quien_pide, None)
+}
+
+pub fn listar_para(
+    c: &Connection,
+    rol_de_quien_pide: Rol,
+    actual: Option<&str>,
+) -> Resultado<Vec<UsuarioVisible>> {
     let ve_correos = rol_de_quien_pide.es_lider_o_admin();
     Ok(usuarios::listar(c)?
         .into_iter()
         .map(|u| UsuarioVisible {
+            propio: actual.is_some_and(|email| crate::modelo::normalizar_email(email) == u.email),
             email: ve_correos.then(|| u.email.clone()),
             nombre: u.nombre,
             apellido: u.apellido,

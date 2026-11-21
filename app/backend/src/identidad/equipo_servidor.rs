@@ -64,6 +64,7 @@ fn visible_invitacion(i: &Invitacion) -> UsuarioVisible {
     let email = normalizar_email(&i.correo);
     let (nombre, apellido) = nombre_desde_email(&email);
     UsuarioVisible {
+        propio: false,
         email: Some(email),
         nombre,
         apellido,
@@ -87,7 +88,12 @@ pub fn listar(
         Err(e) => return Err(e),
     };
     let mut filas = listar_local()?;
-    if rol_de_quien_pide.es_lider_o_admin() {
+    let rol_actual = filas
+        .iter()
+        .find(|u| u.propio)
+        .map(|u| u.rol)
+        .unwrap_or(rol_de_quien_pide);
+    if rol_actual.es_lider_o_admin() {
         if let Some(e) = equipo {
             filas.extend(e.invitaciones.iter().map(visible_invitacion));
         }
@@ -333,6 +339,18 @@ mod tests {
         let inv = lista.iter().find(|u| u.invitado).unwrap();
         assert_eq!(inv.email.as_deref(), Some("nuevo@virustf.dev"));
         assert_eq!(inv.rol, Rol::Tester);
+
+        // Una copia previa de Administrador no permite mostrar invitaciones tras actualizar el rol.
+        let actualizada = listar(
+            &remoto,
+            guardar,
+            || equipo::listar_para(c, Rol::Desarrollador, Some(BETO)),
+            Rol::Administrador,
+        )
+        .unwrap();
+        assert_eq!(actualizada.len(), 2);
+        assert!(actualizada.iter().all(|u| u.email.is_none() && !u.invitado));
+        assert_eq!(actualizada.iter().filter(|u| u.propio).count(), 1);
 
         // Un Desarrollador no ve invitados ni correos.
         let dev = Falso::nuevo(Rol::Desarrollador);

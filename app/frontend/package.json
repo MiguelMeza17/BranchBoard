@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:sesion": "node scripts/probar-sesion.mjs",
+    "test:usuarios": "node scripts/probar-usuarios.mjs",
     "tauri": "cd ../backend && tauri"
   },
   "dependencies": {
