@@ -35,6 +35,16 @@ pub enum Error {
     /// El token de acceso (PAT) ya no sirve: venció o se revocó (HTTP 401).
     #[error("El token de acceso de Unity VC ya no es válido")]
     TokenServidorInvalido,
+    /// No hay sesión de BranchBoard en el servidor (Supabase), o ya no se puede renovar.
+    #[error("Inicia sesión en BranchBoard")]
+    SinSesionServidor,
+    /// No se pudo llegar al servidor (sin internet, o el proyecto de Supabase pausado). Lo hecho se guarda
+    /// en este equipo y se envía cuando vuelva la conexión.
+    #[error("No hay conexión con el servidor de BranchBoard")]
+    ServidorSinConexion,
+    /// El servidor de BranchBoard (Supabase) respondió con un error inesperado.
+    #[error("El servidor de BranchBoard respondió con un error: {0}")]
+    Servidor(String),
     /// Falló SQLite.
     #[error("Error de la base de datos: {0}")]
     BaseDatos(String),
@@ -65,6 +75,9 @@ impl Error {
             Error::Cm(_) => "cm",
             Error::ServidorUnityVc(_) => "servidor_unity_vc",
             Error::TokenServidorInvalido => "token_servidor_invalido",
+            Error::SinSesionServidor => "sin_sesion_servidor",
+            Error::ServidorSinConexion => "servidor_sin_conexion",
+            Error::Servidor(_) => "servidor",
             Error::BaseDatos(_) => "base_datos",
             Error::Archivos(_) => "archivos",
             Error::LlaveCifrada => "llave_cifrada",
