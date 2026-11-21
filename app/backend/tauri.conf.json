@@ -23,7 +23,8 @@
         "height": 800,
         "minWidth": 960,
         "minHeight": 600,
-        "backgroundColor": "#0e1016"
+        "backgroundColor": "#0e1016",
+        "zoomHotkeysEnabled": true
       }
     ],
     "security": {

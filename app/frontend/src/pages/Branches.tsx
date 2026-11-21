@@ -149,8 +149,19 @@ function FlechaEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, ta
     // Sale por adelante y entra por la izquierda: va RECTA a la altura del padre (por su propia
     // fila, donde no hay otras ramas) y gira hacia la hija solo en el último tramo, que está
     // libre gracias a las columnas parejas por nivel.
-    const giro = Math.max(sourceX, baseX - 60);
-    path = `M ${sourceX},${sourceY} L ${giro},${sourceY} C ${giro + 30},${sourceY} ${giro + 30},${baseY} ${baseX},${baseY}`;
+    // Hermanas que salen del mismo punto comparten un tronco vertical en `giro` y cada una entra
+    // en horizontal a su altura: no se montan entre sí ni pasan por la punta de otra flecha.
+    const giro = Math.max(sourceX + 16, baseX - 40);
+    const bajada = baseY - sourceY;
+    if (Math.abs(bajada) < 1) {
+      path = `M ${sourceX},${sourceY} L ${baseX},${baseY}`;
+    } else {
+      const s = Math.sign(bajada);
+      const r = Math.max(0, Math.min(14, Math.abs(bajada) / 2, giro - sourceX, baseX - giro));
+      path =
+        `M ${sourceX},${sourceY} L ${giro - r},${sourceY} Q ${giro},${sourceY} ${giro},${sourceY + s * r} ` +
+        `L ${giro},${baseY - s * r} Q ${giro},${baseY} ${giro + r},${baseY} L ${baseX},${baseY}`;
+    }
   } else {
     [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX: baseX, targetY: baseY, targetPosition });
   }
@@ -605,7 +616,8 @@ export function Branches() {
     // Ramas de dev: una columna adelante de dev (dev centrado entre ellas, ver DEV_Y), en vez de
     // alargarse hacia la derecha. La columna empieza ADELANTO después del borde derecho de dev,
     // para que las curvas tengan espacio. Flechas por adelante, con triángulo hacia la hija.
-    const columnaX = devX + anchoCabeza + ADELANTO;
+    // + el margen del panel y su punto de salida sobre el borde (ver salidaDePanel).
+    const columnaX = devX + anchoCabeza + MARGEN_GRUPO + PUNTO + ADELANTO;
     const xMerge = (i: number) => DEV_CONTENIDO_X + (i + 1) * PUNTO_X; // +1: el primero es el dev inicial
 
     // --- Árbol compacto (que parezca árbol y no escoba) ---
@@ -626,7 +638,7 @@ export function Branches() {
       }
       const x = contenidoX + (cerrados.has(t.id) ? 0 : n) * PUNTO_X;
       // panel: margen arriba y abajo, más el nombre que asoma por el borde superior
-      return { derecha: x + anchoRama(t.id) + MARGEN_GRUPO, alto: ALTO_RAMA + 2 * MARGEN_GRUPO + 10 };
+      return { derecha: x + anchoRama(t.id) + MARGEN_GRUPO + PUNTO, alto: ALTO_RAMA + 2 * MARGEN_GRUPO + 10 };
     };
     const seCruzan = (a: Caja, b: Caja) => a.x0 < b.x1 + 12 && b.x0 < a.x1 + 12;
     // Cuánto bajar "nuevo" para que no toque nada de "puestas" (separación mínima GAP_VERTICAL).
