@@ -25,6 +25,8 @@ use crate::error::{Error, Resultado};
 use crate::servidor::pat::Llavero;
 
 const TIEMPO_POR_PETICION: Duration = Duration::from_secs(20);
+/// Código propio de Supabase para "project paused" (docs: Troubleshooting → HTTP status codes, 54X).
+const HTTP_PROYECTO_PAUSADO: u16 = 540;
 /// La sesión se renueva si le queda menos que esto (segundos).
 const MARGEN_RENOVAR: i64 = 60;
 
@@ -280,6 +282,8 @@ impl<L: Llavero> ClienteSupabase<L> {
                 Ok(nueva)
             }
             Err(Error::ServidorSinConexion) => Err(Error::ServidorSinConexion),
+            // Pausado no es "sesión inválida": la sesión sirve cuando lo reactiven (#246).
+            Err(Error::ServidorPausado) => Err(Error::ServidorPausado),
             Err(Error::Servidor(m)) if m.starts_with("HTTP 5") => Err(Error::Servidor(m)),
             Err(_) => {
                 self.llavero.borrar(&self.cuenta_llavero())?;
@@ -378,6 +382,8 @@ fn leer_json<T: serde::de::DeserializeOwned>(
             serde_json::from_str(texto)
                 .map_err(|_| Error::Servidor("respuesta que la app no entiende".into()))
         }
+        // Código propio de Supabase: el proyecto está pausado (#246). Vale para Auth, datos y funciones.
+        Err(ureq::Error::Status(HTTP_PROYECTO_PAUSADO, _)) => Err(Error::ServidorPausado),
         Err(ureq::Error::Status(status, r)) => {
             let cuerpo = r.into_string().unwrap_or_default();
             Err(mapear(status, &cuerpo))
@@ -613,6 +619,105 @@ mod tests {
             "validacion"
         );
         assert_eq!(error_auth(500, r#"{"msg":"boom"}"#).codigo(), "servidor");
+    }
+
+    /// Servidor HTTP local que a todo responde `540` (lo que contesta Supabase con el proyecto pausado).
+    /// Devuelve un proyecto que apunta a él y cuántas peticiones recibió.
+    fn servidor_pausado() -> (
+        &'static ProyectoSupabase,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let escucha = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto = escucha.local_addr().unwrap().port();
+        let peticiones = std::sync::Arc::new(AtomicUsize::new(0));
+        let contador = peticiones.clone();
+        std::thread::spawn(move || {
+            for conexion in escucha.incoming() {
+                let Ok(mut c) = conexion else { continue };
+                // Lee la petición entera (cabeceras + cuerpo) antes de responder: si se cierra antes,
+                // el cliente lo vería como "sin conexión".
+                let mut leido = Vec::new();
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = c.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    leido.extend_from_slice(&buf[..n]);
+                    let texto = String::from_utf8_lossy(&leido).to_lowercase();
+                    if let Some(fin) = texto.find("\r\n\r\n") {
+                        let largo = texto[..fin]
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if leido.len() >= fin + 4 + largo {
+                            break;
+                        }
+                    }
+                }
+                contador.fetch_add(1, Ordering::SeqCst);
+                let _ = c.write_all(
+                    b"HTTP/1.1 540 Project Paused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        let url: &'static str = Box::leak(format!("http://127.0.0.1:{puerto}").into_boxed_str());
+        let proyecto = Box::leak(Box::new(ProyectoSupabase {
+            nombre: "branchboard-pausado",
+            url,
+            clave_publica: "sb_publishable_prueba",
+        }));
+        (proyecto, peticiones)
+    }
+
+    #[test]
+    fn con_el_proyecto_pausado_se_avisa_y_la_sesion_no_se_pierde() {
+        let (proyecto, peticiones) = servidor_pausado();
+        let cliente = ClienteSupabase::new(proyecto, LlaveroMemoria::default());
+        // Una sesión guardada por vencer: llamar intenta renovarla primero.
+        let vieja = sesion(Utc::now().timestamp() + 10);
+        cliente.guardar(&vieja).unwrap();
+
+        assert!(matches!(
+            cliente.llamar("GET", "/rest/v1/proyectos", None),
+            Err(Error::ServidorPausado)
+        ));
+        assert!(matches!(
+            cliente.renovar(&vieja),
+            Err(Error::ServidorPausado)
+        ));
+        assert_eq!(
+            cliente.sesion_guardada().unwrap(),
+            Some(vieja.clone()),
+            "pausado no es sesión inválida: no se borra"
+        );
+        assert!(matches!(
+            cliente.iniciar_sesion("ana@virustf.dev", "clave"),
+            Err(Error::ServidorPausado)
+        ));
+        assert!(matches!(
+            cliente.iniciar_sesion_con_unity("TOKENx", "Org", "https://x.plasticscm.com"),
+            Err(Error::ServidorPausado)
+        ));
+
+        // Con sesión vigente, subir eventos también lo detecta.
+        cliente
+            .guardar(&sesion(Utc::now().timestamp() + 3600))
+            .unwrap();
+        assert!(matches!(
+            cliente.insertar_eventos(&serde_json::json!([])),
+            Err(Error::ServidorPausado)
+        ));
+        assert!(peticiones.load(std::sync::atomic::Ordering::SeqCst) >= 5);
+    }
+
+    #[test]
+    fn el_error_de_pausado_tiene_su_codigo_y_dice_que_hacer() {
+        let json = serde_json::to_value(Error::ServidorPausado).unwrap();
+        assert_eq!(json["codigo"], "servidor_pausado");
+        assert!(json["mensaje"].as_str().unwrap().contains("reactive"));
     }
 
     #[test]

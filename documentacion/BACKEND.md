@@ -333,6 +333,33 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
   - Real, `supabase::storage::…::entorno_real_storage_documentos_e_imagen`, por la API HTTP: necesita las cuentas confirmadas `storage-a|b|c@prueba.branchboard` con la clave de `BB_PRUEBA_SUPABASE_CLAVE`. Se crean como la de [Cliente de Supabase](#cliente-de-supabase-235) (las tres en un `insert … select … from unnest(array['a','b','c'])`) y se borran al terminar: `delete from public.proyectos where nombre = 'bb-prueba-242'` y `delete from auth.users where email like 'storage-_@prueba.branchboard'`. La prueba borra sus archivos.
   - **Falta**: probarlo de punta a punta en la app con un proyecto vinculado (depende de #240).
 
+### Proyecto pausado y copias de seguridad (#246)
+
+**Nuevo (2026-11-21)** — el plan gratis de Supabase **pausa el proyecto tras una semana sin actividad en la base** y **no tiene copias de seguridad automáticas**. Los planes de pago no se pausan ([Project Pausing](https://supabase.com/docs/guides/platform/free-project-pausing)).
+
+**Qué ve la app**:
+- Con el proyecto pausado, Supabase responde **HTTP 540** a todo: Auth, datos y Edge Functions. Es un código propio de Supabase ([HTTP status codes](https://supabase.com/docs/guides/troubleshooting/http-status-codes)).
+- El cliente (`supabase/cliente.rs`) lo convierte en `Error::ServidorPausado` (código `servidor_pausado`), con un mensaje que dice qué hacer.
+- **No borra la sesión guardada**: pausado no es "sesión inválida", y sirve igual cuando lo reactiven.
+- Los cambios esperan en la bandeja (#238). `EstadoBandeja.servidor_pausado` lo marca y el Topbar muestra **"Servidor pausado · N cambios pendientes de enviar"** (punto rojo), con la explicación al pasar el mouse.
+- Al iniciar sesión con Unity VC, `aviso_servidor` trae el mismo mensaje.
+- Probado con un servidor HTTP local que responde 540 (`con_el_proyecto_pausado_se_avisa_y_la_sesion_no_se_pierde`): `llamar`, `renovar`, `iniciar_sesion`, `iniciar_sesion_con_unity` e `insertar_eventos`. No se probó pausando el proyecto de pruebas, porque lo usan otras pruebas al mismo tiempo.
+
+**Reactivarlo** (solo el dueño de la cuenta de Supabase):
+1. Entrar a [supabase.com/dashboard](https://supabase.com/dashboard), organización BranchBoard, y abrir el proyecto (`branchboard` o `branchboard-pruebas`). Un proyecto pausado lo dice en su página.
+2. **Resume project** y confirmar. Vuelve con sus datos y su configuración en unos minutos.
+3. Las apps abiertas no hay que tocarlas: en la siguiente vuelta del temporizador (15 s) suben lo pendiente y el aviso desaparece.
+- Supabase deja un plazo para reactivarlo desde el panel; su documentación da 90 días en una página y 1 año en otra, así que hay que mirar el que muestra el panel. Pasado ese plazo, los datos solo se recuperan si se descargaron antes.
+- Si se queda trabado en "Pausing" o "Restoring", la vía documentada es el soporte de Supabase.
+
+**Mientras no haya copia automática** (pospuesta el 2026-11-20, decisiones 8 y 9 de #231):
+- El respaldo es lo que queda en cada equipo: el SQLite de cada proyecto y sus `backups/` locales.
+- En proyectos sin Unity VC, también "Exportar proyecto" de Ajustes (`exportar_proyecto_local`, Administrador).
+- Si el proyecto del servidor se perdiera, se vuelve a subir desde la copia de un equipo con "Subir al servidor los proyectos que ya existen" (#245, pendiente).
+- Para que no se pause: cualquier app abierta que lea o escriba en el servidor cuenta como actividad. Hoy se escribe con la bandeja (#238) y se leerá cada pocos segundos con la recepción (#239). Un proyecto que nadie abre en una semana se pausa.
+
+**Cuándo pasar a Pro** (de pago): cuando el equipo use BranchBoard a diario y una pausa o la falta de copias diarias ya no sea aceptable. También cuando se acerquen los límites del plan gratis (tamaño de la base, Storage, #242) o cuando haga falta restaurar a un punto en el tiempo. Pro no se pausa e incluye copias diarias. Con Pro, la copia propia con `pg_dump` deja de hacer falta.
+
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
 Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` con datos que vienen del usuario (nombre de rama, justificación, descripción, comentarios de checkin/merge, etc.):

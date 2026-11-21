@@ -66,6 +66,8 @@ export interface EstadoBandeja {
   rechazados: number;
   /** Por qué quedaron pendientes (sin internet, sin sesión…). */
   error: string | null;
+  /** El proyecto de Supabase está pausado (plan gratis, una semana sin uso; #246). */
+  servidor_pausado: boolean;
 }
 
 /** Códigos de error del backend (`app/backend/src/error.rs`). */
@@ -81,6 +83,7 @@ export type CodigoError =
   | 'token_servidor_invalido'
   | 'sin_sesion_servidor'
   | 'servidor_sin_conexion'
+  | 'servidor_pausado'
   | 'servidor'
   | 'base_datos'
   | 'archivos'
