@@ -15,7 +15,7 @@ use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::normalizar_email;
-use crate::tareas::rol_verificado_de;
+use crate::tareas::rol_de;
 
 /// Tipos de evento de chat manejados desde `ops/`.
 pub const TIPOS: &[&str] = &["enviar_chat", "crear_grupo_chat"];
@@ -211,8 +211,8 @@ fn aplicar_crear_grupo_chat(c: &Connection, creador: &str, raw: &GrupoChat) -> R
 }
 
 /// Reproduce un evento de chat recibido desde `ops/` exigiendo un emisor verificado.
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
-    if rol_verificado_de(c, publica_admin, &evento.usuario)?.is_none() {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
+    if rol_de(c, &evento.usuario)?.is_none() {
         return Err(Error::SinPermiso);
     }
     match evento.tipo.as_str() {
@@ -339,11 +339,6 @@ mod tests {
                 apellido: "Test".into(),
                 rol,
                 fecha_alta: HOY.into(),
-                firma: Some(firmas::firmar_rol(&privada, correo, rol, AHORA).unwrap()),
-                firmado_en: Some(AHORA.into()),
-                firmado_por: Some(ANA.into()),
-                llave_publica: None,
-                certificado: None,
             };
             usuarios::insertar(db_a.conexion(), &fila).unwrap();
             usuarios::insertar(db_b.conexion(), &fila).unwrap();

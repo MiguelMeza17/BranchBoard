@@ -19,7 +19,7 @@ use crate::db::{commits, tareas as db_tareas, usuarios};
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
-use crate::tareas::rol_verificado_de;
+use crate::tareas::rol_de;
 
 /// Días sin check-ins ni actividad antes de enviar recordatorio de inactividad (#117).
 pub const UMBRAL_INACTIVIDAD_DIAS: i64 = 3;
@@ -221,8 +221,8 @@ fn aplicar_lote(c: &Connection, lote: &[Notificacion]) -> Resultado<()> {
 
 /// Reproduce un evento de notificación recibido de `ops/`. Exige que el emisor
 /// esté registrado y verificado en `usuarios`.
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
-    if rol_verificado_de(c, publica_admin, &evento.usuario)?.is_none() {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
+    if rol_de(c, &evento.usuario)?.is_none() {
         return Err(Error::SinPermiso);
     }
     match evento.tipo.as_str() {
@@ -597,11 +597,6 @@ mod tests {
                 apellido: "Test".into(),
                 rol,
                 fecha_alta: HOY.into(),
-                firma: Some(firmas::firmar_rol(&privada, correo, rol, AHORA).unwrap()),
-                firmado_en: Some(AHORA.into()),
-                firmado_por: Some(ADMIN.into()),
-                llave_publica: None,
-                certificado: None,
             };
             usuarios::insertar(db_a.conexion(), &fila).unwrap();
             usuarios::insertar(db_b.conexion(), &fila).unwrap();
@@ -1127,11 +1122,6 @@ mod tests {
             apellido: "Uno".into(),
             rol: Rol::Tester,
             fecha_alta: HOY.into(),
-            firma: None,
-            firmado_en: None,
-            firmado_por: None,
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(e.db_a.conexion(), &tester_fila).unwrap();
         usuarios::insertar(e.db_b.conexion(), &tester_fila).unwrap();

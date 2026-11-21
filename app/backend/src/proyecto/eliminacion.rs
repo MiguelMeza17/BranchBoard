@@ -156,9 +156,6 @@ fn preparar_local(
     confirmacion: &str,
 ) -> Resultado<(RepoUnityVc, String, String)> {
     let yo = estado.exigir_permiso("eliminar_proyecto")?;
-    if !yo.rol_verificado {
-        return Err(Error::SinPermiso);
-    }
     let repo = estado.repo_abierto()?;
     let nombre = estado.con_db(|db| {
         Ok(configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO)?

@@ -16,7 +16,6 @@ use serde::Serialize;
 
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
-use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, Rol};
 
 /// Quién puede usar un comando.
@@ -78,14 +77,11 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("sincronizar_eventos", Acceso::Roles(TODOS)),
     ("revisar_actualizaciones", Acceso::Roles(TODOS)),
     ("eventos_por_subir", Acceso::Libre),
-    ("compactar_eventos", Acceso::Roles(SOLO_ADMIN)),
-    ("exportar_llave_firma", Acceso::Roles(SOLO_ADMIN)),
     // Usuarios (issue #90). El detalle de quién cambia a quién está en `identidad::equipo`.
     ("listar_usuarios", Acceso::Roles(TODOS)),
     ("crear_usuario", Acceso::Roles(LIDER_O_ADMIN)),
     ("cambiar_rol", Acceso::Roles(LIDER_O_ADMIN)),
     ("eliminar_usuario", Acceso::Roles(LIDER_O_ADMIN)),
-    ("confirmar_usuario", Acceso::Roles(SOLO_ADMIN)),
     // Tareas (issues #95, #96, #97, #98). El detalle de quién puede editar, tomar o asignar qué tarea está en `tareas`.
     ("listar_tareas", Acceso::Roles(TODOS)),
     ("crear_tarea", Acceso::Roles(TODOS)),
@@ -183,33 +179,19 @@ pub fn acceso(comando: &str) -> Option<Acceso> {
         .map(|(_, acceso)| *acceso)
 }
 
-/// La persona que está usando la app, con el rol que de verdad se le aplica.
+/// La persona que está usando la app y su rol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UsuarioActual {
     pub email: String,
     pub rol: Rol,
-    /// `false` si su firma no coincide y se le aplica Desarrollador.
-    pub rol_verificado: bool,
 }
 
-/// Busca a `email` (el de `cm whoami`) en la tabla `usuarios` y verifica su rol.
-/// Sin fila, o con la fila pendiente de confirmar, no puede usar nada.
-pub fn usuario_actual(
-    c: &Connection,
-    publica_admin: &str,
-    email: &str,
-) -> Resultado<UsuarioActual> {
+/// Busca a `email` en la tabla `usuarios` (la copia de `miembros` del servidor, #241). Sin fila no
+/// puede usar nada. Desde #243 no hay firmas: los roles los hace cumplir el servidor (#234, #247).
+pub fn usuario_actual(c: &Connection, email: &str) -> Resultado<UsuarioActual> {
     let email = normalizar_email(email);
-    let verificado = verificar_usuarios(publica_admin, usuarios::listar(c)?)
-        .into_iter()
-        .find(|u| u.usuario.email == email)
-        .ok_or(Error::SinPermiso)?;
-    let rol = verificado.rol_efectivo.ok_or(Error::SinPermiso)?;
-    Ok(UsuarioActual {
-        email,
-        rol,
-        rol_verificado: verificado.verificacion == Verificacion::Verificado,
-    })
+    let fila = usuarios::buscar(c, &email)?.ok_or(Error::SinPermiso)?;
+    Ok(UsuarioActual { email, rol: fila.rol })
 }
 
 /// `Ok` si `usuario` puede usar `comando` según [`PERMISOS`].
@@ -237,11 +219,6 @@ mod tests {
             apellido: "A".into(),
             rol,
             fecha_alta: "2026-11-10".into(),
-            firma: None,
-            firmado_en: None,
-            firmado_por: None,
-            llave_publica: None,
-            certificado: None,
         }
     }
 
@@ -252,8 +229,6 @@ mod tests {
         let publica = llaves::generar_llaves_admin(dir.path(), None).unwrap();
         let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
         let firmada = |email: &str, rol: Rol| Usuario {
-            firma: Some(firmas::firmar_rol(&admin, email, rol, FECHA).unwrap()),
-            firmado_en: Some(FECHA.into()),
             ..fila(email, rol)
         };
         let db = Db::en_memoria().unwrap();

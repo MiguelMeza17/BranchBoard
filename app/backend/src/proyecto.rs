@@ -29,7 +29,7 @@ use crate::db::configuracion::{self, Ajuste, CLAVE_ICONO_PROYECTO, CLAVE_NOMBRE_
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::{normalizar_email, Rol};
-use crate::tareas::rol_verificado_de;
+use crate::tareas::rol_de;
 
 pub mod eliminacion;
 
@@ -452,10 +452,10 @@ pub fn imagen_como_data_url(png: &[u8]) -> String {
 
 /// Reproduce un evento de ajustes del proyecto con las mismas reglas que en la
 /// máquina que lo emitió: solo un Administrador verificado, clave y valor válidos.
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
     match evento.tipo.as_str() {
         "actualizar_configuracion_proyecto" => {
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             let payload: PayloadAjuste =
                 serde_json::from_value(evento.payload.clone()).map_err(|e| {
                     Error::Validacion(format!("actualizar_configuracion_proyecto inválido: {e}"))
@@ -526,11 +526,6 @@ mod tests {
                 apellido: "Test".into(),
                 rol,
                 fecha_alta: HOY.into(),
-                firma: Some(firmas::firmar_rol(&privada, correo, rol, AHORA).unwrap()),
-                firmado_en: Some(AHORA.into()),
-                firmado_por: Some(ADMIN.into()),
-                llave_publica: None,
-                certificado: None,
             };
             usuarios::insertar(db_a.conexion(), &fila).unwrap();
             usuarios::insertar(db_b.conexion(), &fila).unwrap();

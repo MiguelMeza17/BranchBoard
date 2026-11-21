@@ -19,7 +19,6 @@ use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
-use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 use crate::notificaciones::{emitir_a_roles_si_falta, emitir_si_falta};
 use crate::ramas::TareaDeCadena;
@@ -2678,20 +2677,9 @@ fn aplicar_crear_tarea_con_subtareas(
     Ok(())
 }
 
-/// Resuelve el rol verificado de `email` en la tabla `usuarios`, si existe.
-pub(crate) fn rol_verificado_de(
-    c: &Connection,
-    publica_admin: &str,
-    email: &str,
-) -> Resultado<Option<Rol>> {
-    let email = normalizar_email(email);
-    if publica_admin.is_empty() {
-        return Ok(usuarios::buscar(c, &email)?.map(|u| u.rol));
-    }
-    Ok(verificar_usuarios(publica_admin, usuarios::listar(c)?)
-        .into_iter()
-        .find(|u| u.usuario.email == email && u.verificacion == Verificacion::Verificado)
-        .and_then(|u| u.rol_efectivo))
+/// El rol de `email` en la tabla `usuarios` (copia de `miembros` del servidor, #241), si está.
+pub(crate) fn rol_de(c: &Connection, email: &str) -> Resultado<Option<Rol>> {
+    Ok(usuarios::buscar(c, &normalizar_email(email))?.map(|u| u.rol))
 }
 
 fn aplicar_cambios_en_fila(tarea: &mut Tarea, c_edit: &CambiosTarea) -> Resultado<()> {
@@ -2775,13 +2763,13 @@ fn aplicar_editar_tarea(
 
 /// Aplica un evento de tareas recibido desde `ops/` (`eventos/lectura.rs` y
 /// `eventos/snapshot.rs`).
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
     match evento.tipo.as_str() {
         "crear_tarea" => {
             let mut tarea: Tarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("crear_tarea inválido: {e}")))?;
             tarea.creado_por = normalizar_email(&evento.usuario);
-            if let Some(rol) = rol_verificado_de(c, publica_admin, &evento.usuario)? {
+            if let Some(rol) = rol_de(c, &evento.usuario)? {
                 tarea.pendiente_aprobacion = !rol.es_lider_o_admin();
             }
             aplicar_crear_tarea(c, &tarea, &evento.timestamp, true)
@@ -2792,7 +2780,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                     Error::Validacion(format!("crear_tarea_con_subtareas inválido: {e}"))
                 })?;
             let autor = normalizar_email(&evento.usuario);
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             payload.tarea.creado_por = autor.clone();
             if let Some(r) = rol {
                 payload.tarea.pendiente_aprobacion = !r.es_lider_o_admin();
@@ -2808,19 +2796,19 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "editar_tarea" => {
             let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("editar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_editar_tarea(c, &evento.usuario, rol, &payload)
         }
         "tomar_tarea" => {
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("tomar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_tomar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         "asignar_tarea" => {
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_asignar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         "desasignar_tarea" => {
@@ -2831,7 +2819,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "cambiar_estado" => {
             let payload: PayloadCambiarEstado = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("cambiar_estado inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_cambiar_estado(c, &evento.usuario, rol, &payload, &evento.timestamp)?;
             Ok(())
         }
@@ -2843,25 +2831,25 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "reabrir_tarea" => {
             let payload: PayloadReabrirTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("reabrir_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_reabrir_tarea(c, rol, &payload, &evento.timestamp)
         }
         "aprobar_tarea" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_tareas(c, rol, &[payload.id])
         }
         "aprobar_tareas" => {
             let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_tareas inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_tareas(c, rol, &payload.ids)
         }
         "editar_y_aprobar_tarea" => {
             let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("editar_y_aprobar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_editar_y_aprobar_tarea(c, rol, &payload, &evento.timestamp)
         }
         "advertir_tarea_pendiente" => {
@@ -2869,7 +2857,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 .map_err(|e| {
                     Error::Validacion(format!("advertir_tarea_pendiente inválido: {e}"))
                 })?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_advertir_tarea_pendiente(c, rol, &payload, &evento.timestamp)
         }
         "proponer_edicion" => {
@@ -2880,25 +2868,25 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "aprobar_modificacion" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_modificacion inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_modificaciones(c, rol, &[payload.id])
         }
         "aprobar_modificaciones" => {
             let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_modificaciones inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_modificaciones(c, rol, &payload.ids)
         }
         "rechazar_modificacion" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("rechazar_modificacion inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_rechazar_modificacion(c, rol, &payload.id)
         }
         "eliminar_tarea" => {
             let payload: PayloadEliminarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("eliminar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_eliminar_tarea(c, rol, &payload, &evento.timestamp)?;
             Ok(())
         }
@@ -2907,7 +2895,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 .map_err(|e| {
                     Error::Validacion(format!("eliminar_definitivamente inválido: {e}"))
                 })?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_eliminar_definitivamente(c, rol, &payload.id)?;
             Ok(())
         }
@@ -2962,20 +2950,20 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "asignar_revision" => {
             let payload: PayloadAsignarRevision = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_revision inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_asignar_revision(c, rol, &payload, &evento.timestamp)
         }
         "autorizar_merge" => {
             let payload: PayloadAutorizarMerge = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("autorizar_merge inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_autorizar_merge(c, &evento.usuario, rol, &payload)
         }
         "rechazar_revision" => {
             let payload: PayloadRechazarRevision =
                 serde_json::from_value(evento.payload.clone())
                     .map_err(|e| Error::Validacion(format!("rechazar_revision inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_rechazar_revision(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         otro => Err(Error::Validacion(format!(
@@ -4419,29 +4407,17 @@ fn buscar_evento_toma_en_ops(
 /// toma local previa), o `false` si se conservó al ganador actual.
 pub fn aplicar_resolucion_doble_toma(
     c: &Connection,
-    publica_admin: &str,
     info: &InfoDobleToma,
     tiene_changesets: bool,
     ahora: &str,
 ) -> Resultado<bool> {
     if tiene_changesets {
         let mut destinatarios = vec![info.ganador.clone(), info.perdedor.clone()];
-        let usuarios = if publica_admin.is_empty() {
-            usuarios::listar(c)?
-                .into_iter()
-                .filter(|u| u.rol.es_lider_o_admin())
-                .map(|u| u.email)
-                .collect::<Vec<_>>()
-        } else {
-            verificar_usuarios(publica_admin, usuarios::listar(c)?)
-                .into_iter()
-                .filter(|u| {
-                    u.verificacion == Verificacion::Verificado
-                        && u.rol_efectivo.is_some_and(|r| r.es_lider_o_admin())
-                })
-                .map(|u| u.usuario.email)
-                .collect::<Vec<_>>()
-        };
+        let usuarios = usuarios::listar(c)?
+            .into_iter()
+            .filter(|u| u.rol.es_lider_o_admin())
+            .map(|u| u.email)
+            .collect::<Vec<_>>();
         for correo in usuarios {
             if !destinatarios.contains(&correo) {
                 destinatarios.push(correo);
@@ -4565,14 +4541,6 @@ mod tests {
                         apellido: "Uno".into(),
                         rol: Rol::Administrador,
                         fecha_alta: HOY.into(),
-                        firma: Some(
-                            firmas::firmar_rol(&llave_admin, ADMIN, Rol::Administrador, AHORA)
-                                .unwrap(),
-                        ),
-                        firmado_en: Some(AHORA.into()),
-                        firmado_por: Some(ADMIN.into()),
-                        llave_publica: None,
-                        certificado: None,
                     },
                 )
                 .unwrap();
@@ -6317,14 +6285,6 @@ mod tests {
                     apellido: "Uno".into(),
                     rol: Rol::ColaboradorExterno,
                     fecha_alta: HOY.into(),
-                    firma: Some(
-                        firmas::firmar_rol(&e.llave_admin, externo, Rol::ColaboradorExterno, AHORA)
-                            .unwrap(),
-                    ),
-                    firmado_en: Some(AHORA.into()),
-                    firmado_por: Some(ADMIN.into()),
-                    llave_publica: None,
-                    certificado: None,
                 },
             )
             .unwrap();

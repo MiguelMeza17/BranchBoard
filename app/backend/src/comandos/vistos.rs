@@ -74,11 +74,6 @@ mod tests {
                     apellido: "Test".into(),
                     rol,
                     fecha_alta: HOY.into(),
-                    firma: Some(firmas::firmar_rol(&privada, correo, rol, AHORA).unwrap()),
-                    firmado_en: Some(AHORA.into()),
-                    firmado_por: Some(ADMIN.into()),
-                    llave_publica: None,
-                    certificado: None,
                 },
             )
             .unwrap();
@@ -169,16 +164,6 @@ mod tests {
                             apellido: "Test".into(),
                             rol: Rol::Desarrollador,
                             fecha_alta: hoy.clone(),
-                            firma: Some(firmas::firmar_rol(
-                                &llave,
-                                DEV,
-                                Rol::Desarrollador,
-                                &ahora,
-                            )?),
-                            firmado_en: Some(ahora.clone()),
-                            firmado_por: Some(admin_email.clone()),
-                            llave_publica: None,
-                            certificado: None,
                         },
                     )
                 })

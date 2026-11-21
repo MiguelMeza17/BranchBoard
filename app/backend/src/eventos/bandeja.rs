@@ -14,7 +14,7 @@
 //!   una regla del servidor), reintentarlo no sirve. El lote se reenvía de a uno, el rechazado se aparta a
 //!   `bandeja_rechazados` (con el motivo) y los demás siguen subiendo. El cambio ya está aplicado en el
 //!   SQLite de este equipo pero no en el servidor.
-//! - **Qué no sube**: los eventos de roles ([`super::TIPOS_FIRMADOS`]): en el servidor los roles los cambian
+//! - **Qué no sube**: los eventos de roles y la compactación ([`super::TIPOS_RETIRADOS`]): en el servidor los roles los cambian
 //!   solo sus funciones (`agregar_miembro`, `cambiar_rol`…, #234/#241), no los eventos.
 //! - **Solo proyectos vinculados**: si el proyecto no tiene `proyecto_servidor_id` en su configuración
 //!   (lo fija #240), no se encola nada.
@@ -23,7 +23,7 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{Evento, TIPOS_FIRMADOS};
+use super::{Evento, TIPOS_RETIRADOS};
 use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
 use crate::error::{Error, Resultado};
 
@@ -62,7 +62,7 @@ fn es_definitivo(e: &Error) -> bool {
 /// Guarda `evento` (con id `id`) en la bandeja si el proyecto está vinculado al servidor. Devuelve si lo
 /// encoló. Se llama dentro de la transacción de `publicar`.
 pub fn encolar(c: &Connection, id: &str, evento: &Evento) -> Resultado<bool> {
-    if TIPOS_FIRMADOS.contains(&evento.tipo.as_str()) {
+    if TIPOS_RETIRADOS.contains(&evento.tipo.as_str()) {
         return Ok(false);
     }
     let Some(proyecto) = configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR)?
@@ -288,7 +288,7 @@ mod tests {
         assert!(encolar(c, "e1", &evento("crear_tarea")).unwrap());
         // El mismo id dos veces no duplica.
         encolar(c, "e1", &evento("crear_tarea")).unwrap();
-        for tipo in TIPOS_FIRMADOS {
+        for tipo in TIPOS_RETIRADOS {
             assert!(!encolar(c, &format!("rol-{tipo}"), &evento(tipo)).unwrap());
         }
         assert_eq!(pendientes(c).unwrap(), 1);

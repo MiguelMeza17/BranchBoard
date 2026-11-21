@@ -70,14 +70,19 @@ fn leer_fecha(texto: &str) -> Option<DateTime<Utc>> {
         .map(|f| f.with_timezone(&Utc))
 }
 
-/// Desde cuándo cuentan los check-ins directos: desde que se configuró el
-/// proyecto en BranchBoard (la firma más vieja de un Administrador). Lo de antes
-/// es la historia del proyecto Unity, no un error. `None` sin Administrador firmado.
+/// Desde cuándo cuentan los check-ins directos: desde que se configuró el proyecto en BranchBoard (el
+/// alta más vieja de un Administrador, desde el inicio de ese día en UTC; hasta #243 era la hora de su
+/// firma). Lo de antes es la historia del proyecto Unity, no un error. `None` sin Administrador.
 pub fn desde_del_proyecto(c: &Connection) -> Resultado<Option<DateTime<Utc>>> {
     Ok(usuarios::listar(c)?
         .into_iter()
         .filter(|u| u.rol == Rol::Administrador)
-        .filter_map(|u| u.firmado_en.as_deref().and_then(leer_fecha))
+        .filter_map(|u| {
+            chrono::NaiveDate::parse_from_str(u.fecha_alta.trim(), "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|d| d.and_utc())
+        })
         .min())
 }
 
@@ -472,7 +477,7 @@ fn aplicar_trasladar(
 }
 
 /// Aplica un evento de este módulo recibido desde `ops/`.
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
     match evento.tipo.as_str() {
         "detectar_cambios_directos" => {
             let tarea: Tarea = serde_json::from_value(evento.payload.clone()).map_err(|e| {
@@ -492,7 +497,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 .map_err(|e| {
                     Error::Validacion(format!("trasladar_cambios_directos inválido: {e}"))
                 })?;
-            let rol = tareas::rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = tareas::rol_de(c, &evento.usuario)?;
             aplicar_trasladar(c, &payload, &evento.usuario, rol, &evento.timestamp)
         }
         otro => Err(Error::Validacion(format!(

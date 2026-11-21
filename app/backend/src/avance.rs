@@ -474,11 +474,6 @@ mod tests {
             apellido: "Uno".into(),
             rol: Rol::Administrador,
             fecha_alta: HOY_INICIO.into(),
-            firma: Some(firmas::firmar_rol(&privada, ADMIN, Rol::Administrador, AHORA).unwrap()),
-            firmado_en: Some(AHORA.into()),
-            firmado_por: Some(ADMIN.into()),
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(db_a.conexion(), &admin_fila).unwrap();
         usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
@@ -489,11 +484,6 @@ mod tests {
             apellido: "Uno".into(),
             rol: Rol::Lider,
             fecha_alta: HOY_INICIO.into(),
-            firma: Some(firmas::firmar_rol(&privada, LIDER, Rol::Lider, AHORA).unwrap()),
-            firmado_en: Some(AHORA.into()),
-            firmado_por: Some(ADMIN.into()),
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(db_a.conexion(), &lider_fila).unwrap();
         usuarios::insertar(db_b.conexion(), &lider_fila).unwrap();

@@ -221,7 +221,6 @@ pub fn aplicar(
     proyecto: &str,
     carpeta_log: Option<&std::path::Path>,
     ahora: DateTime<Utc>,
-    publica_admin: &str,
     aplicar_evento: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
     revisar_rama_perdedor: impl Fn(&InfoDobleToma) -> Resultado<bool>,
 ) -> Resultado<ResumenSincronizacion> {
@@ -232,7 +231,6 @@ pub fn aplicar(
         c,
         None,
         ahora,
-        publica_admin,
         lista,
         &mut resumen,
         &mut avisos,

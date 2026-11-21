@@ -13,7 +13,7 @@ use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoTarea};
-use crate::tareas::{rol_verificado_de, AutorTarea};
+use crate::tareas::{rol_de, AutorTarea};
 
 /// Tipos de evento que maneja este módulo.
 pub const TIPOS: &[&str] = &[
@@ -58,8 +58,8 @@ fn exigir_lider_o_admin_autor(autor: &AutorTarea<'_>) -> Resultado<()> {
     Ok(())
 }
 
-fn exigir_lider_o_admin_evento(c: &Connection, publica_admin: &str, email: &str) -> Resultado<()> {
-    match rol_verificado_de(c, publica_admin, email)? {
+fn exigir_lider_o_admin_evento(c: &Connection, email: &str) -> Resultado<()> {
+    match rol_de(c, email)? {
         Some(rol) if rol.es_lider_o_admin() => Ok(()),
         _ => Err(Error::SinPermiso),
     }
@@ -72,15 +72,15 @@ fn exigir_admin_autor(autor: &AutorTarea<'_>) -> Resultado<()> {
     Ok(())
 }
 
-fn exigir_admin_evento(c: &Connection, publica_admin: &str, email: &str) -> Resultado<()> {
-    match rol_verificado_de(c, publica_admin, email)? {
+fn exigir_admin_evento(c: &Connection, email: &str) -> Resultado<()> {
+    match rol_de(c, email)? {
         Some(Rol::Administrador) => Ok(()),
         _ => Err(Error::SinPermiso),
     }
 }
 
-fn exigir_miembro_evento(c: &Connection, publica_admin: &str, email: &str) -> Resultado<()> {
-    if rol_verificado_de(c, publica_admin, email)?.is_none() {
+fn exigir_miembro_evento(c: &Connection, email: &str) -> Resultado<()> {
+    if rol_de(c, email)?.is_none() {
         return Err(Error::SinPermiso);
     }
     Ok(())
@@ -442,22 +442,22 @@ fn publicar_o_aplicar_cierre(
 }
 
 /// Reproduce un evento de planificación recibido de `ops/`.
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
     match evento.tipo.as_str() {
         "crear_sprint" => {
-            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
+            exigir_lider_o_admin_evento(c, &evento.usuario)?;
             let sprint: Sprint = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("crear_sprint inválido: {e}")))?;
             aplicar_crear_sprint(c, &sprint)
         }
         "cerrar_sprint" => {
-            exigir_admin_evento(c, publica_admin, &evento.usuario)?;
+            exigir_admin_evento(c, &evento.usuario)?;
             let payload: PayloadCerrarSprint = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("cerrar_sprint inválido: {e}")))?;
             aplicar_cerrar_sprint(c, &payload)
         }
         "cerrar_sprint_automatico" => {
-            exigir_miembro_evento(c, publica_admin, &evento.usuario)?;
+            exigir_miembro_evento(c, &evento.usuario)?;
             let payload: PayloadCerrarSprint = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| {
                     Error::Validacion(format!("cerrar_sprint_automatico inválido: {e}"))
@@ -465,7 +465,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             aplicar_cerrar_sprint_automatico(c, &payload)
         }
         "reporte_sprint_fecha_fin" => {
-            exigir_miembro_evento(c, publica_admin, &evento.usuario)?;
+            exigir_miembro_evento(c, &evento.usuario)?;
             let payload: PayloadCerrarSprint = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| {
                     Error::Validacion(format!("reporte_sprint_fecha_fin inválido: {e}"))
@@ -473,19 +473,19 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
             aplicar_reporte_fecha_fin(c, &payload)
         }
         "asignar_tarea_a_sprint" => {
-            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
+            exigir_lider_o_admin_evento(c, &evento.usuario)?;
             let payload: PayloadAsignarTareaGrupo = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_tarea_a_sprint inválido: {e}")))?;
             aplicar_asignar_tarea_a_sprint(c, &payload)
         }
         "asignar_tarea_a_backlog" => {
-            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
+            exigir_lider_o_admin_evento(c, &evento.usuario)?;
             let payload: PayloadAsignarTareaGrupo = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_tarea_a_backlog inválido: {e}")))?;
             aplicar_asignar_tarea_a_backlog(c, &payload)
         }
         "asignar_backlog_a_sprint" => {
-            exigir_lider_o_admin_evento(c, publica_admin, &evento.usuario)?;
+            exigir_lider_o_admin_evento(c, &evento.usuario)?;
             let payload: PayloadAsignarBacklogASprint =
                 serde_json::from_value(evento.payload.clone()).map_err(|e| {
                     Error::Validacion(format!("asignar_backlog_a_sprint inválido: {e}"))
@@ -827,11 +827,6 @@ mod tests {
             apellido: "Uno".into(),
             rol: Rol::Administrador,
             fecha_alta: HOY.into(),
-            firma: Some(firmas::firmar_rol(&privada, ADMIN, Rol::Administrador, AHORA).unwrap()),
-            firmado_en: Some(AHORA.into()),
-            firmado_por: Some(ADMIN.into()),
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(db_a.conexion(), &admin_fila).unwrap();
         usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();

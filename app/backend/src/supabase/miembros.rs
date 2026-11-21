@@ -192,11 +192,6 @@ pub fn filas_locales(equipo: &Equipo) -> Vec<Usuario> {
                 apellido,
                 rol: m.rol,
                 fecha_alta: m.agregado_en.chars().take(10).collect(),
-                firma: None,
-                firmado_en: None,
-                firmado_por: None,
-                llave_publica: None,
-                certificado: None,
             }
         })
         .collect()

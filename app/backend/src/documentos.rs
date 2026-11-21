@@ -23,7 +23,7 @@ use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::{normalizar_email, Rol};
 use crate::supabase::storage;
-use crate::tareas::rol_verificado_de;
+use crate::tareas::rol_de;
 
 /// Tipos de evento de documentos manejados desde `ops/`.
 pub const TIPOS: &[&str] = &[
@@ -618,11 +618,10 @@ fn aplicar_aprobar_documento(c: &Connection, rol_actor: Option<Rol>, id: &str) -
 /// Reproduce un evento de documentos desde `ops/` (opcionalmente borrando copias físicas al eliminar).
 pub fn aplicar_evento(
     c: &Connection,
-    publica_admin: &str,
     carpeta_docs: Option<&Path>,
     evento: &Evento,
 ) -> Resultado<()> {
-    let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+    let rol = rol_de(c, &evento.usuario)?;
     if rol.is_none() {
         return Err(Error::SinPermiso);
     }
@@ -725,11 +724,6 @@ mod tests {
                 apellido: "Test".into(),
                 rol,
                 fecha_alta: HOY.into(),
-                firma: Some(firmas::firmar_rol(&privada, correo, rol, AHORA).unwrap()),
-                firmado_en: Some(AHORA.into()),
-                firmado_por: Some(ADMIN.into()),
-                llave_publica: None,
-                certificado: None,
             };
             usuarios::insertar(db_a.conexion(), &fila).unwrap();
             usuarios::insertar(db_b.conexion(), &fila).unwrap();

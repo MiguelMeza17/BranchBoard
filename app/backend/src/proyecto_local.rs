@@ -8,13 +8,13 @@
 //! ```text
 //! <Proyecto>/
 //!   branchboard-proyecto-local.json   ← marca: identifica la carpeta como proyecto de BranchBoard
-//!   datos/                            ← base SQLite, llaves del Administrador, copias de seguridad
+//!   datos/                            ← base SQLite y copias de seguridad
 //!   compartida/                       ← lo que en un proyecto de Unity VC va en Drive/OneDrive (ops/, documentos, imagen)
 //! ```
 //!
-//! La contraseña que se pide al crearlo cifra la llave del Administrador
-//! (`datos/admin.key`): abrir el proyecto exige esa contraseña, también después
-//! de exportarlo e importarlo en otra máquina.
+//! Desde #243 no lleva contraseña (decisión 4 de #231): antes cifraba la llave del Administrador
+//! (`datos/admin.key`), que se quitó con las firmas. Un proyecto creado antes conserva sus archivos de
+//! llave, pero ya no se usan.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -30,13 +30,11 @@ use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos;
 use crate::identidad::acceso::Entrada;
-use crate::identidad::firmas::{self, verificar_usuarios};
-use crate::identidad::llaves;
 use crate::modelo::{normalizar_email, Rol};
 
 /// Archivo que identifica la carpeta como un proyecto local de BranchBoard.
 pub const ARCHIVO_MARCA: &str = "branchboard-proyecto-local.json";
-/// Subcarpeta con la base y las llaves.
+/// Subcarpeta con la base y sus copias de seguridad.
 pub const CARPETA_DATOS: &str = "datos";
 /// Subcarpeta con `ops/`, documentos e imagen del proyecto.
 pub const CARPETA_COMPARTIDA: &str = "compartida";
@@ -79,7 +77,6 @@ pub struct NuevoProyectoLocal {
     pub proyecto: String,
     pub nombre: String,
     pub correo: String,
-    pub clave: String,
 }
 
 fn no_es_proyecto() -> Error {
@@ -172,8 +169,7 @@ fn id_nuevo() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Crea la carpeta del proyecto dentro de `nuevo.carpeta` con su marca, la base,
-/// las llaves del Administrador (cifradas con `nuevo.clave`) y su fila firmada.
+/// Crea la carpeta del proyecto dentro de `nuevo.carpeta` con su marca, la base y su Administrador.
 /// Devuelve la carpeta del proyecto. No lo abre.
 pub fn crear(nuevo: &NuevoProyectoLocal, ahora: &str, hoy: &str) -> Resultado<PathBuf> {
     let proyecto = nuevo.proyecto.trim();
@@ -191,11 +187,6 @@ pub fn crear(nuevo: &NuevoProyectoLocal, ahora: &str, hoy: &str) -> Resultado<Pa
             "El correo no es válido (ej. nombre@correo.com).".into(),
         ));
     }
-    if nuevo.clave.chars().count() < llaves::LARGO_MINIMO_PASSPHRASE {
-        return Err(Error::Validacion(
-            "La contraseña debe tener al menos 8 caracteres.".into(),
-        ));
-    }
     let padre = carpeta_padre_valida(&nuevo.carpeta)?;
     let carpeta = padre.join(nombre_carpeta(proyecto)?);
     if carpeta.exists() {
@@ -204,15 +195,7 @@ pub fn crear(nuevo: &NuevoProyectoLocal, ahora: &str, hoy: &str) -> Resultado<Pa
             carpeta.display()
         )));
     }
-    let resultado = crear_en(
-        &carpeta,
-        proyecto,
-        nombre,
-        &correo,
-        &nuevo.clave,
-        ahora,
-        hoy,
-    );
+    let resultado = crear_en(&carpeta, proyecto, nombre, &correo, ahora, hoy);
     if resultado.is_err() {
         // A medio crear no sirve: no deja una carpeta que parezca un proyecto.
         let _ = std::fs::remove_dir_all(&carpeta);
@@ -225,15 +208,12 @@ fn crear_en(
     proyecto: &str,
     nombre: &str,
     correo: &str,
-    clave: &str,
     ahora: &str,
     hoy: &str,
 ) -> Resultado<()> {
     std::fs::create_dir_all(carpeta)?;
     let datos = carpeta.join(CARPETA_DATOS);
     let db = Db::abrir(&datos)?;
-    llaves::generar_llaves_admin(&datos, Some(clave))?;
-    let llave = llaves::cargar_llave_admin(&datos, Some(clave))?;
     let mut palabras = nombre.split_whitespace();
     let admin = Usuario {
         email: correo.to_string(),
@@ -241,16 +221,6 @@ fn crear_en(
         apellido: palabras.collect::<Vec<_>>().join(" "),
         rol: Rol::Administrador,
         fecha_alta: hoy.to_string(),
-        firma: Some(firmas::firmar_rol(
-            &llave,
-            correo,
-            Rol::Administrador,
-            ahora,
-        )?),
-        firmado_en: Some(ahora.to_string()),
-        firmado_por: Some(correo.to_string()),
-        llave_publica: None,
-        certificado: None,
     };
     let c = db.conexion();
     let tx = c.unchecked_transaction()?;
@@ -278,45 +248,29 @@ fn crear_en(
     Ok(())
 }
 
-/// Abre el proyecto local de `carpeta` con su contraseña: queda abierto en
-/// `estado` con su Administrador como usuario y se anota en "Recientes".
+/// Abre el proyecto local de `carpeta`: queda abierto en `estado` con su Administrador como usuario y
+/// se anota en "Recientes".
 pub fn abrir(
     estado: &AppState,
     datos_app: &Path,
     carpeta: &Path,
-    clave: &str,
     configurado_ahora: bool,
 ) -> Resultado<Entrada> {
     let carpeta = carpeta_existente(carpeta)?;
     let marca = leer_marca(&carpeta)?;
     let datos = carpeta.join(CARPETA_DATOS);
-    if !datos.join(NOMBRE_DB).is_file() || !llaves::existe_llave_admin(&datos) {
+    if !datos.join(NOMBRE_DB).is_file() {
         return Err(Error::Validacion(
             "A ese proyecto le faltan archivos (carpeta datos). Puede que la copia esté incompleta."
                 .into(),
         ));
     }
-    // La contraseña solo se pide si el proyecto la tiene: sin ella, una llave cifrada responde
-    // `llave_cifrada` (la interfaz muestra entonces el campo) y una sin cifrar abre directo.
-    let clave = (!clave.is_empty()).then_some(clave);
-    let llave = llaves::cargar_llave_admin(&datos, clave).map_err(|e| match e {
-        Error::Validacion(_) => {
-            Error::Validacion("La contraseña del proyecto no es correcta.".into())
-        }
-        otro => otro,
-    })?;
-    let publica = llaves::leer_llave_publica_admin(&datos)?.ok_or_else(no_es_proyecto)?;
-    if publica != llave.publica() {
-        return Err(Error::Validacion(
-            "La llave del Administrador no coincide con la del proyecto".into(),
-        ));
-    }
     let db = Db::abrir_con_respaldo(&datos)?;
-    let admin = verificar_usuarios(&publica, usuarios::listar(db.conexion())?)
+    let admin = usuarios::listar(db.conexion())?
         .into_iter()
-        .find(|u| u.rol_efectivo == Some(Rol::Administrador))
-        .ok_or_else(|| Error::Validacion("El proyecto no tiene un Administrador válido".into()))?;
-    let email = admin.usuario.email.clone();
+        .find(|u| u.rol == Rol::Administrador)
+        .ok_or_else(|| Error::Validacion("El proyecto no tiene un Administrador".into()))?;
+    let email = admin.email.clone();
     let proyecto =
         configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO)?.unwrap_or(marca.nombre.clone());
     let vistos_usuario = vistos::listar_vistos(db.conexion(), &email)?;
@@ -326,7 +280,6 @@ pub fn abrir(
     estado.fijar_usuario(Some(&email));
     estado.abrir_proyecto(db);
     estado.fijar_workspace(None, None);
-    estado.recordar_llave_firma(&datos, Rol::Administrador, llave);
     registrar_reciente(
         datos_app,
         ProyectoLocal {

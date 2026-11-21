@@ -1,16 +1,14 @@
 //! `entrar_a_proyecto` (issue #89): qué ve la persona al abrir un workspace.
 //! Ver "Identidad de usuario" en BACKEND.md.
 //!
-//! - Registrado y con el rol firmado → entra con su rol.
-//! - Registrado sin firma → "pendiente de confirmar".
+//! - Registrado → entra con su rol (desde #243 no hay firmas ni "pendiente de confirmar").
 //! - No registrado → "pídele a un Líder o Administrador".
 //! - Proyecto sin datos de BranchBoard en esta máquina: si quien entra es el
 //!   **dueño del repositorio** (el `owner` que da la API de Unity VC) se configura
 //!   y queda como Administrador; si no, se le pide que espere a que lo abra su dueño.
 //!
-//! Los datos del proyecto viven en `<datos>/proyectos/<org>-<repo>/`. Mientras no
-//! existan los eventos de `ops/` (#91 a #93), "tener datos" es tener ahí la base y
-//! la llave pública del Administrador.
+//! Los datos del proyecto viven en `<datos>/proyectos/<org>-<repo>/`. "Tener datos" es tener ahí la
+//! base con al menos un Administrador (hasta #243, la base y la llave pública del Administrador).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,8 +19,6 @@ use crate::db::configuracion::{self, CLAVE_NOMBRE_PROYECTO};
 use crate::db::usuarios::{self, nombre_desde_email, Usuario};
 use crate::db::{carpeta_proyecto, vistos, Db, NOMBRE_DB};
 use crate::error::{Error, Resultado};
-use crate::identidad::firmas::{self, verificar_usuarios, Verificacion};
-use crate::identidad::llaves;
 use crate::modelo::{normalizar_email, Rol};
 
 /// Repositorio de Unity VC Cloud de un workspace.
@@ -77,7 +73,8 @@ pub enum Entrada {
         #[serde(default)]
         vistos: BTreeMap<String, String>,
     },
-    /// Registrado, pero el Administrador todavía no confirma su rol.
+    /// Registrado, pero el Administrador todavía no confirma su rol. Ya no pasa desde #243 (no hay
+    /// firmas); se deja mientras el frontend lo siga esperando.
     Pendiente { email: String, proyecto: String },
     /// Su correo no está en el proyecto.
     NoRegistrado { email: String, proyecto: String },
@@ -100,16 +97,20 @@ pub fn entrar(
     let proyecto = repo.nombre().to_string();
     let carpeta = carpeta_proyecto(carpeta_datos, &repo.id_proyecto())?;
 
-    let publica = if carpeta.join(NOMBRE_DB).is_file() {
-        llaves::leer_llave_publica_admin(&carpeta)?
+    let db = if carpeta.join(NOMBRE_DB).is_file() {
+        let db = Db::abrir(&carpeta)?;
+        let con_admin = usuarios::listar(db.conexion())?
+            .iter()
+            .any(|u| u.rol == Rol::Administrador);
+        con_admin.then_some(db)
     } else {
         None
     };
-    let Some(publica) = publica else {
+    let Some(db) = db else {
         if !es_dueno()? {
             return Ok((Entrada::EsperarDueno { email, proyecto }, None));
         }
-        let db = configurar(&carpeta, repo, &email, ahora, hoy)?;
+        let db = configurar(&carpeta, repo, &email, hoy)?;
         return Ok((
             Entrada::Dentro {
                 email,
@@ -123,42 +124,32 @@ pub fn entrar(
         ));
     };
 
-    let db = Db::abrir(&carpeta)?;
-    let fila = verificar_usuarios(&publica, usuarios::listar(db.conexion())?)
-        .into_iter()
-        .find(|u| u.usuario.email == email);
+    let fila = usuarios::buscar(db.conexion(), &email)?;
     let vistos_usuario = vistos::listar_vistos(db.conexion(), &email)?;
     let entrada = match fila {
         None => Entrada::NoRegistrado { email, proyecto },
-        Some(v) => match v.rol_efectivo {
-            None => Entrada::Pendiente { email, proyecto },
-            Some(rol) => Entrada::Dentro {
-                email,
-                rol,
-                rol_verificado: v.verificacion == Verificacion::Verificado,
-                proyecto,
-                configurado_ahora: false,
-                vistos: vistos_usuario,
-            },
+        Some(u) => Entrada::Dentro {
+            email,
+            rol: u.rol,
+            rol_verificado: true,
+            proyecto,
+            configurado_ahora: false,
+            vistos: vistos_usuario,
         },
     };
     let abierta = matches!(entrada, Entrada::Dentro { .. }).then_some(db);
     Ok((entrada, abierta))
 }
 
-/// Primera vez del dueño: crea la base, genera las llaves del Administrador y
-/// guarda su fila firmada y el nombre del proyecto.
+/// Primera vez del dueño: crea la base y guarda su fila de Administrador y el nombre del proyecto.
 fn configurar(
     carpeta: &Path,
     repo: &RepoUnityVc,
     email: &str,
-    ahora: &str,
     hoy: &str,
 ) -> Resultado<Db> {
     std::fs::create_dir_all(carpeta)?;
     let db = Db::abrir(carpeta)?;
-    llaves::generar_llaves_admin(carpeta, None)?;
-    let llave = llaves::cargar_llave_admin(carpeta, None)?;
     let (nombre, apellido) = nombre_desde_email(email);
     let admin = Usuario {
         email: email.to_string(),
@@ -166,20 +157,10 @@ fn configurar(
         apellido,
         rol: Rol::Administrador,
         fecha_alta: hoy.to_string(),
-        firma: Some(firmas::firmar_rol(
-            &llave,
-            email,
-            Rol::Administrador,
-            ahora,
-        )?),
-        firmado_en: Some(ahora.to_string()),
-        firmado_por: Some(email.to_string()),
-        llave_publica: None,
-        certificado: None,
     };
     let c = db.conexion();
     let tx = c.unchecked_transaction()?;
-    // Una fila previa sin llave (configuración a medias) se reemplaza.
+    // Una fila previa (configuración a medias, sin Administrador) se reemplaza.
     if usuarios::buscar(&tx, email)?.is_some() {
         usuarios::eliminar(&tx, email)?;
     }
@@ -329,11 +310,6 @@ mod tests {
             apellido: "A".into(),
             rol,
             fecha_alta: HOY.into(),
-            firma: firmada.then(|| firmas::firmar_rol(&llave, email, rol, AHORA).unwrap()),
-            firmado_en: firmada.then(|| AHORA.to_string()),
-            firmado_por: firmada.then(|| "ana@virustf.dev".to_string()),
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(
             db.conexion(),
