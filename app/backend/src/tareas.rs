@@ -9567,18 +9567,25 @@ mod tests {
                 .en(&env.ws_ruta)
                 .exigir_exito(&env.estado_a)
                 .unwrap();
+            let estado_t101 = || {
+                env.estado_a
+                    .con_db(|db| Ok(de_rama(db, "/main/dev/T-101").unwrap().estado))
+                    .unwrap()
+            };
             let reactivadas = revisar_en(&env.estado_a, &admin);
+            // El polling normal (cierre por merge, #104) no la vuelve a cerrar mientras haya
+            // cambios sin check-in: antes se cerraba y reactivaba en cada vuelta.
+            let polling = crate::comandos::eventos::revisar_actualizaciones_en(&env.estado_a, None);
+            let tras_polling = estado_t101();
             let _ = Comando::cm()
                 .args(["undo", "-r", "."])
                 .en(&env.ws_ruta)
                 .exigir_exito(&env.estado_a);
             let _ = std::fs::remove_file(&pendiente);
             assert_eq!(reactivadas.unwrap(), std::slice::from_ref(&t101.id));
-            let estado_t101 = env
-                .estado_a
-                .con_db(|db| Ok(de_rama(db, "/main/dev/T-101").unwrap().estado))
-                .unwrap();
-            assert_eq!(estado_t101, EstadoTarea::EnProduccion);
+            let polling = polling.unwrap();
+            assert!(!polling.tareas_cerradas.contains(&t101.id), "{polling:?}");
+            assert_eq!(tras_polling, EstadoTarea::EnProduccion);
             env.sincronizar_b();
             assert_eq!(
                 de_rama(&env.db_b, "/main/dev/T-101").unwrap().estado,

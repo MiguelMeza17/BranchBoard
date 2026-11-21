@@ -1090,38 +1090,61 @@ pub fn eliminar_cambios_ajenos_workspace(
         .or(actual.changeset))
 }
 
-/// Comprueba si `rama` ya fue mergeada hacia `rama_padre` en Unity VC (`cm find merge`, #104).
-/// Solo cuentan merges reales (`merge`), nunca préstamos (`cherrypick`).
-pub fn rama_cerrada_hacia_padre(
+/// Último changeset de `rama` que se unió con un merge real (`merge`, nunca préstamos
+/// `cherrypick`) hacia `rama_padre` en Unity VC (`cm find merge`, #104). `None` si nunca se unió.
+/// La rama está cerrada solo si ese changeset es su último check-in (#283): si después siguió
+/// recibiendo trabajo, no.
+pub fn ultimo_merge_hacia_padre(
     estado: &AppState,
     repo_cm: &str,
     rama: &str,
     rama_padre: &str,
-) -> Resultado<bool> {
+) -> Resultado<Option<i64>> {
     let rama = rama.trim().trim_end_matches('/');
     let rama_padre = rama_padre.trim().trim_end_matches('/');
     if !rama.starts_with(&format!("{RAMA_DEV}/")) {
-        return Ok(false);
+        return Ok(None);
     }
     let salida = Comando::cm()
         .args(["find", "merge"])
         .arg(format!(
             "where srcbranch='br:{rama}' on repository '{repo_cm}'"
         ))
-        .args(["--format={type}|{dstbranch}", "--nototal"])
+        .args(["--format={type}|{srcchangeset}|{dstbranch}", "--nototal"])
         .exigir_exito(estado)?;
-    Ok(parsear_rama_cerrada(&salida, rama_padre))
+    Ok(parsear_ultimo_merge(&salida, rama_padre))
 }
 
-fn parsear_rama_cerrada(salida: &str, rama_padre: &str) -> bool {
+fn parsear_ultimo_merge(salida: &str, rama_padre: &str) -> Option<i64> {
     let rama_padre = rama_padre.trim().trim_end_matches('/');
-    salida.lines().any(|linea| {
-        let Some((tipo, dst)) = linea.split_once('|') else {
-            return false;
-        };
-        let dst = dst.trim().trim_start_matches("br:").trim_end_matches('/');
-        tipo.trim().eq_ignore_ascii_case("merge") && dst.eq_ignore_ascii_case(rama_padre)
-    })
+    salida
+        .lines()
+        .filter_map(|linea| {
+            let mut partes = linea.splitn(3, '|');
+            let tipo = partes.next()?.trim();
+            let cs = partes.next()?.trim().parse::<i64>().ok()?;
+            let dst = partes
+                .next()?
+                .trim()
+                .trim_start_matches("br:")
+                .trim_end_matches('/');
+            (tipo.eq_ignore_ascii_case("merge") && dst.eq_ignore_ascii_case(rama_padre))
+                .then_some(cs)
+        })
+        .max()
+}
+
+/// Cerrada = se unió a su padre, después no tuvo check-ins (`cabeza` es su último changeset, si
+/// se sabe) y no tiene cambios sin check-in en el workspace de esta PC.
+pub fn cerrada_sin_trabajo_despues(
+    ultimo_merge: Option<i64>,
+    cabeza: Option<i64>,
+    con_pendientes: bool,
+) -> bool {
+    match ultimo_merge {
+        Some(unido) => !con_pendientes && cabeza.map_or(true, |c| c <= unido),
+        None => false,
+    }
 }
 
 /// Changesets de `rama` que son destino de un merge (de cualquier tipo: merge de
@@ -1691,11 +1714,32 @@ mod tests {
 
     #[test]
     fn parsea_cierre_de_rama_solo_con_merge_real_al_padre() {
-        let salida =
-            "cherrypick|br:/main/dev\ncherrypicksubtractive|/main/dev\nmerge|/main/dev/T-101\n";
-        assert!(!parsear_rama_cerrada(salida, "/main/dev"));
-        assert!(parsear_rama_cerrada(salida, "/main/dev/T-101"));
-        assert!(parsear_rama_cerrada("merge|br:/main/dev/\n", "/main/dev"));
+        let salida = "cherrypick|4|br:/main/dev\ncherrypicksubtractive|5|/main/dev\nmerge|7|/main/dev/T-101\n";
+        assert_eq!(parsear_ultimo_merge(salida, "/main/dev"), None);
+        assert_eq!(parsear_ultimo_merge(salida, "/main/dev/T-101"), Some(7));
+        assert_eq!(
+            parsear_ultimo_merge("merge|3|br:/main/dev/\nmerge|9|br:/main/dev\n", "/main/dev"),
+            Some(9)
+        );
+    }
+
+    #[test]
+    fn cerrada_solo_sin_trabajo_despues_del_merge() {
+        // Como CorreccionesEtapasBasicas1-6 en VirusTF: cs 121 unido a dev y es su último check-in.
+        assert!(cerrada_sin_trabajo_despues(Some(121), Some(121), false));
+        assert!(
+            !cerrada_sin_trabajo_despues(Some(121), Some(121), true),
+            "cambios sin check-in"
+        );
+        assert!(
+            !cerrada_sin_trabajo_despues(Some(121), Some(125), false),
+            "check-in después"
+        );
+        assert!(
+            !cerrada_sin_trabajo_despues(None, Some(121), false),
+            "nunca se unió"
+        );
+        assert!(cerrada_sin_trabajo_despues(Some(121), None, false));
     }
 
     #[test]
