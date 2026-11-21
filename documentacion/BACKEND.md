@@ -425,8 +425,12 @@ Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_p
   5. Si no aparece y no es Administrador: `no_es_miembro` (lo agrega un Administrador, #241).
 - **Listar**: `listar_proyectos_del_servidor()` (libre; hace falta la sesión del servidor) → `[{ id, nombre, unity_org, unity_repo, rol }]`, con `GET /rest/v1/miembros?select=rol,proyectos(id,nombre,unity_org,unity_repo)&usuario_id=eq.<cuenta>`. `listar_proyectos_servidor()` ("Cargar proyecto") lo usa para marcar como "Con tareas" los repos que ya son proyectos de la cuenta, con su `rol_servidor`. Sin internet, la lista sale igual que antes.
 - **Cliente**: `ClienteSupabase::llamar_funcion(nombre, cuerpo)` hace `POST /functions/v1/<nombre>` con la sesión.
+- **Entrar con el servidor** (`identidad::acceso::entrar_con_servidor`, segunda parte, 2026-11-21):
+  - **Base local vinculada**: antes de decidir se rehace la copia de `miembros` (#241; sin red se usa la última) y se decide **sin firmas**, con la llave vacía, igual que `estado::llave_publica_del_proyecto`. Antes `entrar` leía `admin.pub` del disco y, con la copia sin firmas que deja #241, hasta el Administrador quedaba "pendiente".
+  - **Primera vez en una PC, sin ser el dueño**: si no hay datos locales usables y el servidor muestra el proyecto (la cuenta es miembro), se crea la base local con `proyecto_servidor_id` y el nombre del proyecto, se trae el equipo y se entra con el rol del servidor. No hay llaves del Administrador en esa PC. El historial lo baja la recepción (#239).
+  - Si el servidor no lo muestra (o no hay red): como antes, el dueño configura y los demás ven "espera a que lo abra su dueño".
+  - Igual que hoy, después de entrar el frontend pide la carpeta compartida hasta #244.
 - **Falta (siguientes partes de #240)**:
-  - Entrar por primera vez en una PC como miembro que no es el dueño (necesita los roles del servidor, #241).
   - Proyectos sin Unity VC en el servidor y abrirlos desde otra PC. La contraseña de esos proyectos la quita #243.
   - Crear un proyecto sin internet (que espere en la bandeja).
   - Usar un proyecto vinculado sin carpeta compartida: hoy `publicar` escribe en `ops/` y la entrada pide la carpeta; eso se quita en #244.
@@ -438,6 +442,13 @@ Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_p
     - volver a vincular A no toca la red;
     - la lista de la cuenta lo muestra como Administrador.
     - Deja el proyecto: borrarlo con `delete from public.proyectos where unity_repo = 'BranchBoard-Pruebas/BranchBoard-Pruebas'`.
+  - 4 unitarias en `identidad::acceso`: un miembro entra por primera vez desde el servidor (base vinculada, sin llaves); en el servidor pero sin ser miembro → no registrado; sin servidor y sin ser dueño → espera; vinculado, el dueño entra aunque la copia no tenga firmas (y sin red).
+  - Real, `comandos::acceso::…::entorno_real_miembro_entra_por_primera_vez_en_una_pc` (mismas variables, `cargo test --lib entorno_real_miembro_entra -- --ignored --nocapture`):
+    - la dueña trae el repo;
+    - registra una cuenta `entrar-240-<hora>@prueba.branchboard` (clave aleatoria) y la agrega como Desarrolladora;
+    - esa cuenta entra en una PC sin datos como Desarrolladora y queda la base vinculada con los 2 miembros; al entrar otra vez usa esa base;
+    - la dueña entra en otra PC sin datos como Administradora.
+    - Borrar después: `delete from public.proyectos where unity_repo = 'BranchBoard-Pruebas/BranchBoard-Pruebas'` y `delete from auth.users where email like 'entrar-240-%@prueba.branchboard'`.
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
