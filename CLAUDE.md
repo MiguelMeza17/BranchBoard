@@ -62,6 +62,7 @@ La migración a Supabase (#231, hoja de ruta #248) se prueba igual que Unity VC,
 - **Qué va en el código**: la URL y la clave **pública** (publishable) de cada proyecto, en `app/backend/src/supabase/entorno.rs`. **Nunca** la `sb_secret_…`, la contraseña de Postgres ni un token de acceso de la CLI: el repo es público. Esas las tiene solo el dueño de la cuenta de Supabase.
 - **Estructura de la base**: solo por migraciones en `supabase/migrations/` (revisadas en el PR), no a mano desde el panel. Cómo aplicarlas: [Servidor (Supabase) en BACKEND.md](documentacion/BACKEND.md#servidor-supabase).
 - **Qué va en el PR**: la misma sección "Prueba en el entorno real", indicando qué se probó en `branchboard-pruebas`.
+- **Reglas RLS**: todo cambio de reglas o funciones de roles corre `supabase/tests/01_reglas.test.sql` contra pruebas (`npx supabase@3 db query --remote --yes --file …`, sin Docker; `fallidas` tiene que ser 0) y `npx supabase@3 db advisors --linked --type security`. Una regla nueva va con su caso de prueba.
 - **Nunca** se prueba en producción ni con datos de proyectos reales.
 
 ### Cómo se está construyendo el backend

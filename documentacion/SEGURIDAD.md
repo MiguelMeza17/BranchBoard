@@ -28,6 +28,23 @@
 
 5 roles: Administrador, Líder, Desarrollador, **Tester** y **Colaborador externo** (nuevo 2026-11-07).
 
+### Reglas del servidor (Supabase, #234)
+
+**Nuevo (2026-11-20)** — con la migración a Supabase (#231, hoja de ruta #248) los roles los aplica **el servidor**, no solo la app (`supabase/migrations/20261121000000_reglas_rls_y_roles.sql` y `…000100_ajustes_seguridad.sql`):
+
+- **Leer**: un proyecto, sus miembros y sus eventos los ven solo sus miembros. Perfiles: el propio y los de quienes comparten algún proyecto contigo. **Sin sesión no se lee nada.**
+- **Eventos**: se insertan solo en proyectos donde eres miembro; **el autor y la hora los pone el servidor** (no se puede escribir a nombre de otro ni cambiar el orden). No se editan ni se borran.
+- **Roles**: viven en la tabla `miembros`, que **nadie escribe directo**; solo las funciones `crear_proyecto`, `agregar_miembro`, `cambiar_rol` y `quitar_miembro`, que revisan el rol de quien lo pide:
+  - Administrador: asigna cualquier rol, **incluido Administrador** (puede haber varios, decisión 5 de #231), y quita a cualquiera.
+  - Líder: solo da Desarrollador, Tester o Colaborador externo, y solo a gente que tiene uno de esos roles (o a alguien nuevo); solo quita Desarrolladores y Colaboradores externos. Igual que `roles_asignables` y `puede_eliminar` de la app.
+  - **Nunca se puede quitar ni degradar al último Administrador** de un proyecto.
+  - Cualquiera puede salirse de un proyecto (salvo el último Administrador).
+- Probado con 42 casos contra el proyecto de pruebas (ver BACKEND.md → Reglas RLS y funciones de roles).
+
+**Quién se lo puede saltar**: el **dueño de la cuenta de Supabase** (panel, clave secreta, contraseña de Postgres). Es el nuevo ancla de confianza en lugar de `admin.key` (decisión 2 y 3 de #231); riesgo aceptado.
+
+**Pendiente**: hoy, cualquier miembro puede insertar eventos de cualquier tipo (p. ej. aprobar una tarea siendo Desarrollador). Qué eventos valida el servidor según el rol se decide en #247.
+
 ### Administrador
 - Gestiona y administra todo tipo de usuarios, incluyendo **eliminar cualquier usuario** (Líder o Desarrollador) — ej. cuando alguien deja el equipo
 - Es el único que puede asignar el rol de **Líder** a otro usuario, o **degradarlo**/reasignar entre Desarrollador, Tester y Colaborador externo (`cambiar_rol`, que reemplaza a `ascender_a_lider`) — ver [BACKEND.md](./BACKEND.md#comandos-de-usuarios-y-ajustes)
@@ -148,19 +165,6 @@ Para que alguien pueda usar BranchBoard en un proyecto, además de crearlo en [U
 - Manejo de datos del equipo: **resuelto**, no hay login propio, ni siquiera para el colaborador de subtareas simples — identidad vía `cm whoami` para **todos** los roles (ver [Identidad de usuario en BACKEND.md](./BACKEND.md#identidad-de-usuario) y [Workspace parcial (Gluon) en BACKEND.md](./BACKEND.md#workspace-parcial-gluon-para-subtareas-simples)). El diseño anterior de Service Account/API REST se descartó por una limitación real de la plataforma (las Service Accounts no pueden recibir permisos de Version Control), así que no hay ninguna llave/secreto compartido que proteger. **Actualizado (2026-11-12)**: la API REST sí se adoptó, pero con un **PAT personal por usuario** (no compartido), guardado en el llavero del sistema de su propia máquina — ver [API REST del servidor de Unity VC](#api-rest-del-servidor-de-unity-vc-manejo-de-tokens-probado-2026-11-12).
 - Control de acceso por rol (autorización): cada comando Tauri sensible (eliminar proyecto, crear líder, eliminar tarea de otro, crear usuario o cambiar rol) debe validar el rol del usuario que lo invoca, no solo ocultar el botón en la UI — la UI oculta, pero el backend es quien debe negar la acción aunque alguien intente saltarse la interfaz
 - **Resuelto (hallazgo C1 de auditoría)**: el `rol` en la tabla `usuarios` no bastaba como ancla de confianza porque el `.db` se sincroniza por Drive/OneDrive con lectura/escritura para todo el equipo — cualquiera podía editarlo a mano. Ver [Firma criptográfica del rol en BACKEND.md](./BACKEND.md#firma-criptográfica-del-rol-ancla-de-confianza-para-el-rbac): cada fila de rol se firma con Ed25519 (llave privada solo en la máquina del Administrador, nunca sincronizada; llave pública embebida en la app) y se verifica al leer. Adicionalmente, **eliminar el proyecto** exige también permiso real `rmrepository` en Unity Version Control (ver [Verificación adicional sobre Unity Version Control en BACKEND.md](./BACKEND.md#verificación-adicional-sobre-unity-version-control-para-eliminar-el-proyecto)) — doble candado, no solo la firma local.
-
-## Servidor (Supabase): reglas de acceso (#234)
-
-Con la migración a Supabase (#231), los permisos que hoy revisa la app de cada uno pasan a revisarse **también en el servidor**, con reglas RLS y funciones (detalle en [Reglas RLS y funciones de roles en BACKEND.md](./BACKEND.md#reglas-rls-y-funciones-de-roles-234)):
-
-- **La clave pública sola no da acceso a nada** (rol `anon` sin permisos). Por eso puede ir en el repo y en el instalador.
-- Cada cuenta solo **ve** los proyectos de los que es miembro, sus miembros y sus eventos; de los demás no ve ni que existen.
-- Los **roles no son eventos**: viven en `miembros` y solo los cambian funciones del servidor que revisan el rol de quien lo pide (Admin, o Líder dentro de los roles base). Puede haber **varios Administradores**, pero nunca cero.
-- Los **eventos** se insertan solo a nombre propio, con la hora y el orden del servidor, y no se editan ni se borran.
-- Los **correos** de los miembros solo los ve un Administrador o un Líder del proyecto (`miembros_de_proyecto`); la tabla de perfiles no los expone.
-- **Quién puede saltarse todo esto**: el **dueño de la cuenta de Supabase** (panel web, clave `sb_secret_…`, contraseña de Postgres). No es un rol de BranchBoard ni Administrador de ningún proyecto por serlo (decisiones 2 y 5 de #231). Esas credenciales nunca van al repo.
-- **Riesgo**: una regla mal escrita expone datos de otros equipos. Toda regla nueva va con su caso en `supabase/tests/reglas_rls_y_roles.sql`.
-- **Pendiente (#247)**: qué tipos de evento puede insertar cada rol (hoy, cualquier miembro puede insertar cualquier tipo; la app de cada uno sigue revisando el rol al aplicarlos).
 
 ## Allowlist de capabilities de Tauri (resuelto)
 
