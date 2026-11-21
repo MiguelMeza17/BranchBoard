@@ -5,7 +5,7 @@ import { Icono } from './Icono';
 type EntradaDentro = Extract<EntradaProyecto, { estado: 'dentro' }>;
 
 /** Los proyectos sin Unity VC de la cuenta en el servidor (#240), pedidos cada vez que `abierta` pasa a
- * `true`. Vacío sin sesión, sin red o fuera de la app de escritorio. */
+ * `true`. Incluye altas locales pendientes de subir, también sin conexión. */
 export function useProyectosDelServidor(abierta: boolean): ProyectoDeLaCuenta[] {
   const [proyectos, setProyectos] = useState<ProyectoDeLaCuenta[]>([]);
   useEffect(() => {
@@ -59,7 +59,7 @@ export function ListaProyectosDelServidor({
 
   return (
     <div>
-      {titulo('En el servidor')}
+      {titulo('Tus proyectos de BranchBoard')}
       <div className="space-y-1.5">
         {proyectos.map((p) => (
           <button key={p.id} type="button" className={fila} disabled={abriendo !== null} onClick={() => void abrir(p)}>

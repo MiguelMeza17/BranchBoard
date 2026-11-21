@@ -190,7 +190,7 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 | Leer proyectos, miembros, eventos y perfiles | `select` normal por la API de datos; solo devuelve lo de los proyectos de los que se es miembro |
 | Editar el propio nombre y apellido | `update perfiles set nombre, apellido` (el correo no) |
 | Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en`. Si el `tipo` está en `privado.permisos_evento` y el rol de quien lo manda no está en sus roles, se rechaza con `42501` (#247, tabla en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234)) |
-| Crear un proyecto sin Unity VC | `rpc/crear_proyecto(p_nombre)` → id; quien lo crea queda Administrador |
+| Crear un proyecto sin Unity VC | UUID v4 local; al sincronizar `rpc/crear_proyecto(p_nombre, p_id)` confirma ese mismo id y deja al creador como Administrador |
 | Agregar a alguien (o invitarlo si aún no tiene cuenta, #241) | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` → id, o `null` si quedó invitado |
 | Cancelar una invitación | `rpc/quitar_invitacion(p_proyecto, p_correo)` (#241) |
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
@@ -443,13 +443,16 @@ Con el proyecto en el servidor (tiene `proyecto_servidor_id` en `configuracion_p
   - Si el servidor no lo muestra (o no hay red): como antes, el dueño configura y los demás ven "espera a que lo abra su dueño".
   - Igual que hoy, después de entrar el frontend pide la carpeta compartida hasta #244.
 - **Proyectos sin Unity VC en el servidor** (`proyecto_servidor.rs`, `comandos/proyecto_servidor.rs`, tercera parte, 2026-11-21). Nada va por Drive: el proyecto vive en el servidor y se abre desde cualquier PC con la cuenta.
-  - `crear_proyecto_servidor(nombre)` (libre): con la sesión de BranchBoard, `rpc/crear_proyecto(p_nombre)`; quien lo crea queda Administrador (#234). Sin carpeta que elegir, sin contraseña ni llaves. Deja el proyecto abierto (`configurado_ahora: true`).
+  - `crear_proyecto_servidor(nombre)` (libre, #269): usa la sesión **guardada**, incluso con token vencido y sin red. Genera el UUID v4 definitivo en la app, crea SQLite y la copia del creador como Administrador, y persiste el alta pendiente en la misma transacción. Abre el proyecto inmediatamente (`configurado_ahora: true`), sin carpeta que elegir ni contraseña. No guarda tokens en SQLite.
+  - Antes de subir cualquier evento, la sincronización automática confirma el alta con `rpc/crear_proyecto(p_nombre, p_id)`. Conserva el UUID de todas las tareas y eventos creados sin conexión. Si falla, no envía ni aparta eventos como rechazados: todo queda pendiente incluso al reiniciar. La petición de red no mantiene bloqueada la base local. Solo la cuenta que lo creó puede subirlo; cambiar de cuenta no transfiere su autoría.
+  - El RPC conserva la versión anterior de un argumento. La versión con UUID no sobrescribe proyectos ni otorga roles por colisión; permite reintentar únicamente el mismo nombre, creador y Administrador de un proyecto sin Unity VC, para recuperar una respuesta perdida sin duplicar. El alta cuenta como un cambio pendiente en el indicador, incluso antes de crear tareas.
+  - `listar_proyectos_del_servidor` combina la lista remota con los proyectos creados **por esta cuenta en esta PC**, sin duplicar UUID. Si falla la red, siguen disponibles para abrirlos y trabajar, incluso si el alta ya se confirmó y todavía quedan tareas por subir. Conserva solo los metadatos del origen y la copia del rol; una PC distinta necesita que el alta ya haya llegado al servidor. Al abrir un alta pendiente no consulta la red; una confirmada usa el refresco habitual del equipo y su copia si no hay conexión.
   - `abrir_proyecto_servidor(id)` (libre): uno de los de `listar_proyectos_del_servidor` sin `unity_repo`. Se sabe quién es con la sesión guardada (también sin red). El nombre viene del servidor si hay red.
   - **Datos locales**: `<datos de la app>/proyectos/servidor-<id>/`, con `proyecto_servidor_id`, el nombre y la copia del equipo (`equipo_servidor::refrescar`, #241). Entra con su rol de la copia, sin firmas; si no está, `no_registrado`. Una PC nueva sin red no puede abrirlo (no sabe el rol); una que ya lo tenía, abre con la última copia.
   - **Eventos**: hasta que #244 quite `ops/`, `publicar` escribe también en `eventos-locales/`, dentro de los datos del proyecto. Es local y privada, no se sincroniza con nada (`eventos::fijar_carpeta_compartida_local`). Lo que viaja va por la bandeja (#238) y la recepción (#239).
   - Los proyectos "por carpeta" de antes (`proyecto_local`) se siguen abriendo como estaban; subirlos al servidor es de #245.
+- Crear sin internet está implementado en #269; la sesión de BranchBoard debe haberse iniciado antes en esta PC.
 - **Falta (siguientes partes de #240)**:
-  - Crear un proyecto sin internet (que espere en la bandeja).
   - Usar un proyecto vinculado sin carpeta compartida: hoy `publicar` escribe en `ops/` y la entrada pide la carpeta; eso se quita en #244.
 - **Pruebas**:
   - 7 unitarias en `supabase::proyectos`: si el servidor lo muestra se guarda sin traerlo; el Administrador lo trae; quien no lo es, no; ya vinculado no toca la red; sin internet no guarda nada; con equipo local no se vincula; rutas y respuestas.

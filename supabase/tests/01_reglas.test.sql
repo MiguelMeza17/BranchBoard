@@ -46,7 +46,9 @@ select no_plan();
 create temp table _r (n serial, linea text);
 
 insert into _r (linea) select is(
-    (select count(*)::int from public.perfiles where correo like '%@prueba.branchboard'), 4,
+    (select count(*)::int from public.perfiles where id in (
+        'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002',
+        'c0000000-0000-4000-8000-000000000003', 'd0000000-0000-4000-8000-000000000004')), 4,
     'el trigger crea un perfil por cada cuenta nueva');
 insert into _r (linea) select is(
     (select nombre || ' ' || apellido from public.perfiles where correo = 'a@prueba.branchboard'), 'Ana Admin',

@@ -102,7 +102,11 @@ fn buscar_en_servidor<L: crate::servidor::pat::Llavero>(
 ) -> Option<String> {
     login_unity::asegurar_sesion_servidor_del_equipo(estado, email).ok()?;
     cliente
-        .llamar("GET", &proyectos::ruta_buscar_unity(&repo.org, &repo.repo), None)
+        .llamar(
+            "GET",
+            &proyectos::ruta_buscar_unity(&repo.org, &repo.repo),
+            None,
+        )
         .ok()
         .and_then(|j| proyectos::id_desde_json(&j))
 }
@@ -142,7 +146,11 @@ pub fn vincular_proyecto_servidor_en(estado: &AppState) -> Resultado<Vinculo> {
         &hoy_local(),
         || {
             cliente
-                .llamar("GET", &proyectos::ruta_buscar_unity(&repo.org, &repo.repo), None)
+                .llamar(
+                    "GET",
+                    &proyectos::ruta_buscar_unity(&repo.org, &repo.repo),
+                    None,
+                )
                 .map(|j| proyectos::id_desde_json(&j))
         },
         || traer_repo(estado, &cliente, &repo, &yo.email),
@@ -195,8 +203,23 @@ pub async fn vincular_proyecto_servidor(estado: State<'_, AppState>) -> Resultad
 /// `listar_proyectos_del_servidor()`: los proyectos de los que la cuenta de BranchBoard es miembro, con
 /// su rol en el servidor (#240). Libre: no hace falta un proyecto abierto, sí la sesión del servidor.
 #[tauri::command]
-pub async fn listar_proyectos_del_servidor() -> Resultado<Vec<ProyectoDeLaCuenta>> {
-    proyectos::listar_mios(&ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema))
+pub async fn listar_proyectos_del_servidor(app: AppHandle) -> Resultado<Vec<ProyectoDeLaCuenta>> {
+    let cliente = ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema);
+    let sesion = cliente.sesion_guardada()?.ok_or(Error::SinSesionServidor)?;
+    let locales =
+        crate::proyecto_servidor::pendientes::listar(&carpeta_datos(&app)?, &sesion.usuario_id)?;
+    let mut lista = match proyectos::listar_mios(&cliente) {
+        Ok(lista) => lista,
+        Err(_) if !locales.is_empty() => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    for local in locales {
+        if !lista.iter().any(|p| p.id == local.id) {
+            lista.push(local);
+        }
+    }
+    lista.sort_by_key(|p| p.nombre.to_lowercase());
+    Ok(lista)
 }
 
 /// `true` si `email` es el dueño (`owner`) del repositorio según la API.
@@ -289,50 +312,84 @@ mod tests {
         crate::supabase::miembros::agregar(&cliente_duena, &proyecto, &miembro, Rol::Desarrollador)
             .unwrap();
 
-        let entrar_en_pc = |datos: &Path, correo: &str, cliente: &ClienteSupabase<LlaveroCompartido>| {
-            acceso::entrar_con_servidor(
-                datos,
-                &repo,
-                correo,
-                || panic!("no hace falta preguntar por el dueño"),
-                || {
-                    cliente
-                        .llamar("GET", &proyectos::ruta_buscar_unity(&repo.org, &repo.repo), None)
-                        .ok()
-                        .and_then(|j| proyectos::id_desde_json(&j))
-                },
-                |db, p| refrescar_equipo(cliente, db, p),
-                &ahora_iso(),
-                &hoy_local(),
-            )
-            .unwrap()
-        };
+        let entrar_en_pc =
+            |datos: &Path, correo: &str, cliente: &ClienteSupabase<LlaveroCompartido>| {
+                acceso::entrar_con_servidor(
+                    datos,
+                    &repo,
+                    correo,
+                    || panic!("no hace falta preguntar por el dueño"),
+                    || {
+                        cliente
+                            .llamar(
+                                "GET",
+                                &proyectos::ruta_buscar_unity(&repo.org, &repo.repo),
+                                None,
+                            )
+                            .ok()
+                            .and_then(|j| proyectos::id_desde_json(&j))
+                    },
+                    |db, p| refrescar_equipo(cliente, db, p),
+                    &ahora_iso(),
+                    &hoy_local(),
+                )
+                .unwrap()
+            };
 
         // 3. El miembro, en una PC sin datos.
         let pc_miembro = tempfile::tempdir().unwrap();
         let (entrada, db) = entrar_en_pc(pc_miembro.path(), &miembro, &cliente_miembro);
         assert!(
-            matches!(entrada, Entrada::Dentro { rol: Rol::Desarrollador, configurado_ahora: false, .. }),
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Desarrollador,
+                    configurado_ahora: false,
+                    ..
+                }
+            ),
             "{entrada:?}"
         );
         let db = db.expect("entra con la base abierta");
         assert_eq!(
-            proyectos::proyecto_guardado(db.conexion()).unwrap().as_deref(),
+            proyectos::proyecto_guardado(db.conexion())
+                .unwrap()
+                .as_deref(),
             Some(proyecto.as_str())
         );
         assert_eq!(crate::db::usuarios::listar(db.conexion()).unwrap().len(), 2);
         drop(db);
         let (entrada, _) = entrar_en_pc(pc_miembro.path(), &miembro, &cliente_miembro);
-        assert!(matches!(entrada, Entrada::Dentro { rol: Rol::Desarrollador, .. }), "{entrada:?}");
+        assert!(
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Desarrollador,
+                    ..
+                }
+            ),
+            "{entrada:?}"
+        );
 
         // 4. La dueña, en otra PC sin datos.
         let pc_duena = tempfile::tempdir().unwrap();
         let (entrada, _) = entrar_en_pc(pc_duena.path(), &duena, &cliente_duena);
-        assert!(matches!(entrada, Entrada::Dentro { rol: Rol::Administrador, .. }), "{entrada:?}");
+        assert!(
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Administrador,
+                    ..
+                }
+            ),
+            "{entrada:?}"
+        );
 
         cliente_miembro.cerrar_sesion().unwrap();
         cliente_duena.cerrar_sesion().unwrap();
-        println!("el miembro entró desde el servidor en el proyecto {proyecto} de branchboard-pruebas");
+        println!(
+            "el miembro entró desde el servidor en el proyecto {proyecto} de branchboard-pruebas"
+        );
     }
 
     /// **Prueba en el entorno real** (#240) contra branchboard-pruebas, con la sesión de Unity VC del
@@ -372,7 +429,11 @@ mod tests {
         .unwrap();
         let buscar = || {
             cliente
-                .llamar("GET", &proyectos::ruta_buscar_unity(&repo.org, &repo.repo), None)
+                .llamar(
+                    "GET",
+                    &proyectos::ruta_buscar_unity(&repo.org, &repo.repo),
+                    None,
+                )
                 .map(|j| proyectos::id_desde_json(&j))
         };
 
@@ -388,7 +449,11 @@ mod tests {
             || traer_repo(&estado, &cliente, &repo, &correo),
         )
         .unwrap();
-        let Vinculo::Vinculado { proyecto_id, ahora: true } = v else {
+        let Vinculo::Vinculado {
+            proyecto_id,
+            ahora: true,
+        } = v
+        else {
             panic!("A no quedó vinculada: {v:?}")
         };
 
@@ -427,7 +492,10 @@ mod tests {
 
         // 4. Aparece en la lista de la cuenta como Administradora.
         let lista = proyectos::listar_mios(&cliente).unwrap();
-        let p = lista.iter().find(|p| p.id == proyecto_id).expect("no aparece en la lista");
+        let p = lista
+            .iter()
+            .find(|p| p.id == proyecto_id)
+            .expect("no aparece en la lista");
         assert_eq!(p.rol, "Administrador");
         assert_eq!(p.unity_repo.as_deref(), Some(repo.repo.as_str()));
 
