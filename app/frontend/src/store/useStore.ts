@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { CHAT_GRUPO } from '../types';
 import * as ejemplo from '../data/fixtures';
-import { api, enTauri, ErrorBackend, mensajeDeError, type AlertaRamaAjena, type CambiosEntrantes, type ConflictoMerge, type ProyectoServidor, type ResumenPolling } from '../lib/api';
+import { api, enTauri, ErrorBackend, mensajeDeError, type AlertaRamaAjena, type CambiosEntrantes, type ConflictoMerge, type ProyectoServidor, type ResumenPolling, type UsuarioVisible } from '../lib/api';
 import { esTareaEnEspera, ramaDeTarea } from '../lib/ui';
 import type { Cuenta } from '../lib/cuentas';
 import { esLiderOAdmin, puedeTomarTarea } from '../lib/permisos';
@@ -369,6 +369,12 @@ interface State {
 
   // datos
   usuarios: Usuario[];
+  usuariosVisibles: UsuarioVisible[];
+  usuariosCargando: boolean;
+  equipoOcupado: boolean;
+  errorUsuarios: string | null;
+  revisionEquipo: number;
+  cargarUsuarios: () => Promise<boolean>;
   tareas: Tarea[];
   sprints: Sprint[];
   notificaciones: Notificacion[];
@@ -537,12 +543,12 @@ interface State {
 
   // usuarios / ajustes
   /** Crea el usuario con su correo y rol (la identidad es `cm whoami`, sin contraseña). Devuelve false si ya existe. */
-  crearUsuario: (correo: string, rol: Rol) => boolean;
+  crearUsuario: (correo: string, rol: Rol) => Promise<boolean>;
   /** Antes de restaurar, el estado actual se guarda como una copia más, tal cual estaba. */
   restaurarBackup: (id: string) => void;
-  eliminarUsuario: (email: string) => void;
+  eliminarUsuario: (email: string) => Promise<boolean>;
   /** Cambia el rol (con el proyecto en el servidor lo hace cumplir el servidor, #241). */
-  cambiarRol: (email: string, rol: Rol) => void;
+  cambiarRol: (email: string, rol: Rol) => Promise<boolean>;
   /** Mensaje libre a un compañero: le llega como notificación. */
   enviarMensaje: (para: string, texto: string) => void;
   /** Cambia el nombre del proyecto en BranchBoard (el repositorio de Unity VC conserva el suyo). */
@@ -567,6 +573,32 @@ function quedariaSinAdministrador(usuarios: Usuario[], email: string, rol: Rol |
 }
 
 export const useStore = create<State>((set, get) => {
+  let lecturaEquipo = 0;
+  const contextoEquipo = () => {
+    const s = get();
+    return `${s.revisionEquipo}\n${s.proyectoActual}\n${s.currentEmail}`;
+  };
+  const cambiarEquipo = async (operacion: () => Promise<unknown>, mensaje: string): Promise<boolean> => {
+    if (get().equipoOcupado) return false;
+    const contexto = contextoEquipo();
+    set({ equipoOcupado: true, errorUsuarios: null });
+    try {
+      await operacion();
+      if (contextoEquipo() !== contexto) return false;
+      const actualizado = await get().cargarUsuarios();
+      if (contextoEquipo() !== contexto) return false;
+      get().showToast(actualizado ? mensaje : `${mensaje}. No se pudo actualizar la lista; pulsa Actualizar.`, actualizado ? 'ok' : 'info');
+      return true;
+    } catch (e) {
+      if (contextoEquipo() === contexto) {
+        set({ errorUsuarios: mensajeDeError(e) });
+        get().showToast(mensajeDeError(e), 'danger');
+      }
+      return false;
+    } finally {
+      if (contextoEquipo() === contexto) set({ equipoOcupado: false });
+    }
+  };
   const notificar = (n: Omit<Notificacion, 'id' | 'fecha' | 'leida'>) => {
     const notif: Notificacion = { id: nextNotifId(), fecha: today(), leida: false, ...n };
     set((s) => ({ notificaciones: [notif, ...s.notificaciones] }));
@@ -595,6 +627,8 @@ export const useStore = create<State>((set, get) => {
   entrarSinProyecto: (cuenta) =>
     set({
       cuentaBranchBoard: cuenta,
+      revisionEquipo: get().revisionEquipo + 1,
+      usuariosVisibles: [], usuariosCargando: false, equipoOcupado: false, errorUsuarios: null,
       currentEmail: cuenta.correo,
       usuarios: [],
       tareas: [],
@@ -610,6 +644,8 @@ export const useStore = create<State>((set, get) => {
     set({
       cuentaBranchBoard: null,
       currentEmail: '',
+      revisionEquipo: get().revisionEquipo + 1,
+      usuariosVisibles: [], usuariosCargando: false, equipoOcupado: false, errorUsuarios: null,
       usuarios: [],
       tareas: [],
       proyectoActual: '',
@@ -709,6 +745,36 @@ export const useStore = create<State>((set, get) => {
   },
 
   usuarios: [...fx.usuarios],
+  usuariosVisibles: [],
+  usuariosCargando: false,
+  equipoOcupado: false,
+  errorUsuarios: null,
+  revisionEquipo: 0,
+  cargarUsuarios: async () => {
+    const contexto = contextoEquipo();
+    const lectura = ++lecturaEquipo;
+    set({ usuariosCargando: true, errorUsuarios: null });
+    try {
+      const filas = await api.listarUsuarios(() => get().usuarios.map((u) => ({ ...u, propio: u.email === get().currentEmail })));
+      if (contextoEquipo() !== contexto || lectura !== lecturaEquipo) return false;
+      if (enTauri()) {
+        const usuarios: Usuario[] = filas.flatMap((u) => {
+          const correo = u.email ?? (u.propio ? get().currentEmail : null);
+          return correo ? [{ ...u, email: correo }] : [];
+        });
+        set({ usuarios, usuariosVisibles: filas });
+      } else set({ usuariosVisibles: filas });
+      return true;
+    } catch (e) {
+      if (contextoEquipo() === contexto && lectura === lecturaEquipo) {
+        set({ errorUsuarios: mensajeDeError(e) });
+        if (e instanceof ErrorBackend && e.codigo === 'sin_permiso') set({ usuarios: [], usuariosVisibles: [] });
+      }
+      return false;
+    } finally {
+      if (contextoEquipo() === contexto && lectura === lecturaEquipo) set({ usuariosCargando: false });
+    }
+  },
   tareas: normalizarJerarquiaEstados([...fx.tareas], new Set(fx.commits.map((c) => c.tarea_id))),
   sprints: [...fx.sprints],
   notificaciones: [...fx.notificaciones],
@@ -1015,7 +1081,7 @@ export const useStore = create<State>((set, get) => {
     );
   },
 
-  setEmail: (email) => set({ currentEmail: email }),
+  setEmail: (email) => set({ currentEmail: email, revisionEquipo: get().revisionEquipo + 1, usuariosVisibles: [], usuariosCargando: false, equipoOcupado: false, errorUsuarios: null }),
   setRolActual: (rol) =>
     set((s) => ({
       usuarios: s.usuarios.map((u) => (u.email === s.currentEmail ? { ...u, rol } : u)),
@@ -1227,6 +1293,9 @@ export const useStore = create<State>((set, get) => {
     }),
   entrarAProyecto: (nombre, workspace, carpetaLocal) => {
     set({
+      revisionEquipo: get().revisionEquipo + 1,
+      usuariosVisibles: [], usuariosCargando: false, equipoOcupado: false, errorUsuarios: null,
+      ...(enTauri() ? { usuarios: get().usuarios.filter((u) => u.email === get().currentEmail) } : {}),
       proyectoLocal: carpetaLocal ?? null,
       ...(carpetaLocal ? { modoSinUnityVc: true } : {}),
       proyectoActual: nombre,
@@ -1264,7 +1333,7 @@ export const useStore = create<State>((set, get) => {
   currentUser: () => {
     const s = get();
     const email = s.currentEmail.toLowerCase();
-    return s.usuarios.find((u) => u.email.toLowerCase() === email) ?? s.usuarios[0] ?? USUARIO_SIN_SESION;
+    return s.usuarios.find((u) => u.email.toLowerCase() === email) ?? (enTauri() ? USUARIO_SIN_SESION : s.usuarios[0] ?? USUARIO_SIN_SESION);
   },
 
   puedeAvanzar: (id, estado) => {
@@ -2098,9 +2167,10 @@ export const useStore = create<State>((set, get) => {
       notificaciones: s.notificaciones.map((n) => (n.para === email ? { ...n, leida: true } : n)),
     })),
 
-  crearUsuario: (correo, rol) => {
+  crearUsuario: async (correo, rol) => {
     const s = get();
     const c = correo.trim().toLowerCase();
+    if (enTauri()) return cambiarEquipo(() => api.crearUsuario(c, rol), `${c} agregado al equipo o invitado`);
     if (s.usuarios.some((u) => u.email.toLowerCase() === c)) {
       s.showToast('Ya existe un usuario con ese correo', 'danger');
       return false;
@@ -2141,15 +2211,17 @@ export const useStore = create<State>((set, get) => {
     s.showToast(`Copia del ${b.fecha} restaurada — la anterior quedó guardada`);
   },
 
-  eliminarUsuario: (email) => {
+  eliminarUsuario: async (email) => {
+    if (enTauri()) return cambiarEquipo(() => api.eliminarUsuario(email), 'Usuario o invitación quitados del proyecto');
     const s = get();
     const quien = s.usuarios.find((u) => u.email === email);
     if (quien && quedariaSinAdministrador(s.usuarios, email, null)) {
       s.showToast('El proyecto tiene que tener al menos un Administrador', 'danger');
-      return;
+      return false;
     }
     set({ usuarios: s.usuarios.filter((u) => u.email !== email) });
     s.showToast(quien?.invitado ? 'Invitación quitada' : 'Usuario eliminado', 'danger');
+    return true;
   },
 
   renombrarProyecto: (nombre) => {
@@ -2185,15 +2257,17 @@ export const useStore = create<State>((set, get) => {
     s.showToast(`Mensaje enviado a ${destino ? destino.nombre : para}`);
   },
 
-  cambiarRol: (email, rol) => {
+  cambiarRol: async (email, rol) => {
+    if (enTauri()) return cambiarEquipo(() => api.cambiarRol(email, rol), `Rol cambiado a ${rol}`);
     const s = get();
     // El servidor nunca deja degradar al último Administrador (#241).
     if (quedariaSinAdministrador(s.usuarios, email, rol)) {
       s.showToast('El proyecto tiene que tener al menos un Administrador', 'danger');
-      return;
+      return false;
     }
     set({ usuarios: s.usuarios.map((u) => (u.email === email ? { ...u, rol } : u)) });
     s.showToast(`Rol cambiado a ${rol}`);
+    return true;
   },
 
   crearSprint: (nombre, descripcion, con_fecha, duracion_dias) => {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useStore } from './store/useStore';
-import { api, EVENTO_SESION_CADUCADA } from './lib/api';
+import { api, enTauri, EVENTO_SESION_CADUCADA } from './lib/api';
 import { useEventosServidor, useSincronizacionEventos } from './lib/useSincronizacionEventos';
 import { ConflictoMergeModal } from './components/ConflictoMergeModal';
 import { Layout } from './components/Layout';
@@ -30,6 +30,11 @@ export function App() {
   const cmSesionActiva = useStore((s) => s.cmSesionActiva);
   const accesoCompletado = useStore((s) => s.accesoCompletado);
   const proyectoActual = useStore((s) => s.proyectoActual);
+  const revisionEquipo = useStore((s) => s.revisionEquipo);
+  const cargarUsuarios = useStore((s) => s.cargarUsuarios);
+  useEffect(() => {
+    if (enTauri() && accesoCompletado && proyectoActual) void cargarUsuarios();
+  }, [accesoCompletado, proyectoActual, revisionEquipo, cargarUsuarios]);
   const showToast = useStore((s) => s.showToast);
   const cargarEstadoWarp = useStore((s) => s.cargarEstadoWarp);
   const cargarEstadoCm = useStore((s) => s.cargarEstadoCm);
