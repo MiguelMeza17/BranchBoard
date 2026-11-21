@@ -302,6 +302,8 @@ export interface EstadoSesionUnityVc {
   activa: boolean;
   email: string | null;
   abrio_asistente: boolean;
+  /** Se entró con Unity pero no se abrió la sesión del servidor de BranchBoard (#237): por qué. */
+  aviso_servidor?: string | null;
 }
 
 /** Resultado del comando `reconectar_unity_vc` (#124). */
