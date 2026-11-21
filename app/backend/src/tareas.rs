@@ -4261,7 +4261,9 @@ pub fn detectar_doble_toma(
             (rival, gana)
         }
         // Con el servidor (#239) manda su `orden`: gana la toma que llegó antes al servidor.
-        FuenteToma::Servidor { orden } => buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?,
+        FuenteToma::Servidor { orden } => {
+            buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?
+        }
     };
 
     if entrante_gana {
@@ -4341,7 +4343,10 @@ fn buscar_toma_rival_servidor(
         (id, ev)
     };
     if let Some((id, orden, payload, recibido_en)) = bajada {
-        return Ok((Some(armar(id, payload, recibido_en)), orden_entrante < orden));
+        return Ok((
+            Some(armar(id, payload, recibido_en)),
+            orden_entrante < orden,
+        ));
     }
     // La bandeja solo tiene eventos de esta máquina: la toma es de `usuario` si su payload lo dice.
     let mut consulta = c.prepare(
@@ -4349,7 +4354,11 @@ fn buscar_toma_rival_servidor(
          WHERE tipo = 'tomar_tarea' AND tarea_id = ?1 ORDER BY rowid",
     )?;
     let filas = consulta.query_map([tarea_id], |f| {
-        Ok((f.get::<_, String>(0)?, f.get::<_, String>(1)?, f.get::<_, String>(2)?))
+        Ok((
+            f.get::<_, String>(0)?,
+            f.get::<_, String>(1)?,
+            f.get::<_, String>(2)?,
+        ))
     })?;
     for fila in filas {
         let (id, payload, creado_en) = fila?;
@@ -4493,11 +4502,7 @@ mod tests {
     use crate::db::notificaciones;
     use crate::db::Db;
     use crate::eventos::lectura::{self, sincronizar};
-    use crate::identidad::equipo::{self, Firmante};
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin, LlavePrivada,
-    };
+
     use chrono::{DateTime, Utc};
     use std::path::PathBuf;
 
@@ -4513,8 +4518,6 @@ mod tests {
         _dir: tempfile::TempDir,
         ops: PathBuf,
         local_b: PathBuf,
-        publica: String,
-        llave_admin: LlavePrivada,
         db_a: Db,
         db_b: Db,
     }
@@ -4523,11 +4526,7 @@ mod tests {
         fn nuevo() -> Self {
             let dir = tempfile::tempdir().unwrap();
             let ops = dir.path().join("ops");
-            let local_a = dir.path().join("local_a");
             let local_b = dir.path().join("local_b");
-            let publica = generar_llaves_admin(&local_a, None).unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_a = Db::en_memoria().unwrap();
             let db_b = Db::en_memoria().unwrap();
@@ -4549,15 +4548,8 @@ mod tests {
                 _dir: dir,
                 ops,
                 local_b,
-                publica,
-                llave_admin,
                 db_a,
                 db_b,
-            };
-            let firmante = Firmante {
-                email: ADMIN,
-                rol: Rol::Administrador,
-                llave: &esc.llave_admin,
             };
             for (correo, rol) in [
                 (LIDER, Rol::Lider),
@@ -4565,17 +4557,16 @@ mod tests {
                 (TESTER, Rol::Tester),
                 (COLAB, Rol::ColaboradorExterno),
             ] {
-                equipo::crear(
-                    esc.db_a.conexion(),
-                    &esc.ops,
-                    &esc.publica,
-                    &firmante,
-                    correo,
-                    rol,
-                    AHORA,
-                    HOY,
-                )
-                .unwrap();
+                {
+                    let u = crate::identidad::equipo::alta_de_prueba(
+                        esc.db_a.conexion(),
+                        correo,
+                        rol,
+                        HOY,
+                    );
+                    crate::db::usuarios::insertar(esc.db_b.conexion(), &u).unwrap();
+                    u
+                };
             }
             esc.sincronizar_b();
             esc
@@ -4590,7 +4581,7 @@ mod tests {
                 &self.ops,
                 &self.local_b,
                 ahora,
-                |c, e| lectura::aplicar_evento(c, &self.publica, e),
+                lectura::aplicar_evento,
             )
             .unwrap()
         }
@@ -5226,8 +5217,7 @@ mod tests {
             &e.ops,
             &e.local_b,
             ahora,
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
         .unwrap();
@@ -5236,8 +5226,7 @@ mod tests {
             &e.ops,
             &e.local_b,
             ahora,
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
         .unwrap();
@@ -5275,8 +5264,14 @@ mod tests {
         const PROYECTO: &str = "11111111-2222-4333-8444-555555555555";
         let e = Escenario::nuevo();
         for db in [&e.db_a, &e.db_b] {
-            configuracion::guardar(db.conexion(), CLAVE_PROYECTO_SERVIDOR, PROYECTO, ADMIN, AHORA)
-                .unwrap();
+            configuracion::guardar(
+                db.conexion(),
+                CLAVE_PROYECTO_SERVIDOR,
+                PROYECTO,
+                ADMIN,
+                AHORA,
+            )
+            .unwrap();
         }
         // El "servidor": numera lo que le llega y le pone su hora.
         let servidor: RefCell<Vec<recepcion::FilaServidor>> = RefCell::new(Vec::new());
@@ -5327,8 +5322,7 @@ mod tests {
                 PROYECTO,
                 None,
                 Utc::now(),
-                &e.publica,
-                |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+                lectura::aplicar_evento,
                 |_| Ok(false),
             )
             .unwrap()
@@ -5356,28 +5350,55 @@ mod tests {
         };
 
         // A crea T-101, la sube y B la recibe del servidor.
-        crear(e.db_a.conexion(), &e.ops, &dev, &datos_base("Colisión"), "2026-11-15T15:00:01.000Z", HOY)
-            .unwrap();
+        crear(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            &datos_base("Colisión"),
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
         subir(&e.db_a, "uuid-dev");
         assert_eq!(recibir(&e.db_b).aplicados, 1);
 
         // B toma con reloj 15:00:05 y sube primero; A toma con reloj 15:00:02 y sube después.
-        tomar(e.db_b.conexion(), &e.ops, &tester, "T-101", rama(202, "/main/dev/T-101-colision-b"), "2026-11-15T15:00:05.000Z")
-            .unwrap();
+        tomar(
+            e.db_b.conexion(),
+            &e.ops,
+            &tester,
+            "T-101",
+            rama(202, "/main/dev/T-101-colision-b"),
+            "2026-11-15T15:00:05.000Z",
+        )
+        .unwrap();
         subir(&e.db_b, "uuid-tester");
-        tomar(e.db_a.conexion(), &e.ops, &dev, "T-101", rama(201, "/main/dev/T-101-colision-a"), "2026-11-15T15:00:02.000Z")
-            .unwrap();
+        tomar(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            "T-101",
+            rama(201, "/main/dev/T-101-colision-a"),
+            "2026-11-15T15:00:02.000Z",
+        )
+        .unwrap();
         subir(&e.db_a, "uuid-dev");
 
         let sync_a = recibir(&e.db_a);
         let sync_b = recibir(&e.db_b);
         assert_eq!(sync_a.aplicados, 1, "A revierte su toma local a B");
-        assert_eq!(sync_b.descartados, 1, "la toma de A llegó después: se descarta");
+        assert_eq!(
+            sync_b.descartados, 1,
+            "la toma de A llegó después: se descarta"
+        );
 
         for db in [&e.db_a, &e.db_b] {
             let t = db_tareas::obtener(db.conexion(), "T-101").unwrap();
             assert_eq!(t.asignado_a.as_deref(), Some(TESTER));
-            assert_eq!(t.rama_asociada.as_deref(), Some("/main/dev/T-101-colision-b"));
+            assert_eq!(
+                t.rama_asociada.as_deref(),
+                Some("/main/dev/T-101-colision-b")
+            );
             let notifs_dev = notificaciones::de_usuario(db.conexion(), DEV).unwrap();
             assert_eq!(notifs_dev.len(), 1);
             assert!(notifs_dev[0].accionable);
@@ -5399,8 +5420,15 @@ mod tests {
             email: DEV,
             rol: Rol::Desarrollador,
         };
-        let creada = crear(c, &e.ops, &dev, &datos_base("Colisión"), "2026-11-15T15:00:01.000Z", HOY)
-            .unwrap();
+        let creada = crear(
+            c,
+            &e.ops,
+            &dev,
+            &datos_base("Colisión"),
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
         // A toma la tarea; su evento queda en la bandeja (sin subir).
         tomar(
             c,
@@ -5422,7 +5450,11 @@ mod tests {
         .unwrap();
         // Del servidor baja la creación (la propia, ya aplicada) y la toma de TESTER.
         let id_crear: String = c
-            .query_row("SELECT id FROM bandeja_salida WHERE tipo = 'crear_tarea'", [], |f| f.get(0))
+            .query_row(
+                "SELECT id FROM bandeja_salida WHERE tipo = 'crear_tarea'",
+                [],
+                |f| f.get(0),
+            )
             .unwrap();
         let toma_tester = serde_json::json!({
             "id": "T-101", "asignado_a": TESTER, "rama_asociada": "/main/dev/T-101-colision-b",
@@ -5465,8 +5497,7 @@ mod tests {
             PROYECTO,
             None,
             Utc::now(),
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
         .unwrap();
@@ -5544,8 +5575,7 @@ mod tests {
             &e.ops,
             &e.local_b,
             ahora,
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(true),
         )
         .unwrap();
@@ -5597,7 +5627,7 @@ mod tests {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -5638,46 +5668,38 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        DEV,
-                        Rol::Desarrollador,
-                        "2026-11-15T15:00:01.000Z",
-                        HOY,
-                    )?;
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        LIDER,
-                        Rol::Lider,
-                        "2026-11-15T15:00:02.000Z",
-                        HOY,
-                    )?;
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            DEV,
+                            Rol::Desarrollador,
+                            HOY,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })?;
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            LIDER,
+                            Rol::Lider,
+                            HOY,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })?;
 
                     // 1. El Desarrollador crea una tarea general con 2 subtareas (quedan pendientes).
                     let creadas = crear_con_subtareas(
@@ -5767,7 +5789,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza tareas desde OneDrive: {sync_b:?}");
@@ -5813,7 +5835,7 @@ mod tests {
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::tareas::tomar_en;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -5855,14 +5877,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
@@ -5924,7 +5944,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza tomar_tarea desde OneDrive: {sync_b:?}");
@@ -5975,7 +5995,7 @@ mod tests {
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::eventos::revisar_y_cerrar_rama_perdedor;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
         use crate::ramas::{cambiar_a_rama, crear_rama_tarea, RAMA_DEV};
         use crate::servidor::{conectar, LlaveroSistema};
@@ -6019,15 +6039,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
@@ -6036,21 +6053,16 @@ mod tests {
             // Alta de DEV en A y creación de T-101 y T-102.
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        DEV,
-                        Rol::Desarrollador,
-                        "2026-11-15T15:00:01.000Z",
-                        HOY,
-                    )?;
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            DEV,
+                            Rol::Desarrollador,
+                            HOY,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })?;
                     crear(
                         db_a.conexion(),
                         &ops_a,
@@ -6083,7 +6095,7 @@ mod tests {
                 .with_timezone(&Utc);
             let sync_init =
                 lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                    lectura::aplicar_evento(c, &publica, e)
+                    lectura::aplicar_evento(c, e)
                 })
                 .unwrap();
             assert_eq!(sync_init.aplicados, 3);
@@ -6135,8 +6147,7 @@ mod tests {
                 &ops_b,
                 &local_b,
                 ahora,
-                &publica,
-                |c, e| lectura::aplicar_evento(c, &publica, e),
+                lectura::aplicar_evento,
                 |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
             )
             .unwrap();
@@ -6225,8 +6236,7 @@ mod tests {
                 &ops_b,
                 &local_b,
                 ahora,
-                &publica,
-                |c, e| lectura::aplicar_evento(c, &publica, e),
+                lectura::aplicar_evento,
                 |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
             )
             .unwrap();
@@ -6521,8 +6531,6 @@ mod tests {
         local_b: PathBuf,
         ops_a: PathBuf,
         ops_b: PathBuf,
-        publica: String,
-        llave_admin: LlavePrivada,
         admin_fila: usuarios::Usuario,
         ramas_creadas: Vec<String>,
     }
@@ -6532,7 +6540,7 @@ mod tests {
             use crate::cm::Comando;
             use crate::comandos::acceso::entrar_como_dueno_en;
             use crate::comandos::datos::carpeta_abierta;
-            use crate::estado::{llave_publica_del_proyecto, AppState};
+            use crate::estado::AppState;
             use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
             let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -6580,15 +6588,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
@@ -6604,8 +6609,6 @@ mod tests {
                 local_b,
                 ops_a,
                 ops_b,
-                publica,
-                llave_admin,
                 admin_fila,
                 ramas_creadas: Vec::new(),
             }
@@ -6627,23 +6630,18 @@ mod tests {
         }
 
         fn crear_usuario(&self, email: &str, rol: Rol) -> usuarios::Usuario {
-            let firmante = Firmante {
-                email: &self.admin_fila.email,
-                rol: Rol::Administrador,
-                llave: &self.llave_admin,
-            };
             self.estado_a
                 .con_db(|db_a| {
-                    equipo::crear(
-                        db_a.conexion(),
-                        &self.ops_a,
-                        &self.publica,
-                        &firmante,
-                        email,
-                        rol,
-                        &crate::modelo::ahora_iso(),
-                        &crate::modelo::hoy_local(),
-                    )
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            email,
+                            rol,
+                            &crate::modelo::hoy_local(),
+                        );
+                        crate::db::usuarios::insertar(self.db_b.conexion(), &u).unwrap();
+                        u
+                    })
                 })
                 .unwrap()
         }
@@ -6741,7 +6739,7 @@ mod tests {
                 &self.ops_b,
                 &self.local_b,
                 ahora,
-                |c, e| lectura::aplicar_evento(c, &self.publica, e),
+                lectura::aplicar_evento,
             )
             .unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
@@ -10356,7 +10354,6 @@ mod tests {
     #[ignore = "acompaña a la app abierta: correr a mano con BB_UI_PROYECTO_LOCAL, BB_UI_CARPETA_COMPARTIDA y BB_UI_ACCION"]
     fn entorno_real_ui_maquina_b() {
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
-        use crate::identidad::llaves::leer_llave_publica_admin;
 
         let local_a = PathBuf::from(
             std::env::var("BB_UI_PROYECTO_LOCAL").expect("falta BB_UI_PROYECTO_LOCAL"),
@@ -10366,9 +10363,6 @@ mod tests {
         let accion = std::env::var("BB_UI_ACCION").expect("falta BB_UI_ACCION");
         let dev = std::env::var("BB_UI_DEV").unwrap_or_else(|_| DEV.to_string());
 
-        let publica = leer_llave_publica_admin(&local_a)
-            .unwrap()
-            .expect("la app todavía no configuró el proyecto");
         let admin_fila = {
             let db_a = Db::abrir(&local_a).unwrap();
             usuarios::listar(db_a.conexion())
@@ -10384,7 +10378,6 @@ mod tests {
             .join("proyectos")
             .join(local_a.file_name().unwrap());
         configurar_carpeta_compartida(&local_b, &compartida, false).unwrap();
-        fijar_llave_publica_admin(&local_b, &publica).unwrap();
         let ops_b = carpeta_ops(&local_b).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
         usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
@@ -10392,7 +10385,7 @@ mod tests {
         let sincronizar_b = || {
             let ahora = Utc::now() + chrono::Duration::minutes(5);
             let sync = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
@@ -10400,10 +10393,7 @@ mod tests {
         };
         println!("máquina B sincronizó: {:?}", sincronizar_b());
 
-        let rol_dev = verificar_usuarios(&publica, usuarios::listar(db_b.conexion()).unwrap())
-            .into_iter()
-            .find(|u| u.usuario.email == dev)
-            .and_then(|u| u.rol_efectivo);
+        let rol_dev = rol_de(db_b.conexion(), &dev).unwrap();
         assert_eq!(
             rol_dev,
             Some(Rol::Desarrollador),

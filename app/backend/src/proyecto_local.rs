@@ -359,13 +359,12 @@ fn escribir_zip(carpeta: &Path, copia_db: &Path, destino: &Path) -> Resultado<()
     let opciones = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
-    let agregar =
-        |zip: &mut zip::ZipWriter<File>, nombre: &str, origen: &Path| -> Resultado<()> {
-            zip.start_file(nombre, opciones).map_err(zip_err)?;
-            let mut f = File::open(origen)?;
-            std::io::copy(&mut f, zip)?;
-            Ok(())
-        };
+    let agregar = |zip: &mut zip::ZipWriter<File>, nombre: &str, origen: &Path| -> Resultado<()> {
+        zip.start_file(nombre, opciones).map_err(zip_err)?;
+        let mut f = File::open(origen)?;
+        std::io::copy(&mut f, zip)?;
+        Ok(())
+    };
     agregar(&mut zip, ARCHIVO_MARCA, &carpeta.join(ARCHIVO_MARCA))?;
     agregar(&mut zip, &format!("{CARPETA_DATOS}/{NOMBRE_DB}"), copia_db)?;
     let excluidos_datos = |relativa: &Path| {
@@ -558,12 +557,11 @@ mod tests {
             proyecto: proyecto.into(),
             nombre: "Ana María Pérez".into(),
             correo: "Ana@Ejemplo.dev".into(),
-            clave: "clave-segura".into(),
         }
     }
 
     #[test]
-    fn crear_deja_la_marca_y_abrir_pide_la_contrasena() {
+    fn crear_deja_la_marca_y_abrir_entra_como_administrador() {
         let base = tempfile::tempdir().unwrap();
         let app = tempfile::tempdir().unwrap();
         let carpeta = crear(&nuevo(base.path(), "Mi Juego"), AHORA, HOY).unwrap();
@@ -574,18 +572,11 @@ mod tests {
             ("Mi Juego", FORMATO)
         );
         assert!(carpeta.join(CARPETA_DATOS).join(NOMBRE_DB).is_file());
-        assert!(llaves::llave_admin_cifrada(&carpeta.join(CARPETA_DATOS)).unwrap());
+        // Sin llaves ni contraseña desde #243.
+        assert!(!carpeta.join(CARPETA_DATOS).join("admin.key").exists());
 
         let estado = AppState::default();
-        let e = abrir(&estado, app.path(), &carpeta, "otra-clave", false).unwrap_err();
-        assert_eq!(e.to_string(), "La contraseña del proyecto no es correcta.");
-        assert!(estado.con_db(|_| Ok(())).is_err(), "no queda abierto");
-        // Sin contraseña: como el proyecto la tiene, pide escribirla (la interfaz muestra el campo).
-        let e = abrir(&estado, app.path(), &carpeta, "", false).unwrap_err();
-        assert_eq!(e.codigo(), "llave_cifrada");
-        assert!(estado.con_db(|_| Ok(())).is_err(), "no queda abierto");
-
-        let entrada = abrir(&estado, app.path(), &carpeta, "clave-segura", true).unwrap();
+        let entrada = abrir(&estado, app.path(), &carpeta, true).unwrap();
         assert_eq!(
             entrada,
             Entrada::Dentro {
@@ -626,14 +617,14 @@ mod tests {
         let app = tempfile::tempdir().unwrap();
         let estado = AppState::default();
         std::fs::write(base.path().join("algo.txt"), "hola").unwrap();
-        let e = abrir(&estado, app.path(), base.path(), "clave-segura", false).unwrap_err();
+        let e = abrir(&estado, app.path(), base.path(), false).unwrap_err();
         assert_eq!(
             e.to_string(),
             "En esa carpeta no hay un proyecto de BranchBoard."
         );
         // Una marca de otra cosa (p. ej. la de la carpeta compartida) tampoco.
         std::fs::write(base.path().join(ARCHIVO_MARCA), r#"{"proyecto":"x"}"#).unwrap();
-        assert!(abrir(&estado, app.path(), base.path(), "clave-segura", false).is_err());
+        assert!(abrir(&estado, app.path(), base.path(), false).is_err());
         // Una marca de una versión más nueva pide actualizar.
         let nueva = serde_json::json!({
             "aplicacion": "BranchBoard", "tipo": "local", "formato": FORMATO + 1,
@@ -648,9 +639,6 @@ mod tests {
     fn crear_valida_los_datos_y_no_pisa_carpetas() {
         let base = tempfile::tempdir().unwrap();
         let mut datos = nuevo(base.path(), "Juego");
-        datos.clave = "corta".into();
-        assert!(crear(&datos, AHORA, HOY).is_err());
-        datos.clave = "clave-segura".into();
         datos.correo = "sin-arroba".into();
         assert!(crear(&datos, AHORA, HOY).is_err());
         assert!(!base.path().join("Juego").exists(), "nada a medias");
@@ -666,7 +654,7 @@ mod tests {
         let app = tempfile::tempdir().unwrap();
         let carpeta = crear(&nuevo(base.path(), "Juego"), AHORA, HOY).unwrap();
         let estado = AppState::default();
-        abrir(&estado, app.path(), &carpeta, "clave-segura", false).unwrap();
+        abrir(&estado, app.path(), &carpeta, false).unwrap();
         std::fs::write(
             carpeta.join(CARPETA_COMPARTIDA).join("ops").join("e1.json"),
             "{}",
@@ -687,7 +675,6 @@ mod tests {
         };
         assert!(nombres.contains(&ARCHIVO_MARCA.to_string()));
         assert!(nombres.contains(&"datos/branchboard.db".to_string()));
-        assert!(nombres.contains(&"datos/admin.key".to_string()));
         assert!(nombres.contains(&"compartida/ops/e1.json".to_string()));
         assert!(!nombres
             .iter()
@@ -697,7 +684,7 @@ mod tests {
             "no deja temporales"
         );
 
-        // Otra máquina: importa en otra carpeta (dos veces → no pisa) y abre con la contraseña.
+        // Otra máquina: importa en otra carpeta (dos veces → no pisa) y abre.
         let otra = tempfile::tempdir().unwrap();
         let otra_app = tempfile::tempdir().unwrap();
         let destino = otra.path().to_string_lossy().to_string();
@@ -711,8 +698,7 @@ mod tests {
 
         let estado_b = AppState::default();
         let ruta = PathBuf::from(&importado.ruta);
-        assert!(abrir(&estado_b, otra_app.path(), &ruta, "mala-clave", false).is_err());
-        abrir(&estado_b, otra_app.path(), &ruta, "clave-segura", false).unwrap();
+        abrir(&estado_b, otra_app.path(), &ruta, false).unwrap();
         let valor = estado_b
             .con_db(|db| configuracion::leer(db.conexion(), "prueba"))
             .unwrap();

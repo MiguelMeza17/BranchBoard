@@ -569,40 +569,30 @@ mod tests {
     }
 
     #[test]
-    fn los_tipos_que_exigen_firma_se_descartan_sin_ella_y_los_demas_siguen_desconocidos() {
-        use crate::identidad::llaves;
-
+    fn los_cambios_de_equipo_y_la_compactacion_se_descartan_y_lo_demas_sigue_desconocido() {
         let db = Db::en_memoria().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let publica = llaves::generar_llaves_admin(dir.path(), None).unwrap();
-        let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
-
-        // Un tipo cualquiera sin firma: todavía no lo conoce la app.
+        // Un tipo cualquiera: todavía no lo conoce la app.
         assert_eq!(
-            aplicar_evento(db.conexion(), &publica, &evento(AHORA, "a@x.dev", 1)).unwrap(),
+            aplicar_evento(db.conexion(), &evento(AHORA, "a@x.dev", 1)).unwrap(),
             Aplicacion::Desconocido
         );
-        // `compactar_eventos` (#94) exige firma del Administrador y un snapshot válido.
-        let mut compactar = evento(AHORA, "a@x.dev", 1);
-        compactar.tipo = "compactar_eventos".into();
-        assert!(matches!(
-            aplicar_evento(db.conexion(), &publica, &compactar).unwrap(),
-            Aplicacion::Descartado(motivo) if motivo.contains("firma_admin")
-        ));
-        let firmado = compactar.firmar(&admin);
-        assert!(matches!(
-            aplicar_evento(db.conexion(), &publica, &firmado).unwrap(),
-            Aplicacion::Descartado(_)
-        ));
-        // Un evento de usuarios bien firmado pero sin tabla `usuarios` detrás que lo
-        // respalde: regla rota, se descarta (no detiene el escaneo).
-        let mut usuario = evento(AHORA, "a@x.dev", 1);
-        usuario.tipo = "eliminar_usuario".into();
-        let usuario = usuario.firmar(&admin);
-        assert!(matches!(
-            aplicar_evento(db.conexion(), &publica, &usuario).unwrap(),
-            Aplicacion::Descartado(_)
-        ));
+        // Sin firmas (#243) nadie puede probar quién mandó un cambio de equipo o un snapshot: se
+        // descartan siempre, sin mirar su contenido, y el equipo no cambia.
+        for tipo in crate::eventos::TIPOS_RETIRADOS {
+            let mut e = evento(AHORA, "a@x.dev", 1);
+            e.tipo = (*tipo).into();
+            e.payload = json!({ "email": "a@x.dev", "rol": "Administrador" });
+            assert!(
+                matches!(
+                    aplicar_evento(db.conexion(), &e).unwrap(),
+                    Aplicacion::Descartado(motivo) if motivo.contains("#243")
+                ),
+                "{tipo}"
+            );
+        }
+        assert!(crate::db::usuarios::listar(db.conexion())
+            .unwrap()
+            .is_empty());
     }
 
     /// **Prueba en el entorno real** (CLAUDE.md): dos "máquinas" (cada una con su

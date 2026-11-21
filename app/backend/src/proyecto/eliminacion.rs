@@ -216,7 +216,7 @@ mod tests {
     use super::*;
     use crate::{
         db::usuarios,
-        identidad::{acceso, firmas, llaves},
+        identidad::acceso,
         modelo::{ahora_iso, hoy_local, Rol},
     };
 
@@ -271,23 +271,14 @@ mod tests {
         assert!(preparar_local(&estado, "Juego Ágil").is_err());
         drop(operacion);
         estado
-            .con_db(|db| {
-                usuarios::actualizar_rol(
-                    db.conexion(),
-                    "admin@virustf.dev",
-                    Rol::Administrador,
-                    Some("forjada"),
-                    Some(&ahora_iso()),
-                    Some("admin@virustf.dev"),
-                )
-            })
+            .con_db(|db| usuarios::actualizar_rol(db.conexion(), "admin@virustf.dev", Rol::Lider))
             .unwrap();
         assert!(preparar_local(&estado, "Juego Ágil").is_err());
         estado.cerrar_proyecto();
     }
 
     #[test]
-    fn otros_roles_aunque_estan_firmados_no_pueden_eliminar() {
+    fn solo_el_administrador_puede_eliminar() {
         let repo = RepoUnityVc {
             repo: "Pruebas/Juego".into(),
             org: "OrgPrueba".into(),
@@ -295,19 +286,7 @@ mod tests {
         let (_datos, estado) = escenario("admin@virustf.dev", &repo);
         for rol in Rol::TODOS {
             estado
-                .con_db(|db| {
-                    let llave = llaves::cargar_llave_admin(db.carpeta().unwrap(), None)?;
-                    let ahora = ahora_iso();
-                    let firma = firmas::firmar_rol(&llave, "admin@virustf.dev", *rol, &ahora)?;
-                    usuarios::actualizar_rol(
-                        db.conexion(),
-                        "admin@virustf.dev",
-                        *rol,
-                        Some(&firma),
-                        Some(&ahora),
-                        Some("admin@virustf.dev"),
-                    )
-                })
+                .con_db(|db| usuarios::actualizar_rol(db.conexion(), "admin@virustf.dev", *rol))
                 .unwrap();
             assert_eq!(
                 preparar_local(&estado, "Juego").is_ok(),

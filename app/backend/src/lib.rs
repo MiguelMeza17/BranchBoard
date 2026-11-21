@@ -46,10 +46,9 @@ use tauri::{Emitter, Manager, WindowEvent};
 use comandos::{
     acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, cuenta, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
-    notificaciones as comandos_notificaciones,
-    proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local, sistema,
-    sprints as comandos_sprints, tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
-    warp as comandos_warp,
+    notificaciones as comandos_notificaciones, proyecto as comandos_proyecto,
+    proyecto_local as comandos_proyecto_local, sistema, sprints as comandos_sprints,
+    tareas as comandos_tareas, usuarios, vistos as comandos_vistos, warp as comandos_warp,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -83,7 +82,10 @@ fn sincronizar_servidor(app: &tauri::AppHandle) {
     if let Ok(Some(resumen)) = comandos_eventos::sincronizar_con_servidor_en(&estado) {
         let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &resumen.bandeja);
         if resumen.recibidos.hubo_cambios() {
-            let _ = app.emit(comandos_eventos::EVENTO_EVENTOS_RECIBIDOS, &resumen.recibidos);
+            let _ = app.emit(
+                comandos_eventos::EVENTO_EVENTOS_RECIBIDOS,
+                &resumen.recibidos,
+            );
         }
     }
 }

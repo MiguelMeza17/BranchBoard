@@ -63,7 +63,10 @@ pub fn ruta_eventos(proyecto: &str, desde: i64) -> String {
 
 /// Ruta de la API para pedir el correo de las cuentas `ids`.
 pub fn ruta_perfiles(ids: &[String]) -> String {
-    format!("/rest/v1/perfiles?select=id,correo&id=in.({})", ids.join(","))
+    format!(
+        "/rest/v1/perfiles?select=id,correo&id=in.({})",
+        ids.join(",")
+    )
 }
 
 /// Convierte la respuesta de `GET /rest/v1/eventos` en filas.
@@ -79,8 +82,9 @@ pub fn correos_desde_json(json: Value) -> Resultado<Vec<(String, String)>> {
         id: String,
         correo: String,
     }
-    let perfiles: Vec<Perfil> = serde_json::from_value(json)
-        .map_err(|e| Error::Interno(format!("respuesta de perfiles del servidor no válida: {e}")))?;
+    let perfiles: Vec<Perfil> = serde_json::from_value(json).map_err(|e| {
+        Error::Interno(format!("respuesta de perfiles del servidor no válida: {e}"))
+    })?;
     Ok(perfiles.into_iter().map(|p| (p.id, p.correo)).collect())
 }
 
@@ -328,7 +332,12 @@ mod tests {
         let c = db.conexion();
         let filas = vec![
             fila(1, "e1", "crear_tarea", ANA),
-            fila(2, "e2", "crear_tarea", "cccccccc-0000-4000-8000-000000000003"),
+            fila(
+                2,
+                "e2",
+                "crear_tarea",
+                "cccccccc-0000-4000-8000-000000000003",
+            ),
         ];
         bajar(en(c), P, servidor(filas), correos).unwrap();
         let usuarios: Vec<String> = c
@@ -369,11 +378,12 @@ mod tests {
             P,
             None,
             Utc::now(),
-            "",
             |_, e| {
-                vistos
-                    .borrow_mut()
-                    .push((e.usuario.clone(), e.timestamp.clone(), e.payload["n"].clone()));
+                vistos.borrow_mut().push((
+                    e.usuario.clone(),
+                    e.timestamp.clone(),
+                    e.payload["n"].clone(),
+                ));
                 Ok(Aplicacion::Aplicado)
             },
             |_| Ok(false),
@@ -396,8 +406,15 @@ mod tests {
             ]
         );
         // Una segunda vuelta no aplica nada otra vez.
-        let r = aplicar(c, P, None, Utc::now(), "", |_, _| panic!("ya aplicado"), |_| Ok(false))
-            .unwrap();
+        let r = aplicar(
+            c,
+            P,
+            None,
+            Utc::now(),
+            |_, _| panic!("ya aplicado"),
+            |_| Ok(false),
+        )
+        .unwrap();
         assert_eq!(r.aplicados, 0);
     }
 
@@ -422,9 +439,9 @@ mod tests {
                 Aplicacion::Desconocido
             })
         };
-        let r = aplicar(c, P, None, Utc::now(), "", aplicar_una, |_| Ok(false)).unwrap();
+        let r = aplicar(c, P, None, Utc::now(), aplicar_una, |_| Ok(false)).unwrap();
         assert_eq!((r.aplicados, r.desconocidos), (1, 1));
-        let r = aplicar(c, P, None, Utc::now(), "", aplicar_una, |_| Ok(false)).unwrap();
+        let r = aplicar(c, P, None, Utc::now(), aplicar_una, |_| Ok(false)).unwrap();
         assert_eq!((r.aplicados, r.desconocidos), (0, 1));
     }
 
@@ -441,9 +458,21 @@ mod tests {
     fn las_copias_de_cada_proyecto_van_aparte() {
         let db = base();
         let c = db.conexion();
-        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, P, "ana@virustf.dev", "2026-11-21T00:00:00.000Z")
-            .unwrap();
-        bajar(en(c), P, servidor(vec![fila(9, "e9", "crear_tarea", ANA)]), correos).unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            P,
+            "ana@virustf.dev",
+            "2026-11-21T00:00:00.000Z",
+        )
+        .unwrap();
+        bajar(
+            en(c),
+            P,
+            servidor(vec![fila(9, "e9", "crear_tarea", ANA)]),
+            correos,
+        )
+        .unwrap();
         assert_eq!(ultimo_orden(c, P).unwrap(), 9);
         assert_eq!(ultimo_orden(c, "otro").unwrap(), 0);
     }
@@ -525,8 +554,14 @@ mod tests {
         let proyecto = proyecto.as_str().unwrap().to_string();
         let (pc_a, pc_b) = (base(), base());
         for db in [&pc_a, &pc_b] {
-            configuracion::guardar(db.conexion(), CLAVE_PROYECTO_SERVIDOR, &proyecto, &correo, "2026-11-21T00:00:00.000Z")
-                .unwrap();
+            configuracion::guardar(
+                db.conexion(),
+                CLAVE_PROYECTO_SERVIDOR,
+                &proyecto,
+                &correo,
+                "2026-11-21T00:00:00.000Z",
+            )
+            .unwrap();
         }
         let ops_a = tempfile::tempdir().unwrap();
         let autor = AutorTarea {
@@ -544,11 +579,22 @@ mod tests {
                 con_fecha: false,
                 fecha_limite: None,
             };
-            tareas::crear(pc_a.conexion(), ops_a.path(), &autor, &datos, &crate::modelo::ahora_iso(), "2026-11-21")
-                .unwrap()
+            tareas::crear(
+                pc_a.conexion(),
+                ops_a.path(),
+                &autor,
+                &datos,
+                &crate::modelo::ahora_iso(),
+                "2026-11-21",
+            )
+            .unwrap()
         };
         let subir_a = || {
-            let r = bandeja::subir(|f| f(pc_a.conexion()), |filas| servidor.insertar_eventos(filas)).unwrap();
+            let r = bandeja::subir(
+                |f| f(pc_a.conexion()),
+                |filas| servidor.insertar_eventos(filas),
+            )
+            .unwrap();
             assert_eq!(r.error, None);
             r.subidos
         };
@@ -556,8 +602,16 @@ mod tests {
             let nuevos = bajar(
                 |f| f(db.conexion()),
                 &proyecto,
-                |desde| servidor.llamar("GET", &ruta_eventos(&proyecto, desde), None).and_then(filas_desde_json),
-                |ids| servidor.llamar("GET", &ruta_perfiles(ids), None).and_then(correos_desde_json),
+                |desde| {
+                    servidor
+                        .llamar("GET", &ruta_eventos(&proyecto, desde), None)
+                        .and_then(filas_desde_json)
+                },
+                |ids| {
+                    servidor
+                        .llamar("GET", &ruta_perfiles(ids), None)
+                        .and_then(correos_desde_json)
+                },
             )
             .unwrap();
             let r = aplicar(
@@ -565,8 +619,7 @@ mod tests {
                 &proyecto,
                 None,
                 Utc::now(),
-                "",
-                |c, e| lectura::aplicar_evento(c, "", e),
+                lectura::aplicar_evento,
                 |_| Ok(false),
             )
             .unwrap();
@@ -588,7 +641,11 @@ mod tests {
         }
         let usuario: String = pc_b
             .conexion()
-            .query_row("SELECT usuario FROM eventos_servidor ORDER BY orden LIMIT 1", [], |f| f.get(0))
+            .query_row(
+                "SELECT usuario FROM eventos_servidor ORDER BY orden LIMIT 1",
+                [],
+                |f| f.get(0),
+            )
             .unwrap();
         assert_eq!(usuario, crate::modelo::normalizar_email(&correo));
 

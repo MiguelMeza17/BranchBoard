@@ -478,10 +478,6 @@ mod tests {
     use crate::db::{usuarios, Db};
     use crate::eventos::lectura::{self, sincronizar};
     use crate::eventos::{carpeta_imagen_proyecto, carpeta_ops, configurar_carpeta_compartida};
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin,
-    };
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
@@ -496,7 +492,6 @@ mod tests {
         imagen_a: PathBuf,
         db_b: Db,
         local_b: PathBuf,
-        publica: String,
     }
 
     fn setup() -> Escenario {
@@ -510,9 +505,6 @@ mod tests {
         let ops = carpeta_ops(&local_a).unwrap();
         let imagen_a = carpeta_imagen_proyecto(&local_a).unwrap();
 
-        let publica = generar_llaves_admin(&local_a, None).unwrap();
-        fijar_llave_publica_admin(&local_b, &publica).unwrap();
-        let privada = cargar_llave_admin(&local_a, None).unwrap();
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
         for (correo, rol) in [
@@ -537,7 +529,6 @@ mod tests {
             imagen_a,
             db_b,
             local_b,
-            publica,
         }
     }
 
@@ -673,7 +664,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         assert_eq!(sync.aplicados, 2);
@@ -818,7 +809,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         assert_eq!(sync.aplicados, 3);
@@ -849,8 +840,8 @@ mod tests {
             actualizar_configuracion_proyecto_en, obtener_configuracion_proyecto_en,
             renombrar_proyecto_en, subir_imagen_proyecto_en,
         };
-        use crate::estado::{llave_publica_del_proyecto, AppState};
-        use crate::identidad::equipo::{self, Firmante};
+        use crate::estado::AppState;
+
         use crate::modelo::hoy_local;
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -898,36 +889,28 @@ mod tests {
             let ops_b = carpeta_ops(&local_b).unwrap();
             let imagen_a = carpeta_imagen_proyecto(&local_a).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
             let pausa = || std::thread::sleep(std::time::Duration::from_millis(5));
             estado_a
                 .con_db(|db_a| {
-                    let firmante = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante,
-                        LIDER,
-                        Rol::Lider,
-                        &crate::modelo::ahora_iso(),
-                        &hoy_local(),
-                    )
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            LIDER,
+                            Rol::Lider,
+                            &hoy_local(),
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })
                 })
                 .unwrap();
 
@@ -1017,7 +1000,7 @@ mod tests {
             // La máquina B sincroniza por OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza ajustes del proyecto desde OneDrive: {sync_b:?}");

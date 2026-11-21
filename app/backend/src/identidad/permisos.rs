@@ -191,7 +191,10 @@ pub struct UsuarioActual {
 pub fn usuario_actual(c: &Connection, email: &str) -> Resultado<UsuarioActual> {
     let email = normalizar_email(email);
     let fila = usuarios::buscar(c, &email)?.ok_or(Error::SinPermiso)?;
-    Ok(UsuarioActual { email, rol: fila.rol })
+    Ok(UsuarioActual {
+        email,
+        rol: fila.rol,
+    })
 }
 
 /// `Ok` si `usuario` puede usar `comando` según [`PERMISOS`].
@@ -208,9 +211,6 @@ mod tests {
     use super::*;
     use crate::db::usuarios::Usuario;
     use crate::db::Db;
-    use crate::identidad::{firmas, llaves};
-
-    const FECHA: &str = "2026-11-10T10:00:00Z";
 
     fn fila(email: &str, rol: Rol) -> Usuario {
         Usuario {
@@ -222,72 +222,40 @@ mod tests {
         }
     }
 
-    /// Base con un Administrador, un Tester, alguien con el rol cambiado a mano
-    /// y alguien pendiente de confirmar.
-    fn proyecto() -> (tempfile::TempDir, Db, String) {
-        let dir = tempfile::tempdir().unwrap();
-        let publica = llaves::generar_llaves_admin(dir.path(), None).unwrap();
-        let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
-        let firmada = |email: &str, rol: Rol| Usuario {
-            ..fila(email, rol)
-        };
+    /// Base con un Administrador y un Tester (la copia de `miembros` del servidor).
+    fn proyecto() -> Db {
         let db = Db::en_memoria().unwrap();
         let c = db.conexion();
-        usuarios::insertar(c, &firmada("admin@virustf.dev", Rol::Administrador)).unwrap();
-        usuarios::insertar(c, &firmada("tester@virustf.dev", Rol::Tester)).unwrap();
-        usuarios::insertar(
-            c,
-            &Usuario {
-                rol: Rol::Administrador,
-                ..firmada("tramposo@virustf.dev", Rol::Tester)
-            },
-        )
-        .unwrap();
-        usuarios::insertar(c, &fila("nuevo@virustf.dev", Rol::Lider)).unwrap();
-        (dir, db, publica)
+        usuarios::insertar(c, &fila("admin@virustf.dev", Rol::Administrador)).unwrap();
+        usuarios::insertar(c, &fila("tester@virustf.dev", Rol::Tester)).unwrap();
+        db
     }
 
     #[test]
-    fn el_rol_sale_de_la_firma() {
-        let (_dir, db, publica) = proyecto();
+    fn el_rol_sale_de_la_tabla_usuarios() {
+        let db = proyecto();
         let c = db.conexion();
-        let admin = usuario_actual(c, &publica, "Admin@VirusTF.dev").unwrap();
-        assert_eq!(
-            (admin.rol, admin.rol_verificado),
-            (Rol::Administrador, true)
-        );
+        let admin = usuario_actual(c, "Admin@VirusTF.dev").unwrap();
+        assert_eq!(admin.rol, Rol::Administrador);
         assert_eq!(admin.email, "admin@virustf.dev");
-
-        // Se escribió Administrador a mano: se le aplica Desarrollador.
-        let tramposo = usuario_actual(c, &publica, "tramposo@virustf.dev").unwrap();
+        // Fuera del proyecto: nada.
         assert_eq!(
-            (tramposo.rol, tramposo.rol_verificado),
-            (Rol::Desarrollador, false)
+            usuario_actual(c, "nadie@virustf.dev").unwrap_err().codigo(),
+            "sin_permiso"
         );
-
-        // Pendiente de confirmar o fuera del proyecto: nada.
-        for email in ["nuevo@virustf.dev", "nadie@virustf.dev"] {
-            assert_eq!(
-                usuario_actual(c, &publica, email).unwrap_err().codigo(),
-                "sin_permiso"
-            );
-        }
     }
 
     #[test]
     fn exigir_aplica_la_tabla() {
-        let (_dir, db, publica) = proyecto();
+        let db = proyecto();
         let c = db.conexion();
-        let admin = usuario_actual(c, &publica, "admin@virustf.dev").unwrap();
-        let tester = usuario_actual(c, &publica, "tester@virustf.dev").unwrap();
-        let tramposo = usuario_actual(c, &publica, "tramposo@virustf.dev").unwrap();
+        let admin = usuario_actual(c, "admin@virustf.dev").unwrap();
+        let tester = usuario_actual(c, "tester@virustf.dev").unwrap();
 
         assert!(exigir("restaurar_backup", &admin).is_ok());
-        for u in [&tester, &tramposo] {
-            let error = exigir("restaurar_backup", u).unwrap_err();
-            assert_eq!(error.codigo(), "sin_permiso");
-            assert!(exigir("ping", u).is_ok());
-        }
+        let error = exigir("restaurar_backup", &tester).unwrap_err();
+        assert_eq!(error.codigo(), "sin_permiso");
+        assert!(exigir("ping", &tester).is_ok());
         // Un comando que no está en la tabla se niega, también al Administrador.
         assert!(exigir("comando_inventado", &admin).is_err());
     }

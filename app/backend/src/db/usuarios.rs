@@ -60,9 +60,7 @@ pub fn insertar(c: &Connection, usuario: &Usuario) -> Resultado<()> {
         )));
     }
     c.execute(
-        &format!(
-            "INSERT INTO usuarios ({COLUMNAS}) VALUES (?1, ?2, ?3, ?4, ?5)"
-        ),
+        &format!("INSERT INTO usuarios ({COLUMNAS}) VALUES (?1, ?2, ?3, ?4, ?5)"),
         params![
             email,
             usuario.nombre,
@@ -157,7 +155,6 @@ mod tests {
             ("Ana", "Lopez")
         );
         assert_eq!(leido.rol, Rol::Desarrollador);
-        assert_eq!(leido.firma, None);
     }
 
     #[test]
@@ -171,21 +168,12 @@ mod tests {
     }
 
     #[test]
-    fn cambiar_rol_firma_y_eliminar() {
+    fn cambiar_rol_y_eliminar() {
         let db = Db::en_memoria().unwrap();
         let c = db.conexion();
         insertar(c, &usuario("zoe@virustf.dev", Rol::Desarrollador)).unwrap();
         insertar(c, &usuario("ana@virustf.dev", Rol::Lider)).unwrap();
-        actualizar_rol(
-            c,
-            "zoe@virustf.dev",
-            Rol::Tester,
-            Some("firma"),
-            Some("2026-11-09T10:00:00Z"),
-            Some("Ana@virustf.dev"),
-        )
-        .unwrap();
-        actualizar_certificado(c, "ana@virustf.dev", Some("llave"), Some("cert")).unwrap();
+        actualizar_rol(c, "zoe@virustf.dev", Rol::Tester).unwrap();
 
         let todos = listar(c).unwrap();
         assert_eq!(
@@ -193,8 +181,6 @@ mod tests {
             ["Ana", "Zoe"]
         );
         assert_eq!(todos[1].rol, Rol::Tester);
-        assert_eq!(todos[1].firmado_por.as_deref(), Some("ana@virustf.dev"));
-        assert_eq!(todos[0].certificado.as_deref(), Some("cert"));
 
         eliminar(c, "zoe@virustf.dev").unwrap();
         assert_eq!(listar(c).unwrap().len(), 1);

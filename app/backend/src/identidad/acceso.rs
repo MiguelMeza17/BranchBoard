@@ -203,12 +203,7 @@ fn decidir(db: Db, email: String, proyecto: String) -> Resultado<(Entrada, Optio
 }
 
 /// Primera vez del dueño: crea la base y guarda su fila de Administrador y el nombre del proyecto.
-fn configurar(
-    carpeta: &Path,
-    repo: &RepoUnityVc,
-    email: &str,
-    hoy: &str,
-) -> Resultado<Db> {
+fn configurar(carpeta: &Path, repo: &RepoUnityVc, email: &str, hoy: &str) -> Resultado<Db> {
     std::fs::create_dir_all(carpeta)?;
     let db = Db::abrir(carpeta)?;
     let (nombre, apellido) = nombre_desde_email(email);
@@ -293,11 +288,6 @@ mod tests {
                 apellido: String::new(),
                 rol: *rol,
                 fecha_alta: HOY.into(),
-                firma: None,
-                firmado_en: None,
-                firmado_por: None,
-                llave_publica: None,
-                certificado: None,
             })
             .collect()
     }
@@ -331,17 +321,30 @@ mod tests {
             datos.path(),
             "Luis@VirusTF.dev",
             Some(ID_SERVIDOR),
-            &[("ana@virustf.dev", Rol::Administrador), ("luis@virustf.dev", Rol::Desarrollador)],
+            &[
+                ("ana@virustf.dev", Rol::Administrador),
+                ("luis@virustf.dev", Rol::Desarrollador),
+            ],
         );
         assert!(
-            matches!(e, Entrada::Dentro { rol: Rol::Desarrollador, rol_verificado: true, configurado_ahora: false, .. }),
+            matches!(
+                e,
+                Entrada::Dentro {
+                    rol: Rol::Desarrollador,
+                    rol_verificado: true,
+                    configurado_ahora: false,
+                    ..
+                }
+            ),
             "{e:?}"
         );
-        // Quedó una base local vinculada, sin llaves del Administrador.
+        // Quedó una base local vinculada.
         let carpeta = carpeta_proyecto(datos.path(), &repo().id_proyecto()).unwrap();
         let db = Db::abrir(&carpeta).unwrap();
-        assert_eq!(proyecto_del_servidor(&db).unwrap().as_deref(), Some(ID_SERVIDOR));
-        assert_eq!(llaves::leer_llave_publica_admin(&carpeta).unwrap(), None);
+        assert_eq!(
+            proyecto_del_servidor(&db).unwrap().as_deref(),
+            Some(ID_SERVIDOR)
+        );
     }
 
     #[test]
@@ -371,13 +374,22 @@ mod tests {
         let datos = tempfile::tempdir().unwrap();
         assert!(matches!(
             entrar_como(datos.path(), "ana@virustf.dev", true),
-            Entrada::Dentro { configurado_ahora: true, .. }
+            Entrada::Dentro {
+                configurado_ahora: true,
+                ..
+            }
         ));
         let carpeta = carpeta_proyecto(datos.path(), &repo().id_proyecto()).unwrap();
         {
             let db = Db::abrir(&carpeta).unwrap();
-            configuracion::guardar(db.conexion(), CLAVE_PROYECTO_SERVIDOR, ID_SERVIDOR, "ana@virustf.dev", HOY)
-                .unwrap();
+            configuracion::guardar(
+                db.conexion(),
+                CLAVE_PROYECTO_SERVIDOR,
+                ID_SERVIDOR,
+                "ana@virustf.dev",
+                HOY,
+            )
+            .unwrap();
             usuarios::reemplazar_todos(
                 db.conexion(),
                 &copia_del_servidor(&[("ana@virustf.dev", Rol::Administrador)]),
@@ -398,7 +410,14 @@ mod tests {
         .unwrap()
         .0;
         assert!(
-            matches!(e, Entrada::Dentro { rol: Rol::Administrador, rol_verificado: true, .. }),
+            matches!(
+                e,
+                Entrada::Dentro {
+                    rol: Rol::Administrador,
+                    rol_verificado: true,
+                    ..
+                }
+            ),
             "{e:?}"
         );
     }
@@ -471,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn registrado_pendiente_y_no_registrado() {
+    fn registrado_y_no_registrado() {
         let datos = tempfile::tempdir().unwrap();
         let (_, db) = entrar(
             datos.path(),
@@ -483,27 +502,20 @@ mod tests {
         )
         .unwrap();
         let db = db.unwrap();
-        let carpeta = db.carpeta().unwrap().to_path_buf();
-        let llave = llaves::cargar_llave_admin(&carpeta, None).unwrap();
-        let fila = |email: &str, rol: Rol, firmada: bool| Usuario {
-            email: email.into(),
-            nombre: "N".into(),
-            apellido: "A".into(),
-            rol,
-            fecha_alta: HOY.into(),
-        };
         usuarios::insertar(
             db.conexion(),
-            &fila("dev@virustf.dev", Rol::Desarrollador, true),
-        )
-        .unwrap();
-        usuarios::insertar(
-            db.conexion(),
-            &fila("nuevo@virustf.dev", Rol::Tester, false),
+            &Usuario {
+                email: "dev@virustf.dev".into(),
+                nombre: "N".into(),
+                apellido: "A".into(),
+                rol: Rol::Desarrollador,
+                fecha_alta: HOY.into(),
+            },
         )
         .unwrap();
         drop(db);
 
+        // Sin firmas (#243): quien está en la tabla entra con su rol; no hay "pendiente de confirmar".
         assert!(matches!(
             entrar_como(datos.path(), "dev@virustf.dev", false),
             Entrada::Dentro {
@@ -511,10 +523,6 @@ mod tests {
                 rol_verificado: true,
                 ..
             }
-        ));
-        assert!(matches!(
-            entrar_como(datos.path(), "nuevo@virustf.dev", false),
-            Entrada::Pendiente { .. }
         ));
         assert!(matches!(
             entrar_como(datos.path(), "otro@virustf.dev", false),

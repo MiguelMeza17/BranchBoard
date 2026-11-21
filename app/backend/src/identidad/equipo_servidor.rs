@@ -288,25 +288,18 @@ mod tests {
     }
 
     #[test]
-    fn la_copia_local_vale_sin_firmas_con_la_llave_vacia() {
+    fn la_copia_local_da_los_roles() {
         let (_d, db) = base();
         let c = db.conexion();
         let remoto = Falso::nuevo(Rol::Administrador);
         refrescar(&remoto, |f| usuarios::reemplazar_todos(c, f)).unwrap();
-        // Con la llave vacía (proyecto en el servidor) los roles de la copia valen tal cual.
-        let ana = permisos::usuario_actual(c, "", ANA).unwrap();
+        // Los roles de la copia valen tal cual: los hace cumplir el servidor.
+        let ana = permisos::usuario_actual(c, ANA).unwrap();
         assert_eq!(ana.rol, Rol::Administrador);
-        assert!(ana.rol_verificado);
         assert_eq!(
-            crate::tareas::rol_de(c, "", BETO).unwrap(),
+            crate::tareas::rol_de(c, BETO).unwrap(),
             Some(Rol::Desarrollador)
         );
-        // Con una llave (proyecto por Drive) la misma fila sin firma no vale: no cambia lo de antes.
-        let publica = {
-            let d = tempfile::tempdir().unwrap();
-            crate::identidad::llaves::generar_llaves_admin(d.path(), None).unwrap()
-        };
-        assert!(permisos::usuario_actual(c, &publica, ANA).is_err());
     }
 
     #[test]
@@ -339,11 +332,7 @@ mod tests {
         assert_eq!(lista.len(), 3);
         let inv = lista.iter().find(|u| u.invitado).unwrap();
         assert_eq!(inv.email.as_deref(), Some("nuevo@virustf.dev"));
-        assert_eq!(inv.rol_efectivo, None);
-        assert!(lista
-            .iter()
-            .filter(|u| !u.invitado)
-            .all(|u| u.verificacion == Verificacion::Verificado));
+        assert_eq!(inv.rol, Rol::Tester);
 
         // Un Desarrollador no ve invitados ni correos.
         let dev = Falso::nuevo(Rol::Desarrollador);
@@ -514,7 +503,7 @@ mod tests {
         assert_eq!(lista.iter().filter(|u| !u.invitado).count(), 2);
         assert_eq!(lista.iter().filter(|u| u.invitado).count(), 1);
         assert_eq!(
-            permisos::usuario_actual(la, "", &ua).unwrap().rol,
+            permisos::usuario_actual(la, &ua).unwrap().rol,
             Rol::Administrador
         );
         // Invitarlo otra vez se rechaza.

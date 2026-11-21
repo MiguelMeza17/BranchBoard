@@ -457,7 +457,6 @@ mod tests {
             let usuario = UsuarioActual {
                 email: "ejemplo@virustf.dev".into(),
                 rol: *rol,
-                rol_verificado: true,
             };
             assert!(exigir("diff_changeset", &usuario).is_ok());
             assert_eq!(

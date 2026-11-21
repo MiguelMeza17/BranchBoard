@@ -11,9 +11,9 @@ use crate::cm::lectura::rama_actual_workspace;
 use crate::comandos::datos::carpeta_abierta;
 use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::{commits, tareas as db_tareas};
-use crate::eventos::recepcion;
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
+use crate::eventos::recepcion;
 use crate::eventos::{self, ResumenSincronizacion};
 use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol, TipoTarea};
 use crate::ramas::{self, RAMA_DEV};
@@ -154,7 +154,10 @@ fn sincronizar_con_servidor_sin_guardia(estado: &AppState) -> Resultado<ResumenS
     ) {
         resumen.error_bajada = Some(e.to_string());
     }
-    let email = estado.exigir_permiso("sincronizar_eventos").ok().map(|yo| yo.email);
+    let email = estado
+        .exigir_permiso("sincronizar_eventos")
+        .ok()
+        .map(|yo| yo.email);
     let carpeta = carpeta_abierta(estado).ok();
     resumen.recibidos = estado.con_db(|db| {
         recepcion::aplicar(

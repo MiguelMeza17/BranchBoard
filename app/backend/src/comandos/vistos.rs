@@ -45,24 +45,16 @@ mod tests {
     use crate::comandos::acceso::entrar_en;
     use crate::db::usuarios::{self, Usuario};
     use crate::db::Db;
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin,
-    };
     use crate::modelo::Rol;
 
     const ADMIN: &str = "admin@estudio.com";
     const DEV: &str = "dev@estudio.com";
-    const AHORA: &str = "2026-11-16T10:00:00.000Z";
     const HOY: &str = "2026-11-16";
 
     #[test]
     fn marcar_visto_y_obtener_vistos_aislados_por_usuario() {
         let tmp = tempfile::tempdir().unwrap();
         let carpeta = tmp.path().join("proyectos").join("estudio-vistos");
-        let publica = generar_llaves_admin(&carpeta, None).unwrap();
-        let privada = cargar_llave_admin(&carpeta, None).unwrap();
-        fijar_llave_publica_admin(&carpeta, &publica).unwrap();
 
         let db = Db::abrir(&carpeta).unwrap();
         for (correo, rol) in [(ADMIN, Rol::Administrador), (DEV, Rol::Desarrollador)] {
@@ -113,9 +105,7 @@ mod tests {
     #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_puntos_aviso() {
         use crate::cm::Comando;
-        use crate::comandos::datos::carpeta_abierta;
         use crate::identidad::acceso::Entrada;
-        use crate::identidad::llaves::cargar_llave_admin;
         use crate::modelo::hoy_local;
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -150,9 +140,6 @@ mod tests {
             assert_eq!(obtener_vistos_en(&estado).unwrap().len(), 2);
 
             // Registramos otro usuario en la misma máquina y validamos su aislamiento local.
-            let local = carpeta_abierta(&estado).unwrap();
-            let llave = cargar_llave_admin(&local, None).unwrap();
-            let ahora = crate::modelo::ahora_iso();
             let hoy = hoy_local();
             estado
                 .con_db(|db| {

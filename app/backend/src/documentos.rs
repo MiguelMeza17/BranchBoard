@@ -665,10 +665,6 @@ mod tests {
     use crate::db::{usuarios, Db};
     use crate::eventos::lectura::{self, sincronizar};
     use crate::eventos::{carpeta_documentos, carpeta_ops, configurar_carpeta_compartida};
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin,
-    };
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
@@ -684,7 +680,6 @@ mod tests {
         docs: PathBuf,
         db_b: Db,
         local_b: PathBuf,
-        publica: String,
     }
 
     fn setup() -> Escenario {
@@ -705,10 +700,6 @@ mod tests {
         configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
         let ops = carpeta_ops(&local_a).unwrap();
         let docs = carpeta_documentos(&local_a).unwrap();
-
-        let publica = generar_llaves_admin(&local_a, None).unwrap();
-        fijar_llave_publica_admin(&local_b, &publica).unwrap();
-        let privada = cargar_llave_admin(&local_a, None).unwrap();
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -736,7 +727,6 @@ mod tests {
             docs,
             db_b,
             local_b,
-            publica,
         }
     }
 
@@ -874,7 +864,7 @@ mod tests {
             })
             .unwrap(),
         );
-        assert!(aplicar_evento(e.db_a.conexion(), &e.publica, Some(&e.docs), &ev_trav).is_err());
+        assert!(aplicar_evento(e.db_a.conexion(), Some(&e.docs), &ev_trav).is_err());
 
         malicioso.ruta = "D-fake.txt".into();
         malicioso.pendiente = false;
@@ -888,7 +878,7 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            aplicar_evento(e.db_a.conexion(), &e.publica, Some(&e.docs), &ev_bypass)
+            aplicar_evento(e.db_a.conexion(), Some(&e.docs), &ev_bypass)
                 .unwrap_err()
                 .codigo(),
             "sin_permiso"
@@ -914,7 +904,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         assert_eq!(sync.aplicados, 4);
@@ -1021,7 +1011,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         assert!(matches!(
@@ -1148,8 +1138,8 @@ mod tests {
             aprobar_documento_en, eliminar_documento_en, listar_documentos_en,
             resolver_documento_en, subir_documentos_en,
         };
-        use crate::estado::{llave_publica_del_proyecto, AppState};
-        use crate::identidad::equipo::{self, Firmante};
+        use crate::estado::AppState;
+
         use crate::modelo::hoy_local;
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -1191,44 +1181,32 @@ mod tests {
             let ops_b = carpeta_ops(&local_b).unwrap();
             let docs_a = carpeta_documentos(&local_a).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
             let hoy_real = hoy_local();
             let pausa = || std::thread::sleep(std::time::Duration::from_millis(5));
-            let ahora_pausa = || {
-                pausa();
-                crate::modelo::ahora_iso()
-            };
 
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
                     for (correo, rol) in [(DEV, Rol::Desarrollador), (LIDER, Rol::Lider)] {
-                        equipo::crear(
-                            db_a.conexion(),
-                            &ops_a,
-                            &publica,
-                            &firmante_admin,
-                            correo,
-                            rol,
-                            &ahora_pausa(),
-                            &hoy_real,
-                        )?;
+                        Ok::<_, crate::error::Error>({
+                            let u = crate::identidad::equipo::alta_de_prueba(
+                                db_a.conexion(),
+                                correo,
+                                rol,
+                                &hoy_real,
+                            );
+                            crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                            u
+                        })?;
                     }
                     Ok(())
                 })
@@ -1332,7 +1310,7 @@ mod tests {
             // 4. Máquina B sincroniza vía OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza documentos desde OneDrive: {sync_b:?}");
