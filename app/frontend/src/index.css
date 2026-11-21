@@ -12,14 +12,17 @@
   /* Es una app de escritorio: la ventana no se desplaza ni "rebota" al llegar al final de una
      lista. Solo se desplazan las pantallas de adentro (main, paneles, modales). Si una pantalla
      sin Layout (acceso) no cabe, se desplaza #root, que queda dentro de la ventana. */
+  /* Solo la ventana: overscroll-behavior en todo cortaba el paso del scroll de un panel interno a
+     su contenedor (ej. la rueda sobre una columna del Scrum no movía la pantalla). touch-action:
+     una pantalla táctil no hace zoom de toda la app (el pellizco está activo para Branches). */
   html,
   body {
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: pan-x pan-y;
   }
   #root {
     overflow-y: auto;
-  }
-  * {
     overscroll-behavior: none;
   }
   /* Ancho mínimo: por debajo de 320px la página se desplaza en horizontal en vez de desarmarse. */
