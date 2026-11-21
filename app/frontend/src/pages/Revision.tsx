@@ -6,6 +6,7 @@ import { ConfirmLock } from '../components/ConfirmLock';
 import { CambiosTraidos, ramaDeTarea } from '../components/AccionesRama';
 import { Modal } from '../components/Modal';
 import { VisorDiff } from '../components/VisorDiff';
+import { TerminarRevisionModal } from '../components/TerminarRevisionModal';
 import type { Tarea, Usuario } from '../types';
 import { coincidePalabra, palabraCambios, tipoMeta } from '../lib/ui';
 import { Icono, IconoEnLinea } from '../components/Icono';
@@ -204,17 +205,13 @@ export function Revision() {
         {preview && <PrevisualizadorTipo tarea={preview} />}
       </Modal>
 
-      {/* Autorizar (doble candado) */}
-      <ConfirmLock
-        open={!!autorizar}
+      {/* Terminar: consulta los logs locales antes de la confirmación explícita. */}
+      {autorizar && <TerminarRevisionModal
+        key={autorizar.id}
+        tarea={autorizar}
         onClose={() => setAutorizar(null)}
-        onConfirm={() => { if (autorizar) autorizarMerge(autorizar.id); setAutorizar(null); }}
-        title="Autorizar merge"
-        tone="primary"
-        palabra="autorizar"
-        confirmLabel="Autorizar y mergear"
-        description={`Vas a autorizar el merge de "${autorizar?.titulo}". Esta acción ejecuta el merge en Unity Version Control.`}
-      />
+        onConfirm={async () => { await autorizarMerge(autorizar.id); setAutorizar(null); }}
+      />}
 
       {/* Rechazar (con justificación + candado) */}
       <ConfirmLock
@@ -268,7 +265,7 @@ function RevisarEnRevisionModal({
             <Icono nombre="unity" className="h-3.5 w-3.5" /> Abrir en Unity
           </button>
           <button className="btn-danger btn-sm" onClick={onRechazar}>Rechazar</button>
-          <button className="btn-primary btn-sm" onClick={onAutorizar}><Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Autorizar</button>
+          <button className="btn-primary btn-sm" onClick={onAutorizar}><Icono nombre="check" className="h-3.5 w-3.5" sinColor /> Terminar</button>
         </>
       }
     >

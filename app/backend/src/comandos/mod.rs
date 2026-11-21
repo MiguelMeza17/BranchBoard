@@ -11,6 +11,7 @@ pub mod diff;
 pub mod documentos;
 pub mod eventos;
 pub mod identidad;
+pub mod logs_unity;
 pub mod notificaciones;
 pub mod proyecto;
 pub mod proyecto_local;

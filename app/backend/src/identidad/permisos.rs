@@ -126,6 +126,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     // también quien tiene a cargo la tarea padre de una subtarea; `tareas` lo revisa.
     ("asignar_revision", Acceso::Roles(LIDER_O_ADMIN)),
     ("autorizar_merge", Acceso::Roles(TODOS)),
+    ("logs_unity_para_terminar", Acceso::Roles(TODOS)),
     ("rechazar_revision", Acceso::Roles(TODOS)),
     ("listar_commits", Acceso::Roles(TODOS)),
     ("abrir_en_unity", Acceso::Roles(TODOS)),

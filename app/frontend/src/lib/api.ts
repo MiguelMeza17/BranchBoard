@@ -30,7 +30,15 @@ import type {
   WorkspaceUnityVC,
 } from '../types';
 
-/** `true` cuando la app corre dentro de la ventana de Tauri (no en el navegador). */
+/** Fragmento local de Editor.log; no se guarda ni se envía al servidor. */
+export interface LogsUnity {
+  archivo: string | null;
+  modificado: string | null;
+  contenido: string;
+  recortado: boolean;
+  aviso: string | null;
+}
+
 /** Un changeset de la rama que el workspace todavía no tiene (#110). */
 export interface ChangesetEntrante {
   changeset: number;
@@ -662,6 +670,11 @@ export const api = {
    * padre (subtarea), del lado del servidor (#107). Si hay conflicto, la tarea no cambia y
    * `conflicto` trae los archivos para la alerta; si no, `tareas` ya viene con ella terminada.
    */
+  logsUnityParaTerminar: (tareaId: string) =>
+    llamar<LogsUnity>('logs_unity_para_terminar', { tareaId }, () => ({
+      archivo: null, modificado: null, contenido: '', recortado: false, aviso: null,
+    })),
+
   autorizarMerge: (id: string, mockup: () => ResultadoAutorizacion) =>
     llamar<ResultadoAutorizacion>('autorizar_merge', { id }, mockup),
 

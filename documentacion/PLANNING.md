@@ -29,7 +29,7 @@ Antes de pasar al estado "en revisión", el entregable de cualquier tarea se pue
 - **Audio** → reproductor de audio embebido.
 - **Música** → reproductor de audio embebido.
 - **Video** → reproductor de video embebido. **Restricción de archivo**: valida la extensión real del archivo, no solo el nombre — no se puede subir una imagen disfrazada de video para esta categoría.
-- **Scripting** → visor del **diff de la rama** (#152): archivos a la izquierda y líneas añadidas/borradas coloreadas; se lee el código sin compilar ni cambiar de rama. Los check-ins también permiten expandir su diff. Para ejecutar el proyecto sigue disponible «Abrir en Unity»; compilar desde Revisión queda para #153.
+- **Scripting** → visor del **diff de la rama** (#152): archivos a la izquierda y líneas añadidas/borradas coloreadas; se lee el código sin compilar ni cambiar de rama. Los check-ins también permiten expandir su diff. Para ejecutar el proyecto sigue disponible «Abrir en Unity». **Decisión de Miguel (2026-11-21, #153)**: al pulsar «Terminar» se leen los logs de Unity del equipo de quien termina. Sin logs se conserva la confirmación normal; con registros se muestran y se puede «Terminar igualmente», incluso si contienen errores. No hay botón separado de comprobar ni se compila automáticamente. Solo la confirmación explícita ejecuta el merge; los permisos y conflictos de Unity VC siguen vigentes.
 
 **Primer tipo a implementar:** el visor de previsualización de **modelado 3D**, usando tecnología web de visualización 3D (ej. Three.js / `<model-viewer>` sobre glTF) embebida en la webview de Tauri.
 
