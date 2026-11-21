@@ -628,13 +628,10 @@ export const useStore = create<State>((set, get) => {
   setModoSinUnityVc: (activo) => set({ modoSinUnityVc: activo }),
   proyectoLocal: null,
   sesionUnityVcCaducada: false,
+  // Que caduque Unity VC no saca a nadie del proyecto (#124): sus tareas siguen funcionando y solo
+  // espera lo que necesita Unity VC (ramas, check-in, merge) hasta que pulse "Reconectar" en el aviso.
   marcarSesionUnityVcCaducada: () =>
-    set((s) =>
-      // Un proyecto local no depende de la sesión de Unity VC: no se saca a nadie de él.
-      s.proyectoLocal
-        ? { cmSesionActiva: false, sesionUnityVC: null, sesionUnityVcCaducada: true }
-        : { cmSesionActiva: false, accesoCompletado: false, sesionUnityVC: null, sesionUnityVcCaducada: true }
-    ),
+    set({ cmSesionActiva: false, sesionUnityVC: null, sesionUnityVcCaducada: true }),
   accesoCompletado: false,
   proyectoActual: enTauri() ? '' : fx.PROYECTO_NOMBRE,
   workspaceActual: enTauri() ? null : fx.PROYECTO_NOMBRE,
