@@ -335,7 +335,28 @@ export interface ProyectoServidor {
   repo: string;
   org: string;
   tiene_db_branchboard: boolean;
+  /** Rol de la cuenta en el proyecto del servidor de BranchBoard, si el repo ya está allí (#240). */
+  rol_servidor?: Rol | null;
 }
+
+/** Un proyecto del servidor de BranchBoard del que la cuenta es miembro (`listar_proyectos_del_servidor`, #240). */
+export interface ProyectoDeLaCuenta {
+  id: string;
+  nombre: string;
+  unity_org: string | null;
+  unity_repo: string | null;
+  rol: Rol;
+}
+
+/** Cómo quedó el proyecto abierto respecto al servidor (`vincular_proyecto_servidor`, #240). */
+export type VinculoServidor =
+  | { estado: 'vinculado'; proyecto_id: string; ahora: boolean }
+  | { estado: 'no_es_miembro' }
+  | { estado: 'con_equipo_local' };
+
+/** Texto de la etiqueta de un repo en "Cargar proyecto": "Con tareas", con el rol si ya está en el servidor. */
+export const etiquetaProyectoServidor = (p: ProyectoServidor): string =>
+  p.rol_servidor ? `Con tareas · ${p.rol_servidor}` : p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas';
 
 /** Progreso emitido por el evento `clonado-progreso` (#125). */
 export interface ProgresoClonado {
@@ -1164,6 +1185,18 @@ export const api = {
   /** Proyectos accesibles en Unity VC Cloud (`cm repo list`) con etiqueta "Con tareas" (#125). */
   listarProyectosServidor: (mockup?: () => ProyectoServidor[]) =>
     llamar<ProyectoServidor[]>('listar_proyectos_servidor', undefined, mockup ?? (() => [])),
+
+  /** Proyectos del servidor de BranchBoard de los que la cuenta es miembro, con su rol (#240). */
+  listarProyectosDelServidor: (mockup?: () => ProyectoDeLaCuenta[]) =>
+    llamar<ProyectoDeLaCuenta[]>('listar_proyectos_del_servidor', undefined, mockup ?? (() => [])),
+
+  /** Vincula el proyecto abierto con el servidor (#240). La app ya lo intenta al entrar; sirve para reintentar. */
+  vincularProyectoServidor: (mockup?: () => VinculoServidor) =>
+    llamar<VinculoServidor>(
+      'vincular_proyecto_servidor',
+      undefined,
+      mockup ?? (() => ({ estado: 'no_es_miembro' }))
+    ),
 
   /** Clona un proyecto de Unity VC Cloud (`cm workspace create` + `cm update`) en `carpeta` (#125). */
   /** `carpeta`: dónde crearlo; `nombreCarpeta`: nombre de la carpeta nueva (por defecto, el del proyecto). */

@@ -59,7 +59,7 @@ pub fn credencial_en_tokens_conf(texto: &str, correo: &str) -> Option<Credencial
     encontradas.into_iter().next()
 }
 
-fn credencial_de(carpeta_plastic4: &Path, correo: &str) -> Resultado<CredencialUnity> {
+pub(crate) fn credencial_de(carpeta_plastic4: &Path, correo: &str) -> Resultado<CredencialUnity> {
     let texto = std::fs::read_to_string(carpeta_plastic4.join("tokens.conf"))
         .map_err(|_| Error::SinSesionUnityVc)?;
     credencial_en_tokens_conf(&texto, correo).ok_or(Error::SinSesionUnityVc)

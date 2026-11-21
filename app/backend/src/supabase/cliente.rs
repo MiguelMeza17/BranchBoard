@@ -324,6 +324,20 @@ impl<L: Llavero> ClienteSupabase<L> {
         .map(|_| ())
     }
 
+    /// `POST` a la Edge Function `nombre` con la sesión de BranchBoard (#240, p. ej. `vincular-repo-unity`).
+    /// Errores como los de [`error_funcion`]: un `401` es `SesionUnityVcCaducada` (lo usual: el token de
+    /// Unity que va en el cuerpo venció); la sesión de BranchBoard ya se renovó antes si estaba por vencer.
+    pub fn llamar_funcion(&self, nombre: &str, cuerpo: &Value) -> Resultado<Value> {
+        let sesion = self.sesion_vigente()?;
+        let respuesta = self
+            .agente
+            .post(&self.url(&format!("/functions/v1/{nombre}")))
+            .set("apikey", self.proyecto.clave_publica)
+            .set("Authorization", &format!("Bearer {}", sesion.access_token))
+            .send_json(cuerpo.clone());
+        leer_json(respuesta, error_funcion)
+    }
+
     /// Como [`Self::llamar`], con la cabecera `Prefer` de PostgREST si se pide.
     fn llamar_prefiriendo(
         &self,

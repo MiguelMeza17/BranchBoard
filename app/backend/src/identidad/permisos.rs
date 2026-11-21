@@ -66,6 +66,9 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("traer_proyecto", Acceso::Libre),
     ("abrir_unity_cloud", Acceso::Libre),
     ("entrar_a_proyecto", Acceso::Libre),
+    // Proyectos en el servidor (#240): listar es de la cuenta; vincular, del proyecto abierto.
+    ("listar_proyectos_del_servidor", Acceso::Libre),
+    ("vincular_proyecto_servidor", Acceso::Roles(TODOS)),
     ("buscar_actualizacion", Acceso::Libre),
     ("instalar_actualizacion", Acceso::Libre),
     ("listar_backups", Acceso::Roles(SOLO_ADMIN)),

@@ -161,6 +161,8 @@ pub fn run() {
             comandos_cm::traer_proyecto,
             comandos_cm::abrir_unity_cloud,
             acceso::entrar_a_proyecto,
+            acceso::vincular_proyecto_servidor,
+            acceso::listar_proyectos_del_servidor,
             actualizaciones::buscar_actualizacion,
             actualizaciones::instalar_actualizacion,
             datos::listar_backups,

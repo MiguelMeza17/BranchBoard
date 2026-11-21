@@ -36,8 +36,12 @@ pub struct ProyectoServidor {
     /// `<Proyecto/Repo>@<org>@unity`, listo para pasar a `clonar_proyecto`.
     pub repo: String,
     pub org: String,
-    /// `true` si ya usa BranchBoard (base local o ramas de tareas `/main/dev/T-*`) → "Con tareas".
+    /// `true` si ya usa BranchBoard (base local, ramas de tareas `/main/dev/T-*` o, desde #240, es un
+    /// proyecto de la cuenta en el servidor) → "Con tareas".
     pub tiene_db_branchboard: bool,
+    /// Rol de la cuenta en el proyecto del servidor, si el repo ya está en BranchBoard (#240).
+    #[serde(default)]
+    pub rol_servidor: Option<String>,
 }
 
 /// Evento incremental devuelto durante el clonado de un workspace (#125).
@@ -201,6 +205,7 @@ pub fn interpretar_repos_servidor(
             repo: spec,
             org,
             tiene_db_branchboard: false,
+            rol_servidor: None,
         });
     }
     proyectos
@@ -306,14 +311,36 @@ pub fn listar_proyectos_servidor_en(
         })?
     };
 
+    // Los proyectos de la cuenta en el servidor (#240). Sin internet o sin sesión, la lista sale igual.
+    let de_la_cuenta = crate::supabase::proyectos::listar_mios(&crate::supabase::ClienteSupabase::new(
+        crate::supabase::Entorno::actual().proyecto(),
+        crate::servidor::LlaveroSistema,
+    ))
+    .unwrap_or_default();
     for p in &mut proyectos {
         if let Some(r) = RepoUnityVc::desde_especificacion(&p.repo) {
-            p.tiene_db_branchboard =
-                tiene_db_local(carpeta_datos, &r) || repo_tiene_ramas_branchboard(estado, &p.repo);
+            p.rol_servidor = rol_en_el_servidor(&de_la_cuenta, &r);
+            p.tiene_db_branchboard = p.rol_servidor.is_some()
+                || tiene_db_local(carpeta_datos, &r)
+                || repo_tiene_ramas_branchboard(estado, &p.repo);
         }
     }
 
     Ok(proyectos)
+}
+
+/// El rol de la cuenta en el proyecto del servidor del repo `r`, si es uno de `de_la_cuenta` (#240).
+fn rol_en_el_servidor(
+    de_la_cuenta: &[crate::supabase::proyectos::ProyectoDeLaCuenta],
+    r: &RepoUnityVc,
+) -> Option<String> {
+    de_la_cuenta
+        .iter()
+        .find(|p| {
+            p.unity_org.as_deref() == Some(r.org.as_str())
+                && p.unity_repo.as_deref() == Some(r.repo.as_str())
+        })
+        .map(|p| p.rol.clone())
 }
 
 /// Resuelve y valida la carpeta destino para clonar sin sobrescribir carpetas existentes con datos.

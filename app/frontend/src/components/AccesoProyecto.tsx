@@ -6,6 +6,7 @@ import {
   api,
   enTauri,
   ErrorBackend,
+  etiquetaProyectoServidor,
   mensajeDeError,
   nombreDeRepo,
   unoPorRepo,
@@ -1006,7 +1007,7 @@ export function PasoClonar({
             >
               {proyectosServidor.map((p) => (
                 <option key={p.repo} value={p.repo}>
-                  {p.nombre} ({p.repo}) — {p.tiene_db_branchboard ? 'Con tareas' : 'Sin tareas'}
+                  {p.nombre} ({p.repo}) — {etiquetaProyectoServidor(p)}
                 </option>
               ))}
             </select>
