@@ -52,6 +52,8 @@
 
 **Quién se lo puede saltar**: el **dueño de la cuenta de Supabase** (panel, clave secreta, contraseña de Postgres). Es el nuevo ancla de confianza en lugar de `admin.key` (decisión 2 y 3 de #231); riesgo aceptado.
 
+**Cuentas sin confirmar el correo (#236, riesgo aceptado el 2026-11-21)**: al registrarse no se comprueba que el correo sea de quien lo escribe (el correo incluido de Supabase no lo permite; ver [Cuentas de BranchBoard en BACKEND.md](./BACKEND.md#cuentas-de-branchboard-236)). Alguien podría registrarse con el correo de otra persona y, si un Administrador agrega ese correo a un proyecto, entrar en su lugar. Mientras tanto, conviene que quien agrega a alguien confirme con esa persona que ya creó su cuenta. Lo resolverá la recuperación de contraseña con código (otro issue, necesita un SMTP propio). Por lo mismo, la protección de `login-unity` (#237) para cuentas sin confirmar no se activa: todas quedan confirmadas al registrarse.
+
 **Eventos según el rol (#247, decidido 2026-11-20)**: una app modificada podría insertar en `eventos` acciones que su rol no permite. Por eso el servidor revisa el **tipo** del evento contra la tabla `privado.permisos_evento` (migración `20261121020000_permisos_evento.sql`), copiada de `identidad/permisos.rs`. La regla de inserción de `eventos` agrega: si el tipo está en la tabla, el rol de quien lo inserta tiene que estar en sus roles; si no está, lo inserta cualquier miembro.
 
 | Quién | Tipos de evento |

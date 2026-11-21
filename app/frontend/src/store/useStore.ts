@@ -612,7 +612,9 @@ export const useStore = create<State>((set, get) => {
       accesoCompletado: true,
       accesoIrAWorkspaces: false,
     }),
-  cerrarSesionBranchBoard: () =>
+  cerrarSesionBranchBoard: () => {
+    // Borra la sesión de Supabase del llavero (y avisa al servidor si hay red, #236).
+    void api.cerrarSesionBranchBoard().catch(() => undefined);
     set({
       cuentaBranchBoard: null,
       currentEmail: '',
@@ -627,17 +629,15 @@ export const useStore = create<State>((set, get) => {
       accesoCompletado: false,
       // Sin sesión de Unity VC, esto deja ver el login de BranchBoard en vez de la pantalla de Unity VC.
       modoSinUnityVc: true,
-    }),
+    });
+  },
   setModoSinUnityVc: (activo) => set({ modoSinUnityVc: activo }),
   proyectoLocal: null,
   sesionUnityVcCaducada: false,
+  // Que caduque Unity VC no saca a nadie del proyecto (#124): sus tareas siguen funcionando y solo
+  // espera lo que necesita Unity VC (ramas, check-in, merge) hasta que pulse "Reconectar" en el aviso.
   marcarSesionUnityVcCaducada: () =>
-    set((s) =>
-      // Un proyecto local no depende de la sesión de Unity VC: no se saca a nadie de él.
-      s.proyectoLocal
-        ? { cmSesionActiva: false, sesionUnityVC: null, sesionUnityVcCaducada: true }
-        : { cmSesionActiva: false, accesoCompletado: false, sesionUnityVC: null, sesionUnityVcCaducada: true }
-    ),
+    set({ cmSesionActiva: false, sesionUnityVC: null, sesionUnityVcCaducada: true }),
   accesoCompletado: false,
   proyectoActual: enTauri() ? '' : fx.PROYECTO_NOMBRE,
   workspaceActual: enTauri() ? null : fx.PROYECTO_NOMBRE,

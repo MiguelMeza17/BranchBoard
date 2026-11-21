@@ -18,6 +18,7 @@ function CambiosPendientes() {
   const [pendientes, setPendientes] = useState(0);
   const [rechazados, setRechazados] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [pausado, setPausado] = useState(false);
 
   useEffect(() => {
     let activo = true;
@@ -29,6 +30,7 @@ function CambiosPendientes() {
       setPendientes(estado.pendientes);
       setRechazados(estado.rechazados);
       setError(estado.error);
+      setPausado(estado.servidor_pausado);
     });
     return () => {
       activo = false;
@@ -38,6 +40,7 @@ function CambiosPendientes() {
 
   if (pendientes === 0 && rechazados === 0) return null;
   const partes = [
+    pausado && 'Servidor pausado',
     pendientes > 0 &&
       `${pendientes} ${pendientes === 1 ? 'cambio pendiente' : 'cambios pendientes'} de enviar`,
     rechazados > 0 &&
@@ -45,7 +48,10 @@ function CambiosPendientes() {
   ].filter(Boolean);
   const texto = partes.join(' · ');
   const detalle = [
-    pendientes > 0 && (error ? `Pendientes: ${error}` : 'Los pendientes se envían solos cuando hay conexión.'),
+    pausado
+      ? 'El servidor de BranchBoard se pausó por falta de uso (plan gratis de Supabase). Quien administra la cuenta de Supabase lo reactiva con "Resume project"; mientras tanto puedes seguir trabajando y los cambios se envían solos al reactivarlo.'
+      : pendientes > 0 &&
+        (error ? `Pendientes: ${error}` : 'Los pendientes se envían solos cuando hay conexión.'),
     rechazados > 0 &&
       'Los rechazados no se reintentan (por ejemplo, tu rol ya no permite ese cambio): los demás ven el proyecto sin ellos.',
   ]
@@ -58,7 +64,7 @@ function CambiosPendientes() {
       role="status"
     >
       <span
-        className={`h-2 w-2 shrink-0 rounded-full ${rechazados > 0 ? 'bg-red-400' : 'bg-amber-400'}`}
+        className={`h-2 w-2 shrink-0 rounded-full ${rechazados > 0 || pausado ? 'bg-red-400' : 'bg-amber-400'}`}
         aria-hidden="true"
       />
       <span className="hidden sm:inline">{texto}</span>

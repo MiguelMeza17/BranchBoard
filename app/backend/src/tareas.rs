@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::db::commits;
@@ -4221,10 +4221,11 @@ fn aplicar_rechazar_revision(
 
 /// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
 /// contra una toma previa de otra persona sobre la misma tarea (#97).
-/// Determina quién ganó y quién perdió según el orden `(timestamp, usuario, archivo)`.
+/// Determina quién ganó y quién perdió: por `(timestamp, usuario, archivo)` si el
+/// evento vino de `ops/`, o por el `orden` del servidor si vino de Supabase (#239).
 pub fn detectar_doble_toma(
     c: &Connection,
-    ops: &Path,
+    fuente: FuenteToma<'_>,
     evento_id: &str,
     evento: &Evento,
 ) -> Resultado<Option<InfoDobleToma>> {
@@ -4255,20 +4256,24 @@ pub fn detectar_doble_toma(
         Err(_) => return Ok(None),
     };
 
-    // Buscamos en `ops/` el evento con el que se asignó `actual_email` para comparar
-    // orden determinista `(timestamp, usuario, id)` incluso si la máquina local
-    // aplicó su propio evento antes de recibir el remoto.
-    let actual_en_ops = buscar_evento_toma_en_ops(ops, &tarea.id, actual_email);
-    let entrante_gana = match &actual_en_ops {
-        Some((id_actual, ev_actual)) => {
-            (&evento.timestamp, &entrante_email, evento_id)
-                < (
-                    &ev_actual.timestamp,
-                    &normalizar_email(&ev_actual.usuario),
-                    id_actual.as_str(),
-                )
+    let (actual_en_ops, entrante_gana) = match fuente {
+        // Buscamos en `ops/` el evento con el que se asignó `actual_email` para comparar
+        // orden determinista `(timestamp, usuario, id)` incluso si la máquina local
+        // aplicó su propio evento antes de recibir el remoto.
+        FuenteToma::Ops(ops) => {
+            let rival = buscar_evento_toma_en_ops(ops, &tarea.id, actual_email);
+            let gana = rival.as_ref().is_some_and(|(id_actual, ev_actual)| {
+                (&evento.timestamp, &entrante_email, evento_id)
+                    < (
+                        &ev_actual.timestamp,
+                        &normalizar_email(&ev_actual.usuario),
+                        id_actual.as_str(),
+                    )
+            });
+            (rival, gana)
         }
-        None => false,
+        // Con el servidor (#239) manda su `orden`: gana la toma que llegó antes al servidor.
+        FuenteToma::Servidor { orden } => buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?,
     };
 
     if entrante_gana {
@@ -4302,6 +4307,71 @@ pub fn detectar_doble_toma(
             revertir_a_entrante: None,
         }))
     }
+}
+
+/// De dónde vino el evento `tomar_tarea` que se revisa en [`detectar_doble_toma`].
+#[derive(Debug, Clone, Copy)]
+pub enum FuenteToma<'a> {
+    /// De la carpeta `ops/` (Drive/OneDrive, hasta #244).
+    Ops(&'a Path),
+    /// De la tabla `eventos` del servidor, con su número de `orden` (#239).
+    Servidor { orden: i64 },
+}
+
+/// La toma rival (la de `usuario` sobre `tarea_id`) cuando el entrante viene del servidor con `orden`,
+/// y si el entrante le gana:
+/// - Si la rival ya bajó del servidor (`eventos_servidor`), gana la de `orden` menor.
+/// - Si sigue en la bandeja de salida de esta máquina, todavía no llegó al servidor: llegará después
+///   del entrante, así que el entrante gana (igual que lo verán las demás máquinas).
+/// - Si no está en ninguna (p. ej. la asignó un Líder con `asignar_tarea`), el entrante pierde.
+///
+/// La bandeja y la bajada no se cruzan: la app sube la bandeja y después baja, en la misma vuelta.
+fn buscar_toma_rival_servidor(
+    c: &Connection,
+    tarea_id: &str,
+    usuario: &str,
+    orden_entrante: i64,
+) -> Resultado<(Option<(String, Evento)>, bool)> {
+    let usuario = normalizar_email(usuario);
+    let bajada: Option<(String, i64, String, String)> = c
+        .query_row(
+            "SELECT id, orden, payload, recibido_en FROM eventos_servidor
+             WHERE tipo = 'tomar_tarea' AND tarea_id = ?1 AND usuario = ?2
+             ORDER BY orden LIMIT 1",
+            params![tarea_id, usuario],
+            |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?, f.get(3)?)),
+        )
+        .optional()?;
+    let armar = |id: String, payload: String, timestamp: String| {
+        let mut ev = Evento::nuevo(
+            "tomar_tarea",
+            Some(tarea_id),
+            &usuario,
+            serde_json::from_str(&payload).unwrap_or(serde_json::Value::Null),
+        );
+        ev.timestamp = timestamp;
+        (id, ev)
+    };
+    if let Some((id, orden, payload, recibido_en)) = bajada {
+        return Ok((Some(armar(id, payload, recibido_en)), orden_entrante < orden));
+    }
+    // La bandeja solo tiene eventos de esta máquina: la toma es de `usuario` si su payload lo dice.
+    let mut consulta = c.prepare(
+        "SELECT id, payload, creado_en FROM bandeja_salida
+         WHERE tipo = 'tomar_tarea' AND tarea_id = ?1 ORDER BY rowid",
+    )?;
+    let filas = consulta.query_map([tarea_id], |f| {
+        Ok((f.get::<_, String>(0)?, f.get::<_, String>(1)?, f.get::<_, String>(2)?))
+    })?;
+    for fila in filas {
+        let (id, payload, creado_en) = fila?;
+        let es_de_usuario = serde_json::from_str::<PayloadTomarTarea>(&payload)
+            .is_ok_and(|p| normalizar_email(&p.asignado_a) == usuario);
+        if es_de_usuario {
+            return Ok((Some(armar(id, payload, creado_en)), true));
+        }
+    }
+    Ok((None, false))
 }
 
 fn buscar_evento_toma_en_ops(
@@ -5223,6 +5293,218 @@ mod tests {
                 .unwrap()
                 .is_empty());
         }
+    }
+
+    /// Lo mismo que la prueba anterior pero sincronizando por el servidor (#239): manda el `orden` del
+    /// servidor, no el reloj de cada PC. B toma con un reloj **más tardío** pero su toma **llega antes** al
+    /// servidor, así que gana B en las dos máquinas (por `ops/` habría ganado A).
+    #[test]
+    fn doble_toma_por_el_servidor_gana_la_que_llego_antes() {
+        use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
+        use crate::eventos::{bandeja, recepcion};
+        use std::cell::RefCell;
+
+        const PROYECTO: &str = "11111111-2222-4333-8444-555555555555";
+        let e = Escenario::nuevo();
+        for db in [&e.db_a, &e.db_b] {
+            configuracion::guardar(db.conexion(), CLAVE_PROYECTO_SERVIDOR, PROYECTO, ADMIN, AHORA)
+                .unwrap();
+        }
+        // El "servidor": numera lo que le llega y le pone su hora.
+        let servidor: RefCell<Vec<recepcion::FilaServidor>> = RefCell::new(Vec::new());
+        let subir = |db: &Db, autor: &str| {
+            bandeja::subir(
+                |f| f(db.conexion()),
+                |filas| {
+                    let mut srv = servidor.borrow_mut();
+                    for f in filas.as_array().unwrap() {
+                        let orden = srv.len() as i64 + 1;
+                        srv.push(recepcion::FilaServidor {
+                            orden,
+                            id: f["id"].as_str().unwrap().into(),
+                            tipo: f["tipo"].as_str().unwrap().into(),
+                            tarea_id: f["tarea_id"].as_str().map(String::from),
+                            autor: autor.into(),
+                            payload: f["payload"].clone(),
+                            recibido_en: format!("2026-11-15T15:01:{orden:02}.000Z"),
+                        });
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap()
+        };
+        let recibir = |db: &Db| {
+            recepcion::bajar(
+                |f| f(db.conexion()),
+                PROYECTO,
+                |desde| {
+                    Ok(servidor
+                        .borrow()
+                        .iter()
+                        .filter(|f| f.orden > desde)
+                        .cloned()
+                        .collect())
+                },
+                |ids| {
+                    Ok(ids
+                        .iter()
+                        .map(|id| (id.clone(), id.replace("uuid-", "") + "@virustf.dev"))
+                        .collect())
+                },
+            )
+            .unwrap();
+            recepcion::aplicar(
+                db.conexion(),
+                PROYECTO,
+                None,
+                Utc::now(),
+                &e.publica,
+                |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+                |_| Ok(false),
+            )
+            .unwrap()
+        };
+        let dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let tester = AutorTarea {
+            email: TESTER,
+            rol: Rol::Tester,
+        };
+        let rama = |id: i64, nombre: &str| {
+            let nombre = nombre.to_string();
+            move |_: &[TareaDeCadena]| {
+                Ok(vec![(
+                    "T-101".to_string(),
+                    Rama {
+                        id,
+                        name: nombre.clone(),
+                        head_changeset: 50,
+                    },
+                )])
+            }
+        };
+
+        // A crea T-101, la sube y B la recibe del servidor.
+        crear(e.db_a.conexion(), &e.ops, &dev, &datos_base("Colisión"), "2026-11-15T15:00:01.000Z", HOY)
+            .unwrap();
+        subir(&e.db_a, "uuid-dev");
+        assert_eq!(recibir(&e.db_b).aplicados, 1);
+
+        // B toma con reloj 15:00:05 y sube primero; A toma con reloj 15:00:02 y sube después.
+        tomar(e.db_b.conexion(), &e.ops, &tester, "T-101", rama(202, "/main/dev/T-101-colision-b"), "2026-11-15T15:00:05.000Z")
+            .unwrap();
+        subir(&e.db_b, "uuid-tester");
+        tomar(e.db_a.conexion(), &e.ops, &dev, "T-101", rama(201, "/main/dev/T-101-colision-a"), "2026-11-15T15:00:02.000Z")
+            .unwrap();
+        subir(&e.db_a, "uuid-dev");
+
+        let sync_a = recibir(&e.db_a);
+        let sync_b = recibir(&e.db_b);
+        assert_eq!(sync_a.aplicados, 1, "A revierte su toma local a B");
+        assert_eq!(sync_b.descartados, 1, "la toma de A llegó después: se descarta");
+
+        for db in [&e.db_a, &e.db_b] {
+            let t = db_tareas::obtener(db.conexion(), "T-101").unwrap();
+            assert_eq!(t.asignado_a.as_deref(), Some(TESTER));
+            assert_eq!(t.rama_asociada.as_deref(), Some("/main/dev/T-101-colision-b"));
+            let notifs_dev = notificaciones::de_usuario(db.conexion(), DEV).unwrap();
+            assert_eq!(notifs_dev.len(), 1);
+            assert!(notifs_dev[0].accionable);
+        }
+    }
+
+    /// Si la toma propia todavía no salió de la bandeja, llegará al servidor después de la ajena que acaba
+    /// de bajar: gana la ajena (#239).
+    #[test]
+    fn doble_toma_por_el_servidor_con_la_propia_aun_en_la_bandeja() {
+        use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
+        use crate::eventos::recepcion;
+
+        const PROYECTO: &str = "11111111-2222-4333-8444-555555555555";
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, PROYECTO, ADMIN, AHORA).unwrap();
+        let dev = AutorTarea {
+            email: DEV,
+            rol: Rol::Desarrollador,
+        };
+        let creada = crear(c, &e.ops, &dev, &datos_base("Colisión"), "2026-11-15T15:00:01.000Z", HOY)
+            .unwrap();
+        // A toma la tarea; su evento queda en la bandeja (sin subir).
+        tomar(
+            c,
+            &e.ops,
+            &dev,
+            "T-101",
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 201,
+                        name: "/main/dev/T-101-colision-a".into(),
+                        head_changeset: 50,
+                    },
+                )])
+            },
+            "2026-11-15T15:00:02.000Z",
+        )
+        .unwrap();
+        // Del servidor baja la creación (la propia, ya aplicada) y la toma de TESTER.
+        let id_crear: String = c
+            .query_row("SELECT id FROM bandeja_salida WHERE tipo = 'crear_tarea'", [], |f| f.get(0))
+            .unwrap();
+        let toma_tester = serde_json::json!({
+            "id": "T-101", "asignado_a": TESTER, "rama_asociada": "/main/dev/T-101-colision-b",
+            "ultimo_changeset_visto": 50
+        });
+        let filas = [
+            recepcion::FilaServidor {
+                orden: 1,
+                id: id_crear,
+                tipo: "crear_tarea".into(),
+                tarea_id: Some(creada.id.clone()),
+                autor: "uuid-dev".into(),
+                payload: serde_json::json!({}),
+                recibido_en: "2026-11-15T15:01:01.000Z".into(),
+            },
+            recepcion::FilaServidor {
+                orden: 2,
+                id: "toma-tester".into(),
+                tipo: "tomar_tarea".into(),
+                tarea_id: Some("T-101".into()),
+                autor: "uuid-tester".into(),
+                payload: toma_tester,
+                recibido_en: "2026-11-15T15:01:02.000Z".into(),
+            },
+        ];
+        recepcion::bajar(
+            |f| f(c),
+            PROYECTO,
+            |desde| Ok(filas.iter().filter(|f| f.orden > desde).cloned().collect()),
+            |ids| {
+                Ok(ids
+                    .iter()
+                    .map(|id| (id.clone(), id.replace("uuid-", "") + "@virustf.dev"))
+                    .collect())
+            },
+        )
+        .unwrap();
+        let r = recepcion::aplicar(
+            c,
+            PROYECTO,
+            None,
+            Utc::now(),
+            &e.publica,
+            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            |_| Ok(false),
+        )
+        .unwrap();
+        assert_eq!(r.aplicados, 1);
+        let t = db_tareas::obtener(c, "T-101").unwrap();
+        assert_eq!(t.asignado_a.as_deref(), Some(TESTER));
     }
 
     #[test]

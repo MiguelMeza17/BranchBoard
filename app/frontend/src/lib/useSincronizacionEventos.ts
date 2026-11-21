@@ -2,7 +2,10 @@ import { useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { api, enTauri } from './api';
 
-/** Cada cuánto se revisa `ops/` mientras la app está abierta (BACKEND.md: 2 minutos). */
+/**
+ * Cada cuánto el frontend pide `sincronizar_eventos` mientras la app está abierta (BACKEND.md: 2 minutos).
+ * Lo del servidor llega más rápido: el backend lo consulta cada 5 s y avisa con `eventos-recibidos` (#239).
+ */
 export const INTERVALO_SINCRONIZACION_MS = 2 * 60 * 1000;
 
 /**
@@ -22,6 +25,7 @@ export function useSincronizacionEventos(activo: boolean) {
     let cancelado = false;
     let dejarUnity: (() => void) | undefined;
     let dejarAlerta: (() => void) | undefined;
+    let dejarRecibidos: (() => void) | undefined;
     const revisar = async () => {
       try {
         const resumen = await api.sincronizarEventos();
@@ -46,6 +50,18 @@ export function useSincronizacionEventos(activo: boolean) {
             dejarUnity = dejar;
           }
         });
+      // Cambios del equipo que llegaron del servidor (#239).
+      void api
+        .alEventosRecibidos((resumen) => {
+          if (!cancelado && resumen.aplicados > 0) subirVersionDatos();
+        })
+        .then((dejar) => {
+          if (cancelado) {
+            dejar();
+          } else {
+            dejarRecibidos = dejar;
+          }
+        });
       // Cambios en main, dev o la rama de otra persona en este workspace (#111).
       void api
         .alAlertaRamaAjena((alerta) => {
@@ -68,6 +84,7 @@ export function useSincronizacionEventos(activo: boolean) {
       cancelado = true;
       dejarUnity?.();
       dejarAlerta?.();
+      dejarRecibidos?.();
       window.clearInterval(temporizador);
       window.removeEventListener('focus', alVolver);
       document.removeEventListener('visibilitychange', alVolver);

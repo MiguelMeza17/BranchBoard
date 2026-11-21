@@ -71,15 +71,25 @@ impl ResumenSincronizacion {
     pub fn hubo_cambios(&self) -> bool {
         self.aplicados > 0
     }
+
+    /// Suma lo de `otro` (p. ej. lo de `ops/` más lo del servidor, #239).
+    pub fn sumar(&mut self, otro: &ResumenSincronizacion) {
+        self.aplicados += otro.aplicados;
+        self.descartados += otro.descartados;
+        self.desconocidos += otro.desconocidos;
+        self.ilegibles += otro.ilegibles;
+    }
 }
 
 /// Un evento pendiente, con lo que hace falta para ordenarlo.
 #[derive(Debug, Clone)]
-struct Pendiente {
-    id: String,
-    evento: Evento,
+pub(super) struct Pendiente {
+    pub id: String,
+    pub evento: Evento,
     /// Momento por el que se ordena (el declarado, o la llegada si es sospechoso).
-    orden: DateTime<Utc>,
+    pub orden: DateTime<Utc>,
+    /// Si vino del servidor (#239), su número de `orden` allí. `None` = vino de `ops/`.
+    pub orden_servidor: Option<i64>,
 }
 
 /// Escanea `ops/` y aplica, en orden, todo lo que esta base todavía no tiene.
@@ -111,8 +121,42 @@ pub fn sincronizar_con_doble_toma(
     let mut resumen = ResumenSincronizacion::default();
     let mut avisos = Vec::new();
     let pendientes = leer_pendientes(c, ops, ahora, &mut resumen, &mut avisos)?;
+    aplicar_pendientes(
+        c,
+        Some(ops),
+        ahora,
+        publica_admin,
+        pendientes,
+        &mut resumen,
+        &mut avisos,
+        aplicar,
+        revisar_rama_perdedor,
+    )?;
+    if !avisos.is_empty() {
+        registrar(carpeta_proyecto, ahora, &avisos);
+    }
+    Ok(resumen)
+}
+
+/// Aplica `pendientes` en el orden en que vienen, cada uno en su transacción (ver el inicio del módulo).
+/// Lo usan la lectura de `ops/` y la recepción del servidor (#239). `ops` solo hace falta para los
+/// eventos que vinieron de `ops/` (doble toma por archivo).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn aplicar_pendientes(
+    c: &Connection,
+    ops: Option<&Path>,
+    ahora: DateTime<Utc>,
+    publica_admin: &str,
+    pendientes: Vec<Pendiente>,
+    resumen: &mut ResumenSincronizacion,
+    avisos: &mut Vec<String>,
+    aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
+    revisar_rama_perdedor: impl Fn(&InfoDobleToma) -> Resultado<bool>,
+) -> Resultado<()> {
     for p in pendientes {
-        if !es_snapshot(&p.id)
+        // Los snapshots son de `ops/` (#94); con el servidor no hay compactación.
+        if p.orden_servidor.is_none()
+            && !es_snapshot(&p.id)
             && snapshot::ultimo_snapshot_hasta(c)?.is_some_and(|corte| p.orden <= corte)
         {
             marcar_aplicado(c, &p.id, &ahora_iso(ahora))?;
@@ -126,10 +170,16 @@ pub fn sincronizar_con_doble_toma(
                 resumen.aplicados += 1;
             }
             Aplicacion::Descartado(motivo) => {
-                let doble = if p.evento.tipo == "tomar_tarea" {
-                    tareas::detectar_doble_toma(&tx, ops, &p.id, &p.evento)?
-                } else {
-                    None
+                let fuente = match (p.orden_servidor, ops) {
+                    (Some(orden), _) => Some(tareas::FuenteToma::Servidor { orden }),
+                    (None, Some(ops)) => Some(tareas::FuenteToma::Ops(ops)),
+                    (None, None) => None,
+                };
+                let doble = match fuente {
+                    Some(fuente) if p.evento.tipo == "tomar_tarea" => {
+                        tareas::detectar_doble_toma(&tx, fuente, &p.id, &p.evento)?
+                    }
+                    _ => None,
                 };
                 // Lo que haya escrito el aplicador antes de descartar no se guarda.
                 drop(tx);
@@ -163,10 +213,7 @@ pub fn sincronizar_con_doble_toma(
             }
         }
     }
-    if !avisos.is_empty() {
-        registrar(carpeta_proyecto, ahora, &avisos);
-    }
-    Ok(resumen)
+    Ok(())
 }
 
 fn leer_pendientes(
@@ -218,7 +265,12 @@ fn leer_pendientes(
         } else {
             declarado
         };
-        pendientes.push(Pendiente { id, evento, orden });
+        pendientes.push(Pendiente {
+            id,
+            evento,
+            orden,
+            orden_servidor: None,
+        });
     }
     pendientes.sort_by(|a, b| match (es_snapshot(&a.id), es_snapshot(&b.id)) {
         // Los snapshots van antes que los eventos sueltos, del más reciente al
@@ -241,7 +293,7 @@ fn ahora_iso(momento: DateTime<Utc>) -> String {
 }
 
 /// Agrega los avisos a `eventos.log`. Si no se puede escribir, no frena la sincronización.
-fn registrar(carpeta_proyecto: &Path, ahora: DateTime<Utc>, avisos: &[String]) {
+pub(super) fn registrar(carpeta_proyecto: &Path, ahora: DateTime<Utc>, avisos: &[String]) {
     let _ = std::fs::create_dir_all(carpeta_proyecto);
     if let Ok(mut log) = std::fs::OpenOptions::new()
         .create(true)

@@ -65,6 +65,7 @@ fn iniciar_sesion_unity_vc(
         activa: true,
         email: Some(email),
         abrio_asistente: false,
+        aviso_servidor: None,
     })
 }
 

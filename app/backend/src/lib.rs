@@ -44,7 +44,7 @@ pub mod warp;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
-    acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, datos,
+    acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, cuenta, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
     identidad as comandos_identidad, notificaciones as comandos_notificaciones,
     proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local, sistema,
@@ -72,11 +72,20 @@ fn disparar_polling(app: tauri::AppHandle) {
             }
             Err(_) => {}
         }
-        // Sube lo que espera en la bandeja de salida (#238). Sin proyecto abierto no hay nada que subir.
-        if let Ok(bandeja) = comandos_eventos::subir_bandeja_en(&estado) {
-            let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &bandeja);
-        }
+        sincronizar_servidor(&app);
     });
+}
+
+/// Una vuelta con el servidor de Supabase: sube la bandeja de salida (#238) y baja y aplica lo nuevo
+/// (#239). Sin proyecto abierto, o con otra sincronización en curso, no hace nada.
+fn sincronizar_servidor(app: &tauri::AppHandle) {
+    let estado = app.state::<estado::AppState>();
+    if let Ok(Some(resumen)) = comandos_eventos::sincronizar_con_servidor_en(&estado) {
+        let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &resumen.bandeja);
+        if resumen.recibidos.hubo_cambios() {
+            let _ = app.emit(comandos_eventos::EVENTO_EVENTOS_RECIBIDOS, &resumen.recibidos);
+        }
+    }
 }
 
 /// Con una operación de `cm` corriendo, la ventana no se cierra: se cancela el
@@ -109,6 +118,14 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_secs(INTERVALO_POLLING_SEGUNDOS));
                 disparar_polling(handle.clone());
             });
+            // El servidor se consulta más seguido que Unity VC (decisión de #239: ~5 s).
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(
+                    comandos_eventos::INTERVALO_SERVIDOR_SEGUNDOS,
+                ));
+                sincronizar_servidor(&handle);
+            });
             Ok(())
         })
         .on_window_event(manejar_evento_ventana)
@@ -126,6 +143,10 @@ pub fn run() {
             comandos_warp::estado_warp,
             comandos_warp::alternar_warp,
             comandos_warp::instalar_warp,
+            cuenta::registrar_cuenta,
+            cuenta::iniciar_sesion_branchboard,
+            cuenta::sesion_branchboard,
+            cuenta::cerrar_sesion_branchboard,
             comandos_cm::estado_cm,
             comandos_cm::instalar_cm,
             comandos_cm::sesion_unity_vc,

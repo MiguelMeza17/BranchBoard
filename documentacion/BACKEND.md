@@ -62,8 +62,8 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
   - `Desconocido`: lo escribió una versión más nueva de la app; no se marca y queda pendiente hasta que esta máquina se actualice.
   - Un error de la base detiene el escaneo sin marcar el evento.
   - **Tipos registrados**: los cuatro de usuarios (#93, abajo). Cada comando que pase a eventos registra el suyo (#95 tareas…).
-- **Comando `sincronizar_eventos()`** (todos los roles): devuelve `{ aplicados, descartados, desconocidos, ilegibles }`. Si ya hay un escaneo en curso (`AppState::iniciar_sincronizacion`) o no hay carpeta compartida, no hace nada.
-- **Cuándo se escanea** (frontend, `lib/useSincronizacionEventos.ts`, montado en `App`): al entrar al proyecto, al volver la ventana a primer plano (`focus` / `visibilitychange`) y cada 2 minutos. Un fallo no se muestra cada vez; se reintenta en la siguiente revisión.
+- **Comando `sincronizar_eventos()`** (todos los roles): devuelve `{ aplicados, descartados, desconocidos, ilegibles }`. Si ya hay un escaneo en curso (`AppState::iniciar_sincronizacion`), no hace nada. Escanea `ops/` si hay carpeta compartida y, **desde #239**, si el proyecto está vinculado al servidor también sube la bandeja y baja del servidor ([Recepción desde el servidor](#recepción-desde-el-servidor-239)); el resumen suma las dos.
+- **Cuándo se escanea** (frontend, `lib/useSincronizacionEventos.ts`, montado en `App`): al entrar al proyecto, al volver la ventana a primer plano (`focus` / `visibilitychange`) y cada 2 minutos. Un fallo no se muestra cada vez; se reintenta en la siguiente revisión. Lo del servidor llega antes: el backend lo consulta cada 5 s y avisa con el evento Tauri `eventos-recibidos`, que el mismo hook escucha para subir `versionDatos` (#239).
 - **El frontend se refresca solo**: si `aplicados > 0`, sube `versionDatos` en el store. **Toda pantalla que lea datos del backend** (desde #95) lo pone como dependencia de su carga para volver a pedirlos sola.
 - Prueba en el entorno real: `BB_PRUEBA_CARPETA_COMPARTIDA=<carpeta de OneDrive/Drive> cargo test --lib entorno_real_dos_maquinas -- --ignored` (dos máquinas simuladas, cada una con su base y su carpeta local, sobre la misma carpeta de OneDrive).
 
@@ -148,7 +148,9 @@ Los dos se crearon igual: Data API activada, **RLS automático en tablas nuevas*
 
 **Configuración de la app** (`app/backend/src/supabase/entorno.rs`): la URL y la clave **pública** (publishable) de cada proyecto. `Entorno::actual()` elige pruebas en `debug` y producción en `release`; la variable `BB_SUPABASE=pruebas|produccion` lo fuerza. La clave pública por sí sola no permite nada: lo que se puede leer o escribir lo deciden las reglas RLS (#234). La `sb_secret_…`, la contraseña de Postgres y los tokens de la CLI **nunca** van al repo (es público); una prueba del módulo falla si alguien pega una clave secreta.
 
-**Estructura de la base**: solo por migraciones SQL en `supabase/migrations/` (se revisan en el PR). La carpeta `supabase/` la creó la CLI (`npx supabase@2 init`); de su `config.toml` se ajustó: contraseña mínima de 8 caracteres (como la app) y **confirmación de correo obligatoria** (decisión 1 de #231). Los correos de Auth mandarán un **código de 6 números** que se escribe en la app, no un enlace (decidido en #236).
+**Estructura de la base**: solo por migraciones SQL en `supabase/migrations/` (se revisan en el PR). La carpeta `supabase/` la creó la CLI (`npx supabase@2 init`); de su `config.toml` se ajustó: contraseña mínima de 8 caracteres (como la app) y **sin confirmación de correo** (decidido en #236, ver [Cuentas de BranchBoard](#cuentas-de-branchboard-236)).
+
+**Configuración de Auth** (`supabase/config.toml` → servidor): se sube con `npx --yes supabase@3 config push` (solo el dueño de la cuenta de Supabase, primero en pruebas). Ese comando sube **todo** lo que declara el archivo, así que antes se corre `npx --yes supabase@3 config diff`: tiene que mostrar solo lo que se quiere cambiar. Hasta #236 el archivo nunca se había subido (el servidor seguía con contraseña mínima de 6 y código de 8); en #236 se igualaron al servidor los valores que no son de Auth (pooler, Storage, MFA, `site_url`…) y se subió lo de Auth. Hoy `config diff` contra pruebas da **0 diferencias**.
 
 **Aplicar migraciones** (solo el dueño de la cuenta de Supabase, desde su máquina):
 1. `npx supabase@2 login` — abre el navegador; la página muestra un **código de verificación** que se escribe en la terminal. Guarda un token personal de la CLI en esa máquina (no en el repo). Una sola vez.
@@ -201,12 +203,13 @@ Devuelve las líneas TAP y `fallidas` (tiene que ser 0). Con una expectativa cam
 
 ### Cliente de Supabase (#235)
 
-Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust** (con `ureq`) y no `supabase-js` en la webview: así la webview sigue sin red (ver [SEGURIDAD.md](./SEGURIDAD.md)) y los tokens nunca llegan al JavaScript. Si los cambios llegan por Realtime o por consulta periódica se decide en #239.
+Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust** (con `ureq`) y no `supabase-js` en la webview: así la webview sigue sin red (ver [SEGURIDAD.md](./SEGURIDAD.md)) y los tokens nunca llegan al JavaScript. Los cambios llegan por **consulta periódica** (decidido en #239, ver [Recepción desde el servidor](#recepción-desde-el-servidor-239)); Realtime queda para después.
 
 `ClienteSupabase::new(&PROYECTO, llavero)` habla con el proyecto que elige `Entorno::actual()` y ofrece:
 
 | Función | Qué hace |
 |---|---|
+| `registrar(nombre, apellido, correo, clave)` | `POST /auth/v1/signup` con `data: {nombre, apellido}` (el trigger de `perfiles` los copia); sin confirmación de correo, la respuesta ya trae la sesión y se guarda (#236) |
 | `iniciar_sesion(correo, clave)` | `POST /auth/v1/token?grant_type=password`; guarda la sesión en el llavero |
 | `sesion_guardada()` | La sesión del llavero, **sin red** (para arrancar sin internet). Si está dañada, la borra y responde "sin sesión" |
 | `sesion_vigente()` | La guardada; si le quedan menos de 60 s, la renueva antes |
@@ -214,7 +217,7 @@ Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust**
 | `cerrar_sesion()` | `POST /auth/v1/logout` si hay red (si no, da igual) y la borra del llavero |
 | `llamar(metodo, ruta, cuerpo)` | Llamada con la sesión a `/rest/v1/…` (tablas) o `/rest/v1/rpc/…` (funciones); devuelve el JSON (`null` si no hay cuerpo). Si responde 401, renueva y reintenta **una** vez |
 
-**La sesión** (`Sesion`: token de acceso, token de renovación, vencimiento, id de la cuenta y correo) se guarda como JSON en el **llavero del sistema** (el trait `Llavero` de `servidor/pat.rs`, el mismo del PAT), en la cuenta `supabase-<nombre del proyecto>`: pruebas y producción no se pisan. Nunca va a SQLite ni a archivos, y `Debug` de `Sesion` oculta los dos tokens.
+**La sesión** (`Sesion`: token de acceso, token de renovación, vencimiento, id de la cuenta, correo, nombre y apellido) se guarda como JSON en el **llavero del sistema** (el trait `Llavero` de `servidor/pat.rs`, el mismo del PAT), en la cuenta `supabase-<nombre del proyecto>`: pruebas y producción no se pisan. Nunca va a SQLite ni a archivos, y `Debug` de `Sesion` oculta los dos tokens. Se guarda con `guardar_largo` (bytes UTF-8): el `guardar` normal de `keyring` usa UTF-16 en Windows (el doble de bytes) y el límite del Administrador de credenciales es de 2560 bytes; la sesión real mide ~1270 caracteres, así que en UTF-16 quedaba a 26 bytes del límite (comprobado en #236).
 
 **Renovación**: si el servidor rechaza el token de renovación (vencido, revocado o ya usado), la sesión se borra y se pide iniciar sesión otra vez. **Sin conexión se conserva**: la app sigue trabajando con SQLite y los cambios esperan (#238). Un error 5xx tampoco la borra.
 
@@ -225,11 +228,11 @@ Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust**
 | Sin sesión, o ya no se puede renovar | `SinSesionServidor` | `sin_sesion_servidor` |
 | Sin internet o el proyecto pausado | `ServidorSinConexion` | `servidor_sin_conexion` |
 | Respuesta inesperada del servidor | `Servidor(detalle)` | `servidor` |
-| Contraseña incorrecta (`invalid_credentials`), correo sin confirmar (`email_not_confirmed`), demasiados intentos (429) | `Validacion` con el mensaje en español | `validacion` |
+| Contraseña incorrecta (`invalid_credentials`), correo sin confirmar (`email_not_confirmed`), demasiados intentos (429); al registrarse: correo ya usado (`user_already_exists`), contraseña corta (`weak_password`), correo no válido (`email_address_invalid`) | `Validacion` con el mensaje en español | `validacion` |
 | Función o tabla sin permiso (`42501`) | `SinPermiso` | `sin_permiso` |
 | Regla de negocio de nuestras funciones (`P0001`) | `Validacion` con el mensaje del servidor | `validacion` |
 
-Respuestas reales comprobadas en branchboard-pruebas (2026-11-21): contraseña incorrecta → `400 {"error_code":"invalid_credentials"}`; token de renovación inválido → `400 {"error_code":"validation_failed"}`; token de acceso falso en la API de datos → `401 {"code":"PGRST301"}`.
+Respuestas reales comprobadas en branchboard-pruebas (2026-11-21): contraseña incorrecta → `400 {"error_code":"invalid_credentials"}`; token de renovación inválido → `400 {"error_code":"validation_failed"}`; token de acceso falso en la API de datos → `401 {"code":"PGRST301"}`; registro → `200` con la sesión y `user.user_metadata.{nombre,apellido}`; correo ya registrado → `422 user_already_exists`; contraseña de menos de 8 → `422 weak_password`.
 
 **Pruebas reales** (en `app/backend`, contra branchboard-pruebas):
 
@@ -237,12 +240,28 @@ Respuestas reales comprobadas en branchboard-pruebas (2026-11-21): contraseña i
 cargo test --no-default-features --lib supabase::cliente -- --ignored --nocapture --test-threads=1
 ```
 
-- `entorno_real_contrasena_incorrecta_y_renovacion_invalida` y `entorno_real_sin_conexion_conserva_la_sesion` no necesitan nada más.
-- `entorno_real_iniciar_llamar_renovar_y_cerrar` necesita una **cuenta confirmada** en `BB_PRUEBA_SUPABASE_CORREO` y `BB_PRUEBA_SUPABASE_CLAVE`. Mientras no exista el registro con código (#236), se crea una cuenta temporal con SQL (CLI v3, sin Docker; `supabase/.temp/project-ref` debe decir `freppiixmuspvozaqrxj`):
-  1. Un archivo `.sql` **fuera del repo** con un `insert into auth.users` (correo `ciclo-<hora>@prueba.branchboard`, `encrypted_password = extensions.crypt('<clave>', extensions.gen_salt('bf'))`, `email_confirmed_at = now()`, `confirmation_token`, `recovery_token`, `email_change_token_new` y `email_change` en `''`, `raw_app_meta_data = '{"provider":"email","providers":["email"]}'`) y su fila en `auth.identities` con `provider = 'email'`. La clave es aleatoria y **no se imprime ni se guarda**.
-  2. `npx --yes supabase@3 db query --remote --yes --file <ese archivo>`.
-  3. Correr la prueba con las dos variables.
-  4. Borrar: `delete from auth.users where email like 'ciclo-%@prueba.branchboard'` y comprobar que quedan 0 cuentas, 0 perfiles y 0 proyectos de prueba. Borrar también el `.sql`.
+No necesitan variables. Desde #236, las que necesitan una cuenta se **registran** solas con `ciclo-<hora>@prueba.branchboard` y una clave aleatoria que no se imprime (`registrar_y_volver_a_entrar`, `iniciar_llamar_renovar_y_cerrar` y `la_sesion_cabe_en_el_llavero_del_sistema`; esta última usa el llavero real de Windows en la cuenta aparte `supabase-branchboard-pruebas-test`). La API pública no puede borrar cuentas, así que **al terminar** se borran con la CLI v3 (sin Docker; `supabase/.temp/project-ref` debe decir `freppiixmuspvozaqrxj`):
+
+```
+npx --yes supabase@3 db query --remote --yes "delete from auth.users where email like 'ciclo-%@prueba.branchboard'"
+```
+
+y se comprueba que quedan 0 cuentas `ciclo-%`, 0 perfiles y 0 proyectos de prueba.
+
+### Cuentas de BranchBoard (#236)
+
+Las cuentas pasan de `lib/cuentas.ts` (cada PC) a **Supabase Auth**: la misma cuenta sirve en cualquier PC. Quien usa la app nunca ve Supabase; la app le pasa el correo y la contraseña al backend y este a Supabase.
+
+Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a un proyecto); al frontend solo le llega `{nombre, apellido, correo}`, nunca los tokens:
+
+| Comando | Qué hace |
+|---|---|
+| `registrar_cuenta(nombre, apellido, correo, clave)` | Crea la cuenta y deja la sesión iniciada |
+| `iniciar_sesion_branchboard(correo, clave)` | Inicia sesión |
+| `sesion_branchboard()` | La cuenta con sesión guardada en este equipo, **sin red**: al abrir la app se entra directo, también sin internet |
+| `cerrar_sesion_branchboard()` | Avisa al servidor si hay red y borra la sesión del llavero |
+
+**Sin confirmación de correo** (decidido el 2026-11-21 en #236; cambia la decisión 1 de #231 y el "código de 6 números"). Se comprobó en vivo que con el **correo incluido de Supabase** no se puede: (1) solo entrega a los miembros del equipo de la organización de Supabase (a los demás, "Email address not authorized"), con 2 correos por hora; y (2) en proyectos Free creados después del 3 de junio de 2026 no deja cambiar las plantillas: `config push` respondió `entitlement_required` ("Email template modification is not available for free tier projects using the default email provider"), así que el correo traería un enlace en inglés y no el código. El equipo prefirió no conectar un SMTP propio por ahora. **Riesgo conocido**: alguien puede registrarse con el correo de otra persona y, si un Administrador agrega ese correo a un proyecto, entrar en su lugar. Lo resolverá la recuperación de contraseña con código (fuera de alcance, otro issue), que necesitará un SMTP propio por lo mismo. **"¿Olvidaste tu contraseña?"** sigue solo visual. **Ojo con #237**: `login-unity` le cambia la contraseña a una cuenta **sin confirmar** con el mismo correo, pero sin confirmación Supabase marca todas las cuentas nuevas como confirmadas (`email_confirmed_at` al registrarse), así que esa protección hoy no se activa: quien se registró con un correo ajeno conserva su contraseña aunque el dueño entre con Unity.
 
 ### Login con Unity VC y primer Administrador (#237)
 
@@ -273,7 +292,7 @@ cargo test --no-default-features --lib supabase::cliente -- --ignored --nocaptur
   - Proyectos sin `proyecto_servidor_id` en `configuracion_proyecto`: ese valor lo fija vincular el proyecto con el servidor (#240). Mientras no esté, no se encola nada.
   - Eventos de roles (`TIPOS_FIRMADOS`): en el servidor los roles los cambian solo sus funciones (#234/#241).
 - **Por ahora se sigue escribiendo en `ops/`** además de la bandeja. Quitar `ops/` es de #244. Así la sincronización por Drive/OneDrive sigue funcionando hasta que exista la recepción desde el servidor (#239).
-- **Subida**: el temporizador de 15 s (`disparar_polling` en `lib.rs`) llama a `subir_bandeja_en`.
+- **Subida**: **actualizado (#239)** — sube cada 5 s, en la misma vuelta que la recepción y justo antes de ella (`sincronizar_con_servidor_en`, ver [Recepción desde el servidor](#recepción-desde-el-servidor-239)). También al volver la ventana a primer plano y desde `sincronizar_eventos`.
   - Manda lotes de 50 en orden de llegada a `POST /rest/v1/eventos?on_conflict=id` con `Prefer: resolution=ignore-duplicates` (`ClienteSupabase::insertar_eventos`). Un evento que ya estaba (la respuesta se perdió y se reintenta) se ignora, sin error ni duplicado.
   - Al confirmarse, se borra de la bandeja.
   - Si un lote falla por la red o la sesión, se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
@@ -313,6 +332,57 @@ cargo test --no-default-features --lib supabase::cliente -- --ignored --nocaptur
   - SQL, `supabase/tests/03_storage.test.sql` (27 casos): `npx supabase@3 db query --remote --yes --file supabase/tests/03_storage.test.sql`; `fallidas` tiene que ser 0. Usa `set local storage.allow_delete_query = 'true'` porque Supabase no deja borrar filas de `storage.objects` por SQL.
   - Real, `supabase::storage::…::entorno_real_storage_documentos_e_imagen`, por la API HTTP: necesita las cuentas confirmadas `storage-a|b|c@prueba.branchboard` con la clave de `BB_PRUEBA_SUPABASE_CLAVE`. Se crean como la de [Cliente de Supabase](#cliente-de-supabase-235) (las tres en un `insert … select … from unnest(array['a','b','c'])`) y se borran al terminar: `delete from public.proyectos where nombre = 'bb-prueba-242'` y `delete from auth.users where email like 'storage-_@prueba.branchboard'`. La prueba borra sus archivos.
   - **Falta**: probarlo de punta a punta en la app con un proyecto vinculado (depende de #240).
+
+### Proyecto pausado y copias de seguridad (#246)
+
+**Nuevo (2026-11-21)** — el plan gratis de Supabase **pausa el proyecto tras una semana sin actividad en la base** y **no tiene copias de seguridad automáticas**. Los planes de pago no se pausan ([Project Pausing](https://supabase.com/docs/guides/platform/free-project-pausing)).
+
+**Qué ve la app**:
+- Con el proyecto pausado, Supabase responde **HTTP 540** a todo: Auth, datos y Edge Functions. Es un código propio de Supabase ([HTTP status codes](https://supabase.com/docs/guides/troubleshooting/http-status-codes)).
+- El cliente (`supabase/cliente.rs`) lo convierte en `Error::ServidorPausado` (código `servidor_pausado`), con un mensaje que dice qué hacer.
+- **No borra la sesión guardada**: pausado no es "sesión inválida", y sirve igual cuando lo reactiven.
+- Los cambios esperan en la bandeja (#238). `EstadoBandeja.servidor_pausado` lo marca y el Topbar muestra **"Servidor pausado · N cambios pendientes de enviar"** (punto rojo), con la explicación al pasar el mouse.
+- Al iniciar sesión con Unity VC, `aviso_servidor` trae el mismo mensaje.
+- Storage (#242, `supabase/storage.rs`) también lo traduce a `ServidorPausado`.
+- Probado con un servidor HTTP local que responde 540 (`con_el_proyecto_pausado_se_avisa_y_la_sesion_no_se_pierde`): `llamar`, `renovar`, `iniciar_sesion`, `iniciar_sesion_con_unity` e `insertar_eventos`. Storage, con `con_el_proyecto_pausado_storage_avisa_igual`. No se probó pausando el proyecto de pruebas, porque lo usan otras pruebas al mismo tiempo.
+
+**Reactivarlo** (solo el dueño de la cuenta de Supabase):
+1. Entrar a [supabase.com/dashboard](https://supabase.com/dashboard), organización BranchBoard, y abrir el proyecto (`branchboard` o `branchboard-pruebas`). Un proyecto pausado lo dice en su página.
+2. **Resume project** y confirmar. Vuelve con sus datos y su configuración en unos minutos.
+3. Las apps abiertas no hay que tocarlas: en la siguiente vuelta con el servidor (cada 5 s, #239) suben lo pendiente y el aviso desaparece.
+- Supabase deja un plazo para reactivarlo desde el panel; su documentación da 90 días en una página y 1 año en otra, así que hay que mirar el que muestra el panel. Pasado ese plazo, los datos solo se recuperan si se descargaron antes.
+- Si se queda trabado en "Pausing" o "Restoring", la vía documentada es el soporte de Supabase.
+
+**Mientras no haya copia automática** (pospuesta el 2026-11-20, decisiones 8 y 9 de #231):
+- El respaldo es lo que queda en cada equipo: el SQLite de cada proyecto y sus `backups/` locales.
+- En proyectos sin Unity VC, también "Exportar proyecto" de Ajustes (`exportar_proyecto_local`, Administrador).
+- Si el proyecto del servidor se perdiera, se vuelve a subir desde la copia de un equipo con "Subir al servidor los proyectos que ya existen" (#245, pendiente).
+- Para que no se pause: cualquier app abierta que lea o escriba en el servidor cuenta como actividad. Hoy se escribe con la bandeja (#238) y se leerá cada pocos segundos con la recepción (#239). Un proyecto que nadie abre en una semana se pausa.
+
+**Cuándo pasar a Pro** (de pago): cuando el equipo use BranchBoard a diario y una pausa o la falta de copias diarias ya no sea aceptable. También cuando se acerquen los límites del plan gratis (tamaño de la base, Storage, #242) o cuando haga falta restaurar a un punto en el tiempo. Pro no se pausa e incluye copias diarias. Con Pro, la copia propia con `pg_dump` deja de hacer falta.
+
+### Recepción desde el servidor (#239)
+
+**Nuevo (2026-11-21)** — los cambios del resto del equipo bajan de la tabla `eventos` del servidor y se aplican con el mismo código que los de `ops/` (`app/backend/src/eventos/recepcion.rs`). Solo en proyectos con `proyecto_servidor_id` (lo fija #240).
+
+- **Cuándo** (decisión del 2026-11-20 en #239: consulta periódica, Realtime después si hace falta): cada **5 s** mientras la app está abierta (un hilo aparte en `lib.rs`), al volver la ventana a primer plano y cuando el frontend llama a `sincronizar_eventos` (al entrar al proyecto y cada 2 minutos). Sin internet, sin sesión o con el proyecto pausado, la vuelta simplemente no baja nada y se reintenta en 5 s; como cada vuelta pide "lo nuevo desde el último", al volver la conexión llega todo lo que faltaba.
+- **Una vuelta** (`comandos::eventos::sincronizar_con_servidor_en`), con la guardia de sincronización (`AppState::iniciar_sincronizacion`, la misma de `ops/`):
+  1. Sube la bandeja de salida (#238).
+  2. Baja lo nuevo: `GET /rest/v1/eventos?select=orden,id,tipo,tarea_id,autor,payload,recibido_en&proyecto_id=eq.<id>&orden=gt.<último>&order=orden.asc&limit=500`, por páginas de 500 hasta que no haya más.
+  3. Pide el correo de los autores nuevos: `GET /rest/v1/perfiles?select=id,correo&id=in.(…)`.
+  4. Lo guarda en la tabla local **`eventos_servidor`** (migración 13 de SQLite: `orden`, `id`, `proyecto_servidor`, `tipo`, `tarea_id`, `usuario` = correo, `payload`, `recibido_en`). El último `orden` guardado es desde dónde se pide la próxima vez.
+  5. Aplica, en el `orden` del servidor, lo de `eventos_servidor` que no está en `eventos_aplicados`, con `eventos::lectura::aplicar_evento` (el mismo aplicador de `ops/`). Si aplicó algo, emite el evento Tauri **`eventos-recibidos`** (`{ aplicados, descartados, desconocidos, ilegibles }`) y el frontend sube `versionDatos`.
+- **Subir antes de bajar, en la misma vuelta**: así una toma propia está o en la bandeja o ya en el servidor, nunca "subida pero sin bajar", y la doble toma decide igual en todas las PCs (abajo).
+- **Primera vez en una PC**: el último `orden` es 0, así que baja todo el historial del proyecto y arma el SQLite local.
+- **Orden y desempate por el servidor**: se aplica por `orden` y la hora del evento (`timestamp` al aplicarlo) es `recibido_en`, la del servidor. Esto resuelve el riesgo aceptado del reloj local.
+- **Los propios no se aplican dos veces**: el id es el mismo en `ops/`, la bandeja y el servidor, y lo que ya está en `eventos_aplicados` se salta. Por la misma razón, mientras siga `ops/` (hasta #244) un evento que llegue por las dos vías se aplica una sola vez.
+- **Doble toma** (`tareas::detectar_doble_toma` con `FuenteToma::Servidor`): gana la toma con `orden` menor. Si la toma rival es de esta PC y sigue en la bandeja, llegará al servidor después, así que gana la que bajó. Si no hay toma rival (la asignó un Líder), pierde la que bajó, igual que con `ops/`.
+- **Autor sin perfil visible** (alguien que ya no comparte ningún proyecto con quien baja): queda como `<uuid>@sin-perfil`.
+- **Tipo desconocido** (lo escribió una versión más nueva de la app): queda pendiente en `eventos_servidor` y se reintenta en cada vuelta, sin frenar a los demás (igual que con `ops/`).
+- **Red y base separadas**: la base solo se presta para leer y guardar, nunca durante la red.
+- **Pruebas**:
+  - 7 unitarias en `eventos::recepcion` (historial por páginas, correo del autor y sin perfil, orden y hora del servidor y saltar los propios, tipo desconocido, sin conexión, proyectos aparte, rutas) y 2 de doble toma en `tareas` (gana la que llegó antes al servidor aunque el reloj diga otra cosa; la propia aún en la bandeja pierde).
+  - Real, `eventos::recepcion::…::entorno_real_dos_pcs_reciben_lo_del_otro` (`cargo test --lib entorno_real_dos_pcs -- --ignored --nocapture`): contra branchboard-pruebas con la sesión de Unity VC del equipo y **dos bases locales como dos PCs**. La PC A crea dos tareas y las sube; la PC B, nueva, baja todo el historial y las aplica con el creador correcto; A crea una tercera y B baja solo esa; A no aplica dos veces lo suyo. Deja el proyecto "Prueba recepción #239": borrarlo con `delete from public.proyectos where nombre = 'Prueba recepción #239'` (los eventos se borran en cascada).
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 

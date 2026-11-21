@@ -193,6 +193,8 @@ mod tests {
             expira_en: 0,
             usuario_id: "u".into(),
             correo: "ana@virustf.dev".into(),
+            nombre: String::new(),
+            apellido: String::new(),
         };
         llavero
             .guardar(

@@ -38,10 +38,14 @@ pub enum Error {
     /// No hay sesión de BranchBoard en el servidor (Supabase), o ya no se puede renovar.
     #[error("Inicia sesión en BranchBoard")]
     SinSesionServidor,
-    /// No se pudo llegar al servidor (sin internet, o el proyecto de Supabase pausado). Lo hecho se guarda
-    /// en este equipo y se envía cuando vuelva la conexión.
+    /// No se pudo llegar al servidor (sin internet). Lo hecho se guarda en este equipo y se envía cuando
+    /// vuelva la conexión.
     #[error("No hay conexión con el servidor de BranchBoard")]
     ServidorSinConexion,
+    /// El proyecto de Supabase está pausado (HTTP 540; el plan gratis lo pausa tras una semana sin uso,
+    /// #246). Lo hecho espera en este equipo hasta que el dueño de la cuenta de Supabase lo reactive.
+    #[error("El servidor de BranchBoard está pausado. Pídele al dueño de la cuenta de Supabase que lo reactive (Resume project); tus cambios esperan en este equipo")]
+    ServidorPausado,
     /// El servidor de BranchBoard (Supabase) respondió con un error inesperado.
     #[error("El servidor de BranchBoard respondió con un error: {0}")]
     Servidor(String),
@@ -77,6 +81,7 @@ impl Error {
             Error::TokenServidorInvalido => "token_servidor_invalido",
             Error::SinSesionServidor => "sin_sesion_servidor",
             Error::ServidorSinConexion => "servidor_sin_conexion",
+            Error::ServidorPausado => "servidor_pausado",
             Error::Servidor(_) => "servidor",
             Error::BaseDatos(_) => "base_datos",
             Error::Archivos(_) => "archivos",

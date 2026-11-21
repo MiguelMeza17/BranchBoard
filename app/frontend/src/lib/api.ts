@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { diffEjemplo, type ArchivoDiff, type Diferencias } from './diff';
+import type { Cuenta } from './cuentas';
 import type {
   AvanceBacklog,
   AvanceSprint,
@@ -65,6 +66,8 @@ export interface EstadoBandeja {
   rechazados: number;
   /** Por qué quedaron pendientes (sin internet, sin sesión…). */
   error: string | null;
+  /** El proyecto de Supabase está pausado (plan gratis, una semana sin uso; #246). */
+  servidor_pausado: boolean;
 }
 
 /** Códigos de error del backend (`app/backend/src/error.rs`). */
@@ -80,6 +83,7 @@ export type CodigoError =
   | 'token_servidor_invalido'
   | 'sin_sesion_servidor'
   | 'servidor_sin_conexion'
+  | 'servidor_pausado'
   | 'servidor'
   | 'base_datos'
   | 'archivos'
@@ -390,6 +394,9 @@ export function unoPorRepo<T extends { repo: string; nombre: string }>(lista: T[
   return [...porRepo.values()];
 }
 
+// Cuentas del mockup del navegador (solo en memoria).
+const cuentasMockup = new Map<string, { cuenta: Cuenta; clave: string }>();
+
 export const api = {
   eliminarProyecto: (confirmacion: string, mockup: () => { repo: string; nombre: string }) =>
     llamar<{ repo: string; nombre: string }>('eliminar_proyecto', { confirmacion }, mockup),
@@ -662,6 +669,17 @@ export const api = {
         inactividad_notificada: [],
       })
     ),
+
+  /**
+   * Escucha los cambios del equipo que llegaron del servidor y ya se aplicaron (#239). El backend
+   * consulta el servidor cada 5 s y solo avisa cuando aplicó algo.
+   */
+  alEventosRecibidos: async (
+    alRecibir: (resumen: ResumenSincronizacion) => void
+  ): Promise<() => void> => {
+    if (!enTauri()) return () => undefined;
+    return listen<ResumenSincronizacion>('eventos-recibidos', (e) => alRecibir(e.payload));
+  },
 
   /** Escucha actualizaciones periódicas detectadas en Unity VC (#104, #112). */
   alUnityActualizado: async (alActualizar: (resumen: ResumenPolling) => void): Promise<() => void> => {
@@ -1106,6 +1124,34 @@ export const api = {
   /** Revoca los PAT de BranchBoard en Unity VC, limpia credenciales locales y cierra el proyecto (#124). */
   cerrarSesionUnityVc: (mockup?: () => number) =>
     llamar<number>('cerrar_sesion_unity_vc', undefined, mockup ?? (() => 0)),
+
+  // ───────── Cuenta de BranchBoard (Supabase Auth, #236) ─────────
+  // La sesión queda en el llavero del sistema; aquí solo llegan nombre, apellido y correo.
+  // En el navegador (mockup) las cuentas viven en memoria y se pierden al recargar.
+
+  /** Crea la cuenta y deja la sesión iniciada (sin confirmación de correo). */
+  registrarCuenta: (datos: Cuenta & { clave: string }) =>
+    llamar<Cuenta>('registrar_cuenta', { ...datos }, () => {
+      const correo = datos.correo.trim().toLowerCase();
+      if (cuentasMockup.has(correo)) {
+        throw new ErrorBackend('validacion', 'Ya existe una cuenta con ese correo. Inicia sesión.');
+      }
+      const cuenta = { nombre: datos.nombre.trim(), apellido: datos.apellido.trim(), correo };
+      cuentasMockup.set(correo, { cuenta, clave: datos.clave });
+      return cuenta;
+    }),
+
+  iniciarSesionBranchBoard: (correo: string, clave: string) =>
+    llamar<Cuenta>('iniciar_sesion_branchboard', { correo, clave }, () => {
+      const c = cuentasMockup.get(correo.trim().toLowerCase());
+      if (!c || c.clave !== clave) throw new ErrorBackend('validacion', 'Correo o contraseña incorrectos.');
+      return c.cuenta;
+    }),
+
+  /** La cuenta con sesión guardada en este equipo (sin red), o `null`. */
+  sesionBranchBoard: () => llamar<Cuenta | null>('sesion_branchboard', undefined, () => null),
+
+  cerrarSesionBranchBoard: () => llamar<void>('cerrar_sesion_branchboard', undefined, () => undefined),
 
   /** Workspaces locales de Unity VC con su marca local de BranchBoard (#125). */
   listarWorkspacesLocales: (mockup?: () => WorkspaceUnityVC[]) =>
