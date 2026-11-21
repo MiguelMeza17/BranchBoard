@@ -214,8 +214,7 @@ fn recibir(app: &tauri::AppHandle) -> Resultado<usize> {
             &ensayo.proyecto,
             None,
             chrono::Utc::now(),
-            "",
-            |c, e| lectura::aplicar_evento(c, "", e),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
     })?;
