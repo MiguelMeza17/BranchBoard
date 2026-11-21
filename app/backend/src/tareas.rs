@@ -2349,7 +2349,14 @@ pub fn evaluar_alerta_rama_ajena(
     let tarea_ajena_id = activa_en_rama.map(|t| t.id.clone());
     let dueno_rama = activa_en_rama.and_then(|t| t.asignado_a.clone());
 
+    let terminada_mia = activa_en_rama.is_some_and(|t| {
+        t.estado == EstadoTarea::Terminada
+            && t.asignado_a.as_deref().map(normalizar_email).as_deref() == Some(yo.as_str())
+    });
     let donde = match tarea_ajena_id {
+        Some(ref tid) if terminada_mia => {
+            format!("la rama de la tarea {tid}, que ya está terminada")
+        }
         Some(ref tid) => format!("la rama de la tarea {tid}, que no te pertenece"),
         None => format!("{rama}, que no pertenece a ninguna de tus tareas"),
     };
@@ -8645,6 +8652,32 @@ mod tests {
             &[]
         )
         .is_none());
+
+        // En la rama de una tarea propia ya terminada: avisa que está terminada, no que es ajena.
+        let en_terminada = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-103-cerrada",
+            &["Assets/Player.cs".into()],
+            &[],
+        )
+        .unwrap();
+        assert!(
+            en_terminada
+                .mensaje
+                .contains("T-103, que ya está terminada"),
+            "{}",
+            en_terminada.mensaje
+        );
+        let ajena_msg = evaluar_alerta_rama_ajena(
+            &todas,
+            DEV,
+            "/main/dev/T-101-ajena",
+            &["Assets/Player.cs".into()],
+            &[],
+        )
+        .unwrap();
+        assert!(ajena_msg.mensaje.contains("T-101, que no te pertenece"));
 
         // En `dev` con cambio real sí alerta y sugiere la rama asignada.
         let en_dev = evaluar_alerta_rama_ajena(
