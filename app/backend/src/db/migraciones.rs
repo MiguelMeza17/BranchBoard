@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 14;
+pub const VERSION_ESQUEMA: u32 = 15;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -281,6 +281,14 @@ fn migraciones() -> Vec<String> {
          ALTER TABLE usuarios DROP COLUMN firmado_por;
          ALTER TABLE usuarios DROP COLUMN llave_publica;
          ALTER TABLE usuarios DROP COLUMN certificado;"
+            .to_string(),
+        // 15 — ramas hijas de dev creadas fuera de BranchBoard (#283): qué tarea se creó para cada
+        // rama y cuándo se detectó, para desempatar si dos máquinas la importan a la vez.
+        "CREATE TABLE ramas_importadas (
+            rama      TEXT PRIMARY KEY,
+            tarea_id  TEXT NOT NULL,
+            detectado TEXT NOT NULL
+        ) STRICT;"
             .to_string(),
     ]
 }

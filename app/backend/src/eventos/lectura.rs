@@ -179,6 +179,8 @@ pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<Aplicacion> 
     let tipo = evento.tipo.as_str();
     let resultado = if crate::cambios_directos::TIPOS.contains(&tipo) {
         crate::cambios_directos::aplicar_evento(c, evento)
+    } else if crate::ramas_existentes::TIPOS.contains(&tipo) {
+        crate::ramas_existentes::aplicar_evento(c, evento)
     } else if tareas::TIPOS.contains(&tipo) {
         tareas::aplicar_evento(c, evento)
     } else if sprints::TIPOS.contains(&tipo) {

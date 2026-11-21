@@ -199,6 +199,8 @@ export interface ResumenPolling {
   inactividad_notificada?: string[];
   /** Tareas rojas creadas o con check-ins directos nuevos en `/main` o `/main/dev` (#225). */
   cambios_directos?: string[];
+  /** Tareas creadas desde ramas hijas de dev hechas fuera de BranchBoard (#283). */
+  ramas_importadas?: string[];
 }
 
 /** Datos para `crear_tarea` (#95). */

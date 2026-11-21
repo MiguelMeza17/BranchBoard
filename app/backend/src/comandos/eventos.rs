@@ -229,11 +229,14 @@ pub struct ResumenPolling {
     pub inactividad_notificada: Vec<String>,
     /// Tareas rojas creadas o con check-ins directos nuevos en `/main` o `/main/dev` (#225).
     pub cambios_directos: Vec<String>,
+    /// Tareas creadas desde ramas hijas de dev hechas fuera de BranchBoard (#283).
+    pub ramas_importadas: Vec<String>,
 }
 
 impl ResumenPolling {
     pub fn hubo_cambios(&self) -> bool {
         !self.cambios_directos.is_empty()
+            || !self.ramas_importadas.is_empty()
             || self.rama_actual.is_some()
             || !self.tareas_modificadas.is_empty()
             || !self.tareas_cerradas.is_empty()
@@ -254,7 +257,22 @@ pub async fn revisar_actualizaciones(
     estado: State<'_, AppState>,
     tarea_id: Option<String>,
 ) -> Resultado<ResumenPolling> {
-    revisar_actualizaciones_en(&estado, tarea_id.as_deref())
+    match tarea_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => revisar_actualizaciones_en(&estado, Some(id)),
+        None => revisar_todo_en(&estado),
+    }
+}
+
+/// Polling completo (el del temporizador y el botón de actualizar): lo de
+/// [`revisar_actualizaciones_en`] y, después, las ramas hijas de dev creadas fuera
+/// de BranchBoard (#283). Si leer esas ramas falla, el resto del polling vale igual.
+pub fn revisar_todo_en(estado: &AppState) -> Resultado<ResumenPolling> {
+    let mut resumen = revisar_actualizaciones_en(estado, None)?;
+    if let Some(email) = estado.usuario_actual() {
+        resumen.ramas_importadas =
+            crate::ramas_existentes::revisar_en(estado, &email).unwrap_or_default();
+    }
+    Ok(resumen)
 }
 
 /// Versión sin envoltorio Tauri de [`revisar_actualizaciones`] (para el polling

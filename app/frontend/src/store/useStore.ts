@@ -736,7 +736,8 @@ export const useStore = create<State>((set, get) => {
       !!resumen.espera_creada ||
       !!resumen.espera_quitada ||
       (resumen.tocados_detectados?.length ?? 0) > 0 ||
-      (resumen.cambios_directos?.length ?? 0) > 0;
+      (resumen.cambios_directos?.length ?? 0) > 0 ||
+      (resumen.ramas_importadas?.length ?? 0) > 0;
     if (hayCambiosDatos) {
       await get().cargarCommits();
       await get().cargarTareas();
