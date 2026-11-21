@@ -187,7 +187,7 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
 | Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
 
-**Para la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red; reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). La bandeja no debe quedarse atascada reintentándolo.
+**Ojo con la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red y reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). Hoy la bandeja, ante un lote que falla "sin permiso", se para y no deja pasar a los siguientes; y como manda lotes de 50, un solo evento rechazado tumba el lote entero. **Pendiente**: que la bandeja aparte el evento rechazado en vez de quedarse atascada.
 
 Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`, `puede_publicar`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
 
