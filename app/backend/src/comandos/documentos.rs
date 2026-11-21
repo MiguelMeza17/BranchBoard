@@ -12,7 +12,6 @@ use crate::db::documentos::Documento;
 use crate::documentos::{self, AlmacenServidor};
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
-use crate::eventos;
 use crate::modelo::{ahora_iso, hoy_local};
 use crate::servidor::pat::LlaveroSistema;
 use crate::supabase::storage::Storage;
@@ -47,7 +46,8 @@ fn con_almacen<T>(
             })
         }
         None => Err(Error::Validacion(
-            "Para guardar o abrir documentos, primero pasa el proyecto al servidor de BranchBoard".into(),
+            "Para guardar o abrir documentos, primero pasa el proyecto al servidor de BranchBoard"
+                .into(),
         )),
     }
 }
@@ -109,8 +109,7 @@ pub fn aprobar_documento(estado: State<'_, AppState>, id: String) -> Resultado<D
 /// Versión sin envoltorio Tauri de [`aprobar_documento`].
 pub fn aprobar_documento_en(estado: &AppState, id: &str) -> Resultado<Documento> {
     let yo = estado.exigir_permiso("aprobar_documento")?;
-    estado
-        .con_db(|db| documentos::aprobar(db.conexion(), &yo.email, yo.rol, id, &ahora_iso()))
+    estado.con_db(|db| documentos::aprobar(db.conexion(), &yo.email, yo.rol, id, &ahora_iso()))
 }
 
 /// Elimina un documento del proyecto y su archivo (Líder o Administrador, #120, #242).

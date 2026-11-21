@@ -2,11 +2,9 @@
 
 use tauri::State;
 
-use crate::comandos::datos::carpeta_abierta;
 use crate::db::notificaciones::Notificacion;
 use crate::error::Resultado;
 use crate::estado::AppState;
-use crate::eventos;
 use crate::modelo::ahora_iso;
 use crate::notificaciones;
 
@@ -91,12 +89,6 @@ pub fn solicitar_accion_bd(
 pub fn solicitar_accion_bd_en(estado: &AppState, motivo: &str) -> Resultado<Vec<Notificacion>> {
     let yo = estado.exigir_permiso("solicitar_accion_bd")?;
     estado.con_db(|db| {
-        notificaciones::solicitar_accion_bd(
-            db.conexion(),
-            &yo.email,
-            yo.rol,
-            motivo,
-            &ahora_iso(),
-        )
+        notificaciones::solicitar_accion_bd(db.conexion(), &yo.email, yo.rol, motivo, &ahora_iso())
     })
 }

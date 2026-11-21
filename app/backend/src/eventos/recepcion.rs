@@ -561,7 +561,6 @@ mod tests {
             )
             .unwrap();
         }
-        let ops_a = tempfile::tempdir().unwrap();
         let autor = AutorTarea {
             email: &correo,
             rol: Rol::Administrador,

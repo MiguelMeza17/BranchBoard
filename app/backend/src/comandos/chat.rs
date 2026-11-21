@@ -3,11 +3,9 @@
 use tauri::State;
 
 use crate::chat::{self, EstadoChat};
-use crate::comandos::datos::carpeta_abierta;
 use crate::db::chat::{GrupoChat, Mensaje};
 use crate::error::Resultado;
 use crate::estado::AppState;
-use crate::eventos;
 use crate::modelo::ahora_iso;
 
 /// Devuelve grupos, mensajes visibles, eliminaciones locales y conversaciones sin leer (#119).
@@ -63,15 +61,7 @@ pub fn crear_grupo_chat_en(
     miembros: &[String],
 ) -> Resultado<GrupoChat> {
     let yo = estado.exigir_permiso("crear_grupo_chat")?;
-    estado.con_db(|db| {
-        chat::crear_grupo(
-            db.conexion(),
-            &yo.email,
-            nombre,
-            miembros,
-            &ahora_iso(),
-        )
-    })
+    estado.con_db(|db| chat::crear_grupo(db.conexion(), &yo.email, nombre, miembros, &ahora_iso()))
 }
 
 /// Marca como leídos todos los mensajes de una conversación para esta máquina (local #119).

@@ -1,17 +1,13 @@
 //! Comandos Tauri de tareas (issues #95, #96): `listar_tareas`, `crear_tarea`,
 //! `crear_tarea_con_subtareas`, `editar_tarea` y `tomar_tarea`.
 
-use std::path::Path;
-
 use tauri::State;
 
-use crate::comandos::datos::carpeta_abierta;
 use crate::db::commits::{CambioPrestado, Commit};
 use crate::db::ediciones::EdicionPendiente;
 use crate::db::tareas::Tarea;
 use crate::error::{Error, Resultado};
 use crate::estado::AppState;
-use crate::eventos;
 use crate::modelo::{ahora_iso, ahora_local_segundo, hoy_local, EstadoTarea, TipoTarea};
 use crate::ramas;
 use crate::servidor::{conectar, LlaveroSistema};
@@ -117,9 +113,8 @@ pub fn tomar_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
 
     ramas::cambiar_a_rama(estado, &workspace, &rama_final)?;
 
-    estado.con_db(|db| {
-        tareas::registrar_toma(db.conexion(), &autor, &cadena, &creadas, &ahora_iso())
-    })
+    estado
+        .con_db(|db| tareas::registrar_toma(db.conexion(), &autor, &cadena, &creadas, &ahora_iso()))
 }
 
 /// `volver_a_dev()`: cambia el workspace local a `/main/dev` (`cm switch`).
@@ -453,9 +448,8 @@ pub fn eliminar_tarea_en(
         email: &yo.email,
         rol: yo.rol,
     };
-    let afectadas = estado.con_db(|db| {
-        tareas::eliminar(db.conexion(), &autor, id, justificacion, &ahora_iso())
-    })?;
+    let afectadas = estado
+        .con_db(|db| tareas::eliminar(db.conexion(), &autor, id, justificacion, &ahora_iso()))?;
     if let Ok(repo) = estado.repo_abierto() {
         let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
         for t in &afectadas {
@@ -488,9 +482,8 @@ pub fn eliminar_definitivamente_en(estado: &AppState, id: &str) -> Resultado<Vec
         email: &yo.email,
         rol: yo.rol,
     };
-    let purgadas = estado.con_db(|db| {
-        tareas::eliminar_definitivamente(db.conexion(), &autor, id, &ahora_iso())
-    })?;
+    let purgadas = estado
+        .con_db(|db| tareas::eliminar_definitivamente(db.conexion(), &autor, id, &ahora_iso()))?;
     if let Ok(repo) = estado.repo_abierto() {
         let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
         let workspace = estado.workspace_abierto().ok();

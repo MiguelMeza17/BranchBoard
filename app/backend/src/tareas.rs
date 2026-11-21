@@ -7,8 +7,6 @@
 //! aplica en la misma transacción local, y las demás máquinas lo reproducen con
 //! [`aplicar_evento`] al sincronizar.
 
-use std::path::Path;
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -565,9 +563,7 @@ pub fn crear(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, &ev, |tx| {
-        aplicar_crear_tarea(tx, &nueva, ahora, true)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_crear_tarea(tx, &nueva, ahora, true))?;
     db_tareas::obtener(c, &nueva.id)
 }
 
@@ -2222,9 +2218,7 @@ pub fn registrar_eliminar_cambios_ajenos(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, &ev, |tx| {
-        aplicar_eliminar_cambios_ajenos(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_eliminar_cambios_ajenos(tx, &payload))?;
     commits::obtener_prestamo(c, &prestamo.id)
 }
 
@@ -4211,7 +4205,8 @@ pub fn detectar_doble_toma(
         Err(_) => return Ok(None),
     };
 
-    let (actual_en_ops, entrante_gana) = buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?;
+    let (actual_en_ops, entrante_gana) =
+        buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?;
 
     if entrante_gana {
         let (id_actual, ev_actual) = actual_en_ops.unwrap();
@@ -4308,7 +4303,6 @@ fn buscar_toma_rival_servidor(
     }
     Ok((None, false))
 }
-
 
 /// Resuelve una colisión de doble toma (#97) una vez comprobado si la rama del
 /// perdedor ya tiene changesets reales:
@@ -4419,18 +4413,12 @@ mod tests {
     const HOY: &str = "2026-11-15";
 
     struct Escenario {
-        _dir: tempfile::TempDir,
-        local_b: PathBuf,
         db_a: Db,
         db_b: Db,
     }
 
     impl Escenario {
         fn nuevo() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let ops = dir.path().join("ops");
-            let local_b = dir.path().join("local_b");
-
             let db_a = Db::en_memoria().unwrap();
             let db_b = Db::en_memoria().unwrap();
             for db in [&db_a, &db_b] {
@@ -4447,12 +4435,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            let esc = Self {
-                _dir: dir,
-                local_b,
-                db_a,
-                db_b,
-            };
+            let esc = Self { db_a, db_b };
             for (correo, rol) in [
                 (LIDER, Rol::Lider),
                 (DEV, Rol::Desarrollador),
@@ -4481,8 +4464,7 @@ mod tests {
             let ahora = DateTime::parse_from_rfc3339("2026-11-15T23:00:00.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
-            crate::eventos::servidor_de_prueba::entregar(self.db_b.conexion(), ahora)
-            .unwrap()
+            crate::eventos::servidor_de_prueba::entregar(self.db_b.conexion(), ahora).unwrap()
         }
     }
 
@@ -5332,8 +5314,11 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = crate::eventos::servidor_de_prueba::entregar_con(e.db_b.conexion(), ahora, |_| Ok(true))
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar_con(e.db_b.conexion(), ahora, |_| {
+                Ok(true)
+            })
+            .unwrap();
         assert_eq!(sync_b.aplicados, 0, "con changesets no revierte en local");
         assert_eq!(sync_b.descartados, 1);
 
@@ -5377,20 +5362,17 @@ mod tests {
     ///   cargo test --lib entorno_real_crear_editar_y_listar_tareas -- --ignored --nocapture --test-threads=1
     /// ```
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_crear_editar_y_listar_tareas_por_ops() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::estado::AppState;
-        
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-95-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -5417,7 +5399,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -5536,9 +5517,9 @@ mod tests {
             let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:05:00.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza tareas desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza tareas por el servidor de prueba: {sync_b:?}");
             // Las 3 altas de tareas (desde #243 los usuarios ya no viajan por `ops/`: B los tiene de antes).
             assert_eq!(sync_b.aplicados, 3);
             assert_eq!(sync_b.descartados, 0);
@@ -5575,7 +5556,7 @@ mod tests {
     /// Al terminar borra el workspace, las ramas de prueba en Unity VC y la
     /// subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_tomar_tarea_crea_rama_cambia_workspace_y_sincroniza() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
@@ -5583,15 +5564,12 @@ mod tests {
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::tareas::tomar_en;
         use crate::estado::AppState;
-        
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
         let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-96-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -5618,7 +5596,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -5685,9 +5662,9 @@ mod tests {
             let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza tomar_tarea desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza tomar_tarea por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.aplicados, 2);
             assert_eq!(sync_b.descartados, 0);
             assert_eq!(
@@ -5729,24 +5706,22 @@ mod tests {
     /// Al terminar borra workspace, ramas (con `--delete-changesets`) y carpeta
     /// de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_doble_toma_resuelve_sin_y_con_changesets() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::eventos::revisar_y_cerrar_rama_perdedor;
         use crate::estado::AppState;
-        
+
         use crate::ramas::{cambiar_a_rama, crear_rama_tarea, RAMA_DEV};
         use crate::servidor::{conectar, LlaveroSistema};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
         let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-97-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -5773,7 +5748,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -5828,8 +5802,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_init =
-                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-                .unwrap();
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
             assert_eq!(sync_init.aplicados, 3);
 
             // --- CASO 1: Sin changesets en la rama del perdedor (T-101) ---
@@ -5872,8 +5845,11 @@ mod tests {
                 .unwrap();
 
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let sync_b1 = crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info))
-            .unwrap();
+            let sync_b1 =
+                crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| {
+                    revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info)
+                })
+                .unwrap();
             println!("Caso 1 (sin changesets) B sync: {sync_b1:?}");
             assert_eq!(sync_b1.aplicados, 1);
             assert!(
@@ -5952,8 +5928,11 @@ mod tests {
                 .unwrap();
 
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let sync_b2 = crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info))
-            .unwrap();
+            let sync_b2 =
+                crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| {
+                    revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info)
+                })
+                .unwrap();
             println!("Caso 2 (con changeset) B sync: {sync_b2:?}");
             assert_eq!(sync_b2.descartados, 1);
             assert!(
@@ -6233,7 +6212,6 @@ mod tests {
         ws_ruta: PathBuf,
         _datos_a: tempfile::TempDir,
         _maquina_b: tempfile::TempDir,
-        local_b: PathBuf,
         admin_fila: usuarios::Usuario,
         ramas_creadas: Vec<String>,
     }
@@ -6244,15 +6222,12 @@ mod tests {
             use crate::comandos::acceso::entrar_como_dueno_en;
             use crate::comandos::datos::carpeta_abierta;
             use crate::estado::AppState;
-            
 
             let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
             let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
             let repo_cm = format!("{repo}@{org}@unity");
-            let nube = PathBuf::from(
-                std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                    .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-            );
+            let nube_tmp = tempfile::tempdir().unwrap();
+            let nube = nube_tmp.path().to_path_buf();
             let sufijo = chrono::Local::now().format("%H%M%S").to_string();
             let compartida = nube.join(format!("BranchBoard-prueba-{etiqueta}-{sufijo}"));
             std::fs::create_dir_all(&compartida).unwrap();
@@ -6286,7 +6261,6 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-
             let admin_fila = estado_a
                 .con_db(|db| {
                     let todos = usuarios::listar(db.conexion())?;
@@ -6305,7 +6279,6 @@ mod tests {
                 ws_ruta,
                 _datos_a: datos_a,
                 _maquina_b: maquina_b,
-                local_b,
                 admin_fila,
                 ramas_creadas: Vec::new(),
             }
@@ -6429,8 +6402,8 @@ mod tests {
         fn sincronizar_b(&self) -> crate::eventos::lectura::ResumenSincronizacion {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let ahora = Utc::now() + chrono::Duration::minutes(5);
-            let sync = crate::eventos::servidor_de_prueba::entregar(self.db_b.conexion(), ahora)
-            .unwrap();
+            let sync =
+                crate::eventos::servidor_de_prueba::entregar(self.db_b.conexion(), ahora).unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
             sync
         }
@@ -6495,7 +6468,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_asignar_y_soltar_tarea() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -6595,7 +6568,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambiar_estado() {
         use crate::comandos::eventos::revisar_actualizaciones_en;
         use crate::comandos::tareas::{aprobar_tareas_en, cambiar_estado_en, tomar_en};
@@ -7040,8 +7013,7 @@ mod tests {
         )
         .unwrap();
 
-        let lista =
-            borrar_progreso(c, &autor_dev, "T-101", "2026-11-15T10:04:00Z").unwrap();
+        let lista = borrar_progreso(c, &autor_dev, "T-101", "2026-11-15T10:04:00Z").unwrap();
         let t = lista.iter().find(|x| x.id == "T-101").unwrap();
         assert_eq!(t.estado, EstadoTarea::PorHacer);
         assert_eq!(t.asignado_a.as_deref(), Some(DEV));
@@ -7050,14 +7022,7 @@ mod tests {
         assert!(commits::prestamos_de_tarea(c, "T-101").unwrap().is_empty());
 
         // Motivo vacío o tarea no terminada rechaza reabrir.
-        let err = reabrir(
-            c,
-            &autor_lider,
-            "T-101",
-            "   ",
-            "2026-11-15T10:05:00Z",
-        )
-        .unwrap_err();
+        let err = reabrir(c, &autor_lider, "T-101", "   ", "2026-11-15T10:05:00Z").unwrap_err();
         assert!(err.to_string().contains("motivo"));
         let err = reabrir(
             c,
@@ -7101,14 +7066,8 @@ mod tests {
             "2026-11-15T10:30:00Z",
         )
         .unwrap();
-        let err = reabrir(
-            c,
-            &autor_lider,
-            "T-101",
-            "Motivo 4",
-            "2026-11-15T10:31:00Z",
-        )
-        .unwrap_err();
+        let err =
+            reabrir(c, &autor_lider, "T-101", "Motivo 4", "2026-11-15T10:31:00Z").unwrap_err();
         assert!(err.to_string().contains("Administrador"));
 
         let r4 = reabrir(
@@ -7134,7 +7093,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_borrar_progreso() {
         use crate::cm::Comando;
         use crate::comandos::tareas::{
@@ -7331,14 +7290,8 @@ mod tests {
             Error::SinPermiso
         ));
         assert!(matches!(
-            advertir_pendiente(
-                c,
-                &autor_dev,
-                "T-101",
-                "Falta info",
-                "2026-11-15T10:05:00Z"
-            )
-            .unwrap_err(),
+            advertir_pendiente(c, &autor_dev, "T-101", "Falta info", "2026-11-15T10:05:00Z")
+                .unwrap_err(),
             Error::SinPermiso
         ));
 
@@ -7408,7 +7361,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_aprobar_editar_y_advertir() {
         use crate::comandos::tareas::{
             advertir_pendiente_en, aprobar_tarea_en, aprobar_tareas_en, editar_y_aprobar_en,
@@ -7500,25 +7453,11 @@ mod tests {
 
         let mut sub_activa = datos_base("Sub activa");
         sub_activa.tarea_padre_id = Some("T-101".into());
-        crear(
-            c,
-            &autor_dev,
-            &sub_activa,
-            "2026-11-15T15:00:01Z",
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_dev, &sub_activa, "2026-11-15T15:00:01Z", HOY).unwrap();
 
         let mut sub_term = datos_base("Sub terminada");
         sub_term.tarea_padre_id = Some("T-101".into());
-        crear(
-            c,
-            &autor_lider,
-            &sub_term,
-            "2026-11-15T15:00:02Z",
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_lider, &sub_term, "2026-11-15T15:00:02Z", HOY).unwrap();
         cambiar_estado(
             c,
             &autor_lider,
@@ -7547,32 +7486,17 @@ mod tests {
 
         // Desarrollador no puede eliminar; justificación vacía rechazada.
         assert!(matches!(
-            eliminar(
-                c,
-                &autor_dev,
-                "T-101",
-                "Motivo",
-                "2026-11-15T15:00:06Z"
-            )
-            .unwrap_err(),
+            eliminar(c, &autor_dev, "T-101", "Motivo", "2026-11-15T15:00:06Z").unwrap_err(),
             Error::SinPermiso
         ));
         assert!(matches!(
-            eliminar(
-                c,
-                &autor_lider,
-                "T-101",
-                "   ",
-                "2026-11-15T15:00:06Z"
-            )
-            .unwrap_err(),
+            eliminar(c, &autor_lider, "T-101", "   ", "2026-11-15T15:00:06Z").unwrap_err(),
             Error::Validacion(_)
         ));
 
         // No se puede purgar definitivamente una tarea que no está en Papelera.
         assert!(matches!(
-            eliminar_definitivamente(c, &autor_lider, "T-101", "2026-11-15T15:00:06Z")
-                .unwrap_err(),
+            eliminar_definitivamente(c, &autor_lider, "T-101", "2026-11-15T15:00:06Z").unwrap_err(),
             Error::Validacion(_)
         ));
 
@@ -7622,8 +7546,7 @@ mod tests {
 
         // Purga definitiva sobre T-101 borra T-101 y T-101-1 en cascada, dejando T-101-2.
         let purgadas =
-            eliminar_definitivamente(c, &autor_lider, "T-101", "2026-11-15T15:00:09Z")
-                .unwrap();
+            eliminar_definitivamente(c, &autor_lider, "T-101", "2026-11-15T15:00:09Z").unwrap();
         assert_eq!(purgadas.len(), 2);
         assert!(db_tareas::buscar(c, "T-101").unwrap().is_none());
         assert!(db_tareas::buscar(c, "T-101-1").unwrap().is_none());
@@ -7631,12 +7554,7 @@ mod tests {
 
         // Máquina B sincroniza y llega al mismo estado.
         let sync = e.sincronizar_b();
-        let log = std::fs::read_to_string(e.local_b.join("eventos.log")).unwrap_or_default();
-        assert_eq!(
-            sync.descartados, 0,
-            "descartados: {:?}\nlog:\n{}",
-            sync, log
-        );
+        assert_eq!(sync.descartados, 0, "descartados: {sync:?}");
         assert!(db_tareas::buscar(e.db_b.conexion(), "T-101")
             .unwrap()
             .is_none());
@@ -7651,7 +7569,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_eliminar_y_purgar() {
         use crate::cm::Comando;
         use crate::comandos::tareas::{
@@ -7825,14 +7743,7 @@ mod tests {
             rol: Rol::Desarrollador,
         };
 
-        crear(
-            c,
-            &autor_dev,
-            &datos_base("Tarea polling"),
-            AHORA,
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_dev, &datos_base("Tarea polling"), AHORA, HOY).unwrap();
         assert!(actualizar_deteccion_local(c, "T-101", Some(12), true).unwrap());
         // Llamar de nuevo con los mismos datos no vuelve a mutar.
         assert!(!actualizar_deteccion_local(c, "T-101", Some(12), true).unwrap());
@@ -7842,8 +7753,7 @@ mod tests {
         assert!(t.modificada);
 
         let cerrada =
-            cerrar_por_deteccion(c, &autor_dev, "T-101", "2026-11-15T15:00:01Z", HOY)
-                .unwrap();
+            cerrar_por_deteccion(c, &autor_dev, "T-101", "2026-11-15T15:00:01Z", HOY).unwrap();
         assert_eq!(cerrada.estado, EstadoTarea::Terminada);
         assert_eq!(cerrada.fecha_completada.as_deref(), Some(HOY));
         assert!(!cerrada.modificada);
@@ -7857,7 +7767,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_polling_unity_vc() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -7960,7 +7870,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_entrantes() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
@@ -8069,22 +7979,8 @@ mod tests {
         d_vacio.detalles = String::new();
         crear(c, &autor_lider, &d_vacio, AHORA, HOY).unwrap();
         crear(c, &autor_lider, &datos_base("En curso"), AHORA, HOY).unwrap();
-        crear(
-            c,
-            &autor_lider,
-            &datos_base("Aprobar lote A"),
-            AHORA,
-            HOY,
-        )
-        .unwrap();
-        crear(
-            c,
-            &autor_lider,
-            &datos_base("Aprobar lote B"),
-            AHORA,
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_lider, &datos_base("Aprobar lote A"), AHORA, HOY).unwrap();
+        crear(c, &autor_lider, &datos_base("Aprobar lote B"), AHORA, HOY).unwrap();
 
         cambiar_estado(
             c,
@@ -8143,20 +8039,17 @@ mod tests {
 
         // Desarrollador no puede aprobar ni rechazar.
         assert!(matches!(
-            aprobar_modificacion(c, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
-                .unwrap_err(),
+            aprobar_modificacion(c, &autor_dev, "T-101", "2026-11-15T15:05:00Z").unwrap_err(),
             Error::SinPermiso
         ));
         assert!(matches!(
-            rechazar_modificacion(c, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
-                .unwrap_err(),
+            rechazar_modificacion(c, &autor_dev, "T-101", "2026-11-15T15:05:00Z").unwrap_err(),
             Error::SinPermiso
         ));
 
         // Rechazar T-101 restaura título y detalles vacíos originales, y borra la fila pendiente.
         let revertida =
-            rechazar_modificacion(c, &autor_lider, "T-101", "2026-11-15T15:06:00Z")
-                .unwrap();
+            rechazar_modificacion(c, &autor_lider, "T-101", "2026-11-15T15:06:00Z").unwrap();
         assert_eq!(revertida.titulo, "Original 102");
         assert_eq!(revertida.detalles, "");
         assert!(!revertida.edicion_pendiente);
@@ -8217,7 +8110,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_ediciones_pendientes() {
         use crate::comandos::tareas::{
             aprobar_modificacion_en, aprobar_modificaciones_en, asignar_en, cambiar_estado_en,
@@ -8493,14 +8386,7 @@ mod tests {
         assert!(preparar_traer_cambios(c, &autor_dev, "T-103", "T-101", None).is_err());
 
         // Origen pasa a producción con commit 12; destino sigue en 'por hacer' (ya tomada) -> permitido.
-        cambiar_estado(
-            c,
-            &autor_dev,
-            "T-101",
-            EstadoTarea::EnProduccion,
-            AHORA,
-        )
-        .unwrap();
+        cambiar_estado(c, &autor_dev, "T-101", EstadoTarea::EnProduccion, AHORA).unwrap();
         assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).is_err());
         commits::guardar(
             c,
@@ -8525,14 +8411,7 @@ mod tests {
         assert_eq!(cs, Some(12));
 
         // En EnRevision solo Líder/Admin pueden traer cambios.
-        cambiar_estado(
-            c,
-            &autor_dev,
-            "T-102",
-            EstadoTarea::EnRevision,
-            AHORA,
-        )
-        .unwrap();
+        cambiar_estado(c, &autor_dev, "T-102", EstadoTarea::EnRevision, AHORA).unwrap();
         assert!(matches!(
             preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).unwrap_err(),
             Error::SinPermiso
@@ -8580,8 +8459,7 @@ mod tests {
         assert_eq!(pb[0].changeset_merge, Some(30));
 
         let devuelto =
-            registrar_devolver_cambios(c, &autor_lider, &p.id, "2026-11-15T16:05:00Z")
-                .unwrap();
+            registrar_devolver_cambios(c, &autor_lider, &p.id, "2026-11-15T16:05:00Z").unwrap();
         assert_eq!(devuelto.quitado_por.as_deref(), Some(LIDER));
         assert!(commits::prestamos_vigentes(c, "T-102").unwrap().is_empty());
 
@@ -8806,7 +8684,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_hacer_checkin() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9007,15 +8885,8 @@ mod tests {
         .unwrap();
 
         // Crear subtarea "En espera" en T-101: bloquea EnRevision en padre y en sí misma.
-        let esp = crear_en_espera(
-            c,
-            &autor_lider,
-            "T-101",
-            2,
-            "2026-11-15T15:03:00Z",
-            HOY,
-        )
-        .unwrap();
+        let esp =
+            crear_en_espera(c, &autor_lider, "T-101", 2, "2026-11-15T15:03:00Z", HOY).unwrap();
         assert_eq!(esp.tipo, TipoTarea::SinDefinir);
         assert_eq!(esp.estado, EstadoTarea::EnProduccion);
         assert_eq!(
@@ -9063,15 +8934,8 @@ mod tests {
         );
 
         // Segunda En espera -> quitar_en_espera la elimina limpiamente.
-        let esp2 = crear_en_espera(
-            c,
-            &autor_lider,
-            "T-101",
-            1,
-            "2026-11-15T15:06:00Z",
-            HOY,
-        )
-        .unwrap();
+        let esp2 =
+            crear_en_espera(c, &autor_lider, "T-101", 1, "2026-11-15T15:06:00Z", HOY).unwrap();
         quitar_en_espera(c, &autor_lider, &esp2.id, "2026-11-15T15:07:00Z").unwrap();
         assert!(db_tareas::buscar(c, &esp2.id).unwrap().is_none());
 
@@ -9087,7 +8951,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_subtarea_en_espera() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9229,7 +9093,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_prestados() {
         use crate::cm::Comando;
         use crate::comandos::tareas::{
@@ -9440,7 +9304,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_ajenos_tocados() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9610,7 +9474,7 @@ mod tests {
     /// autorizado los devuelve a `dev` sin conflictos. Al final borra de `/main/dev`
     /// todos los changesets que creó (y la rama de la tarea).
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_directos() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9834,7 +9698,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_alerta_rama_ajena() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9977,13 +9841,9 @@ mod tests {
     #[test]
     #[ignore = "acompaña a la app abierta: correr a mano con BB_UI_PROYECTO_LOCAL, BB_UI_CARPETA_COMPARTIDA y BB_UI_ACCION"]
     fn entorno_real_ui_maquina_b() {
-        
-
         let local_a = PathBuf::from(
             std::env::var("BB_UI_PROYECTO_LOCAL").expect("falta BB_UI_PROYECTO_LOCAL"),
         );
-        let compartida =
-            std::env::var("BB_UI_CARPETA_COMPARTIDA").expect("falta BB_UI_CARPETA_COMPARTIDA");
         let accion = std::env::var("BB_UI_ACCION").expect("falta BB_UI_ACCION");
         let dev = std::env::var("BB_UI_DEV").unwrap_or_else(|_| DEV.to_string());
 
@@ -10006,8 +9866,8 @@ mod tests {
 
         let sincronizar_b = || {
             let ahora = Utc::now() + chrono::Duration::minutes(5);
-            let sync = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
+            let sync =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
             sync
         };
@@ -10239,32 +10099,14 @@ mod tests {
 
         // 1. Elegir revisor: solo Líder/Admin, solo a un Líder/Admin, solo en revisión;
         //    con revisor puesto, solo el Administrador lo cambia.
-        let err = asignar_revision(
-            c,
-            &dev,
-            "T-101-1",
-            LIDER,
-            "2026-11-15T16:00:06.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &dev, "T-101-1", LIDER, "2026-11-15T16:00:06.000Z").unwrap_err();
         assert_eq!(err.codigo(), "sin_permiso");
-        let err = asignar_revision(
-            c,
-            &lider,
-            "T-101-1",
-            TESTER,
-            "2026-11-15T16:00:07.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &lider, "T-101-1", TESTER, "2026-11-15T16:00:07.000Z").unwrap_err();
         assert!(err.to_string().contains("no es Líder ni Administrador"));
-        let err = asignar_revision(
-            c,
-            &lider,
-            "T-101-2",
-            LIDER,
-            "2026-11-15T16:00:08.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &lider, "T-101-2", LIDER, "2026-11-15T16:00:08.000Z").unwrap_err();
         assert!(err.to_string().contains("en revisión"));
         let t = asignar_revision(
             c,
@@ -10280,23 +10122,10 @@ mod tests {
             .iter()
             .any(|n| n.tipo == TipoNotificacion::RevisionAsignada
                 && n.tarea_id.as_deref() == Some("T-101-1")));
-        let err = asignar_revision(
-            c,
-            &lider,
-            "T-101-1",
-            ADMIN,
-            "2026-11-15T16:00:10.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &lider, "T-101-1", ADMIN, "2026-11-15T16:00:10.000Z").unwrap_err();
         assert!(err.to_string().contains("solo el Administrador"));
-        let t = asignar_revision(
-            c,
-            &admin,
-            "T-101-1",
-            ADMIN,
-            "2026-11-15T16:00:11.000Z",
-        )
-        .unwrap();
+        let t = asignar_revision(c, &admin, "T-101-1", ADMIN, "2026-11-15T16:00:11.000Z").unwrap();
         assert_eq!(t.lider_revision_asignado.as_deref(), Some(ADMIN));
 
         // 2. Plan de autorización, sin tocar el servidor.
@@ -10403,8 +10232,8 @@ mod tests {
                 .codigo(),
             "sin_permiso"
         );
-        let err = rechazar_revision(c, &lider, "T-102", "  ", "2026-11-15T16:00:17.000Z")
-            .unwrap_err();
+        let err =
+            rechazar_revision(c, &lider, "T-102", "  ", "2026-11-15T16:00:17.000Z").unwrap_err();
         assert!(err.to_string().contains("motivo"));
         let err = rechazar_revision(
             c,
@@ -10462,14 +10291,8 @@ mod tests {
             r.tareas.iter().find(|t| t.id == "T-101").unwrap().estado,
             EstadoTarea::EnRevision
         );
-        let tareas = rechazar_revision(
-            c,
-            &lider,
-            "T-101",
-            "Rehacer",
-            "2026-11-15T16:00:23.000Z",
-        )
-        .unwrap();
+        let tareas =
+            rechazar_revision(c, &lider, "T-101", "Rehacer", "2026-11-15T16:00:23.000Z").unwrap();
         assert!(tareas
             .iter()
             .filter(|t| t.id.starts_with("T-101"))
@@ -10500,7 +10323,7 @@ mod tests {
     /// que chocó y no cambia de rama si hay cambios sin check-in. No abre Unity VC
     /// (eso es `cm::sesion::abrir_plastic_en_workspace`, probado a mano).
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_preparar_resolucion_de_conflicto() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
@@ -10582,7 +10405,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_revision_autorizar_merge_y_rechazar() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;

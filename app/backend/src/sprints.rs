@@ -2,8 +2,6 @@
 //! de tareas (issue #113). Cada mutación compartida pasa por `ops/` y se aplica
 //! igual en todas las máquinas mediante [`aplicar_evento`].
 
-use std::path::Path;
-
 use chrono::{Days, NaiveDate};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -218,9 +216,7 @@ pub fn asignar_tarea_a_sprint(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, &ev, |tx| {
-        aplicar_asignar_tarea_a_sprint(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_asignar_tarea_a_sprint(tx, &payload))?;
     db_tareas::obtener(c, tarea_id)
 }
 
@@ -250,9 +246,7 @@ pub fn asignar_tarea_a_backlog(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, &ev, |tx| {
-        aplicar_asignar_tarea_a_backlog(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_asignar_tarea_a_backlog(tx, &payload))?;
     db_tareas::obtener(c, tarea_id)
 }
 
@@ -293,9 +287,7 @@ pub fn asignar_backlog_a_sprint(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, &ev, |tx| {
-        aplicar_asignar_backlog_a_sprint(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_asignar_backlog_a_sprint(tx, &payload))?;
 
     let mut actualizadas = Vec::with_capacity(elegibles.len());
     for id in elegibles {
@@ -757,7 +749,6 @@ mod tests {
     use crate::db::sprints as db_sprints;
     use crate::db::tareas as db_tareas;
     use crate::db::{usuarios, Db};
-    use crate::eventos::lectura::{self};
 
     use crate::modelo::{hoy_local, EstadoTarea, Rol};
     use crate::tareas::{cambiar_estado, crear, crear_en_espera, eliminar, DatosNuevaTarea};
@@ -773,7 +764,6 @@ mod tests {
         db_a: Db,
         local_a: PathBuf,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Entorno {
@@ -818,15 +808,13 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
 
         Entorno {
             _tmp: tmp,
             db_a,
             local_a,
             db_b,
-            local_b,
         }
     }
 
@@ -1377,8 +1365,8 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.descartados, 1);
         assert_eq!(
             listar(e.db_b.conexion()).unwrap(),
@@ -1409,7 +1397,7 @@ mod tests {
     ///   cargo test --lib entorno_real_sprints_y_backlogs -- --ignored --nocapture --test-threads=1
     /// ```
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_sprints_y_backlogs() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1422,10 +1410,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-113-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1451,7 +1437,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1647,9 +1632,9 @@ mod tests {
 
             // 3. Máquina B sincroniza desde OneDrive y obtiene idénticos sprints y tareas.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza planificación desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza planificación por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.descartados, 1);
 
             let sprints_a = listar_sprints_en(&estado_a).unwrap();
@@ -1863,8 +1848,8 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.descartados, 1);
         assert_eq!(
             listar(e.db_b.conexion()).unwrap(),
@@ -2069,8 +2054,8 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-23T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.descartados, 1);
         assert_eq!(
             listar(e.db_b.conexion()).unwrap(),
@@ -2096,7 +2081,7 @@ mod tests {
     ///
     /// Al terminar borra el workspace y la subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cierre_sprints_y_reportes() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -2111,10 +2096,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-114-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -2140,7 +2123,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -2374,9 +2356,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza cierres y reportes desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza cierres y reportes por el servidor de prueba: {sync_b:?}");
             if sync_b.descartados != 1 {
                 eprintln!(
                     "eventos.log B:\n{}",

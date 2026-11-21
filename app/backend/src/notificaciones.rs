@@ -8,7 +8,6 @@
 //!   `marcar_leida`, `desmarcar_leida`, `marcar_todas_leidas`).
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 use rusqlite::Connection;
@@ -516,14 +515,13 @@ pub fn solicitar_accion_bd(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use chrono::{DateTime, Utc};
     use tempfile::TempDir;
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::lectura::{self};
+
     use crate::modelo::{Rol, TipoTarea};
     use crate::tareas::{
         asignar, cambiar_estado, crear as crear_tarea, crear_con_subtareas, eliminar, reabrir,
@@ -541,7 +539,6 @@ mod tests {
         _tmp: TempDir,
         db_a: Db,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Entorno {
@@ -582,7 +579,6 @@ mod tests {
             _tmp: tmp,
             db_a,
             db_b,
-            local_b,
         }
     }
 
@@ -644,8 +640,8 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.aplicados, 2);
         assert_eq!(sync_b.descartados, 1);
 
@@ -785,8 +781,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
 
         let tipos_lider: Vec<_> = listar_de_usuario(e.db_b.conexion(), LIDER)
             .unwrap()
@@ -1046,8 +1041,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-30T00:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         let inactivas_b: Vec<_> = listar_de_usuario(e.db_b.conexion(), DEV)
             .unwrap()
             .into_iter()
@@ -1094,24 +1088,13 @@ mod tests {
         assert!(!msg.accionable);
 
         // `solicitar_accion_bd`: vacío rechazado, Tester y Admin rechazados (`sin_permiso`).
-        assert!(solicitar_accion_bd(
-            e.db_a.conexion(),
-            DEV,
-            Rol::Desarrollador,
-            "   ",
-            AHORA,
-        )
-        .is_err());
+        assert!(
+            solicitar_accion_bd(e.db_a.conexion(), DEV, Rol::Desarrollador, "   ", AHORA,).is_err()
+        );
         assert_eq!(
-            solicitar_accion_bd(
-                e.db_a.conexion(),
-                TESTER,
-                Rol::Tester,
-                "Tabla rota",
-                AHORA,
-            )
-            .unwrap_err()
-            .codigo(),
+            solicitar_accion_bd(e.db_a.conexion(), TESTER, Rol::Tester, "Tabla rota", AHORA,)
+                .unwrap_err()
+                .codigo(),
             "sin_permiso"
         );
         assert_eq!(
@@ -1153,8 +1136,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
 
         let notis_admin_b = listar_de_usuario(e.db_b.conexion(), ADMIN).unwrap();
         assert_eq!(
@@ -1188,7 +1170,7 @@ mod tests {
     ///
     /// Al terminar borra el workspace y la subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_notificaciones() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1203,10 +1185,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-116-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1232,7 +1212,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1412,9 +1391,9 @@ mod tests {
             // 5. Máquina B sincroniza vía OneDrive: recibe las mismas notificaciones, descarta la falsa
             //    y conserva `leida = false` localmente (no se filtra lo marcado en A).
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza notificaciones desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza notificaciones por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.descartados, 1);
 
             let notis_b = listar_de_usuario(db_b.conexion(), &admin_fila.email).unwrap();
@@ -1452,7 +1431,7 @@ mod tests {
     ///
     /// Al terminar borra workspace, ramas con `--delete-changesets` y carpeta en OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_recordatorio_inactividad() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1465,10 +1444,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-117-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1496,7 +1473,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1606,9 +1582,11 @@ mod tests {
 
             // 3. Máquina B sincroniza vía OneDrive y recibe `inactividad` para DEV.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza recordatorio de inactividad desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!(
+                "B sincroniza recordatorio de inactividad por el servidor de prueba: {sync_b:?}"
+            );
             let notis_dev_b: Vec<_> = listar_de_usuario(db_b.conexion(), DEV)
                 .unwrap()
                 .into_iter()
@@ -1698,7 +1676,7 @@ mod tests {
     ///
     /// Al terminar borra workspace y carpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_mensajes_y_accion_bd() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1712,10 +1690,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-118-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1741,7 +1717,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1825,9 +1800,9 @@ mod tests {
 
             // 4. Máquina B sincroniza vía OneDrive y valida cada destinatario.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza mensajes y accion_bd desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza mensajes y accion_bd por el servidor de prueba: {sync_b:?}");
 
             let notis_admin_b = listar_de_usuario(db_b.conexion(), &admin_fila.email).unwrap();
             let bd_b: Vec<_> = notis_admin_b

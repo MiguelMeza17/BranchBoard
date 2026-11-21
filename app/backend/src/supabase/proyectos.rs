@@ -100,8 +100,11 @@ pub fn proyectos_desde_json(json: Value) -> Resultado<Vec<ProyectoDeLaCuenta>> {
         unity_org: Option<String>,
         unity_repo: Option<String>,
     }
-    let filas: Vec<Fila> = serde_json::from_value(json)
-        .map_err(|e| Error::Interno(format!("respuesta de proyectos del servidor no válida: {e}")))?;
+    let filas: Vec<Fila> = serde_json::from_value(json).map_err(|e| {
+        Error::Interno(format!(
+            "respuesta de proyectos del servidor no válida: {e}"
+        ))
+    })?;
     let mut lista: Vec<ProyectoDeLaCuenta> = filas
         .into_iter()
         .filter_map(|f| {
@@ -198,9 +201,15 @@ mod tests {
     fn si_el_servidor_lo_muestra_se_guarda_sin_traerlo() {
         let db = base();
         let c = db.conexion();
-        let v = vincular_unity(en(c), 1, true, "ana@virustf.dev", "2026-11-21", || Ok(Some(ID.into())), || {
-            panic!("no hace falta traerlo")
-        })
+        let v = vincular_unity(
+            en(c),
+            1,
+            true,
+            "ana@virustf.dev",
+            "2026-11-21",
+            || Ok(Some(ID.into())),
+            || panic!("no hace falta traerlo"),
+        )
         .unwrap();
         assert_eq!(
             v,
@@ -216,8 +225,16 @@ mod tests {
     fn el_administrador_lo_trae_si_el_servidor_no_lo_tiene() {
         let db = base();
         let c = db.conexion();
-        let v = vincular_unity(en(c), 1, true, "ana@virustf.dev", "2026-11-21", || Ok(None), || Ok(ID.into()))
-            .unwrap();
+        let v = vincular_unity(
+            en(c),
+            1,
+            true,
+            "ana@virustf.dev",
+            "2026-11-21",
+            || Ok(None),
+            || Ok(ID.into()),
+        )
+        .unwrap();
         assert!(matches!(v, Vinculo::Vinculado { ahora: true, .. }));
         assert_eq!(proyecto_guardado(c).unwrap().as_deref(), Some(ID));
     }
@@ -226,9 +243,15 @@ mod tests {
     fn quien_no_es_administrador_no_lo_trae() {
         let db = base();
         let c = db.conexion();
-        let v = vincular_unity(en(c), 1, false, "beto@virustf.dev", "2026-11-21", || Ok(None), || {
-            panic!("solo el Administrador lo trae")
-        })
+        let v = vincular_unity(
+            en(c),
+            1,
+            false,
+            "beto@virustf.dev",
+            "2026-11-21",
+            || Ok(None),
+            || panic!("solo el Administrador lo trae"),
+        )
         .unwrap();
         assert_eq!(v, Vinculo::NoEsMiembro);
         assert_eq!(proyecto_guardado(c).unwrap(), None);
@@ -238,7 +261,14 @@ mod tests {
     fn ya_vinculado_no_toca_la_red() {
         let db = base();
         let c = db.conexion();
-        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, ID, "ana@virustf.dev", "2026-11-21").unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            ID,
+            "ana@virustf.dev",
+            "2026-11-21",
+        )
+        .unwrap();
         let llamadas = Cell::new(0);
         let v = vincular_unity(
             en(c),
@@ -267,9 +297,15 @@ mod tests {
     fn sin_internet_no_se_guarda_nada() {
         let db = base();
         let c = db.conexion();
-        let e = vincular_unity(en(c), 1, true, "ana@virustf.dev", "2026-11-21", || Err(Error::ServidorSinConexion), || {
-            Ok(ID.into())
-        })
+        let e = vincular_unity(
+            en(c),
+            1,
+            true,
+            "ana@virustf.dev",
+            "2026-11-21",
+            || Err(Error::ServidorSinConexion),
+            || Ok(ID.into()),
+        )
         .unwrap_err();
         assert!(matches!(e, Error::ServidorSinConexion));
         assert_eq!(proyecto_guardado(c).unwrap(), None);
@@ -279,9 +315,15 @@ mod tests {
     fn con_equipo_local_no_se_vincula_aunque_el_servidor_lo_tenga() {
         let db = base();
         let c = db.conexion();
-        let v = vincular_unity(en(c), 3, true, "ana@virustf.dev", "2026-11-21", || panic!("no debe buscar"), || {
-            panic!("no debe traer")
-        })
+        let v = vincular_unity(
+            en(c),
+            3,
+            true,
+            "ana@virustf.dev",
+            "2026-11-21",
+            || panic!("no debe buscar"),
+            || panic!("no debe traer"),
+        )
         .unwrap();
         assert_eq!(v, Vinculo::ConEquipoLocal);
         assert_eq!(proyecto_guardado(c).unwrap(), None);
@@ -293,7 +335,10 @@ mod tests {
             ruta_buscar_unity("MiguelM17", "BranchBoard-Pruebas/BranchBoard-Pruebas"),
             "/rest/v1/proyectos?select=id&unity_org=eq.MiguelM17&unity_repo=eq.BranchBoard-Pruebas%2FBranchBoard-Pruebas"
         );
-        assert_eq!(id_desde_json(&serde_json::json!([{ "id": ID }])).as_deref(), Some(ID));
+        assert_eq!(
+            id_desde_json(&serde_json::json!([{ "id": ID }])).as_deref(),
+            Some(ID)
+        );
         assert_eq!(id_desde_json(&serde_json::json!([])), None);
         let lista = proyectos_desde_json(serde_json::json!([
             { "rol": "Desarrollador", "proyectos": { "id": "b", "nombre": "zeta", "unity_org": null, "unity_repo": null } },
@@ -302,7 +347,10 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(
-            lista.iter().map(|p| (p.nombre.as_str(), p.rol.as_str())).collect::<Vec<_>>(),
+            lista
+                .iter()
+                .map(|p| (p.nombre.as_str(), p.rol.as_str()))
+                .collect::<Vec<_>>(),
             vec![("Alfa", "Administrador"), ("zeta", "Desarrollador")]
         );
     }

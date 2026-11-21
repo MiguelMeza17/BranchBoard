@@ -60,7 +60,15 @@ pub fn crear_en<L: Llavero>(
         .as_str()
         .map(String::from)
         .ok_or_else(|| Error::Interno("crear_proyecto no devolvió el proyecto".into()))?;
-    abrir_con(estado, datos_app, cliente, &id, nombre, &sesion.correo, true)
+    abrir_con(
+        estado,
+        datos_app,
+        cliente,
+        &id,
+        nombre,
+        &sesion.correo,
+        true,
+    )
 }
 
 /// Lo mismo que [`abrir_proyecto_servidor`], sin Tauri.
@@ -78,7 +86,15 @@ pub fn abrir_en<L: Llavero>(
         .and_then(|l| l.into_iter().find(|p| p.id == id))
         .map(|p| p.nombre)
         .unwrap_or_default();
-    abrir_con(estado, datos_app, cliente, id, &nombre, &sesion.correo, false)
+    abrir_con(
+        estado,
+        datos_app,
+        cliente,
+        id,
+        &nombre,
+        &sesion.correo,
+        false,
+    )
 }
 
 fn abrir_con<L: Llavero>(
@@ -139,7 +155,6 @@ mod tests {
 
     impl Pc {
         fn crear_tarea(&self, titulo: &str) -> String {
-            let carpeta = crate::comandos::datos::carpeta_abierta(&self.estado).unwrap();
             let yo = self.estado.exigir_permiso("crear_tarea").unwrap();
             let autor = AutorTarea {
                 email: &yo.email,
@@ -157,7 +172,13 @@ mod tests {
             };
             self.estado
                 .con_db(|db| {
-                    tareas::crear(db.conexion(), &autor, &datos, &crate::modelo::ahora_iso(), &hoy_local())
+                    tareas::crear(
+                        db.conexion(),
+                        &autor,
+                        &datos,
+                        &crate::modelo::ahora_iso(),
+                        &hoy_local(),
+                    )
                 })
                 .unwrap()
                 .id
@@ -242,7 +263,9 @@ mod tests {
         let pc = |quien: &str, nombre: &str| {
             let correo = format!("sin-unity-{quien}-{hora}@prueba.branchboard");
             let cliente = ClienteSupabase::new(&PRUEBAS, LlaveroMemoria::default());
-            cliente.registrar(nombre, "Prueba", &correo, &clave).unwrap();
+            cliente
+                .registrar(nombre, "Prueba", &correo, &clave)
+                .unwrap();
             Pc {
                 estado: AppState::default(),
                 datos: tempfile::tempdir().unwrap(),
@@ -253,9 +276,22 @@ mod tests {
         let (a, b) = (pc("a", "Ana"), pc("b", "Beto"));
 
         // 1. A crea el proyecto y agrega a B.
-        let entrada = crear_en(&a.estado, a.datos.path(), &a.cliente, &format!("bb-prueba-240-{hora}")).unwrap();
+        let entrada = crear_en(
+            &a.estado,
+            a.datos.path(),
+            &a.cliente,
+            &format!("bb-prueba-240-{hora}"),
+        )
+        .unwrap();
         assert!(
-            matches!(entrada, Entrada::Dentro { rol: Rol::Administrador, configurado_ahora: true, .. }),
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Administrador,
+                    configurado_ahora: true,
+                    ..
+                }
+            ),
             "{entrada:?}"
         );
         let proyecto = a
@@ -263,7 +299,8 @@ mod tests {
             .con_db(|db| proyectos::proyecto_guardado(db.conexion()))
             .unwrap()
             .expect("vinculado");
-        crate::supabase::miembros::agregar(&a.cliente, &proyecto, &b.correo, Rol::Desarrollador).unwrap();
+        crate::supabase::miembros::agregar(&a.cliente, &proyecto, &b.correo, Rol::Desarrollador)
+            .unwrap();
 
         // 2. A crea una tarea y la sube.
         a.crear_tarea("De Ana");
@@ -272,7 +309,14 @@ mod tests {
         // 3. B abre desde el servidor en una PC sin datos y ve la tarea de A.
         let entrada = abrir_en(&b.estado, b.datos.path(), &b.cliente, &proyecto).unwrap();
         assert!(
-            matches!(entrada, Entrada::Dentro { rol: Rol::Desarrollador, configurado_ahora: false, .. }),
+            matches!(
+                entrada,
+                Entrada::Dentro {
+                    rol: Rol::Desarrollador,
+                    configurado_ahora: false,
+                    ..
+                }
+            ),
             "{entrada:?}"
         );
         assert_eq!(b.sincronizar(&proyecto), 1);
@@ -282,10 +326,15 @@ mod tests {
         b.crear_tarea("De Beto");
         b.sincronizar(&proyecto);
         assert_eq!(a.sincronizar(&proyecto), 1);
-        assert_eq!(a.titulos(), vec!["De Ana".to_string(), "De Beto".to_string()]);
+        assert_eq!(
+            a.titulos(),
+            vec!["De Ana".to_string(), "De Beto".to_string()]
+        );
 
         a.cliente.cerrar_sesion().unwrap();
         b.cliente.cerrar_sesion().unwrap();
-        println!("proyecto sin Unity VC sincronizado entre dos PCs: {proyecto} de branchboard-pruebas");
+        println!(
+            "proyecto sin Unity VC sincronizado entre dos PCs: {proyecto} de branchboard-pruebas"
+        );
     }
 }

@@ -585,7 +585,6 @@ mod tests {
         .unwrap();
 
         // 2. Dos cambios publicados como los publica la app.
-        let ops = tempfile::tempdir().unwrap();
         let mut ids = Vec::new();
         for tipo in ["crear_tarea", "mover_tarea"] {
             let e = Evento::nuevo(

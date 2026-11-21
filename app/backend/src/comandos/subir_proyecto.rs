@@ -309,7 +309,6 @@ mod tests {
     }
 
     fn crear_tarea(estado: &AppState, titulo: &str) {
-        let carpeta = carpeta_abierta(estado).unwrap();
         let yo = estado.exigir_permiso("crear_tarea").unwrap();
         let autor = AutorTarea {
             email: &yo.email,
@@ -326,15 +325,7 @@ mod tests {
             fecha_limite: None,
         };
         estado
-            .con_db(|db| {
-                tareas::crear(
-                    db.conexion(),
-                    &autor,
-                    &datos,
-                    &ahora_iso(),
-                    &hoy_local(),
-                )
-            })
+            .con_db(|db| tareas::crear(db.conexion(), &autor, &datos, &ahora_iso(), &hoy_local()))
             .unwrap();
     }
 

@@ -5,7 +5,6 @@
 //! - `marcar_chat_leido` y `eliminar_chat` son locales por usuario en SQLite.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -269,14 +268,13 @@ pub fn eliminar(c: &Connection, yo: &str, conversacion: &str, ahora: &str) -> Re
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use chrono::{DateTime, Utc};
     use tempfile::TempDir;
 
     use super::*;
     use crate::db::Db;
-    use crate::eventos::lectura::{self};
+
     use crate::modelo::Rol;
 
     const ANA: &str = "ana@estudio.com";
@@ -290,7 +288,6 @@ mod tests {
         _tmp: TempDir,
         db_a: Db,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Escenario {
@@ -331,7 +328,6 @@ mod tests {
             _tmp: tmp,
             db_a,
             db_b,
-            local_b,
         }
     }
 
@@ -341,14 +337,7 @@ mod tests {
 
         // Validaciones al crear grupo y enviar mensaje.
         assert!(crear_grupo(e.db_a.conexion(), ANA, "  ", &[ZOE.into()], AHORA).is_err());
-        assert!(crear_grupo(
-            e.db_a.conexion(),
-            ANA,
-            "Arte",
-            &[INTRUSO.into()],
-            AHORA
-        )
-        .is_err());
+        assert!(crear_grupo(e.db_a.conexion(), ANA, "Arte", &[INTRUSO.into()], AHORA).is_err());
         assert!(enviar(e.db_a.conexion(), ANA, ANA, "Hola yo", AHORA).is_err());
         assert!(enviar(e.db_a.conexion(), ANA, INTRUSO, "Hola", AHORA).is_err());
         assert!(enviar(e.db_a.conexion(), ANA, GRUPO_GENERAL, "  ", AHORA).is_err());
@@ -449,8 +438,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync.aplicados, 5);
 
         assert_eq!(
@@ -499,8 +487,7 @@ mod tests {
         let ahora2 = DateTime::parse_from_rfc3339("2026-11-16T10:07:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora2)
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora2).unwrap();
         let revivida: Vec<_> = obtener_estado(e.db_b.conexion(), ZOE)
             .unwrap()
             .mensajes
@@ -526,7 +513,7 @@ mod tests {
     ///
     /// Al terminar borra workspace y subcarpeta en OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_chat() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -543,10 +530,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-119-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -572,7 +557,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -690,9 +674,9 @@ mod tests {
 
             // 2. Máquina B sincroniza desde OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza chat desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza chat por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.descartados, 1);
 
             let estado_zoe_b = obtener_estado(db_b.conexion(), ZOE).unwrap();

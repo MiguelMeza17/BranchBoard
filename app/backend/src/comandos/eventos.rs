@@ -15,7 +15,7 @@ use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos::recepcion;
 use crate::eventos::{self, ResumenSincronizacion};
-use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol, TipoTarea};
+use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, TipoTarea};
 use crate::ramas::{self, RAMA_DEV};
 use crate::servidor::{conectar, Changeset, LlaveroSistema};
 use crate::tareas::{self, AlertaRamaAjena, AutorTarea, InfoDobleToma};
@@ -411,13 +411,7 @@ pub fn revisar_actualizaciones_en(
             }
             if cerrada {
                 {
-                    tareas::cerrar_por_deteccion(
-                        db.conexion(),
-                        &autor,
-                        &id,
-                        &ahora,
-                        &hoy,
-                    )?;
+                    tareas::cerrar_por_deteccion(db.conexion(), &autor, &id, &ahora, &hoy)?;
                     resumen.tareas_cerradas.push(id);
                 }
             }

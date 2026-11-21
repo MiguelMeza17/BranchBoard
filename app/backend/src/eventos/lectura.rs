@@ -247,7 +247,9 @@ mod tests {
                 "{tipo}"
             );
         }
-        assert!(crate::db::usuarios::listar(db.conexion()).unwrap().is_empty());
+        assert!(crate::db::usuarios::listar(db.conexion())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -258,7 +260,9 @@ mod tests {
         retirado.tipo = "cambiar_rol".into();
         servidor_de_prueba::agregar(&retirado);
         servidor_de_prueba::agregar(&evento(AHORA, "a@x.dev", 2));
-        let ahora = DateTime::parse_from_rfc3339(AHORA).unwrap().with_timezone(&Utc);
+        let ahora = DateTime::parse_from_rfc3339(AHORA)
+            .unwrap()
+            .with_timezone(&Utc);
         let r = servidor_de_prueba::entregar(c, ahora).unwrap();
         assert_eq!((r.aplicados, r.descartados, r.desconocidos), (0, 1, 1));
         // La vuelta siguiente: el descartado no se repite y el desconocido sigue esperando.

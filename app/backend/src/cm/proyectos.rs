@@ -312,11 +312,12 @@ pub fn listar_proyectos_servidor_en(
     };
 
     // Los proyectos de la cuenta en el servidor (#240). Sin internet o sin sesión, la lista sale igual.
-    let de_la_cuenta = crate::supabase::proyectos::listar_mios(&crate::supabase::ClienteSupabase::new(
-        crate::supabase::Entorno::actual().proyecto(),
-        crate::servidor::LlaveroSistema,
-    ))
-    .unwrap_or_default();
+    let de_la_cuenta =
+        crate::supabase::proyectos::listar_mios(&crate::supabase::ClienteSupabase::new(
+            crate::supabase::Entorno::actual().proyecto(),
+            crate::servidor::LlaveroSistema,
+        ))
+        .unwrap_or_default();
     for p in &mut proyectos {
         if let Some(r) = RepoUnityVc::desde_especificacion(&p.repo) {
             p.rol_servidor = rol_en_el_servidor(&de_la_cuenta, &r);

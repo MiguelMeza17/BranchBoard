@@ -139,7 +139,9 @@ pub fn aplicar(c: &Connection, evento: &Evento) -> Resultado<Aplicacion> {
         return Ok(Aplicacion::Desconocido);
     }
     let Some(tablas) = evento.payload["tablas"].as_object() else {
-        return Ok(Aplicacion::Descartado("la foto del proyecto no trae tablas".into()));
+        return Ok(Aplicacion::Descartado(
+            "la foto del proyecto no trae tablas".into(),
+        ));
     };
     if tablas.keys().any(|t| !TABLAS.contains(&t.as_str())) {
         return Ok(Aplicacion::Desconocido);
@@ -173,8 +175,15 @@ pub fn aplicar(c: &Connection, evento: &Evento) -> Resultado<Aplicacion> {
             if nombres.is_empty() {
                 continue;
             }
-            let lista = nombres.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
-            let marcas = (1..=nombres.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ");
+            let lista = nombres
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let marcas = (1..=nombres.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             // La configuración puede traer claves que la base ya tiene (p. ej. el nombre): gana la foto.
             let verbo = if *tabla == "configuracion_proyecto" {
                 "INSERT OR REPLACE"
@@ -202,9 +211,22 @@ mod tests {
     }
 
     fn sembrar(c: &Connection) {
-        configuracion::guardar(c, CLAVE_NOMBRE_PROYECTO, "Juego", "ana@virustf.dev", "2026-11-01").unwrap();
-        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, "local-no-viaja", "ana@virustf.dev", "2026-11-01")
-            .unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_NOMBRE_PROYECTO,
+            "Juego",
+            "ana@virustf.dev",
+            "2026-11-01",
+        )
+        .unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            "local-no-viaja",
+            "ana@virustf.dev",
+            "2026-11-01",
+        )
+        .unwrap();
         c.execute_batch(&format!(
             "INSERT INTO sprints (id, nombre, con_fecha, fecha_inicio, duracion_dias, fecha_fin, creado_por)
                VALUES ('S-1', 'Sprint 1', 1, '2026-11-01', 14, '2026-11-14', 'ana@virustf.dev');
@@ -225,27 +247,52 @@ mod tests {
         let origen = base();
         sembrar(origen.conexion());
         let foto = foto(origen.conexion()).unwrap();
-        assert_eq!(filas_en(&foto), 4, "nombre, sprint, tarea y notificación (no el id del servidor)");
+        assert_eq!(
+            filas_en(&foto),
+            4,
+            "nombre, sprint, tarea y notificación (no el id del servidor)"
+        );
 
         let destino = base();
         let c = destino.conexion();
-        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, "el-de-destino", "x@virustf.dev", "2026-11-21").unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            "el-de-destino",
+            "x@virustf.dev",
+            "2026-11-21",
+        )
+        .unwrap();
         let tx = c.unchecked_transaction().unwrap();
         assert_eq!(aplicar(&tx, &evento(foto)).unwrap(), Aplicacion::Aplicado);
         tx.commit().unwrap();
 
         let t = crate::db::tareas::obtener(c, "T-101").unwrap();
         assert_eq!(t.titulo, "Saltar");
-        assert_eq!(t.creado_por, "beto@virustf.dev", "el autor es el original, no quien subió");
-        assert_eq!(t.sprint_id.as_deref(), Some("S-1"));
-        assert_eq!(configuracion::leer(c, CLAVE_NOMBRE_PROYECTO).unwrap().as_deref(), Some("Juego"));
         assert_eq!(
-            configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR).unwrap().as_deref(),
+            t.creado_por, "beto@virustf.dev",
+            "el autor es el original, no quien subió"
+        );
+        assert_eq!(t.sprint_id.as_deref(), Some("S-1"));
+        assert_eq!(
+            configuracion::leer(c, CLAVE_NOMBRE_PROYECTO)
+                .unwrap()
+                .as_deref(),
+            Some("Juego")
+        );
+        assert_eq!(
+            configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR)
+                .unwrap()
+                .as_deref(),
             Some("el-de-destino"),
             "el id del servidor es de cada PC"
         );
         let leida: i64 = c
-            .query_row("SELECT leida FROM notificaciones WHERE id = 'N-1'", [], |f| f.get(0))
+            .query_row(
+                "SELECT leida FROM notificaciones WHERE id = 'N-1'",
+                [],
+                |f| f.get(0),
+            )
             .unwrap();
         assert_eq!(leida, 1, "las notificaciones viejas llegan leídas");
     }
@@ -271,10 +318,19 @@ mod tests {
             "formato": FORMATO,
             "tablas": { "sprints": [{ "id": "S-1", "columna_del_futuro": 1 }] }
         });
-        assert_eq!(aplicar(c, &evento(nueva_columna)).unwrap(), Aplicacion::Desconocido);
+        assert_eq!(
+            aplicar(c, &evento(nueva_columna)).unwrap(),
+            Aplicacion::Desconocido
+        );
         let nuevo_formato = serde_json::json!({ "formato": FORMATO + 1, "tablas": {} });
-        assert_eq!(aplicar(c, &evento(nuevo_formato)).unwrap(), Aplicacion::Desconocido);
+        assert_eq!(
+            aplicar(c, &evento(nuevo_formato)).unwrap(),
+            Aplicacion::Desconocido
+        );
         let tabla_nueva = serde_json::json!({ "formato": FORMATO, "tablas": { "otra": [] } });
-        assert_eq!(aplicar(c, &evento(tabla_nueva)).unwrap(), Aplicacion::Desconocido);
+        assert_eq!(
+            aplicar(c, &evento(tabla_nueva)).unwrap(),
+            Aplicacion::Desconocido
+        );
     }
 }

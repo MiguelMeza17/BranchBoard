@@ -230,7 +230,10 @@ pub mod servidor_de_prueba {
     }
 
     /// Le entrega a `destino` todo lo que tiene el "servidor" y aplica lo que le falte.
-    pub fn entregar(destino: &Connection, ahora: DateTime<Utc>) -> Resultado<ResumenSincronizacion> {
+    pub fn entregar(
+        destino: &Connection,
+        ahora: DateTime<Utc>,
+    ) -> Resultado<ResumenSincronizacion> {
         entregar_con(destino, ahora, |_| Ok(false))
     }
 
@@ -333,17 +336,29 @@ mod tests {
         let c = db.conexion();
         // Sin vincular: se aplica y se anota, pero no hay a dónde subirlo.
         let id = publicar(c, &evento_de_prueba(), |tx| {
-            tx.execute("INSERT INTO meta (clave, valor) VALUES ('prueba', 'aplicado')", [])?;
+            tx.execute(
+                "INSERT INTO meta (clave, valor) VALUES ('prueba', 'aplicado')",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
         assert!(ya_aplicado(c, &id).unwrap());
         assert!(!ya_aplicado(c, "otro.json").unwrap());
-        assert_eq!(contar(c, "SELECT count(*) FROM meta WHERE clave = 'prueba'"), 1);
+        assert_eq!(
+            contar(c, "SELECT count(*) FROM meta WHERE clave = 'prueba'"),
+            1
+        );
         assert_eq!(bandeja::pendientes(c).unwrap(), 0);
         // Vinculado al servidor: queda en la bandeja de salida.
-        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, servidor_de_prueba::PROYECTO, "a@x.dev", "2026-11-14")
-            .unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            servidor_de_prueba::PROYECTO,
+            "a@x.dev",
+            "2026-11-14",
+        )
+        .unwrap();
         publicar(c, &evento_de_prueba(), |_| Ok(())).unwrap();
         assert_eq!(bandeja::pendientes(c).unwrap(), 1);
     }
@@ -352,8 +367,14 @@ mod tests {
     fn si_aplicar_falla_no_queda_nada() {
         let db = Db::en_memoria().unwrap();
         let c = db.conexion();
-        configuracion::guardar(c, CLAVE_PROYECTO_SERVIDOR, servidor_de_prueba::PROYECTO, "a@x.dev", "2026-11-14")
-            .unwrap();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            servidor_de_prueba::PROYECTO,
+            "a@x.dev",
+            "2026-11-14",
+        )
+        .unwrap();
         let antes = servidor_de_prueba::cuantos();
         let e = publicar(c, &evento_de_prueba(), |tx| {
             tx.execute("INSERT INTO meta (clave, valor) VALUES ('x', '1')", [])?;
@@ -393,7 +414,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(carpeta_compartida(dir.path()).unwrap(), Some(vieja.clone()));
-        assert_eq!(carpeta_documentos(dir.path()).unwrap(), vieja.join(CARPETA_DOCUMENTOS));
-        assert_eq!(carpeta_imagen_proyecto(dir.path()).unwrap(), vieja.join(CARPETA_PROYECTO));
+        assert_eq!(
+            carpeta_documentos(dir.path()).unwrap(),
+            vieja.join(CARPETA_DOCUMENTOS)
+        );
+        assert_eq!(
+            carpeta_imagen_proyecto(dir.path()).unwrap(),
+            vieja.join(CARPETA_PROYECTO)
+        );
     }
 }

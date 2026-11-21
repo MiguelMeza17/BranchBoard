@@ -13,13 +13,11 @@
 //! tarea sigue en rojo) y `trasladar_cambios_directos`.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::comandos::datos::carpeta_abierta;
 use crate::db::tareas::{self as db_tareas, CambiosDirectos, ChangesetDirecto, Tarea};
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};

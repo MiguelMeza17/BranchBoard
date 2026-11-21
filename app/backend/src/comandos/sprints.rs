@@ -3,12 +3,10 @@
 use tauri::State;
 
 use crate::avance::{self, AvanceBacklog, AvanceSprint};
-use crate::comandos::datos::carpeta_abierta;
 use crate::db::sprints::Sprint;
 use crate::db::tareas::Tarea;
 use crate::error::Resultado;
 use crate::estado::AppState;
-use crate::eventos;
 use crate::modelo::{ahora_iso, hoy_local};
 use crate::sprints;
 use crate::tareas::AutorTarea;
@@ -98,13 +96,7 @@ pub fn asignar_tarea_a_sprint_en(
         rol: yo.rol,
     };
     estado.con_db(|db| {
-        sprints::asignar_tarea_a_sprint(
-            db.conexion(),
-            &autor,
-            tarea_id,
-            sprint_id,
-            &ahora_iso(),
-        )
+        sprints::asignar_tarea_a_sprint(db.conexion(), &autor, tarea_id, sprint_id, &ahora_iso())
     })
 }
 
@@ -130,13 +122,7 @@ pub fn asignar_tarea_a_backlog_en(
         rol: yo.rol,
     };
     estado.con_db(|db| {
-        sprints::asignar_tarea_a_backlog(
-            db.conexion(),
-            &autor,
-            tarea_id,
-            backlog_id,
-            &ahora_iso(),
-        )
+        sprints::asignar_tarea_a_backlog(db.conexion(), &autor, tarea_id, backlog_id, &ahora_iso())
     })
 }
 
@@ -186,13 +172,7 @@ pub fn cerrar_sprint_en(estado: &AppState, sprint_id: &str) -> Resultado<Sprint>
         rol: yo.rol,
     };
     estado.con_db(|db| {
-        sprints::cerrar_sprint(
-            db.conexion(),
-            &autor,
-            sprint_id,
-            &ahora_iso(),
-            &hoy_local(),
-        )
+        sprints::cerrar_sprint(db.conexion(), &autor, sprint_id, &ahora_iso(), &hoy_local())
     })
 }
 

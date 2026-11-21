@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use crate::db::configuracion::{self, CLAVE_NOMBRE_PROYECTO, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::{carpeta_proyecto, usuarios, vistos, Db};
 use crate::error::{Error, Resultado};
-use crate::eventos;
 use crate::identidad::acceso::Entrada;
 use crate::modelo::normalizar_email;
 
@@ -113,16 +112,33 @@ mod tests {
         let datos = tempfile::tempdir().unwrap();
         let db = preparar_con(
             datos.path(),
-            &[("ana@virustf.dev", Rol::Administrador), ("beto@virustf.dev", Rol::Tester)],
+            &[
+                ("ana@virustf.dev", Rol::Administrador),
+                ("beto@virustf.dev", Rol::Tester),
+            ],
         );
         let c = db.conexion();
-        assert_eq!(configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR).unwrap().as_deref(), Some(ID));
-        assert_eq!(configuracion::leer(c, CLAVE_NOMBRE_PROYECTO).unwrap().as_deref(), Some("Juego"));
+        assert_eq!(
+            configuracion::leer(c, CLAVE_PROYECTO_SERVIDOR)
+                .unwrap()
+                .as_deref(),
+            Some(ID)
+        );
+        assert_eq!(
+            configuracion::leer(c, CLAVE_NOMBRE_PROYECTO)
+                .unwrap()
+                .as_deref(),
+            Some("Juego")
+        );
         let carpeta = carpeta_datos(datos.path(), ID).unwrap();
         assert!(carpeta.ends_with(format!("servidor-{ID}")));
         assert!(matches!(
             decidir(&db, "Beto@VirusTF.dev", false).unwrap(),
-            Entrada::Dentro { rol: Rol::Tester, rol_verificado: true, .. }
+            Entrada::Dentro {
+                rol: Rol::Tester,
+                rol_verificado: true,
+                ..
+            }
         ));
         assert!(matches!(
             decidir(&db, "nadie@virustf.dev", false).unwrap(),
@@ -143,18 +159,26 @@ mod tests {
     #[test]
     fn sin_red_se_abre_con_la_ultima_copia() {
         let datos = tempfile::tempdir().unwrap();
-        drop(preparar_con(datos.path(), &[("ana@virustf.dev", Rol::Administrador)]));
+        drop(preparar_con(
+            datos.path(),
+            &[("ana@virustf.dev", Rol::Administrador)],
+        ));
         let db = preparar(datos.path(), ID, "", "ana@virustf.dev", HOY, |_| {
             Err(Error::ServidorSinConexion)
         })
         .unwrap();
         assert!(matches!(
             decidir(&db, "ana@virustf.dev", false).unwrap(),
-            Entrada::Dentro { rol: Rol::Administrador, .. }
+            Entrada::Dentro {
+                rol: Rol::Administrador,
+                ..
+            }
         ));
         // Un nombre vacío no pisa el que ya tenía.
         assert_eq!(
-            configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO).unwrap().as_deref(),
+            configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO)
+                .unwrap()
+                .as_deref(),
             Some("Juego")
         );
     }

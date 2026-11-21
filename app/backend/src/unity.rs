@@ -485,11 +485,11 @@ mod tests {
     fn entorno_real_abrir_en_unity() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
+
         use crate::comandos::tareas::{
             abrir_en_unity_preparar_en, hacer_checkin_en, listar_commits_en, tomar_en,
         };
-        
+
         use crate::modelo::{ahora_iso, hoy_local, Rol};
         use crate::tareas::{crear, AutorTarea, DatosNuevaTarea};
 
@@ -501,7 +501,6 @@ mod tests {
         let estado = AppState::default();
         let ws = tempfile::tempdir().unwrap();
         let datos = tempfile::tempdir().unwrap();
-        let compartida = tempfile::tempdir().unwrap();
         let ruta_ws = ws.path().to_string_lossy().to_string();
         let mut ramas_creadas = Vec::new();
 

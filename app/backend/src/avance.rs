@@ -407,14 +407,12 @@ pub fn datos_general(c: &Connection, hoy: &str) -> Resultado<AvanceBacklog> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use chrono::{DateTime, Utc};
     use tempfile::TempDir;
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::lectura::{self};
 
     use crate::modelo::{EstadoTarea, Rol, TipoTarea};
     use crate::sprints::{
@@ -431,7 +429,6 @@ mod tests {
         _tmp: TempDir,
         db_a: Db,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Entorno {
@@ -476,7 +473,6 @@ mod tests {
             _tmp: tmp,
             db_a,
             db_b,
-            local_b,
         }
     }
 
@@ -804,8 +800,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T12:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(datos_general(e.db_b.conexion(), hoy).unwrap(), gen);
     }
 
@@ -822,7 +817,7 @@ mod tests {
     ///
     /// Al terminar borra el workspace y la subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_datos_avance() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -838,10 +833,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-115-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -867,7 +860,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1002,9 +994,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
-            .unwrap();
-            println!("B sincroniza datos de avance desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza datos de avance por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.descartados, 0);
 
             assert_eq!(
