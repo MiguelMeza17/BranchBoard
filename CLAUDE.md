@@ -63,6 +63,7 @@ La migración a Supabase (#231, hoja de ruta #248) se prueba igual que Unity VC,
 - **Estructura de la base**: solo por migraciones en `supabase/migrations/` (revisadas en el PR), no a mano desde el panel. Cómo aplicarlas: [Servidor (Supabase) en BACKEND.md](documentacion/BACKEND.md#servidor-supabase).
 - **Qué va en el PR**: la misma sección "Prueba en el entorno real", indicando qué se probó en `branchboard-pruebas`.
 - **Reglas RLS**: todo cambio de reglas o funciones de roles corre `supabase/tests/01_reglas.test.sql` contra pruebas (`npx supabase@3 db query --remote --yes --file …`, sin Docker; `fallidas` tiene que ser 0) y `npx supabase@3 db advisors --linked --type security`. Una regla nueva va con su caso de prueba.
+- **Edge Functions** (`supabase/functions/`, desde #237): `npx deno@2 test supabase/functions/` y su prueba SQL si tienen funciones de base de datos; se despliegan en pruebas con `npx supabase@3 functions deploy <nombre> --use-api --remote=freppiixmuspvozaqrxj` y se prueban de punta a punta contra pruebas, borrando después las cuentas y proyectos que se crearon.
 - **Nunca** se prueba en producción ni con datos de proyectos reales.
 
 ### Cómo se está construyendo el backend
