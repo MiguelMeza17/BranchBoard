@@ -33,6 +33,7 @@ pub mod modelo;
 pub mod notificaciones;
 pub mod proyecto;
 pub mod proyecto_local;
+pub mod proyecto_servidor;
 pub mod ramas;
 pub mod servidor;
 pub mod sprints;
@@ -47,7 +48,8 @@ use comandos::{
     acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, cuenta, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
     identidad as comandos_identidad, notificaciones as comandos_notificaciones,
-    proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local, sistema,
+    proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local,
+    proyecto_servidor as comandos_proyecto_servidor, sistema,
     sprints as comandos_sprints, tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
     warp as comandos_warp,
 };
@@ -250,6 +252,8 @@ pub fn run() {
             comandos_proyecto::actualizar_configuracion_proyecto,
             comandos_proyecto::subir_imagen_proyecto,
             comandos_proyecto_local::crear_proyecto_local,
+            comandos_proyecto_servidor::crear_proyecto_servidor,
+            comandos_proyecto_servidor::abrir_proyecto_servidor,
             comandos_proyecto_local::abrir_proyecto_local,
             comandos_proyecto_local::listar_proyectos_locales,
             comandos_proyecto_local::exportar_proyecto_local,

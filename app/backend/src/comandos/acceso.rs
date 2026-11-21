@@ -67,11 +67,17 @@ fn entrar_con(
     let especificacion = rama_actual_workspace(estado, workspace)?.repositorio;
     let repo = RepoUnityVc::desde_especificacion(&especificacion)
         .ok_or_else(|| acceso::error_repo_no_cloud(&especificacion))?;
-    let (entrada, db) = acceso::entrar(
+    let cliente = ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema);
+    let (entrada, db) = acceso::entrar_con_servidor(
         datos,
         &repo,
         &email,
         || es_dueno(estado, &repo, &email),
+        || buscar_en_servidor(estado, &cliente, &repo, &email),
+        |db, proyecto| {
+            login_unity::asegurar_sesion_servidor_del_equipo(estado, &email)?;
+            refrescar_equipo(&cliente, db, proyecto)
+        },
         &ahora_iso(),
         &hoy_local(),
     )?;
@@ -84,6 +90,34 @@ fn entrar_con(
         let _ = vincular_proyecto_servidor_en(estado);
     }
     Ok(entrada)
+}
+
+/// El id del proyecto de `repo` en el servidor si la cuenta es miembro (#240). Sin internet, sin sesión
+/// o sin el proyecto: `None` (la entrada sigue como siempre).
+fn buscar_en_servidor<L: crate::servidor::pat::Llavero>(
+    estado: &AppState,
+    cliente: &ClienteSupabase<L>,
+    repo: &RepoUnityVc,
+    email: &str,
+) -> Option<String> {
+    login_unity::asegurar_sesion_servidor_del_equipo(estado, email).ok()?;
+    cliente
+        .llamar("GET", &proyectos::ruta_buscar_unity(&repo.org, &repo.repo), None)
+        .ok()
+        .and_then(|j| proyectos::id_desde_json(&j))
+}
+
+/// Rehace la copia local de `miembros` del `proyecto` en `db` (#241).
+pub(crate) fn refrescar_equipo<L: crate::servidor::pat::Llavero>(
+    cliente: &ClienteSupabase<L>,
+    db: &crate::db::Db,
+    proyecto: &str,
+) -> Resultado<()> {
+    crate::identidad::equipo_servidor::refrescar(
+        &crate::identidad::equipo_servidor::EnSupabase { cliente, proyecto },
+        |filas| crate::db::usuarios::reemplazar_todos(db.conexion(), filas),
+    )
+    .map(|_| ())
 }
 
 /// Vincula el proyecto de Unity VC abierto con su proyecto del servidor (#240, ver
@@ -197,6 +231,108 @@ mod tests {
             self.0.borrow_mut().remove(cuenta);
             Ok(())
         }
+    }
+
+    /// **Prueba en el entorno real** (#240): un miembro que **no es el dueño** entra por primera vez en una
+    /// PC desde el servidor. Contra branchboard-pruebas, con la sesión de Unity VC de la dueña del repo:
+    /// 1. la dueña trae el repo al servidor (`vincular-repo-unity`);
+    /// 2. se registra una cuenta `entrar-240-<hora>@prueba.branchboard` (clave aleatoria, no se imprime)
+    ///    y la dueña la agrega como Desarrollador;
+    /// 3. en una PC sin datos, el miembro entra: queda una base vinculada y entra como Desarrollador; al
+    ///    entrar otra vez usa esa base;
+    /// 4. la dueña, en otra PC sin datos, entra como Administradora.
+    ///
+    /// ```text
+    /// BB_PRUEBA_ORG=MiguelM17 BB_PRUEBA_REPO=BranchBoard-Pruebas/BranchBoard-Pruebas \
+    ///   cargo test --lib entorno_real_miembro_entra -- --ignored --nocapture
+    /// ```
+    /// Deja el proyecto y la cuenta del miembro: borrarlos después (ver BACKEND.md → Proyectos en el
+    /// servidor).
+    #[test]
+    #[ignore = "toca branchboard-pruebas y Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
+    fn entorno_real_miembro_entra_por_primera_vez_en_una_pc() {
+        use crate::supabase::entorno::PRUEBAS;
+        use rand::{distributions::Alphanumeric, Rng};
+
+        let repo = RepoUnityVc {
+            repo: std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO"),
+            org: std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG"),
+        };
+        let estado = AppState::default();
+        let duena = whoami(&estado).expect("sin sesión de cm");
+        let carpeta = crate::cm::sesion::carpeta_config_plastic().unwrap();
+        let cliente_duena = ClienteSupabase::new(&PRUEBAS, LlaveroCompartido::default());
+        login_unity::asegurar_sesion_servidor(
+            &cliente_duena,
+            &carpeta,
+            &duena,
+            crate::servidor::region::webserver,
+            |o| login_unity::renovar_token_cm(&estado, o),
+        )
+        .unwrap();
+
+        // 1. La dueña trae el repo.
+        let proyecto = traer_repo(&estado, &cliente_duena, &repo, &duena).unwrap();
+
+        // 2. Un miembro nuevo, agregado como Desarrollador.
+        let hora = chrono::Utc::now().format("%H%M%S%3f").to_string();
+        let miembro = format!("entrar-240-{hora}@prueba.branchboard");
+        let clave: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(24)
+            .map(char::from)
+            .collect();
+        let cliente_miembro = ClienteSupabase::new(&PRUEBAS, LlaveroCompartido::default());
+        cliente_miembro
+            .registrar("Mia", "Prueba", &miembro, &clave)
+            .unwrap();
+        crate::supabase::miembros::agregar(&cliente_duena, &proyecto, &miembro, Rol::Desarrollador)
+            .unwrap();
+
+        let entrar_en_pc = |datos: &Path, correo: &str, cliente: &ClienteSupabase<LlaveroCompartido>| {
+            acceso::entrar_con_servidor(
+                datos,
+                &repo,
+                correo,
+                || panic!("no hace falta preguntar por el dueño"),
+                || {
+                    cliente
+                        .llamar("GET", &proyectos::ruta_buscar_unity(&repo.org, &repo.repo), None)
+                        .ok()
+                        .and_then(|j| proyectos::id_desde_json(&j))
+                },
+                |db, p| refrescar_equipo(cliente, db, p),
+                &ahora_iso(),
+                &hoy_local(),
+            )
+            .unwrap()
+        };
+
+        // 3. El miembro, en una PC sin datos.
+        let pc_miembro = tempfile::tempdir().unwrap();
+        let (entrada, db) = entrar_en_pc(pc_miembro.path(), &miembro, &cliente_miembro);
+        assert!(
+            matches!(entrada, Entrada::Dentro { rol: Rol::Desarrollador, configurado_ahora: false, .. }),
+            "{entrada:?}"
+        );
+        let db = db.expect("entra con la base abierta");
+        assert_eq!(
+            proyectos::proyecto_guardado(db.conexion()).unwrap().as_deref(),
+            Some(proyecto.as_str())
+        );
+        assert_eq!(crate::db::usuarios::listar(db.conexion()).unwrap().len(), 2);
+        drop(db);
+        let (entrada, _) = entrar_en_pc(pc_miembro.path(), &miembro, &cliente_miembro);
+        assert!(matches!(entrada, Entrada::Dentro { rol: Rol::Desarrollador, .. }), "{entrada:?}");
+
+        // 4. La dueña, en otra PC sin datos.
+        let pc_duena = tempfile::tempdir().unwrap();
+        let (entrada, _) = entrar_en_pc(pc_duena.path(), &duena, &cliente_duena);
+        assert!(matches!(entrada, Entrada::Dentro { rol: Rol::Administrador, .. }), "{entrada:?}");
+
+        cliente_miembro.cerrar_sesion().unwrap();
+        cliente_duena.cerrar_sesion().unwrap();
+        println!("el miembro entró desde el servidor en el proyecto {proyecto} de branchboard-pruebas");
     }
 
     /// **Prueba en el entorno real** (#240) contra branchboard-pruebas, con la sesión de Unity VC del

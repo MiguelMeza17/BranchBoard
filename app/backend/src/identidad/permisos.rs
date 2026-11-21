@@ -162,6 +162,9 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("eliminar_proyecto", Acceso::Roles(SOLO_ADMIN)),
     // Proyectos sin Unity VC (`proyecto_local`).
     ("crear_proyecto_local", Acceso::Libre),
+    // Proyectos sin Unity VC en el servidor (#240): todavía no hay proyecto ni rol.
+    ("crear_proyecto_servidor", Acceso::Libre),
+    ("abrir_proyecto_servidor", Acceso::Libre),
     ("abrir_proyecto_local", Acceso::Libre),
     ("listar_proyectos_locales", Acceso::Libre),
     ("importar_proyecto_local", Acceso::Libre),
