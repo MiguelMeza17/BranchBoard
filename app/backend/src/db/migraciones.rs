@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 10;
+pub const VERSION_ESQUEMA: u32 = 11;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -231,6 +231,20 @@ fn migraciones() -> Vec<String> {
             rama      TEXT NOT NULL,
             changeset INTEGER NOT NULL,
             PRIMARY KEY (rama, changeset)
+        ) STRICT;"
+            .to_string(),
+        // 11 — bandeja de salida hacia el servidor de Supabase (#238). Local: los eventos de esta
+        // máquina que todavía no subieron a `eventos` del servidor. Se suben en orden (`rowid`) y se
+        // borran al confirmarse; sin internet esperan aquí aunque se cierre la app.
+        "CREATE TABLE bandeja_salida (
+            id                TEXT PRIMARY KEY,
+            proyecto_servidor TEXT NOT NULL,
+            tipo              TEXT NOT NULL,
+            tarea_id          TEXT,
+            payload           TEXT NOT NULL,
+            creado_en         TEXT NOT NULL,
+            intentos          INTEGER NOT NULL DEFAULT 0,
+            ultimo_error      TEXT
         ) STRICT;"
             .to_string(),
     ]

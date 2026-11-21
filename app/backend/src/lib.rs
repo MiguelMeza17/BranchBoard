@@ -72,6 +72,10 @@ fn disparar_polling(app: tauri::AppHandle) {
             }
             Err(_) => {}
         }
+        // Sube lo que espera en la bandeja de salida (#238). Sin proyecto abierto no hay nada que subir.
+        if let Ok(bandeja) = comandos_eventos::subir_bandeja_en(&estado) {
+            let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &bandeja);
+        }
     });
 }
 
@@ -148,6 +152,7 @@ pub fn run() {
             comandos_eventos::configurar_carpeta_compartida,
             comandos_eventos::sincronizar_eventos,
             comandos_eventos::revisar_actualizaciones,
+            comandos_eventos::eventos_por_subir,
             comandos_eventos::compactar_eventos,
             comandos_identidad::exportar_llave_firma,
             usuarios::listar_usuarios,

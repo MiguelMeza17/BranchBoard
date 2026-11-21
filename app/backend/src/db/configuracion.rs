@@ -10,6 +10,9 @@ use crate::modelo::normalizar_email;
 pub const CLAVE_NOMBRE_PROYECTO: &str = "nombre_proyecto";
 /// Ruta de la imagen del proyecto dentro de la carpeta compartida.
 pub const CLAVE_ICONO_PROYECTO: &str = "icono_proyecto";
+/// Id (uuid) del proyecto en el servidor de Supabase (#238). Mientras no exista, los eventos no se suben
+/// al servidor. Lo fija "vincular el proyecto con el servidor" (#240).
+pub const CLAVE_PROYECTO_SERVIDOR: &str = "proyecto_servidor_id";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ajuste {

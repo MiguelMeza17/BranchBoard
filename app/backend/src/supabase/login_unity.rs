@@ -67,11 +67,15 @@ fn credencial_de(carpeta_plastic4: &Path, correo: &str) -> Resultado<CredencialU
 
 /// Deja abierta la sesión del servidor para `correo`. Si ya hay una guardada de ese correo no toca la red
 /// (devuelve `false`); si no, la pide a `login-unity` con el token de Unity VC (devuelve `true`).
+///
+/// El token de `tokens.conf` dura ~1 h y `cm` lo renueva solo cuando habla con el servidor. Si Unity lo
+/// rechaza, se llama a `renovar_token(org)` (un comando remoto de `cm`) y se reintenta una vez con el nuevo.
 pub fn asegurar_sesion_servidor<L: Llavero>(
     cliente: &ClienteSupabase<L>,
     carpeta_plastic4: &Path,
     correo: &str,
     webserver: impl Fn(&str) -> Resultado<String>,
+    renovar_token: impl Fn(&str) -> Resultado<()>,
 ) -> Resultado<bool> {
     let correo = correo.trim().to_lowercase();
     if let Some(sesion) = cliente.sesion_guardada()? {
@@ -81,16 +85,41 @@ pub fn asegurar_sesion_servidor<L: Llavero>(
     }
     let credencial = credencial_de(carpeta_plastic4, &correo)?;
     let servidor = webserver(&credencial.org)?;
-    cliente.iniciar_sesion_con_unity(&credencial.token, &credencial.org, &servidor)?;
+    match cliente.iniciar_sesion_con_unity(&credencial.token, &credencial.org, &servidor) {
+        Err(Error::SesionUnityVcCaducada) => {
+            renovar_token(&credencial.org)?;
+            let nueva = credencial_de(carpeta_plastic4, &correo)?;
+            cliente.iniciar_sesion_con_unity(&nueva.token, &nueva.org, &servidor)?;
+        }
+        otro => {
+            otro?;
+        }
+    }
     Ok(true)
+}
+
+/// Renueva el token de `tokens.conf` con un comando remoto de `cm` (lo renueva solo al usarse; probado
+/// el 2026-11-21: después de `cm repo list <org>@unity` el token cambia).
+pub fn renovar_token_cm(estado: &crate::estado::AppState, org: &str) -> Resultado<()> {
+    crate::cm::ejecutor::Comando::cm()
+        .arg("repo")
+        .arg("list")
+        .arg(format!("{org}@unity"))
+        .exigir_exito(estado)
+        .map(|_| ())
 }
 
 /// [`asegurar_sesion_servidor`] con el proyecto de Supabase del entorno, el llavero del sistema y la
 /// carpeta `plastic4` real.
-pub fn asegurar_sesion_servidor_del_equipo(correo: &str) -> Resultado<bool> {
+pub fn asegurar_sesion_servidor_del_equipo(
+    estado: &crate::estado::AppState,
+    correo: &str,
+) -> Resultado<bool> {
     let carpeta = crate::cm::sesion::carpeta_config_plastic().ok_or(Error::SinSesionUnityVc)?;
     let cliente = ClienteSupabase::new(Entorno::actual().proyecto(), LlaveroSistema);
-    asegurar_sesion_servidor(&cliente, &carpeta, correo, region::webserver)
+    asegurar_sesion_servidor(&cliente, &carpeta, correo, region::webserver, |org| {
+        renovar_token_cm(estado, org)
+    })
 }
 
 #[cfg(test)]
@@ -176,9 +205,13 @@ mod tests {
         let cliente = ClienteSupabase::new(&super::super::entorno::PRUEBAS, llavero);
         let carpeta = tempfile::tempdir().unwrap();
         // Sin tokens.conf y con un `webserver` que falla: si intentara la red, daría error.
-        let r = asegurar_sesion_servidor(&cliente, carpeta.path(), "Ana@VirusTF.dev", |_| {
-            Err(Error::Interno("no debía llamarse".into()))
-        });
+        let r = asegurar_sesion_servidor(
+            &cliente,
+            carpeta.path(),
+            "Ana@VirusTF.dev",
+            |_| Err(Error::Interno("no debía llamarse".into())),
+            |_| Err(Error::Interno("no debía llamarse".into())),
+        );
         assert!(matches!(r, Ok(false)));
     }
 
@@ -187,9 +220,13 @@ mod tests {
         let cliente =
             ClienteSupabase::new(&super::super::entorno::PRUEBAS, LlaveroMemoria::default());
         let carpeta = tempfile::tempdir().unwrap();
-        let r = asegurar_sesion_servidor(&cliente, carpeta.path(), "ana@virustf.dev", |_| {
-            Ok("https://x.plasticscm.com:7178".into())
-        });
+        let r = asegurar_sesion_servidor(
+            &cliente,
+            carpeta.path(),
+            "ana@virustf.dev",
+            |_| Ok("https://x.plasticscm.com:7178".into()),
+            |_| Ok(()),
+        );
         assert!(matches!(r, Err(Error::SinSesionUnityVc)));
     }
 
@@ -206,7 +243,10 @@ mod tests {
             ClienteSupabase::new(&super::super::entorno::PRUEBAS, LlaveroMemoria::default());
 
         let abrio =
-            asegurar_sesion_servidor(&cliente, &carpeta, &correo, region::webserver).unwrap();
+            asegurar_sesion_servidor(&cliente, &carpeta, &correo, region::webserver, |org| {
+                renovar_token_cm(&estado, org)
+            })
+            .unwrap();
         assert!(abrio, "sin sesión guardada debía pedirla");
         let sesion = cliente.sesion_guardada().unwrap().unwrap();
         assert_eq!(sesion.correo, correo);
@@ -218,7 +258,12 @@ mod tests {
         assert_eq!(perfiles, serde_json::json!([{ "correo": correo }]));
 
         // La segunda vez no vuelve a pedirla.
-        assert!(!asegurar_sesion_servidor(&cliente, &carpeta, &correo, region::webserver).unwrap());
+        assert!(
+            !asegurar_sesion_servidor(&cliente, &carpeta, &correo, region::webserver, |org| {
+                renovar_token_cm(&estado, org)
+            })
+            .unwrap()
+        );
 
         // Un token que Unity rechaza → hay que volver a iniciar sesión con Unity.
         let otro = ClienteSupabase::new(&super::super::entorno::PRUEBAS, LlaveroMemoria::default());
@@ -232,5 +277,41 @@ mod tests {
         println!(
             "login-unity verificado para {correo} (cuenta de prueba creada en branchboard-pruebas)"
         );
+    }
+
+    /// Token de `tokens.conf` vencido: Unity lo rechaza, se renueva (aquí se simula escribiendo el token
+    /// real en un `tokens.conf` temporal, como haría `cm`) y el segundo intento abre la sesión.
+    #[test]
+    #[ignore = "toca branchboard-pruebas y la sesión real de Unity VC: correr a mano con --ignored"]
+    fn entorno_real_token_vencido_se_renueva_y_se_reintenta() {
+        let estado = crate::estado::AppState::default();
+        let correo = crate::cm::lectura::whoami(&estado).expect("sin sesión de cm");
+        let real = crate::cm::sesion::carpeta_config_plastic().unwrap();
+        renovar_token_cm(&estado, "MiguelM17").unwrap();
+        let bueno = credencial_de(&real, &correo).unwrap();
+
+        let falsa = tempfile::tempdir().unwrap();
+        let linea = |token: &str| {
+            format!(
+                "server={}@cloud user={correo} token={token}
+",
+                bueno.org
+            )
+        };
+        std::fs::write(falsa.path().join("tokens.conf"), linea("TOKENvencido")).unwrap();
+        let renovaciones = RefCell::new(0);
+        let cliente =
+            ClienteSupabase::new(&super::super::entorno::PRUEBAS, LlaveroMemoria::default());
+        let abrio =
+            asegurar_sesion_servidor(&cliente, falsa.path(), &correo, region::webserver, |_| {
+                *renovaciones.borrow_mut() += 1;
+                std::fs::write(falsa.path().join("tokens.conf"), linea(&bueno.token))?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(abrio);
+        assert_eq!(*renovaciones.borrow(), 1);
+        assert_eq!(cliente.sesion_guardada().unwrap().unwrap().correo, correo);
+        cliente.cerrar_sesion().unwrap();
     }
 }

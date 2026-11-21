@@ -183,15 +183,17 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 |---|---|
 | Leer proyectos, miembros, eventos y perfiles | `select` normal por la API de datos; solo devuelve lo de los proyectos de los que se es miembro |
 | Editar el propio nombre y apellido | `update perfiles set nombre, apellido` (el correo no) |
-| Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en` |
+| Publicar un evento | `insert into eventos (id, proyecto_id, tipo, tarea_id, payload, creado_en_app)`; el servidor pone `autor`, `orden` y `recibido_en`. Si el `tipo` está en `privado.permisos_evento` y el rol de quien lo manda no está en sus roles, se rechaza con `42501` (#247, tabla en [SEGURIDAD.md](./SEGURIDAD.md#reglas-del-servidor-supabase-234)) |
 | Crear un proyecto sin Unity VC | `rpc/crear_proyecto(p_nombre)` → id; quien lo crea queda Administrador |
 | Agregar a alguien con cuenta | `rpc/agregar_miembro(p_proyecto, p_correo, p_rol)` |
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
 | Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
 
-Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
+**Ojo con la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red y reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). Hoy la bandeja, ante un lote que falla "sin permiso", se para y no deja pasar a los siguientes; y como manda lotes de 50, un solo evento rechazado tumba el lote entero. **Pendiente**: que la bandeja aparte el evento rechazado en vez de quedarse atascada.
 
-**Pruebas de las reglas** (`supabase/tests/01_reglas.test.sql`, 42 casos): crean cuentas, proyectos y eventos de mentira dentro de una transacción que se deshace al final, así que no dejan nada en la base. No usan `supabase test db` (necesita Docker) sino la CLI v3:
+Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`, `puede_publicar`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
+
+**Pruebas de las reglas** (`supabase/tests/01_reglas.test.sql`, 63 casos; 21 de ellos de eventos según el rol, #247): crean cuentas, proyectos y eventos de mentira dentro de una transacción que se deshace al final, así que no dejan nada en la base. No usan `supabase test db` (necesita Docker) sino la CLI v3:
 
 ```
 npx supabase@3 db query --remote --yes --file supabase/tests/01_reglas.test.sql
@@ -277,8 +279,29 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 - **Base de datos** (migración `20261121010000_login_unity.sql`): `cuenta_por_correo(correo)` (id y si confirmó el correo) y `vincular_repo_unity(usuario, org, repo, nombre)`. **Solo las ejecuta `service_role`** (la clave secreta, que solo tienen las Edge Functions): con sesión normal o sin sesión dan `42501`. `verify_jwt = false` en `config.toml` porque las claves nuevas (`sb_publishable_…`) no son JWT: cada función revisa lo suyo.
 - **Desplegar** (pruebas primero): `npx supabase@3 functions deploy login-unity vincular-repo-unity --use-api --remote=freppiixmuspvozaqrxj` (pide confirmar). `--use-api` empaqueta en el servidor, sin Docker.
 - **Pruebas**: `npx deno@2 test supabase/functions/_shared/unity.test.ts` (9 casos, `fetch` simulado: servidores no permitidos, token rechazado, sin red, repo con `/`); `supabase/tests/02_login_unity.test.sql` (15 casos, igual que las reglas de #234). De punta a punta contra pruebas, con una cuenta real de Unity VC (2026-11-21): token inválido → 401; servidor ajeno → 400; login → sesión válida en Auth con el correo confirmado; segundo login → misma cuenta; cuenta sin confirmar → queda confirmada y con otra contraseña; vincular sin sesión → 401; repo inexistente → 404; la dueña vincula `BranchBoard-Pruebas` → Administradora, y vincular otra vez → mismo proyecto. Después se borraron la cuenta y el proyecto de prueba.
-- **En la app** (`app/backend/src/supabase/login_unity.rs`): `iniciar_sesion_unity_vc` (login por el navegador, o la sesión de `cm` que ya había), al confirmar el correo con `cm whoami`, abre también la sesión del servidor. Si ya hay una guardada en el llavero para ese correo no toca la red. Si no, toma de `tokens.conf` la línea `server=<org>@cloud user=<correo> token=…` (prefiere la organización por nombre sobre el id numérico), saca el `webserver` de `cloudregions.conf` (`servidor::region::webserver`) y llama a `login-unity` (`ClienteSupabase::iniciar_sesion_con_unity`), que guarda la sesión en el llavero como la de correo y contraseña. **Si falla** (sin internet, servidor pausado, Unity rechaza el token) la sesión de Unity sigue valiendo: el resultado trae `aviso_servidor` con el motivo y lo que necesita el servidor espera. Errores de la función: `401` → `SesionUnityVcCaducada` (volver a iniciar sesión con Unity); `400/403/404/409` → `Validacion` con el mensaje de la función.
+- **En la app** (`app/backend/src/supabase/login_unity.rs`): `iniciar_sesion_unity_vc` (login por el navegador, o la sesión de `cm` que ya había), al confirmar el correo con `cm whoami`, abre también la sesión del servidor. Si ya hay una guardada en el llavero para ese correo no toca la red. Si no, toma de `tokens.conf` la línea `server=<org>@cloud user=<correo> token=…` (prefiere la organización por nombre sobre el id numérico), saca el `webserver` de `cloudregions.conf` (`servidor::region::webserver`) y llama a `login-unity` (`ClienteSupabase::iniciar_sesion_con_unity`), que guarda la sesión en el llavero como la de correo y contraseña. **Si falla** (sin internet, servidor pausado, Unity rechaza el token) la sesión de Unity sigue valiendo: el resultado trae `aviso_servidor` con el motivo y lo que necesita el servidor espera. Errores de la función: `401` → `SesionUnityVcCaducada` (volver a iniciar sesión con Unity); `400/403/404/409` → `Validacion` con el mensaje de la función. **Token vencido (2026-11-21, #238)**: el token de `tokens.conf` dura ~1 h y `cm` solo lo renueva al hablar con el servidor, así que con una sesión de `cm` vieja Unity lo rechazaba aunque `cm whoami` funcionara. Ahora, si `login-unity` da `401`, se corre `cm repo list <org>@unity` (renueva el token; comprobado que cambia) y se reintenta una vez.
 - `vincular-repo-unity` lo usará "Cargar proyecto" (#240).
+
+### Bandeja de salida (#238)
+
+**Nuevo (2026-11-21)** — los cambios de este equipo suben a la tabla `eventos` del servidor (`app/backend/src/eventos/bandeja.rs`).
+
+- **Dónde esperan**: tabla local `bandeja_salida` de SQLite (migración 11): `id` (el mismo del evento), `proyecto_servidor`, `tipo`, `tarea_id`, `payload`, `creado_en`, `intentos`, `ultimo_error`. Sobrevive a cerrar la app.
+- **Quién la llena**: `eventos::publicar`, en **la misma transacción** que el cambio y que `eventos_aplicados`: si el cambio se guarda, el evento queda en la bandeja; si falla, tampoco. `tareas.rs`, `sprints.rs`, `chat.rs`… no cambian.
+- **Qué no entra**:
+  - Proyectos sin `proyecto_servidor_id` en `configuracion_proyecto`: ese valor lo fija vincular el proyecto con el servidor (#240). Mientras no esté, no se encola nada.
+  - Eventos de roles (`TIPOS_FIRMADOS`): en el servidor los roles los cambian solo sus funciones (#234/#241).
+- **Por ahora se sigue escribiendo en `ops/`** además de la bandeja. Quitar `ops/` es de #244. Así la sincronización por Drive/OneDrive sigue funcionando hasta que exista la recepción desde el servidor (#239).
+- **Subida**: el temporizador de 15 s (`disparar_polling` en `lib.rs`) llama a `subir_bandeja_en`.
+  - Manda lotes de 50 en orden de llegada a `POST /rest/v1/eventos?on_conflict=id` con `Prefer: resolution=ignore-duplicates` (`ClienteSupabase::insertar_eventos`). Un evento que ya estaba (la respuesta se perdió y se reintenta) se ignora, sin error ni duplicado.
+  - Al confirmarse, se borra de la bandeja.
+  - Si un lote falla (sin internet, sin sesión, sin permiso), se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
+  - La base solo se presta para leer y borrar, nunca durante la red.
+- **Qué manda la app**: `id, proyecto_id, tipo, tarea_id, payload, creado_en_app`. El servidor pone `autor` (la cuenta de la sesión), `orden` y `recibido_en`.
+- **Interfaz**: comando `eventos_por_subir()` (libre; 0 sin proyecto abierto) y evento Tauri `bandeja-salida` (`{ pendientes, subidos, error }`) después de cada intento. El Topbar muestra **"N cambios pendientes de enviar"** mientras haya alguno; al pasar el mouse dice el motivo.
+- **Pruebas**:
+  - 6 unitarias: sin vincular no encola; roles no; sin duplicar; orden y lotes; sin red esperan; un lote que falla frena; sobrevive a cerrar.
+  - Real, `eventos::bandeja::…::entorno_real_sin_red_esperan_y_al_volver_se_suben`: contra branchboard-pruebas, entrando con la sesión de Unity VC del equipo (#237). Crea un proyecto en el servidor, vincula una base local, publica dos cambios, y sin red esperan (dirección que no resuelve, misma sesión). Al volver la red suben en orden con el autor de la sesión, y reenviar uno no duplica. Deja la cuenta y el proyecto "Prueba bandeja #238": borrarlos después con `delete from public.proyectos where nombre = 'Prueba bandeja #238'` y `delete from auth.users where lower(email) = '<correo>'`.
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
