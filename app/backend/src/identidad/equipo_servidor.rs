@@ -466,32 +466,39 @@ mod tests {
 
     /// **Prueba en el entorno real** (#241) contra **branchboard-pruebas**: A crea un proyecto, agrega a B
     /// como Desarrollador e invita a un correo sin cuenta. B **no** puede cambiar roles ni agregar (lo
-    /// rechaza el servidor, no la app) ni ve invitaciones. A nombra Administrador a B y se degrada; B, ya
-    /// último Administrador, no se puede degradar; B quita a A y A deja de ver el proyecto.
+    /// rechaza el servidor, no la app) ni ve invitaciones. El invitado se registra y entra solo con su
+    /// rol. A nombra Administrador a B y se degrada; B, ya último Administrador, no se puede degradar; B
+    /// quita al invitado y a A, y A deja de ver el proyecto.
     ///
-    /// Necesita dos cuentas confirmadas `usuarios-a|b@prueba.branchboard` con la clave de
-    /// `BB_PRUEBA_SUPABASE_CLAVE` (cómo crearlas y borrarlas: "Usuarios y roles por el servidor (#241)" en
-    /// BACKEND.md). El proyecto `bb-prueba-241` se borra con las cuentas.
+    /// Registra sus propias cuentas (`usuarios-a|b|invitado-<hora>@prueba.branchboard`, clave aleatoria que
+    /// no se imprime) y crea el proyecto `bb-prueba-241-<hora>`. La API pública no borra cuentas ni
+    /// proyectos: al terminar se borran con SQL ("Usuarios y roles por el servidor (#241)" en BACKEND.md).
     #[test]
-    #[ignore = "usa branchboard-pruebas de verdad: correr a mano con BB_PRUEBA_SUPABASE_CLAVE"]
+    #[ignore = "crea cuentas y un proyecto en branchboard-pruebas: correr a mano con --ignored y borrarlos (BACKEND.md)"]
     fn entorno_real_usuarios_por_el_servidor() {
         use crate::supabase::entorno::PRUEBAS;
         use crate::supabase::ClienteSupabase;
+        use rand::{distributions::Alphanumeric, Rng};
 
-        let clave =
-            std::env::var("BB_PRUEBA_SUPABASE_CLAVE").expect("falta BB_PRUEBA_SUPABASE_CLAVE");
-        let entrar = |quien: &str| {
+        let hora = chrono::Utc::now().format("%H%M%S%3f").to_string();
+        let clave: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(24)
+            .map(char::from)
+            .collect();
+        let correo = |quien: &str| format!("usuarios-{quien}-{hora}@prueba.branchboard");
+        let (ua, ub, invitado) = (correo("a"), correo("b"), correo("invitado"));
+        let registrar = |correo: &str, nombre: &str| {
             let c = ClienteSupabase::new(&PRUEBAS, LlaveroMemoria::default());
-            c.iniciar_sesion(&format!("usuarios-{quien}@prueba.branchboard"), &clave)
-                .unwrap();
+            c.registrar(nombre, "Prueba", correo, &clave).unwrap();
             c
         };
-        let (ca, cb) = (entrar("a"), entrar("b"));
+        let (ca, cb) = (registrar(&ua, "Ana"), registrar(&ub, "Beto"));
         let p = ca
             .llamar(
                 "POST",
                 "/rest/v1/rpc/crear_proyecto",
-                Some(&serde_json::json!({ "p_nombre": "bb-prueba-241" })),
+                Some(&serde_json::json!({ "p_nombre": format!("bb-prueba-241-{hora}") })),
             )
             .unwrap();
         let p = p.as_str().unwrap().to_string();
@@ -508,15 +515,9 @@ mod tests {
         let (la, lb) = (db_a.conexion(), db_b.conexion());
         let guardar_a = |f: &[Usuario]| usuarios::reemplazar_todos(la, f);
         let guardar_b = |f: &[Usuario]| usuarios::reemplazar_todos(lb, f);
-        let ua = "usuarios-a@prueba.branchboard";
-        let ub = "usuarios-b@prueba.branchboard";
-        let invitado = format!(
-            "invitado-{}@prueba.branchboard",
-            chrono::Utc::now().format("%H%M%S")
-        );
 
         // A agrega a B (tiene cuenta) e invita a alguien sin cuenta.
-        let creado = crear(&a, guardar_a, ub, Rol::Desarrollador, "2026-11-21").unwrap();
+        let creado = crear(&a, guardar_a, &ub, Rol::Desarrollador, "2026-11-21").unwrap();
         assert_eq!(creado.rol, Rol::Desarrollador);
         crear(&a, guardar_a, &invitado, Rol::Tester, "2026-11-21").unwrap();
         let lista = listar(
@@ -526,19 +527,16 @@ mod tests {
             Rol::Administrador,
         )
         .unwrap();
-        println!(
-            "A ve -> {:?}",
-            lista
-                .iter()
-                .map(|u| (u.email.clone(), u.rol, u.invitado))
-                .collect::<Vec<_>>()
-        );
         assert_eq!(lista.iter().filter(|u| !u.invitado).count(), 2);
         assert_eq!(lista.iter().filter(|u| u.invitado).count(), 1);
         assert_eq!(
-            permisos::usuario_actual(la, "", ua).unwrap().rol,
+            permisos::usuario_actual(la, "", &ua).unwrap().rol,
             Rol::Administrador
         );
+        // Invitarlo otra vez se rechaza.
+        let e = crear(&a, guardar_a, &invitado, Rol::Tester, "2026-11-21").unwrap_err();
+        println!("A invita otra vez -> {e}");
+        assert!(matches!(e, Error::Validacion(_)));
 
         // B (Desarrollador): el servidor le rechaza cambiar roles y agregar; no ve invitaciones.
         let lista_b = listar(
@@ -550,42 +548,50 @@ mod tests {
         .unwrap();
         assert_eq!(lista_b.len(), 2);
         assert!(lista_b.iter().all(|u| !u.invitado && u.email.is_none()));
-        let e = cambiar_rol(&b, guardar_b, ua, Rol::Tester).unwrap_err();
+        let e = cambiar_rol(&b, guardar_b, &ua, Rol::Tester).unwrap_err();
         println!("B cambia el rol de A -> {e:?}");
         assert!(matches!(e, Error::SinPermiso));
-        let e = cambiar_rol(&b, guardar_b, ub, Rol::Administrador).unwrap_err();
+        let e = cambiar_rol(&b, guardar_b, &ub, Rol::Administrador).unwrap_err();
         println!("B se da Administrador -> {e:?}");
         assert!(matches!(e, Error::SinPermiso));
-        let e = crear(
-            &b,
-            guardar_b,
-            "otro@prueba.branchboard",
-            Rol::Tester,
-            "2026-11-21",
-        )
-        .unwrap_err();
+        let e = crear(&b, guardar_b, &correo("otro"), Rol::Tester, "2026-11-21").unwrap_err();
         println!("B agrega a alguien -> {e:?}");
         assert!(matches!(e, Error::SinPermiso));
         assert_eq!(
-            usuarios::buscar(lb, ub).unwrap().unwrap().rol,
+            usuarios::buscar(lb, &ub).unwrap().unwrap().rol,
             Rol::Desarrollador
         );
 
+        // El invitado se registra con ese correo: entra solo, con el rol de la invitación.
+        let ci = registrar(&invitado, "Iván");
+        let equipo_a = a.leer().unwrap();
+        assert!(equipo_a.invitaciones.is_empty(), "la invitación se usó");
+        let m = equipo_a
+            .miembros
+            .iter()
+            .find(|m| m.usuario.correo == invitado)
+            .expect("el invitado ya es miembro");
+        assert_eq!(m.rol, Rol::Tester);
+        let suyos = ci
+            .llamar("GET", "/rest/v1/proyectos?select=id", None)
+            .unwrap();
+        assert_eq!(suyos, serde_json::json!([{ "id": p }]));
+
         // A nombra Administrador a B y se degrada; B, último Administrador, no se puede degradar.
-        cambiar_rol(&a, guardar_a, ub, Rol::Administrador).unwrap();
-        cambiar_rol(&a, guardar_a, ua, Rol::Lider).unwrap();
-        let e = cambiar_rol(&b, guardar_b, ub, Rol::Tester).unwrap_err();
+        cambiar_rol(&a, guardar_a, &ub, Rol::Administrador).unwrap();
+        cambiar_rol(&a, guardar_a, &ua, Rol::Lider).unwrap();
+        let e = cambiar_rol(&b, guardar_b, &ub, Rol::Tester).unwrap_err();
         println!("B (último Administrador) se degrada -> {e:?}");
         assert!(matches!(e, Error::Validacion(_)));
 
-        // B quita la invitación y a A; A ya no ve el proyecto.
+        // B quita al que fue invitado y a A; A ya no ve el proyecto.
         eliminar(&b, guardar_b, &invitado).unwrap();
-        eliminar(&b, guardar_b, ua).unwrap();
-        assert!(usuarios::buscar(lb, ua).unwrap().is_none());
+        eliminar(&b, guardar_b, &ua).unwrap();
+        assert!(usuarios::buscar(lb, &ua).unwrap().is_none());
         let equipo_a = a.leer().unwrap();
         assert!(equipo_a.miembros.is_empty() && equipo_a.invitaciones.is_empty());
 
-        for c in [&ca, &cb] {
+        for c in [&ca, &cb, &ci] {
             let _ = c.cerrar_sesion();
         }
     }
