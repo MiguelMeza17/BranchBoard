@@ -19,6 +19,7 @@ import { estadoMeta } from '../lib/ui';
 import { PageHeader } from '../components/primitives';
 import { HistorialRamas } from '../components/HistorialRamas';
 import type { Tarea } from '../types';
+import { api, enTauri, type EntradaDev } from '../lib/api';
 
 // Separación entre los tramos de la línea de tiempo de main.
 const MAIN_X = 130;
@@ -230,6 +231,22 @@ type Ubicacion = { nodo: string; abrir: string[] };
 export function Branches() {
   const tareasAll = useStore((s) => s.tareas);
   const commits = useStore((s) => s.commits);
+  const versionDatos = useStore((s) => s.versionDatos);
+  // Historial real de dev en Unity VC: sus merges (de qué rama) y check-ins directos. Con él, dev
+  // muestra todas sus entradas (también las de ramas que ya no existen) y la cabeza dice cuál fue
+  // la última. Sin él (mockup o sin conexión), dev se arma con las tareas terminadas.
+  const [entradasDev, setEntradasDev] = useState<EntradaDev[]>([]);
+  useEffect(() => {
+    if (!enTauri()) return;
+    let vigente = true;
+    api
+      .historialDev()
+      .then((lista) => vigente && setEntradasDev(lista))
+      .catch(() => undefined);
+    return () => {
+      vigente = false;
+    };
+  }, [versionDatos]);
   // Historiales cerrados: 'main', 'dev' o el número de una tarea con historial. Click en
   // su recuadro de color lo cierra/abre, para ahorrar espacio.
   const [cerrados, setCerrados] = useState<Set<string>>(new Set());
@@ -433,9 +450,55 @@ export function Branches() {
     // tarea general ya fusionada (en orden) y termina en el último merge: su presente.
     const historialDev = !cerrados.has('dev');
     let bordeDev: number | null = null; // borde derecho del panel de dev en el presente
-    const merges = tareas
-      .filter((t) => !padreEnGrafo(t) && terminada(t))
-      .sort((a, b) => (a.fecha_completada ?? '').localeCompare(b.fecha_completada ?? '') || a.id.localeCompare(b.id));
+    // Con el historial real, un recuadro por merge a dev (en orden de changeset): el de una tarea
+    // terminada lleva su número; el de una rama sin tarea (o que se sigue trabajando), cs:<n>.
+    const entradaDe = new Map<string, EntradaDev>();
+    const mergesReales = entradasDev
+      .filter((e) => e.rama_origen)
+      .map((e) => {
+        const rama = e.rama_origen!.toLowerCase();
+        const tarea = tareas.find((t) => terminada(t) && !padreEnGrafo(t) && t.rama_asociada?.toLowerCase() === rama);
+        const t: Tarea = tarea
+          ? { ...tarea, fecha_completada: e.fecha }
+          : ({
+              id: `cs:${e.changeset}`,
+              titulo: e.comentario ?? e.rama_origen!.split('/').pop() ?? '',
+              rama_asociada: e.rama_origen,
+              estado: 'terminada',
+              fecha_completada: e.fecha,
+              tarea_padre_id: null,
+              eliminada: false,
+            } as Tarea);
+        entradaDe.set(t.id, e);
+        return t;
+      });
+    const merges = mergesReales.length
+      ? mergesReales
+      : tareas
+          .filter((t) => !padreEnGrafo(t) && terminada(t))
+          .sort((a, b) => (a.fecha_completada ?? '').localeCompare(b.fecha_completada ?? '') || a.id.localeCompare(b.id));
+    const ultimaEntrada = entradasDev.length ? entradasDev[entradasDev.length - 1] : null;
+    const fechaLocal = (iso: string) => {
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+    };
+    const infoEntrada = (e: EntradaDev, t: Tarea, esCabeza: boolean) => (
+      <div className="space-y-1">
+        {esCabeza && <div className="text-[11px] font-semibold text-primary">Última entrada en dev</div>}
+        <div className="font-mono text-[11px]">{e.rama_origen}</div>
+        {!t.id.startsWith('cs:') && <InfoFila k="Tarea" v={`${t.id} · ${t.titulo}`} />}
+        {e.comentario && <InfoFila k="Comentario" v={e.comentario} />}
+        <InfoFila k="Changeset" v={`cs:${e.changeset}`} />
+        <InfoFila k="Fecha" v={fechaLocal(e.fecha)} />
+        <InfoFila k="Autor" v={e.autor} />
+        {esCabeza && ultimaEntrada && ultimaEntrada.changeset !== e.changeset && (
+          <InfoFila
+            k="Después"
+            v={`cs:${ultimaEntrada.changeset}, check-in directo (${fechaLocal(ultimaEntrada.fecha)})`}
+          />
+        )}
+      </div>
+    );
     // Cabeza elegida (viaje en el tiempo): índice del merge hasta donde se ve dev; -1 = presente.
     const idxCabeza = historialDev && cabezaDev ? merges.findIndex((m) => m.id === cabezaDev) : -1;
     const enElPasado = idxCabeza >= 0;
@@ -477,7 +540,10 @@ export function Branches() {
         id,
         type: 'rama',
         position: { x: esCabezaActual && !historialDev ? DEV_CONTENIDO_X : xDeMerge(i), y: DEV_Y },
-        data: { nombre: t.id, info: infoTerminada(t) } satisfies RamaData,
+        data: {
+          nombre: t.id,
+          info: entradaDe.has(t.id) ? infoEntrada(entradaDe.get(t.id)!, t, t === ultimo) : infoTerminada(t),
+        } satisfies RamaData,
         style: esCabezaActual
           ? { ...estiloRamaBase, border: '2px solid #2dd4bf', cursor: 'pointer' }
           : { ...estiloPasado, cursor: 'pointer' },
@@ -708,6 +774,8 @@ export function Branches() {
     const nacimiento = (t: Tarea): string => {
       const f = primerCommit.get(t.id);
       if (f) return f;
+      // Con el historial real, sin commits no se sabe de qué dev nació: cuelga del presente.
+      if (mergesReales.length) return '9999';
       if (recientes.has(t.id) || mergesBase.length < 2) return FECHA_RECIENTE;
       return `${mergesBase[hashDe(t.id) % (mergesBase.length - 1)].fecha_completada}T12:00`;
     };
@@ -830,7 +898,7 @@ export function Branches() {
 
     const conHistorial = new Set(['main', ...historialDe.keys()]);
     return { nodes, edges, ubicaciones, buscables: tareas, conHistorial, duenoHistorial, cabezaId };
-  }, [tareasAll, commits, cerrados, cabezaDev, enfoqueDev, cabezas]);
+  }, [tareasAll, commits, cerrados, cabezaDev, enfoqueDev, cabezas, entradasDev]);
 
   // ===== vistas: Árbol (diagrama) e Historial (ramas apiladas con su historia y commits) =====
   const [vista, setVista] = useState<'arbol' | 'historial'>('arbol');

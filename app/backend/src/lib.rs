@@ -28,6 +28,7 @@ pub mod error;
 pub mod estado;
 pub mod eventos;
 pub mod exportacion;
+pub mod historial_dev;
 pub mod identidad;
 pub mod instalacion;
 pub mod modelo;
@@ -139,6 +140,7 @@ pub fn run() {
             sistema::ping,
             comandos::logs_unity::logs_unity_para_terminar,
             comandos::diff::diff_rama,
+            historial_dev::historial_dev,
             comandos::diff::diff_changeset,
             comandos::diff::diff_archivo,
             entrantes::cambios_entrantes,

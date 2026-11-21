@@ -79,6 +79,17 @@ export interface EstadoBandeja {
   servidor_pausado: boolean;
 }
 
+/** Un check-in de `/main/dev` en Unity VC: un merge (con su rama de origen) o un check-in directo. */
+export interface EntradaDev {
+  changeset: number;
+  /** UTC, como la da la API (`2026-11-09T21:52:15Z`). */
+  fecha: string;
+  autor: string;
+  comentario: string | null;
+  rama_origen: string | null;
+  changeset_origen: number | null;
+}
+
 /** Lista de Usuarios: solo Líder/Administrador reciben correos ajenos. */
 export interface UsuarioVisible extends Omit<Usuario, 'email'> {
   email: string | null;
@@ -437,6 +448,8 @@ export function unoPorRepo<T extends { repo: string; nombre: string }>(lista: T[
 const cuentasMockup = new Map<string, { cuenta: Cuenta; clave: string }>();
 
 export const api = {
+  /** Historial real de dev (Branches). En el mockup, vacío: se dibuja con las tareas terminadas. */
+  historialDev: () => llamar<EntradaDev[]>('historial_dev', undefined, () => []),
   listarUsuarios: (mockup: () => UsuarioVisible[]) => llamar<UsuarioVisible[]>('listar_usuarios', undefined, mockup),
   crearUsuario: (email: string, rol: Rol) => llamar<Usuario>('crear_usuario', { email, rol }, () => { throw new Error('Solo en la app de escritorio'); }),
   cambiarRol: (email: string, rol: Rol) => llamar<void>('cambiar_rol', { email, rol }, () => undefined),

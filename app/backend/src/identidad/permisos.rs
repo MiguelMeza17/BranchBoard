@@ -124,6 +124,7 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("logs_unity_para_terminar", Acceso::Roles(TODOS)),
     ("rechazar_revision", Acceso::Roles(TODOS)),
     ("listar_commits", Acceso::Roles(TODOS)),
+    ("historial_dev", Acceso::Roles(TODOS)),
     ("abrir_en_unity", Acceso::Roles(TODOS)),
     // Solo cambia el workspace propio y abre Unity VC; quién puede autorizar ya lo revisó `autorizar_merge` (#207).
     ("abrir_resolucion_conflicto", Acceso::Roles(TODOS)),
