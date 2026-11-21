@@ -44,6 +44,8 @@ pub struct EstadoBandeja {
     pub rechazados: u64,
     /// Por qué se paró, si quedaron pendientes por un error (sin internet, sin sesión…).
     pub error: Option<String>,
+    /// El proyecto de Supabase está pausado (#246): los cambios esperan hasta que lo reactiven.
+    pub servidor_pausado: bool,
 }
 
 /// `true` si reintentar el envío no va a servir: el servidor dijo que no (permiso, regla, datos).
@@ -209,6 +211,7 @@ pub fn subir(
                         Err(e) => {
                             let mensaje = e.to_string();
                             con_db(&mut |c| anotar_fallo(c, std::slice::from_ref(id), &mensaje))?;
+                            estado.servidor_pausado = matches!(e, Error::ServidorPausado);
                             estado.error = Some(mensaje);
                             parar = true;
                             break;
@@ -222,6 +225,7 @@ pub fn subir(
             Err(e) => {
                 let mensaje = e.to_string();
                 con_db(&mut |c| anotar_fallo(c, &ids, &mensaje))?;
+                estado.servidor_pausado = matches!(e, Error::ServidorPausado);
                 estado.error = Some(mensaje);
                 break;
             }
@@ -310,7 +314,8 @@ mod tests {
                 pendientes: 0,
                 subidos: (TAMANO_LOTE + 3) as u64,
                 rechazados: 0,
-                error: None
+                error: None,
+                servidor_pausado: false
             }
         );
         let lotes = enviados.into_inner();
@@ -477,6 +482,23 @@ mod tests {
             (1, 2, 0)
         );
         assert!(estado.error.is_some());
+    }
+
+    #[test]
+    fn con_el_servidor_pausado_esperan_y_se_avisa() {
+        let db = base();
+        let c = db.conexion();
+        vincular(c);
+        encolar(c, "e1", &evento("crear_tarea")).unwrap();
+        let estado = subir(subir_en(c), |_| Err(Error::ServidorPausado)).unwrap();
+        assert!(estado.servidor_pausado);
+        assert_eq!(
+            (estado.pendientes, estado.rechazados),
+            (1, 0),
+            "pausado no es rechazo"
+        );
+        let estado = subir(subir_en(c), |_| Err(Error::ServidorSinConexion)).unwrap();
+        assert!(!estado.servidor_pausado);
     }
 
     #[test]
