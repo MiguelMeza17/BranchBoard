@@ -8,8 +8,12 @@
 //!
 //! - Hija directa de `/main/dev` → tarea general; sus hijas → subtareas, hasta
 //!   [`MAX_NIVELES`].
-//! - **En producción**; si la rama ya se unió (merge) a su rama padre, o su tarea
-//!   padre entra terminada, **Terminada**.
+//! - **Terminada** si la rama ya se unió (merge) a su rama padre y no tiene trabajo
+//!   después: su último check-in es el que se unió y nadie tiene en esta PC cambios
+//!   sin check-in en ella. Si no, **En producción**.
+//! - Una tarea importada terminada se **reactiva** (vuelve a En producción) cuando
+//!   aparece trabajo después de su último merge: check-ins nuevos o cambios sin
+//!   check-in en el workspace. Viaja como `reactivar_rama_importada`.
 //! - Asignada al dueño de la rama si es del equipo; si no, sin asignar.
 //! - Título: el nombre de la rama legible (`CorreccionesEtapasBasicas1-6` →
 //!   `Correcciones Etapas Basicas 1-6`).
@@ -39,13 +43,49 @@ use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, TipoTar
 use crate::ramas::{niveles, MAX_NIVELES, RAMA_DEV};
 
 pub const TIPO: &str = "importar_rama";
-pub const TIPOS: &[&str] = &[TIPO];
+pub const TIPO_REACTIVAR: &str = "reactivar_rama_importada";
+pub const TIPOS: &[&str] = &[TIPO, TIPO_REACTIVAR];
+
+/// Cada cuánto, como mínimo, se miran las tareas importadas terminadas (son dos consultas a todo el
+/// repositorio; el polling corre cada 15 s).
+const INTERVALO_REACTIVAR_SEGUNDOS: u64 = 60;
 
 /// Una rama del repositorio, como la da `cm find branch --format={name}|{owner}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RamaRemota {
     pub ruta: String,
     pub dueno: String,
+}
+
+/// `payload` de `reactivar_rama_importada`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PayloadReactivar {
+    pub tarea_id: String,
+}
+
+/// Lo que se sabe del repositorio para decidir si una rama está terminada.
+#[derive(Debug, Clone, Default)]
+pub struct Historial {
+    /// (origen, destino) → mayor changeset de origen unido con un merge de verdad.
+    pub merges: BTreeMap<(String, String), i64>,
+    /// Rama → su último changeset.
+    pub cabezas: BTreeMap<String, i64>,
+    /// Rama del workspace de esta PC, si tiene cambios sin check-in.
+    pub con_pendientes: Option<String>,
+}
+
+impl Historial {
+    /// Unida a su rama padre y sin trabajo después de ese merge.
+    pub fn terminada(&self, ruta: &str) -> bool {
+        let k = clave(ruta);
+        if self.con_pendientes.as_deref() == Some(k.as_str()) {
+            return false;
+        }
+        let Some(&unido) = self.merges.get(&(k.clone(), clave(&padre_de(ruta)))) else {
+            return false;
+        };
+        self.cabezas.get(&k).map_or(true, |&cabeza| cabeza <= unido)
+    }
 }
 
 /// `payload` de `importar_rama`.
@@ -90,20 +130,42 @@ pub fn interpretar_ramas(salida: &str) -> Vec<RamaRemota> {
         .collect()
 }
 
-/// Salida de `cm find merge "on repository '…'" --format={type}|{srcbranch}|{dstbranch} --nototal`:
-/// los pares (origen, destino) de los merges de verdad (sin cherrypicks), en minúsculas.
-pub fn interpretar_merges(salida: &str) -> BTreeSet<(String, String)> {
-    salida
-        .lines()
-        .filter_map(|linea| {
-            let mut partes = linea.split('|');
-            let tipo = partes.next()?.trim();
-            let origen = partes.next()?;
-            let destino = partes.next()?;
-            tipo.eq_ignore_ascii_case("merge")
-                .then(|| (clave(origen), clave(destino)))
-        })
-        .collect()
+/// Salida de `cm find merge "on repository '…'" --format={type}|{srcbranch}|{srcchangeset}|{dstbranch}
+/// --nototal`: por par (origen, destino) en minúsculas, el mayor changeset de origen unido con un
+/// merge de verdad (sin cherrypicks).
+pub fn interpretar_merges(salida: &str) -> BTreeMap<(String, String), i64> {
+    let mut merges = BTreeMap::new();
+    for linea in salida.lines() {
+        let partes: Vec<&str> = linea.split('|').collect();
+        let [tipo, origen, cs, destino] = partes[..] else {
+            continue;
+        };
+        let Ok(cs) = cs.trim().parse::<i64>() else {
+            continue;
+        };
+        if tipo.trim().eq_ignore_ascii_case("merge") {
+            let actual = merges.entry((clave(origen), clave(destino))).or_insert(cs);
+            *actual = (*actual).max(cs);
+        }
+    }
+    merges
+}
+
+/// Salida de `cm find changeset "on repository '…'" --format={branch}|{changesetid} --nototal`:
+/// el último changeset de cada rama (en minúsculas).
+pub fn interpretar_cabezas(salida: &str) -> BTreeMap<String, i64> {
+    let mut cabezas = BTreeMap::new();
+    for linea in salida.lines() {
+        let Some((rama, cs)) = linea.split_once('|') else {
+            continue;
+        };
+        let Ok(cs) = cs.trim().parse::<i64>() else {
+            continue;
+        };
+        let actual = cabezas.entry(clave(rama)).or_insert(cs);
+        *actual = (*actual).max(cs);
+    }
+    cabezas
 }
 
 /// `CorreccionesEtapasBasicas1-6` → `Correcciones Etapas Basicas 1-6`;
@@ -250,10 +312,7 @@ fn importar(
     tarea.tarea_padre_id = padre.as_ref().map(|p| p.id.clone());
     tarea.rama_asociada = Some(rama.ruta.clone());
     tarea.modo_trabajo = Some("rama".into());
-    let padre_terminada = padre
-        .as_ref()
-        .is_some_and(|p| p.estado == EstadoTarea::Terminada);
-    if cerrada || padre_terminada {
+    if cerrada {
         tarea.estado = EstadoTarea::Terminada;
         tarea.fecha_completada = Some(hoy.to_string());
     } else {
@@ -340,11 +399,115 @@ pub fn aplicar_importar(c: &Connection, payload: &PayloadImportar, usuario: &str
     Ok(())
 }
 
+/// Tareas importadas terminadas (no en la Papelera), con su rama.
+fn importadas_terminadas(c: &Connection) -> Resultado<Vec<(String, String)>> {
+    let mut lista = Vec::new();
+    for t in db_tareas::listar(c)? {
+        let Some(ref rama) = t.rama_asociada else {
+            continue;
+        };
+        if t.eliminada || t.estado != EstadoTarea::Terminada {
+            continue;
+        }
+        if importacion_guardada(c, rama)?.is_some_and(|(id, _)| id == t.id) {
+            lista.push((t.id.clone(), rama.clone()));
+        }
+    }
+    Ok(lista)
+}
+
+/// Publica que la tarea importada `id` vuelve a En producción.
+fn reactivar(c: &Connection, detector: &str, id: &str, cuando: &str) -> Resultado<()> {
+    let payload = PayloadReactivar {
+        tarea_id: id.to_string(),
+    };
+    let mut ev = Evento::nuevo(
+        TIPO_REACTIVAR,
+        Some(id),
+        detector,
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar {TIPO_REACTIVAR}: {e}")))?,
+    );
+    ev.timestamp = cuando.to_string();
+    eventos::publicar(c, &ev, |tx| aplicar_reactivar(tx, &payload))?;
+    Ok(())
+}
+
+/// Aplica `reactivar_rama_importada`: solo a una tarea importada y terminada; si no, no hace nada.
+pub fn aplicar_reactivar(c: &Connection, payload: &PayloadReactivar) -> Resultado<()> {
+    let mut tarea = db_tareas::obtener(c, payload.tarea_id.trim())?;
+    let Some(ref rama) = tarea.rama_asociada else {
+        return Ok(());
+    };
+    let importada = importacion_guardada(c, rama)?.is_some_and(|(id, _)| id == tarea.id);
+    if !importada || tarea.eliminada || tarea.estado != EstadoTarea::Terminada {
+        return Ok(());
+    }
+    tarea.estado = EstadoTarea::EnProduccion;
+    tarea.fecha_completada = None;
+    db_tareas::actualizar(c, &tarea)
+}
+
 /// Aplica un evento de este módulo recibido del servidor.
 pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
+    if evento.tipo == TIPO_REACTIVAR {
+        let payload: PayloadReactivar = serde_json::from_value(evento.payload.clone())
+            .map_err(|e| Error::Validacion(format!("{TIPO_REACTIVAR} inválido: {e}")))?;
+        return aplicar_reactivar(c, &payload);
+    }
     let payload: PayloadImportar = serde_json::from_value(evento.payload.clone())
         .map_err(|e| Error::Validacion(format!("{TIPO} inválido: {e}")))?;
     aplicar_importar(c, &payload, &evento.usuario)
+}
+
+/// Si ya toca volver a mirar las tareas importadas terminadas de `repo` (y anota la hora).
+fn toca_reactivar(repo: &str) -> bool {
+    static ULTIMA: OnceLock<Mutex<BTreeMap<String, std::time::Instant>>> = OnceLock::new();
+    let mut ultima = ULTIMA
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ahora = std::time::Instant::now();
+    // En las pruebas se mira siempre: no se espera el intervalo.
+    let toca = cfg!(test)
+        || ultima.get(repo).map_or(true, |t| {
+            ahora.duration_since(*t).as_secs() >= INTERVALO_REACTIVAR_SEGUNDOS
+        });
+    if toca {
+        ultima.insert(repo.to_string(), ahora);
+    }
+    toca
+}
+
+/// Merges, cabezas de rama y cambios sin check-in del workspace de esta PC.
+fn leer_historial(estado: &AppState, repo_cm: &str) -> Resultado<Historial> {
+    let consulta = |args: [&str; 2], formato: &str| {
+        Comando::cm()
+            .args(args)
+            .arg(format!("on repository '{repo_cm}'"))
+            .args([formato, "--nototal"])
+            .exigir_exito(estado)
+    };
+    let merges = interpretar_merges(&consulta(
+        ["find", "merge"],
+        "--format={type}|{srcbranch}|{srcchangeset}|{dstbranch}",
+    )?);
+    let cabezas = interpretar_cabezas(&consulta(
+        ["find", "changeset"],
+        "--format={branch}|{changesetid}",
+    )?);
+    let con_pendientes = estado.workspace_abierto().ok().and_then(|ws| {
+        let rama = crate::cm::lectura::rama_actual_workspace(estado, &ws)
+            .ok()?
+            .rama;
+        let pendientes = crate::ramas::cambios_pendientes(estado, &ws).ok()?;
+        (!pendientes.is_empty()).then(|| clave(&rama))
+    });
+    Ok(Historial {
+        merges,
+        cabezas,
+        con_pendientes,
+    })
 }
 
 /// Lee las ramas y los merges del repositorio abierto y crea las tareas que falten
@@ -362,28 +525,32 @@ pub fn revisar_en(estado: &AppState, email: &str) -> Resultado<Vec<String>> {
     let ramas = interpretar_ramas(&salida);
     let con_tarea = estado.con_db(|db| ramas_con_tarea(db.conexion()))?;
     let lista = segunda_vez(&repo_cm, candidatas(&ramas, &con_tarea));
-    if lista.is_empty() {
+    let terminadas = estado.con_db(|db| importadas_terminadas(db.conexion()))?;
+    let mirar_terminadas = !terminadas.is_empty() && toca_reactivar(&repo_cm);
+    if lista.is_empty() && !mirar_terminadas {
         return Ok(Vec::new());
     }
-    let merges = interpretar_merges(
-        &Comando::cm()
-            .args(["find", "merge"])
-            .arg(format!("on repository '{repo_cm}'"))
-            .args(["--format={type}|{srcbranch}|{dstbranch}", "--nototal"])
-            .exigir_exito(estado)?,
-    );
+    let historial = leer_historial(estado, &repo_cm)?;
     let detector = normalizar_email(email);
     let detectado = ahora_iso();
     let hoy = hoy_local();
     estado.con_db(|db| {
-        let mut creadas = Vec::new();
+        let mut tocadas = Vec::new();
         for rama in &lista {
-            let cerrada = merges.contains(&(clave(&rama.ruta), clave(&padre_de(&rama.ruta))));
+            let cerrada = historial.terminada(&rama.ruta);
             if let Some(id) = importar(db.conexion(), &detector, rama, cerrada, &detectado, &hoy)? {
-                creadas.push(id);
+                tocadas.push(id);
             }
         }
-        Ok(creadas)
+        if mirar_terminadas {
+            for (id, rama) in &terminadas {
+                if !historial.terminada(rama) {
+                    reactivar(db.conexion(), &detector, id, &detectado)?;
+                    tocadas.push(id.clone());
+                }
+            }
+        }
+        Ok(tocadas)
     })
 }
 
@@ -441,10 +608,83 @@ mod tests {
             rama("/main/dev/T-101", "miguellmezza123@gmail.com")
         );
         let merges = interpretar_merges(
-            "merge|br:/main/dev/T-101|br:/main/dev\ncherrypick|br:/main/dev/T-102|br:/main/dev/T-103\n",
+            "merge|br:/main/dev/T-101|1|br:/main/dev\nmerge|br:/main/dev/T-101|9|br:/main/dev\ncherrypick|br:/main/dev/T-102|3|br:/main/dev/T-103\n",
         );
-        assert!(merges.contains(&("/main/dev/t-101".into(), "/main/dev".into())));
+        assert_eq!(
+            merges.get(&("/main/dev/t-101".into(), "/main/dev".into())),
+            Some(&9)
+        );
         assert_eq!(merges.len(), 1, "un préstamo no cuenta como merge");
+        let cabezas = interpretar_cabezas("/main|0\n/main/dev/T-101|1\n/main/dev|2\n/main/dev|8\n");
+        assert_eq!(cabezas.get("/main/dev"), Some(&8));
+        assert_eq!(cabezas.get("/main/dev/t-101"), Some(&1));
+    }
+
+    #[test]
+    fn terminada_solo_si_no_hay_trabajo_despues_del_merge() {
+        // Como CorreccionesEtapasBasicas1-6 en VirusTF: cs 121 unido a dev y es su último check-in.
+        let rama = "/main/dev/CorreccionesEtapasBasicas1-6";
+        let mut h = Historial {
+            merges: [((clave(rama), "/main/dev".to_string()), 121)].into(),
+            cabezas: [(clave(rama), 121)].into(),
+            con_pendientes: None,
+        };
+        assert!(h.terminada(rama));
+        // Cambios sin check-in en el workspace de esta PC, en esa rama.
+        h.con_pendientes = Some(clave(rama));
+        assert!(!h.terminada(rama));
+        // En otra rama no cuentan.
+        h.con_pendientes = Some("/main/dev/otra".into());
+        assert!(h.terminada(rama));
+        // Un check-in después del merge.
+        h.cabezas.insert(clave(rama), 125);
+        assert!(!h.terminada(rama));
+        // Sin merge a su padre, nunca.
+        assert!(!h.terminada("/main/dev/SinUnir"));
+    }
+
+    #[test]
+    fn una_importada_terminada_se_reactiva_y_una_normal_no() {
+        let db = base();
+        let c = db.conexion();
+        let vieja = rama("/main/dev/Vieja", ANA);
+        let id = importar(c, ANA, &vieja, true, "2026-11-21T10:00:00Z", "2026-11-21")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            importadas_terminadas(c).unwrap(),
+            [(id.clone(), "/main/dev/Vieja".to_string())]
+        );
+        reactivar(c, ANA, &id, "2026-11-21T10:01:00Z").unwrap();
+        let t = db_tareas::obtener(c, &id).unwrap();
+        assert_eq!(t.estado, EstadoTarea::EnProduccion);
+        assert_eq!(t.fecha_completada, None);
+        assert!(importadas_terminadas(c).unwrap().is_empty());
+        // Repetir no hace nada.
+        aplicar_reactivar(
+            c,
+            &PayloadReactivar {
+                tarea_id: id.clone(),
+            },
+        )
+        .unwrap();
+
+        let mut normal = Tarea::nueva("T-150", "Normal", TipoTarea::Audio, ANA, "2026-11-21");
+        normal.rama_asociada = Some("/main/dev/T-150-normal".into());
+        normal.estado = EstadoTarea::Terminada;
+        db_tareas::insertar(c, &normal).unwrap();
+        aplicar_reactivar(
+            c,
+            &PayloadReactivar {
+                tarea_id: "T-150".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            db_tareas::obtener(c, "T-150").unwrap().estado,
+            EstadoTarea::Terminada,
+            "una tarea que no se importó no se toca"
+        );
     }
 
     #[test]

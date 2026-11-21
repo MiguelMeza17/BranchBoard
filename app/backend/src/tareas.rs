@@ -9551,6 +9551,41 @@ mod tests {
                 db_tareas::listar(env.db_b.conexion()).unwrap().len(),
                 total_a
             );
+
+            // Como en VirusTF: T-101 ya está unida a dev (entró terminada), pero alguien sigue
+            // trabajando en ella. Con cambios sin check-in en esa rama se reactiva, también en B.
+            let t101 = env
+                .estado_a
+                .con_db(|db| Ok(de_rama(db, "/main/dev/T-101").unwrap()))
+                .unwrap();
+            crate::ramas::cambiar_a_rama(&env.estado_a, &env.ws_ruta, "/main/dev/T-101").unwrap();
+            let pendiente = env.ws_ruta.join(format!("pendiente-283-{sufijo}.txt"));
+            std::fs::write(&pendiente, "trabajo despues del merge").unwrap();
+            Comando::cm()
+                .arg("add")
+                .arg(pendiente.to_string_lossy().as_ref())
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a)
+                .unwrap();
+            let reactivadas = revisar_en(&env.estado_a, &admin);
+            let _ = Comando::cm()
+                .args(["undo", "-r", "."])
+                .en(&env.ws_ruta)
+                .exigir_exito(&env.estado_a);
+            let _ = std::fs::remove_file(&pendiente);
+            assert_eq!(reactivadas.unwrap(), std::slice::from_ref(&t101.id));
+            let estado_t101 = env
+                .estado_a
+                .con_db(|db| Ok(de_rama(db, "/main/dev/T-101").unwrap().estado))
+                .unwrap();
+            assert_eq!(estado_t101, EstadoTarea::EnProduccion);
+            env.sincronizar_b();
+            assert_eq!(
+                de_rama(&env.db_b, "/main/dev/T-101").unwrap().estado,
+                EstadoTarea::EnProduccion
+            );
+            // Las demás ramas unidas y sin trabajo siguen terminadas.
+            assert_eq!(estado_base("/main/dev/T-102"), Some(EstadoTarea::Terminada));
         });
     }
 
