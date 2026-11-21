@@ -15,7 +15,7 @@ use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
 use crate::modelo::normalizar_email;
-use crate::tareas::rol_verificado_de;
+use crate::tareas::rol_de;
 
 /// Tipos de evento de chat manejados desde `ops/`.
 pub const TIPOS: &[&str] = &["enviar_chat", "crear_grupo_chat"];
@@ -211,8 +211,8 @@ fn aplicar_crear_grupo_chat(c: &Connection, creador: &str, raw: &GrupoChat) -> R
 }
 
 /// Reproduce un evento de chat recibido desde `ops/` exigiendo un emisor verificado.
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
-    if rol_verificado_de(c, publica_admin, &evento.usuario)?.is_none() {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
+    if rol_de(c, &evento.usuario)?.is_none() {
         return Err(Error::SinPermiso);
     }
     match evento.tipo.as_str() {
@@ -281,10 +281,6 @@ mod tests {
     use crate::eventos::carpeta_ops;
     use crate::eventos::configurar_carpeta_compartida;
     use crate::eventos::lectura::{self, sincronizar};
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin,
-    };
     use crate::modelo::Rol;
 
     const ANA: &str = "ana@estudio.com";
@@ -300,7 +296,6 @@ mod tests {
         ops: PathBuf,
         db_b: Db,
         local_b: PathBuf,
-        publica: String,
     }
 
     fn setup() -> Escenario {
@@ -321,10 +316,6 @@ mod tests {
         configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
         let ops = carpeta_ops(&local_a).unwrap();
 
-        let publica = generar_llaves_admin(&local_a, None).unwrap();
-        fijar_llave_publica_admin(&local_b, &publica).unwrap();
-        let privada = cargar_llave_admin(&local_a, None).unwrap();
-
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
 
@@ -339,11 +330,6 @@ mod tests {
                 apellido: "Test".into(),
                 rol,
                 fecha_alta: HOY.into(),
-                firma: Some(firmas::firmar_rol(&privada, correo, rol, AHORA).unwrap()),
-                firmado_en: Some(AHORA.into()),
-                firmado_por: Some(ANA.into()),
-                llave_publica: None,
-                certificado: None,
             };
             usuarios::insertar(db_a.conexion(), &fila).unwrap();
             usuarios::insertar(db_b.conexion(), &fila).unwrap();
@@ -355,7 +341,6 @@ mod tests {
             ops,
             db_b,
             local_b,
-            publica,
         }
     }
 
@@ -464,7 +449,6 @@ mod tests {
         assert_eq!(
             aplicar_evento(
                 e.db_a.conexion(),
-                &e.publica,
                 &Evento::nuevo(
                     "enviar_chat",
                     None,
@@ -482,7 +466,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         assert_eq!(sync.aplicados, 5);
@@ -535,7 +519,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora2, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         let revivida: Vec<_> = obtener_estado(e.db_b.conexion(), ZOE)
@@ -572,8 +556,8 @@ mod tests {
             marcar_chat_leido_en, obtener_chat_en,
         };
         use crate::comandos::datos::carpeta_abierta;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
-        use crate::identidad::equipo::{self, Firmante};
+        use crate::estado::AppState;
+
         use crate::modelo::hoy_local;
 
         const TESTER: &str = "tester119@estudio.com";
@@ -615,15 +599,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
@@ -637,22 +618,17 @@ mod tests {
 
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
                     for (correo, rol) in [(ZOE, Rol::Desarrollador), (TESTER, Rol::Tester)] {
-                        equipo::crear(
-                            db_a.conexion(),
-                            &ops_a,
-                            &publica,
-                            &firmante_admin,
-                            correo,
-                            rol,
-                            &ahora_pausa(),
-                            &hoy_real,
-                        )?;
+                        Ok::<_, crate::error::Error>({
+                            let u = crate::identidad::equipo::alta_de_prueba(
+                                db_a.conexion(),
+                                correo,
+                                rol,
+                                &hoy_real,
+                            );
+                            crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                            u
+                        })?;
                     }
                     Ok(())
                 })
@@ -740,7 +716,7 @@ mod tests {
             // 2. Máquina B sincroniza desde OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza chat desde OneDrive: {sync_b:?}");

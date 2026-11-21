@@ -59,8 +59,6 @@ export const usuarios: Usuario[] = [
     apellido: 'Meza',
     rol: 'Administrador',
     fecha_alta: '2026-06-01',
-    firma: 'sig_admin_ok',
-    firmado_en: '2026-06-01T10:00:00',
   },
   {
     email: 'joan@virustf.dev',
@@ -68,8 +66,6 @@ export const usuarios: Usuario[] = [
     apellido: 'Arteaga',
     rol: 'Líder',
     fecha_alta: '2026-06-02',
-    firma: 'sig_lider_ok',
-    firmado_en: '2026-06-02T09:00:00',
   },
   {
     email: 'sebas@virustf.dev',
@@ -77,8 +73,6 @@ export const usuarios: Usuario[] = [
     apellido: 'Johns',
     rol: 'Desarrollador',
     fecha_alta: '2026-06-03',
-    firma: 'sig_dev_ok',
-    firmado_en: '2026-06-03T09:00:00',
   },
   {
     email: 'laura.qa@virustf.dev',
@@ -86,8 +80,6 @@ export const usuarios: Usuario[] = [
     apellido: 'Quintero',
     rol: 'Tester',
     fecha_alta: '2026-07-10',
-    firma: 'sig_tester_ok',
-    firmado_en: '2026-07-10T09:00:00',
   },
   {
     email: 'nuevo.dev@virustf.dev',
@@ -95,8 +87,6 @@ export const usuarios: Usuario[] = [
     apellido: 'Rivas',
     rol: 'Desarrollador',
     fecha_alta: '2026-09-20',
-    firma: 'sig_dev2_ok',
-    firmado_en: '2026-09-20T10:00:00',
   },
   {
     email: 'colab.arte@freelance.dev',
@@ -104,8 +94,6 @@ export const usuarios: Usuario[] = [
     apellido: 'Freelance',
     rol: 'Colaborador externo',
     fecha_alta: '2026-09-05',
-    firma: 'sig_colab_ok',
-    firmado_en: '2026-09-05T10:00:00',
   },
 ];
 

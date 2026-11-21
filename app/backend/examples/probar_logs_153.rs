@@ -36,11 +36,6 @@ fn main() {
             apellido: "Logs".into(),
             rol: Rol::Administrador,
             fecha_alta: "2026-11-21".into(),
-            firma: None,
-            firmado_en: None,
-            firmado_por: None,
-            llave_publica: None,
-            certificado: None,
         },
     )
     .unwrap();

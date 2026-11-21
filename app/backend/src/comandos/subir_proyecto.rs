@@ -27,7 +27,6 @@ use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos::{self, importacion};
 use crate::identidad::acceso::RepoUnityVc;
-use crate::identidad::firmas::verificar_usuarios;
 use crate::modelo::{ahora_iso, hoy_local, normalizar_email};
 use crate::servidor::pat::Llavero;
 use crate::servidor::LlaveroSistema;
@@ -81,8 +80,13 @@ pub fn subir_en<L: Llavero>(
 ) -> Resultado<ResumenSubida> {
     let yo = estado.exigir_permiso("subir_proyecto_al_servidor")?;
     let carpeta = carpeta_abierta(estado)?;
-    if estado.con_db(|db| proyectos::proyecto_guardado(db.conexion()))?.is_some() {
-        return Err(Error::Validacion("Este proyecto ya está en el servidor.".into()));
+    if estado
+        .con_db(|db| proyectos::proyecto_guardado(db.conexion()))?
+        .is_some()
+    {
+        return Err(Error::Validacion(
+            "Este proyecto ya está en el servidor.".into(),
+        ));
     }
     let sesion = cliente.sesion_vigente()?;
     if normalizar_email(&sesion.correo) != normalizar_email(&yo.email) {
@@ -93,7 +97,8 @@ pub fn subir_en<L: Llavero>(
     }
 
     // 1. El proyecto en el servidor (o el de una subida que no terminó).
-    let pendiente = estado.con_db(|db| configuracion::leer(db.conexion(), CLAVE_SUBIDA_PENDIENTE))?;
+    let pendiente =
+        estado.con_db(|db| configuracion::leer(db.conexion(), CLAVE_SUBIDA_PENDIENTE))?;
     let proyecto_id = match pendiente.filter(|p| !p.trim().is_empty()) {
         Some(id) => id,
         None => {
@@ -114,7 +119,9 @@ pub fn subir_en<L: Llavero>(
                         )?
                         .as_str()
                         .map(String::from)
-                        .ok_or_else(|| Error::Interno("crear_proyecto no devolvió el proyecto".into()))?
+                        .ok_or_else(|| {
+                            Error::Interno("crear_proyecto no devolvió el proyecto".into())
+                        })?
                 }
             };
             // Gana el primero: si el servidor ya tiene datos de ese proyecto, no se mezclan.
@@ -127,7 +134,13 @@ pub fn subir_en<L: Llavero>(
                 return Err(ya_esta());
             }
             estado.con_db(|db| {
-                configuracion::guardar(db.conexion(), CLAVE_SUBIDA_PENDIENTE, &id, &yo.email, &hoy_local())
+                configuracion::guardar(
+                    db.conexion(),
+                    CLAVE_SUBIDA_PENDIENTE,
+                    &id,
+                    &yo.email,
+                    &hoy_local(),
+                )
             })?;
             id
         }
@@ -137,15 +150,12 @@ pub fn subir_en<L: Llavero>(
         ..Default::default()
     };
 
-    // 2. El equipo, con los roles que valen hoy en esta base.
-    let equipo = estado.con_db(|db| {
-        let publica = crate::estado::llave_publica_del_proyecto(db).unwrap_or_default();
-        Ok(verificar_usuarios(&publica, usuarios::listar(db.conexion())?))
-    })?;
+    // 2. El equipo, con los roles de esta base (desde #243 sin firmas que verificar).
+    let equipo = estado.con_db(|db| usuarios::listar(db.conexion()))?;
     let ya_en_el_servidor = miembros::leer_equipo(cliente, &proyecto_id)?;
     for u in equipo {
-        let Some(rol) = u.rol_efectivo else { continue };
-        let correo = normalizar_email(&u.usuario.email);
+        let rol = u.rol;
+        let correo = normalizar_email(&u.email);
         if correo == normalizar_email(&yo.email)
             || ya_en_el_servidor.id_de(&correo).is_some()
             || ya_en_el_servidor.esta_invitado(&correo)
@@ -174,7 +184,10 @@ pub fn subir_en<L: Llavero>(
         }
     }
     let icono = estado.con_db(|db| configuracion::leer(db.conexion(), CLAVE_ICONO_PROYECTO))?;
-    if let (Some(icono), Ok(dir)) = (icono.filter(|i| !i.is_empty()), eventos::carpeta_imagen_proyecto(&carpeta)) {
+    if let (Some(icono), Ok(dir)) = (
+        icono.filter(|i| !i.is_empty()),
+        eventos::carpeta_imagen_proyecto(&carpeta),
+    ) {
         if let Ok(bytes) = std::fs::read(dir.join(&icono)) {
             let ruta = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &icono)?;
             subir_si_falta(&servidor, &ruta, &bytes)?;
@@ -206,7 +219,11 @@ fn ya_esta() -> Error {
 }
 
 /// Sube `bytes` a `ruta` si todavía no está (una subida repetida no falla por los que ya subieron).
-fn subir_si_falta<L: Llavero>(servidor: &Storage<'_, L>, ruta: &str, bytes: &[u8]) -> Resultado<()> {
+fn subir_si_falta<L: Llavero>(
+    servidor: &Storage<'_, L>,
+    ruta: &str,
+    bytes: &[u8],
+) -> Resultado<()> {
     match servidor.subir(ruta, bytes) {
         Err(Error::Validacion(m)) if m.to_lowercase().contains("ya existe") => Ok(()),
         otro => otro,
@@ -215,7 +232,13 @@ fn subir_si_falta<L: Llavero>(servidor: &Storage<'_, L>, ruta: &str, bytes: &[u8
 
 fn vincular(c: &Connection, proyecto_id: &str, id_evento: &str, email: &str) -> Resultado<()> {
     let tx = c.unchecked_transaction()?;
-    configuracion::guardar(&tx, configuracion::CLAVE_PROYECTO_SERVIDOR, proyecto_id, email, &hoy_local())?;
+    configuracion::guardar(
+        &tx,
+        configuracion::CLAVE_PROYECTO_SERVIDOR,
+        proyecto_id,
+        email,
+        &hoy_local(),
+    )?;
     tx.execute(
         "DELETE FROM configuracion_proyecto WHERE clave = ?1",
         [CLAVE_SUBIDA_PENDIENTE],
@@ -261,34 +284,24 @@ mod tests {
             apellido: String::new(),
             rol,
             fecha_alta: "2026-11-01".into(),
-            firma: None,
-            firmado_en: None,
-            firmado_por: None,
-            llave_publica: None,
-            certificado: None,
         }
     }
 
-    /// Un proyecto "de antes" en `carpeta`, como los de verdad: llaves del Administrador, equipo con sus
-    /// filas firmadas, base sin vincular y su carpeta local de `ops/` y documentos. Lo deja abierto en
-    /// `estado` con `admin` como usuario.
-    fn proyecto_viejo(estado: &AppState, carpeta: &Path, nombre: &str, admin: &str, equipo: &[(&str, Rol)]) {
-        use crate::identidad::{firmas, llaves};
+    /// Un proyecto "de antes" en `carpeta`: su equipo, base sin vincular y su carpeta local de `ops/` y
+    /// documentos (desde #243 sin llaves ni firmas). Lo deja abierto en `estado` con `admin` como usuario.
+    fn proyecto_viejo(
+        estado: &AppState,
+        carpeta: &Path,
+        nombre: &str,
+        admin: &str,
+        equipo: &[(&str, Rol)],
+    ) {
         let db = crate::db::Db::abrir(carpeta).unwrap();
         let c = db.conexion();
-        llaves::generar_llaves_admin(carpeta, None).unwrap();
-        let llave = llaves::cargar_llave_admin(carpeta, None).unwrap();
         configuracion::guardar(c, CLAVE_NOMBRE_PROYECTO, nombre, admin, "2026-11-01").unwrap();
-        let firmado = |email: &str, rol: Rol| {
-            let mut u = usuario(email, rol);
-            u.firma = Some(firmas::firmar_rol(&llave, email, rol, "2026-11-01T00:00:00Z").unwrap());
-            u.firmado_en = Some("2026-11-01T00:00:00Z".into());
-            u.firmado_por = Some(admin.into());
-            u
-        };
-        usuarios::insertar(c, &firmado(admin, Rol::Administrador)).unwrap();
+        usuarios::insertar(c, &usuario(admin, Rol::Administrador)).unwrap();
         for (email, rol) in equipo {
-            usuarios::insertar(c, &firmado(email, *rol)).unwrap();
+            usuarios::insertar(c, &usuario(email, *rol)).unwrap();
         }
         eventos::fijar_carpeta_compartida_local(carpeta, &carpeta.join("compartida")).unwrap();
         estado.cerrar_proyecto();
@@ -315,7 +328,16 @@ mod tests {
             fecha_limite: None,
         };
         estado
-            .con_db(|db| tareas::crear(db.conexion(), &ops, &autor, &datos, &ahora_iso(), &hoy_local()))
+            .con_db(|db| {
+                tareas::crear(
+                    db.conexion(),
+                    &ops,
+                    &autor,
+                    &datos,
+                    &ahora_iso(),
+                    &hoy_local(),
+                )
+            })
             .unwrap();
     }
 
@@ -385,9 +407,17 @@ mod tests {
             .unwrap();
 
         // 1. A lo sube.
-        let r = subir_en(&estado_a, &cliente_a, &PRUEBAS, |_, _| panic!("no es de Unity VC")).unwrap();
+        let r = subir_en(&estado_a, &cliente_a, &PRUEBAS, |_, _| {
+            panic!("no es de Unity VC")
+        })
+        .unwrap();
         assert_eq!(
-            (r.miembros, r.invitados, r.documentos, r.documentos_sin_archivo),
+            (
+                r.miembros,
+                r.invitados,
+                r.documentos,
+                r.documentos_sin_archivo
+            ),
             (1, 1, 1, 0),
             "{r:?}"
         );
@@ -397,10 +427,21 @@ mod tests {
         // 2. B, en una PC sin datos.
         let estado_b = AppState::default();
         let pc_b = tempfile::tempdir().unwrap();
-        let entrada =
-            crate::comandos::proyecto_servidor::abrir_en(&estado_b, pc_b.path(), &cliente_b, &proyecto).unwrap();
+        let entrada = crate::comandos::proyecto_servidor::abrir_en(
+            &estado_b,
+            pc_b.path(),
+            &cliente_b,
+            &proyecto,
+        )
+        .unwrap();
         assert!(
-            matches!(entrada, crate::identidad::acceso::Entrada::Dentro { rol: Rol::Desarrollador, .. }),
+            matches!(
+                entrada,
+                crate::identidad::acceso::Entrada::Dentro {
+                    rol: Rol::Desarrollador,
+                    ..
+                }
+            ),
             "{entrada:?}"
         );
         recepcion::bajar(
@@ -425,8 +466,7 @@ mod tests {
                     &proyecto,
                     None,
                     chrono::Utc::now(),
-                    "",
-                    |c, e| lectura::aplicar_evento(c, "", e),
+                    lectura::aplicar_evento,
                     |_| Ok(false),
                 )
             })
@@ -441,17 +481,29 @@ mod tests {
         tareas_b.sort();
         assert_eq!(
             tareas_b,
-            vec![("De Ana".to_string(), ca.clone()), ("De Beto".to_string(), cb.clone())],
+            vec![
+                ("De Ana".to_string(), ca.clone()),
+                ("De Beto".to_string(), cb.clone())
+            ],
             "con sus autores originales"
         );
-        assert_eq!(estado_b.con_db(|db| db_documentos::listar(db.conexion())).unwrap().len(), 1);
+        assert_eq!(
+            estado_b
+                .con_db(|db| db_documentos::listar(db.conexion()))
+                .unwrap()
+                .len(),
+            1
+        );
         let bajado = Storage::new(&cliente_b, &PRUEBAS)
             .bajar(&storage::ruta_objeto(&proyecto, Carpeta::Documentos, "D-245.txt").unwrap())
             .unwrap();
         assert_eq!(bajado, b"documento de prueba 245");
 
         // 3. Ya está: no se sube otra vez.
-        let e = subir_en(&estado_a, &cliente_a, &PRUEBAS, |_, _| panic!("no llega aquí")).unwrap_err();
+        let e = subir_en(&estado_a, &cliente_a, &PRUEBAS, |_, _| {
+            panic!("no llega aquí")
+        })
+        .unwrap_err();
         assert!(e.to_string().contains("ya está en el servidor"), "{e}");
 
         cliente_a.cerrar_sesion().unwrap();
@@ -500,25 +552,37 @@ mod tests {
         let (pc1, _d1) = pc("De la PC 1");
         let (pc2, _d2) = pc("De la PC 2");
 
-        let r1 = subir_en(&pc1, &cliente, &PRUEBAS, |r, e| traer_repo(&cm, &cliente, r, e)).unwrap();
-        let e2 = subir_en(&pc2, &cliente, &PRUEBAS, |r, e| traer_repo(&cm, &cliente, r, e)).unwrap_err();
+        let r1 = subir_en(&pc1, &cliente, &PRUEBAS, |r, e| {
+            traer_repo(&cm, &cliente, r, e)
+        })
+        .unwrap();
+        let e2 = subir_en(&pc2, &cliente, &PRUEBAS, |r, e| {
+            traer_repo(&cm, &cliente, r, e)
+        })
+        .unwrap_err();
         assert!(e2.to_string().contains("ya está en el servidor"), "{e2}");
         assert_eq!(
-            pc2.con_db(|db| proyectos::proyecto_guardado(db.conexion())).unwrap(),
+            pc2.con_db(|db| proyectos::proyecto_guardado(db.conexion()))
+                .unwrap(),
             None,
             "la segunda no queda vinculada"
         );
         let eventos = cliente
             .llamar(
                 "GET",
-                &format!("/rest/v1/eventos?select=tipo,payload&proyecto_id=eq.{}", r1.proyecto_id),
+                &format!(
+                    "/rest/v1/eventos?select=tipo,payload&proyecto_id=eq.{}",
+                    r1.proyecto_id
+                ),
                 None,
             )
             .unwrap();
         let eventos = eventos.as_array().unwrap();
         assert_eq!(eventos.len(), 1, "solo la foto de la primera");
         assert_eq!(eventos[0]["tipo"], importacion::TIPO);
-        let tareas = eventos[0]["payload"]["tablas"]["tareas"].as_array().unwrap();
+        let tareas = eventos[0]["payload"]["tablas"]["tareas"]
+            .as_array()
+            .unwrap();
         assert_eq!(tareas.len(), 1);
         assert_eq!(tareas[0]["titulo"], "De la PC 1");
 

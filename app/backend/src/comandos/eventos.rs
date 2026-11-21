@@ -1,5 +1,6 @@
-//! Carpeta compartida del proyecto (Drive/OneDrive) en esta máquina, donde vive
-//! `ops/` (issue #91), escaneo de `ops/` (#92) y compactación con snapshot (#94).
+//! Carpeta compartida del proyecto (Drive/OneDrive) en esta máquina, donde vive `ops/` (issue #91),
+//! escaneo de `ops/` (#92) y sincronización con el servidor (#238, #239). La compactación con
+//! snapshots firmados (#94) se quitó con las firmas en #243.
 
 use chrono::Utc;
 use serde::Serialize;
@@ -10,11 +11,10 @@ use crate::cm::lectura::rama_actual_workspace;
 use crate::comandos::datos::carpeta_abierta;
 use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::{commits, tareas as db_tareas};
-use crate::eventos::recepcion;
 use crate::error::{Error, Resultado};
-use crate::estado::{llave_publica_del_proyecto, AppState};
-use crate::eventos::{self, ResumenCompactacion, ResumenSincronizacion};
-use crate::identidad::equipo::Firmante;
+use crate::estado::AppState;
+use crate::eventos::recepcion;
+use crate::eventos::{self, ResumenSincronizacion};
 use crate::modelo::{ahora_iso, hoy_local, normalizar_email, EstadoTarea, Rol, TipoTarea};
 use crate::ramas::{self, RAMA_DEV};
 use crate::servidor::{conectar, Changeset, LlaveroSistema};
@@ -77,15 +77,12 @@ fn sincronizar_ops(
 ) -> Resultado<ResumenSincronizacion> {
     let ops = eventos::carpeta_ops(carpeta)?;
     estado.con_db(|db| {
-        // Con la llave del Administrador se verifican los eventos firmados (#93).
-        let publica = llave_publica_del_proyecto(db)?;
         eventos::lectura::sincronizar_con_doble_toma(
             db.conexion(),
             &ops,
             carpeta,
             Utc::now(),
-            &publica,
-            |c, e| eventos::lectura::aplicar_evento(c, &publica, e),
+            eventos::lectura::aplicar_evento,
             |info| revisar_y_cerrar_rama_perdedor(estado, email, info),
         )
     })
@@ -157,18 +154,18 @@ fn sincronizar_con_servidor_sin_guardia(estado: &AppState) -> Resultado<ResumenS
     ) {
         resumen.error_bajada = Some(e.to_string());
     }
-    let email = estado.exigir_permiso("sincronizar_eventos").ok().map(|yo| yo.email);
+    let email = estado
+        .exigir_permiso("sincronizar_eventos")
+        .ok()
+        .map(|yo| yo.email);
     let carpeta = carpeta_abierta(estado).ok();
     resumen.recibidos = estado.con_db(|db| {
-        // Los eventos firmados no viajan por el servidor (#238); la llave solo hace falta si existe.
-        let publica = llave_publica_del_proyecto(db).unwrap_or_default();
         recepcion::aplicar(
             db.conexion(),
             &proyecto,
             carpeta.as_deref(),
             Utc::now(),
-            &publica,
-            |c, e| eventos::lectura::aplicar_evento(c, &publica, e),
+            eventos::lectura::aplicar_evento,
             |info| match &email {
                 Some(email) => revisar_y_cerrar_rama_perdedor(estado, email, info),
                 None => Ok(false),
@@ -205,41 +202,6 @@ pub fn revisar_y_cerrar_rama_perdedor(
         ramas::borrar_rama(estado, &repo_cm, &info.rama_perdedor)?;
     }
     Ok(tiene_changesets)
-}
-
-/// Junta los eventos de más de 30 días en `ops/snapshot_<fecha>.json` (firmado
-/// con la llave del Administrador) y los borra de `ops/` (#94). Solo
-/// Administrador; no corre solo.
-pub fn compactar_eventos_en(
-    estado: &AppState,
-    passphrase: Option<&str>,
-) -> Resultado<ResumenCompactacion> {
-    let yo = estado.exigir_permiso("compactar_eventos")?;
-    let Some(_escaneo) = estado.iniciar_sincronizacion() else {
-        return Err(Error::Validacion(
-            "Hay una sincronización de eventos en curso. Intenta de nuevo en unos segundos.".into(),
-        ));
-    };
-    let carpeta = carpeta_abierta(estado)?;
-    let ops = eventos::carpeta_ops(&carpeta)?;
-    estado.con_db(|db| {
-        let publica = llave_publica_del_proyecto(db)?;
-        let llave = estado.llave_firma(db, &yo, passphrase)?;
-        let firmante = Firmante {
-            email: &yo.email,
-            rol: yo.rol,
-            llave: &llave,
-        };
-        eventos::compactar(db.conexion(), &ops, &publica, &firmante, Utc::now())
-    })
-}
-
-#[tauri::command]
-pub fn compactar_eventos(
-    estado: State<'_, AppState>,
-    passphrase: Option<String>,
-) -> Resultado<ResumenCompactacion> {
-    compactar_eventos_en(&estado, passphrase.as_deref())
 }
 
 /// Evento Tauri con el estado de la bandeja de salida después de cada intento de subida (#238).

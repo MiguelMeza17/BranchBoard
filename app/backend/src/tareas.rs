@@ -19,7 +19,6 @@ use crate::db::tareas::{self as db_tareas, Tarea};
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
 use crate::eventos::{self, Evento};
-use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 use crate::notificaciones::{emitir_a_roles_si_falta, emitir_si_falta};
 use crate::ramas::TareaDeCadena;
@@ -2678,20 +2677,9 @@ fn aplicar_crear_tarea_con_subtareas(
     Ok(())
 }
 
-/// Resuelve el rol verificado de `email` en la tabla `usuarios`, si existe.
-pub(crate) fn rol_verificado_de(
-    c: &Connection,
-    publica_admin: &str,
-    email: &str,
-) -> Resultado<Option<Rol>> {
-    let email = normalizar_email(email);
-    if publica_admin.is_empty() {
-        return Ok(usuarios::buscar(c, &email)?.map(|u| u.rol));
-    }
-    Ok(verificar_usuarios(publica_admin, usuarios::listar(c)?)
-        .into_iter()
-        .find(|u| u.usuario.email == email && u.verificacion == Verificacion::Verificado)
-        .and_then(|u| u.rol_efectivo))
+/// El rol de `email` en la tabla `usuarios` (copia de `miembros` del servidor, #241), si está.
+pub(crate) fn rol_de(c: &Connection, email: &str) -> Resultado<Option<Rol>> {
+    Ok(usuarios::buscar(c, &normalizar_email(email))?.map(|u| u.rol))
 }
 
 fn aplicar_cambios_en_fila(tarea: &mut Tarea, c_edit: &CambiosTarea) -> Resultado<()> {
@@ -2775,13 +2763,13 @@ fn aplicar_editar_tarea(
 
 /// Aplica un evento de tareas recibido desde `ops/` (`eventos/lectura.rs` y
 /// `eventos/snapshot.rs`).
-pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> Resultado<()> {
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
     match evento.tipo.as_str() {
         "crear_tarea" => {
             let mut tarea: Tarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("crear_tarea inválido: {e}")))?;
             tarea.creado_por = normalizar_email(&evento.usuario);
-            if let Some(rol) = rol_verificado_de(c, publica_admin, &evento.usuario)? {
+            if let Some(rol) = rol_de(c, &evento.usuario)? {
                 tarea.pendiente_aprobacion = !rol.es_lider_o_admin();
             }
             aplicar_crear_tarea(c, &tarea, &evento.timestamp, true)
@@ -2792,7 +2780,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                     Error::Validacion(format!("crear_tarea_con_subtareas inválido: {e}"))
                 })?;
             let autor = normalizar_email(&evento.usuario);
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             payload.tarea.creado_por = autor.clone();
             if let Some(r) = rol {
                 payload.tarea.pendiente_aprobacion = !r.es_lider_o_admin();
@@ -2808,19 +2796,19 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "editar_tarea" => {
             let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("editar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_editar_tarea(c, &evento.usuario, rol, &payload)
         }
         "tomar_tarea" => {
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("tomar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_tomar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         "asignar_tarea" => {
             let payload: PayloadTomarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_asignar_tarea(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         "desasignar_tarea" => {
@@ -2831,7 +2819,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "cambiar_estado" => {
             let payload: PayloadCambiarEstado = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("cambiar_estado inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_cambiar_estado(c, &evento.usuario, rol, &payload, &evento.timestamp)?;
             Ok(())
         }
@@ -2843,25 +2831,25 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "reabrir_tarea" => {
             let payload: PayloadReabrirTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("reabrir_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_reabrir_tarea(c, rol, &payload, &evento.timestamp)
         }
         "aprobar_tarea" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_tareas(c, rol, &[payload.id])
         }
         "aprobar_tareas" => {
             let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_tareas inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_tareas(c, rol, &payload.ids)
         }
         "editar_y_aprobar_tarea" => {
             let payload: PayloadEditarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("editar_y_aprobar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_editar_y_aprobar_tarea(c, rol, &payload, &evento.timestamp)
         }
         "advertir_tarea_pendiente" => {
@@ -2869,7 +2857,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 .map_err(|e| {
                     Error::Validacion(format!("advertir_tarea_pendiente inválido: {e}"))
                 })?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_advertir_tarea_pendiente(c, rol, &payload, &evento.timestamp)
         }
         "proponer_edicion" => {
@@ -2880,25 +2868,25 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "aprobar_modificacion" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_modificacion inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_modificaciones(c, rol, &[payload.id])
         }
         "aprobar_modificaciones" => {
             let payload: PayloadAprobarTareas = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("aprobar_modificaciones inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_aprobar_modificaciones(c, rol, &payload.ids)
         }
         "rechazar_modificacion" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("rechazar_modificacion inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_rechazar_modificacion(c, rol, &payload.id)
         }
         "eliminar_tarea" => {
             let payload: PayloadEliminarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("eliminar_tarea inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_eliminar_tarea(c, rol, &payload, &evento.timestamp)?;
             Ok(())
         }
@@ -2907,7 +2895,7 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
                 .map_err(|e| {
                     Error::Validacion(format!("eliminar_definitivamente inválido: {e}"))
                 })?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_eliminar_definitivamente(c, rol, &payload.id)?;
             Ok(())
         }
@@ -2962,20 +2950,20 @@ pub fn aplicar_evento(c: &Connection, publica_admin: &str, evento: &Evento) -> R
         "asignar_revision" => {
             let payload: PayloadAsignarRevision = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("asignar_revision inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_asignar_revision(c, rol, &payload, &evento.timestamp)
         }
         "autorizar_merge" => {
             let payload: PayloadAutorizarMerge = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("autorizar_merge inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_autorizar_merge(c, &evento.usuario, rol, &payload)
         }
         "rechazar_revision" => {
             let payload: PayloadRechazarRevision =
                 serde_json::from_value(evento.payload.clone())
                     .map_err(|e| Error::Validacion(format!("rechazar_revision inválido: {e}")))?;
-            let rol = rol_verificado_de(c, publica_admin, &evento.usuario)?;
+            let rol = rol_de(c, &evento.usuario)?;
             aplicar_rechazar_revision(c, &evento.usuario, rol, &payload, &evento.timestamp)
         }
         otro => Err(Error::Validacion(format!(
@@ -4273,7 +4261,9 @@ pub fn detectar_doble_toma(
             (rival, gana)
         }
         // Con el servidor (#239) manda su `orden`: gana la toma que llegó antes al servidor.
-        FuenteToma::Servidor { orden } => buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?,
+        FuenteToma::Servidor { orden } => {
+            buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?
+        }
     };
 
     if entrante_gana {
@@ -4353,7 +4343,10 @@ fn buscar_toma_rival_servidor(
         (id, ev)
     };
     if let Some((id, orden, payload, recibido_en)) = bajada {
-        return Ok((Some(armar(id, payload, recibido_en)), orden_entrante < orden));
+        return Ok((
+            Some(armar(id, payload, recibido_en)),
+            orden_entrante < orden,
+        ));
     }
     // La bandeja solo tiene eventos de esta máquina: la toma es de `usuario` si su payload lo dice.
     let mut consulta = c.prepare(
@@ -4361,7 +4354,11 @@ fn buscar_toma_rival_servidor(
          WHERE tipo = 'tomar_tarea' AND tarea_id = ?1 ORDER BY rowid",
     )?;
     let filas = consulta.query_map([tarea_id], |f| {
-        Ok((f.get::<_, String>(0)?, f.get::<_, String>(1)?, f.get::<_, String>(2)?))
+        Ok((
+            f.get::<_, String>(0)?,
+            f.get::<_, String>(1)?,
+            f.get::<_, String>(2)?,
+        ))
     })?;
     for fila in filas {
         let (id, payload, creado_en) = fila?;
@@ -4419,29 +4416,17 @@ fn buscar_evento_toma_en_ops(
 /// toma local previa), o `false` si se conservó al ganador actual.
 pub fn aplicar_resolucion_doble_toma(
     c: &Connection,
-    publica_admin: &str,
     info: &InfoDobleToma,
     tiene_changesets: bool,
     ahora: &str,
 ) -> Resultado<bool> {
     if tiene_changesets {
         let mut destinatarios = vec![info.ganador.clone(), info.perdedor.clone()];
-        let usuarios = if publica_admin.is_empty() {
-            usuarios::listar(c)?
-                .into_iter()
-                .filter(|u| u.rol.es_lider_o_admin())
-                .map(|u| u.email)
-                .collect::<Vec<_>>()
-        } else {
-            verificar_usuarios(publica_admin, usuarios::listar(c)?)
-                .into_iter()
-                .filter(|u| {
-                    u.verificacion == Verificacion::Verificado
-                        && u.rol_efectivo.is_some_and(|r| r.es_lider_o_admin())
-                })
-                .map(|u| u.usuario.email)
-                .collect::<Vec<_>>()
-        };
+        let usuarios = usuarios::listar(c)?
+            .into_iter()
+            .filter(|u| u.rol.es_lider_o_admin())
+            .map(|u| u.email)
+            .collect::<Vec<_>>();
         for correo in usuarios {
             if !destinatarios.contains(&correo) {
                 destinatarios.push(correo);
@@ -4517,11 +4502,7 @@ mod tests {
     use crate::db::notificaciones;
     use crate::db::Db;
     use crate::eventos::lectura::{self, sincronizar};
-    use crate::identidad::equipo::{self, Firmante};
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin, LlavePrivada,
-    };
+
     use chrono::{DateTime, Utc};
     use std::path::PathBuf;
 
@@ -4537,8 +4518,6 @@ mod tests {
         _dir: tempfile::TempDir,
         ops: PathBuf,
         local_b: PathBuf,
-        publica: String,
-        llave_admin: LlavePrivada,
         db_a: Db,
         db_b: Db,
     }
@@ -4547,11 +4526,7 @@ mod tests {
         fn nuevo() -> Self {
             let dir = tempfile::tempdir().unwrap();
             let ops = dir.path().join("ops");
-            let local_a = dir.path().join("local_a");
             let local_b = dir.path().join("local_b");
-            let publica = generar_llaves_admin(&local_a, None).unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_a = Db::en_memoria().unwrap();
             let db_b = Db::en_memoria().unwrap();
@@ -4565,14 +4540,6 @@ mod tests {
                         apellido: "Uno".into(),
                         rol: Rol::Administrador,
                         fecha_alta: HOY.into(),
-                        firma: Some(
-                            firmas::firmar_rol(&llave_admin, ADMIN, Rol::Administrador, AHORA)
-                                .unwrap(),
-                        ),
-                        firmado_en: Some(AHORA.into()),
-                        firmado_por: Some(ADMIN.into()),
-                        llave_publica: None,
-                        certificado: None,
                     },
                 )
                 .unwrap();
@@ -4581,15 +4548,8 @@ mod tests {
                 _dir: dir,
                 ops,
                 local_b,
-                publica,
-                llave_admin,
                 db_a,
                 db_b,
-            };
-            let firmante = Firmante {
-                email: ADMIN,
-                rol: Rol::Administrador,
-                llave: &esc.llave_admin,
             };
             for (correo, rol) in [
                 (LIDER, Rol::Lider),
@@ -4597,24 +4557,26 @@ mod tests {
                 (TESTER, Rol::Tester),
                 (COLAB, Rol::ColaboradorExterno),
             ] {
-                equipo::crear(
-                    esc.db_a.conexion(),
-                    &esc.ops,
-                    &esc.publica,
-                    &firmante,
-                    correo,
-                    rol,
-                    AHORA,
-                    HOY,
-                )
-                .unwrap();
+                {
+                    let u = crate::identidad::equipo::alta_de_prueba(
+                        esc.db_a.conexion(),
+                        correo,
+                        rol,
+                        HOY,
+                    );
+                    crate::db::usuarios::insertar(esc.db_b.conexion(), &u).unwrap();
+                    u
+                };
             }
             esc.sincronizar_b();
             esc
         }
 
         fn sincronizar_b(&self) -> lectura::ResumenSincronizacion {
-            let ahora = DateTime::parse_from_rfc3339(AHORA)
+            // Después de todos los eventos de las pruebas (llegan hasta las 16:xx). Con `AHORA` (15:00)
+            // quedaban "en el futuro" y se ordenaban por la hora de su archivo, que puede empatar: B
+            // aplicaba a veces un evento antes del que lo hace posible y lo descartaba.
+            let ahora = DateTime::parse_from_rfc3339("2026-11-15T23:00:00.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
             sincronizar(
@@ -4622,7 +4584,7 @@ mod tests {
                 &self.ops,
                 &self.local_b,
                 ahora,
-                |c, e| lectura::aplicar_evento(c, &self.publica, e),
+                lectura::aplicar_evento,
             )
             .unwrap()
         }
@@ -5258,8 +5220,7 @@ mod tests {
             &e.ops,
             &e.local_b,
             ahora,
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
         .unwrap();
@@ -5268,8 +5229,7 @@ mod tests {
             &e.ops,
             &e.local_b,
             ahora,
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
         .unwrap();
@@ -5307,8 +5267,14 @@ mod tests {
         const PROYECTO: &str = "11111111-2222-4333-8444-555555555555";
         let e = Escenario::nuevo();
         for db in [&e.db_a, &e.db_b] {
-            configuracion::guardar(db.conexion(), CLAVE_PROYECTO_SERVIDOR, PROYECTO, ADMIN, AHORA)
-                .unwrap();
+            configuracion::guardar(
+                db.conexion(),
+                CLAVE_PROYECTO_SERVIDOR,
+                PROYECTO,
+                ADMIN,
+                AHORA,
+            )
+            .unwrap();
         }
         // El "servidor": numera lo que le llega y le pone su hora.
         let servidor: RefCell<Vec<recepcion::FilaServidor>> = RefCell::new(Vec::new());
@@ -5359,8 +5325,7 @@ mod tests {
                 PROYECTO,
                 None,
                 Utc::now(),
-                &e.publica,
-                |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+                lectura::aplicar_evento,
                 |_| Ok(false),
             )
             .unwrap()
@@ -5388,28 +5353,55 @@ mod tests {
         };
 
         // A crea T-101, la sube y B la recibe del servidor.
-        crear(e.db_a.conexion(), &e.ops, &dev, &datos_base("Colisión"), "2026-11-15T15:00:01.000Z", HOY)
-            .unwrap();
+        crear(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            &datos_base("Colisión"),
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
         subir(&e.db_a, "uuid-dev");
         assert_eq!(recibir(&e.db_b).aplicados, 1);
 
         // B toma con reloj 15:00:05 y sube primero; A toma con reloj 15:00:02 y sube después.
-        tomar(e.db_b.conexion(), &e.ops, &tester, "T-101", rama(202, "/main/dev/T-101-colision-b"), "2026-11-15T15:00:05.000Z")
-            .unwrap();
+        tomar(
+            e.db_b.conexion(),
+            &e.ops,
+            &tester,
+            "T-101",
+            rama(202, "/main/dev/T-101-colision-b"),
+            "2026-11-15T15:00:05.000Z",
+        )
+        .unwrap();
         subir(&e.db_b, "uuid-tester");
-        tomar(e.db_a.conexion(), &e.ops, &dev, "T-101", rama(201, "/main/dev/T-101-colision-a"), "2026-11-15T15:00:02.000Z")
-            .unwrap();
+        tomar(
+            e.db_a.conexion(),
+            &e.ops,
+            &dev,
+            "T-101",
+            rama(201, "/main/dev/T-101-colision-a"),
+            "2026-11-15T15:00:02.000Z",
+        )
+        .unwrap();
         subir(&e.db_a, "uuid-dev");
 
         let sync_a = recibir(&e.db_a);
         let sync_b = recibir(&e.db_b);
         assert_eq!(sync_a.aplicados, 1, "A revierte su toma local a B");
-        assert_eq!(sync_b.descartados, 1, "la toma de A llegó después: se descarta");
+        assert_eq!(
+            sync_b.descartados, 1,
+            "la toma de A llegó después: se descarta"
+        );
 
         for db in [&e.db_a, &e.db_b] {
             let t = db_tareas::obtener(db.conexion(), "T-101").unwrap();
             assert_eq!(t.asignado_a.as_deref(), Some(TESTER));
-            assert_eq!(t.rama_asociada.as_deref(), Some("/main/dev/T-101-colision-b"));
+            assert_eq!(
+                t.rama_asociada.as_deref(),
+                Some("/main/dev/T-101-colision-b")
+            );
             let notifs_dev = notificaciones::de_usuario(db.conexion(), DEV).unwrap();
             assert_eq!(notifs_dev.len(), 1);
             assert!(notifs_dev[0].accionable);
@@ -5431,8 +5423,15 @@ mod tests {
             email: DEV,
             rol: Rol::Desarrollador,
         };
-        let creada = crear(c, &e.ops, &dev, &datos_base("Colisión"), "2026-11-15T15:00:01.000Z", HOY)
-            .unwrap();
+        let creada = crear(
+            c,
+            &e.ops,
+            &dev,
+            &datos_base("Colisión"),
+            "2026-11-15T15:00:01.000Z",
+            HOY,
+        )
+        .unwrap();
         // A toma la tarea; su evento queda en la bandeja (sin subir).
         tomar(
             c,
@@ -5454,7 +5453,11 @@ mod tests {
         .unwrap();
         // Del servidor baja la creación (la propia, ya aplicada) y la toma de TESTER.
         let id_crear: String = c
-            .query_row("SELECT id FROM bandeja_salida WHERE tipo = 'crear_tarea'", [], |f| f.get(0))
+            .query_row(
+                "SELECT id FROM bandeja_salida WHERE tipo = 'crear_tarea'",
+                [],
+                |f| f.get(0),
+            )
             .unwrap();
         let toma_tester = serde_json::json!({
             "id": "T-101", "asignado_a": TESTER, "rama_asociada": "/main/dev/T-101-colision-b",
@@ -5497,8 +5500,7 @@ mod tests {
             PROYECTO,
             None,
             Utc::now(),
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(false),
         )
         .unwrap();
@@ -5576,8 +5578,7 @@ mod tests {
             &e.ops,
             &e.local_b,
             ahora,
-            &e.publica,
-            |c, ev| lectura::aplicar_evento(c, &e.publica, ev),
+            lectura::aplicar_evento,
             |_| Ok(true),
         )
         .unwrap();
@@ -5629,7 +5630,7 @@ mod tests {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -5670,46 +5671,38 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        DEV,
-                        Rol::Desarrollador,
-                        "2026-11-15T15:00:01.000Z",
-                        HOY,
-                    )?;
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        LIDER,
-                        Rol::Lider,
-                        "2026-11-15T15:00:02.000Z",
-                        HOY,
-                    )?;
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            DEV,
+                            Rol::Desarrollador,
+                            HOY,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })?;
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            LIDER,
+                            Rol::Lider,
+                            HOY,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })?;
 
                     // 1. El Desarrollador crea una tarea general con 2 subtareas (quedan pendientes).
                     let creadas = crear_con_subtareas(
@@ -5799,11 +5792,12 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza tareas desde OneDrive: {sync_b:?}");
-            assert_eq!(sync_b.aplicados, 5);
+            // Las 3 altas de tareas (desde #243 los usuarios ya no viajan por `ops/`: B los tiene de antes).
+            assert_eq!(sync_b.aplicados, 3);
             assert_eq!(sync_b.descartados, 0);
 
             let tareas_a = estado_a.con_db(|db_a| listar(db_a.conexion())).unwrap();
@@ -5845,7 +5839,7 @@ mod tests {
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::tareas::tomar_en;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -5887,14 +5881,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
@@ -5956,7 +5948,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza tomar_tarea desde OneDrive: {sync_b:?}");
@@ -6007,7 +5999,7 @@ mod tests {
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::eventos::revisar_y_cerrar_rama_perdedor;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
         use crate::ramas::{cambiar_a_rama, crear_rama_tarea, RAMA_DEV};
         use crate::servidor::{conectar, LlaveroSistema};
@@ -6051,15 +6043,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
@@ -6068,21 +6057,16 @@ mod tests {
             // Alta de DEV en A y creación de T-101 y T-102.
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        DEV,
-                        Rol::Desarrollador,
-                        "2026-11-15T15:00:01.000Z",
-                        HOY,
-                    )?;
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            DEV,
+                            Rol::Desarrollador,
+                            HOY,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })?;
                     crear(
                         db_a.conexion(),
                         &ops_a,
@@ -6115,7 +6099,7 @@ mod tests {
                 .with_timezone(&Utc);
             let sync_init =
                 lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                    lectura::aplicar_evento(c, &publica, e)
+                    lectura::aplicar_evento(c, e)
                 })
                 .unwrap();
             assert_eq!(sync_init.aplicados, 3);
@@ -6167,8 +6151,7 @@ mod tests {
                 &ops_b,
                 &local_b,
                 ahora,
-                &publica,
-                |c, e| lectura::aplicar_evento(c, &publica, e),
+                lectura::aplicar_evento,
                 |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
             )
             .unwrap();
@@ -6257,8 +6240,7 @@ mod tests {
                 &ops_b,
                 &local_b,
                 ahora,
-                &publica,
-                |c, e| lectura::aplicar_evento(c, &publica, e),
+                lectura::aplicar_evento,
                 |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
             )
             .unwrap();
@@ -6317,14 +6299,6 @@ mod tests {
                     apellido: "Uno".into(),
                     rol: Rol::ColaboradorExterno,
                     fecha_alta: HOY.into(),
-                    firma: Some(
-                        firmas::firmar_rol(&e.llave_admin, externo, Rol::ColaboradorExterno, AHORA)
-                            .unwrap(),
-                    ),
-                    firmado_en: Some(AHORA.into()),
-                    firmado_por: Some(ADMIN.into()),
-                    llave_publica: None,
-                    certificado: None,
                 },
             )
             .unwrap();
@@ -6561,8 +6535,6 @@ mod tests {
         local_b: PathBuf,
         ops_a: PathBuf,
         ops_b: PathBuf,
-        publica: String,
-        llave_admin: LlavePrivada,
         admin_fila: usuarios::Usuario,
         ramas_creadas: Vec<String>,
     }
@@ -6572,7 +6544,7 @@ mod tests {
             use crate::cm::Comando;
             use crate::comandos::acceso::entrar_como_dueno_en;
             use crate::comandos::datos::carpeta_abierta;
-            use crate::estado::{llave_publica_del_proyecto, AppState};
+            use crate::estado::AppState;
             use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
             let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -6620,15 +6592,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
@@ -6644,8 +6613,6 @@ mod tests {
                 local_b,
                 ops_a,
                 ops_b,
-                publica,
-                llave_admin,
                 admin_fila,
                 ramas_creadas: Vec::new(),
             }
@@ -6667,23 +6634,18 @@ mod tests {
         }
 
         fn crear_usuario(&self, email: &str, rol: Rol) -> usuarios::Usuario {
-            let firmante = Firmante {
-                email: &self.admin_fila.email,
-                rol: Rol::Administrador,
-                llave: &self.llave_admin,
-            };
             self.estado_a
                 .con_db(|db_a| {
-                    equipo::crear(
-                        db_a.conexion(),
-                        &self.ops_a,
-                        &self.publica,
-                        &firmante,
-                        email,
-                        rol,
-                        &crate::modelo::ahora_iso(),
-                        &crate::modelo::hoy_local(),
-                    )
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            email,
+                            rol,
+                            &crate::modelo::hoy_local(),
+                        );
+                        crate::db::usuarios::insertar(self.db_b.conexion(), &u).unwrap();
+                        u
+                    })
                 })
                 .unwrap()
         }
@@ -6781,7 +6743,7 @@ mod tests {
                 &self.ops_b,
                 &self.local_b,
                 ahora,
-                |c, e| lectura::aplicar_evento(c, &self.publica, e),
+                lectura::aplicar_evento,
             )
             .unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
@@ -10396,7 +10358,6 @@ mod tests {
     #[ignore = "acompaña a la app abierta: correr a mano con BB_UI_PROYECTO_LOCAL, BB_UI_CARPETA_COMPARTIDA y BB_UI_ACCION"]
     fn entorno_real_ui_maquina_b() {
         use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
-        use crate::identidad::llaves::leer_llave_publica_admin;
 
         let local_a = PathBuf::from(
             std::env::var("BB_UI_PROYECTO_LOCAL").expect("falta BB_UI_PROYECTO_LOCAL"),
@@ -10406,9 +10367,6 @@ mod tests {
         let accion = std::env::var("BB_UI_ACCION").expect("falta BB_UI_ACCION");
         let dev = std::env::var("BB_UI_DEV").unwrap_or_else(|_| DEV.to_string());
 
-        let publica = leer_llave_publica_admin(&local_a)
-            .unwrap()
-            .expect("la app todavía no configuró el proyecto");
         let admin_fila = {
             let db_a = Db::abrir(&local_a).unwrap();
             usuarios::listar(db_a.conexion())
@@ -10424,7 +10382,6 @@ mod tests {
             .join("proyectos")
             .join(local_a.file_name().unwrap());
         configurar_carpeta_compartida(&local_b, &compartida, false).unwrap();
-        fijar_llave_publica_admin(&local_b, &publica).unwrap();
         let ops_b = carpeta_ops(&local_b).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
         usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
@@ -10432,7 +10389,7 @@ mod tests {
         let sincronizar_b = || {
             let ahora = Utc::now() + chrono::Duration::minutes(5);
             let sync = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
@@ -10440,10 +10397,7 @@ mod tests {
         };
         println!("máquina B sincronizó: {:?}", sincronizar_b());
 
-        let rol_dev = verificar_usuarios(&publica, usuarios::listar(db_b.conexion()).unwrap())
-            .into_iter()
-            .find(|u| u.usuario.email == dev)
-            .and_then(|u| u.rol_efectivo);
+        let rol_dev = rol_de(db_b.conexion(), &dev).unwrap();
         assert_eq!(
             rol_dev,
             Some(Rol::Desarrollador),

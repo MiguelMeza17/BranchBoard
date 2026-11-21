@@ -53,8 +53,6 @@ const USUARIO_SIN_SESION: Usuario = {
   apellido: '',
   rol: 'Colaborador externo',
   fecha_alta: '',
-  firma: null,
-  firmado_en: null,
 };
 
 let idSeq = 1000;
@@ -549,7 +547,7 @@ interface State {
   /** Antes de restaurar, el estado actual se guarda como una copia más, tal cual estaba. */
   restaurarBackup: (id: string) => void;
   eliminarUsuario: (email: string) => void;
-  /** Cambia el rol; lo firma quien lo cambia (Administrador o Líder). */
+  /** Cambia el rol (con el proyecto en el servidor lo hace cumplir el servidor, #241). */
   cambiarRol: (email: string, rol: Rol) => void;
   /** Mensaje libre a un compañero: le llega como notificación. */
   enviarMensaje: (para: string, texto: string) => void;
@@ -1185,8 +1183,6 @@ export const useStore = create<State>((set, get) => {
           apellido: resto.join(' '),
           rol: 'Administrador',
           fecha_alta: hoy,
-          firma: 'firma-local',
-          firmado_en: hoy,
         },
       ],
       currentEmail: correo,
@@ -2132,8 +2128,6 @@ export const useStore = create<State>((set, get) => {
       apellido,
       rol,
       fecha_alta: today(),
-      firma: null,
-      firmado_en: null,
       invitado: true,
     };
     set({ usuarios: [...s.usuarios, nuevo] });

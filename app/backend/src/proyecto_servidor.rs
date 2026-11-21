@@ -100,11 +100,6 @@ mod tests {
                 apellido: String::new(),
                 rol: *rol,
                 fecha_alta: HOY.into(),
-                firma: None,
-                firmado_en: None,
-                firmado_por: None,
-                llave_publica: None,
-                certificado: None,
             })
             .collect()
     }

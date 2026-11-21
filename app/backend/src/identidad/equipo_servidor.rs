@@ -6,14 +6,13 @@
 //!   otros Administradores; nunca se quita ni degrada al último) y quitar.
 //! - La tabla local `usuarios` es una **copia** de `miembros` ([`miembros::filas_locales`]), sin firmas: se
 //!   rehace después de cada cambio y al listar. Sin red se lista la última copia.
-//! - Ya no hay "confirmar usuario": no hay firma que confirmar.
+//! - Ya no hay "confirmar usuario": no hay firma que confirmar (y desde #243 no hay firmas en ningún lado).
 //!
 //! La red y la base van por separado: [`EquipoRemoto`] habla con el servidor y `guardar` escribe la copia.
 
 use crate::db::usuarios::{nombre_desde_email, Usuario};
 use crate::error::{Error, Resultado};
 use crate::identidad::equipo::UsuarioVisible;
-use crate::identidad::firmas::Verificacion;
 use crate::modelo::{normalizar_email, Rol};
 use crate::supabase::miembros::{self, Equipo, Invitacion};
 
@@ -69,8 +68,6 @@ fn visible_invitacion(i: &Invitacion) -> UsuarioVisible {
         nombre,
         apellido,
         rol: i.rol,
-        rol_efectivo: None,
-        verificacion: Verificacion::Pendiente,
         fecha_alta: i.invitado_en.chars().take(10).collect(),
         invitado: true,
     }
@@ -122,11 +119,6 @@ pub fn crear(
             apellido,
             rol,
             fecha_alta: hoy.to_string(),
-            firma: None,
-            firmado_en: None,
-            firmado_por: None,
-            llave_publica: None,
-            certificado: None,
         }
     }))
 }
@@ -154,12 +146,12 @@ pub fn cambiar_rol(
 }
 
 /// `eliminar_usuario`: lo quita del proyecto (pierde el acceso de inmediato, también a los documentos de
-/// Storage, #242) o cancela su invitación. Ya no hay filas que volver a firmar: devuelve 0.
+/// Storage, #242) o cancela su invitación.
 pub fn eliminar(
     remoto: &dyn EquipoRemoto,
     guardar: impl FnOnce(&[Usuario]) -> Resultado<()>,
     correo: &str,
-) -> Resultado<usize> {
+) -> Resultado<()> {
     let equipo = remoto.leer()?;
     if equipo.esta_invitado(correo) {
         remoto.quitar_invitacion(correo)?;
@@ -170,14 +162,7 @@ pub fn eliminar(
         remoto.quitar(id)?;
     }
     refrescar(remoto, guardar)?;
-    Ok(0)
-}
-
-/// `confirmar_usuario` ya no existe con el servidor.
-pub fn confirmar() -> Resultado<()> {
-    Err(Error::Validacion(
-        "Con el proyecto en el servidor ya no hace falta confirmar usuarios".into(),
-    ))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -303,25 +288,18 @@ mod tests {
     }
 
     #[test]
-    fn la_copia_local_vale_sin_firmas_con_la_llave_vacia() {
+    fn la_copia_local_da_los_roles() {
         let (_d, db) = base();
         let c = db.conexion();
         let remoto = Falso::nuevo(Rol::Administrador);
         refrescar(&remoto, |f| usuarios::reemplazar_todos(c, f)).unwrap();
-        // Con la llave vacía (proyecto en el servidor) los roles de la copia valen tal cual.
-        let ana = permisos::usuario_actual(c, "", ANA).unwrap();
+        // Los roles de la copia valen tal cual: los hace cumplir el servidor.
+        let ana = permisos::usuario_actual(c, ANA).unwrap();
         assert_eq!(ana.rol, Rol::Administrador);
-        assert!(ana.rol_verificado);
         assert_eq!(
-            crate::tareas::rol_verificado_de(c, "", BETO).unwrap(),
+            crate::tareas::rol_de(c, BETO).unwrap(),
             Some(Rol::Desarrollador)
         );
-        // Con una llave (proyecto por Drive) la misma fila sin firma no vale: no cambia lo de antes.
-        let publica = {
-            let d = tempfile::tempdir().unwrap();
-            crate::identidad::llaves::generar_llaves_admin(d.path(), None).unwrap()
-        };
-        assert!(permisos::usuario_actual(c, &publica, ANA).is_err());
     }
 
     #[test]
@@ -347,25 +325,21 @@ mod tests {
         let lista = listar(
             &remoto,
             guardar,
-            || equipo::listar(c, "", Rol::Administrador),
+            || equipo::listar(c, Rol::Administrador),
             Rol::Administrador,
         )
         .unwrap();
         assert_eq!(lista.len(), 3);
         let inv = lista.iter().find(|u| u.invitado).unwrap();
         assert_eq!(inv.email.as_deref(), Some("nuevo@virustf.dev"));
-        assert_eq!(inv.rol_efectivo, None);
-        assert!(lista
-            .iter()
-            .filter(|u| !u.invitado)
-            .all(|u| u.verificacion == Verificacion::Verificado));
+        assert_eq!(inv.rol, Rol::Tester);
 
         // Un Desarrollador no ve invitados ni correos.
         let dev = Falso::nuevo(Rol::Desarrollador);
         let lista = listar(
             &dev,
             guardar,
-            || equipo::listar(c, "", Rol::Desarrollador),
+            || equipo::listar(c, Rol::Desarrollador),
             Rol::Desarrollador,
         )
         .unwrap();
@@ -377,7 +351,7 @@ mod tests {
             cambiar_rol(&remoto, guardar, "nuevo@virustf.dev", Rol::Lider),
             Err(Error::Validacion(_))
         ));
-        assert_eq!(eliminar(&remoto, guardar, "nuevo@virustf.dev").unwrap(), 0);
+        eliminar(&remoto, guardar, "nuevo@virustf.dev").unwrap();
         assert!(remoto.equipo.borrow().invitaciones.is_empty());
 
         // Administrador nombra a otro Administrador; después ya se puede degradar al primero.
@@ -413,7 +387,7 @@ mod tests {
         let lista = listar(
             &sin_red,
             guardar,
-            || equipo::listar(c, "", Rol::Administrador),
+            || equipo::listar(c, Rol::Administrador),
             Rol::Administrador,
         )
         .unwrap();
@@ -444,7 +418,6 @@ mod tests {
             crear(&lider, guardar, "x@virustf.dev", Rol::Lider, "2026-11-22"),
             Err(Error::SinPermiso)
         ));
-        assert!(matches!(confirmar(), Err(Error::Validacion(_))));
     }
 
     #[derive(Default)]
@@ -523,14 +496,14 @@ mod tests {
         let lista = listar(
             &a,
             guardar_a,
-            || equipo::listar(la, "", Rol::Administrador),
+            || equipo::listar(la, Rol::Administrador),
             Rol::Administrador,
         )
         .unwrap();
         assert_eq!(lista.iter().filter(|u| !u.invitado).count(), 2);
         assert_eq!(lista.iter().filter(|u| u.invitado).count(), 1);
         assert_eq!(
-            permisos::usuario_actual(la, "", &ua).unwrap().rol,
+            permisos::usuario_actual(la, &ua).unwrap().rol,
             Rol::Administrador
         );
         // Invitarlo otra vez se rechaza.
@@ -542,7 +515,7 @@ mod tests {
         let lista_b = listar(
             &b,
             guardar_b,
-            || equipo::listar(lb, "", Rol::Desarrollador),
+            || equipo::listar(lb, Rol::Desarrollador),
             Rol::Desarrollador,
         )
         .unwrap();

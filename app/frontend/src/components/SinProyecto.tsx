@@ -15,7 +15,6 @@ import { PasoClonar } from './AccesoProyecto';
 import type { WorkspaceUnityVC } from '../types';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
-import { EntradaClave } from './EntradaClave';
 import { Modal } from './Modal';
 import { CrearProyectoEnServidor, ListaProyectosDelServidor } from './ProyectosDelServidor';
 import { Icono, IconoEnLinea } from './Icono';
@@ -52,7 +51,7 @@ function terminarEntradaLocal(entrada: EntradaDentro, ruta: string) {
     useStore.setState((s) => ({
       usuarios: [
         ...s.usuarios,
-        { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '', firma: 'backend', firmado_en: null },
+        { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '' },
       ],
     }));
   }
@@ -135,7 +134,6 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
     proyecto: '',
     nombre: cuenta ? `${cuenta.nombre} ${cuenta.apellido}`.trim() : '',
     correo: cuenta?.correo ?? '',
-    clave: '',
   });
   const [nuevo, setNuevo] = useState(vacio);
   useEffect(() => {
@@ -145,7 +143,7 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
   }, [open]);
   const [creando, setCreando] = useState(false);
   const [errorGeneral, setErrorGeneral] = useState<string | null>(null);
-  type CampoNuevo = 'carpeta' | 'proyecto' | 'nombre' | 'correo' | 'clave';
+  type CampoNuevo = 'carpeta' | 'proyecto' | 'nombre' | 'correo';
   const correoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nuevo.correo.trim());
   const errorNuevo: Record<CampoNuevo, string | null> = {
     // En el mockup no hay disco: la carpeta solo se pide en la app de escritorio.
@@ -153,11 +151,6 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
     proyecto: nuevo.proyecto.trim() ? null : 'Escribe el nombre del proyecto.',
     nombre: nuevo.nombre.trim() ? null : 'Escribe tu nombre.',
     correo: !nuevo.correo.trim() ? 'Escribe tu correo.' : correoOk ? null : 'El correo no es válido (ej. nombre@correo.com).',
-    clave: !nuevo.clave
-      ? 'Escribe una contraseña.'
-      : nuevo.clave.length < 8
-        ? 'La contraseña debe tener al menos 8 caracteres.'
-        : null,
   };
   const [tocados, setTocados] = useState<Set<CampoNuevo>>(new Set());
   const tocar = (c: CampoNuevo) => setTocados((t) => new Set(t).add(c));
@@ -170,7 +163,7 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
   };
   const crear = async () => {
     if (Object.values(errorNuevo).some(Boolean)) {
-      setTocados(new Set(['carpeta', 'proyecto', 'nombre', 'correo', 'clave']));
+      setTocados(new Set(['carpeta', 'proyecto', 'nombre', 'correo']));
       return;
     }
     const datos = {
@@ -178,7 +171,6 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
       proyecto: nuevo.proyecto.trim(),
       nombre: nuevo.nombre.trim(),
       correo: nuevo.correo.trim(),
-      clave: nuevo.clave,
     };
     if (!enTauri()) {
       crearProyectoNuevo({ proyecto: datos.proyecto, nombre: datos.nombre, correo: datos.correo });
@@ -287,18 +279,6 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
           />
           {aviso(errorVisible('correo'))}
         </label>
-        <label className="block">
-          <span className="mb-1 block text-xs text-faint">Contraseña del proyecto (mínimo 8 caracteres)</span>
-          <EntradaClave
-            className={`input ${errorVisible('clave') ? 'border-red-500/70' : ''}`}
-            type="password"
-            autoComplete="new-password"
-            value={nuevo.clave}
-            onBlur={() => tocar('clave')}
-            onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })}
-          />
-          {aviso(errorVisible('clave'))}
-        </label>
         {errorGeneral && (
           <p className="text-[11px] text-red-300">
             <IconoEnLinea nombre="alerta" sinColor />
@@ -326,9 +306,7 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
   const [vista, setVista] = useState<'lista' | 'clonar' | 'carpeta'>('lista');
   const [aClonar, setAClonar] = useState<string | null>(null);
   const [carpeta, setCarpeta] = useState('');
-  const [clave, setClave] = useState('');
   // Solo se pide la contraseña cuando el proyecto que se intentó abrir la tiene.
-  const [pideClave, setPideClave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [recientes, setRecientes] = useState<ProyectoLocal[]>([]);
@@ -356,13 +334,10 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
   const cerrar = () => {
     if (ocupado) return;
     setError(null);
-    setClave('');
     onClose();
   };
   const verCarpeta = (ruta = '') => {
     setCarpeta(ruta);
-    setClave('');
-    setPideClave(false);
     setError(null);
     setVista('carpeta');
   };
@@ -377,16 +352,15 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
       showToast(`Abriste ${ws.nombre}`);
       return;
     }
-    // Workspace de Unity VC: no tiene contraseña; se entra como con "Traer".
+    // Workspace de Unity VC: se entra como con "Traer".
     if (wsDeUnity) {
       cerrar();
       useVentanasProyecto.getState().setTrasClonar(wsDeUnity);
       return;
     }
-    if (pideClave && !clave) return setError('Escribe la contraseña del proyecto.');
     setOcupado(true);
     try {
-      const entrada = await api.abrirProyectoLocal(ruta, clave, () => {
+      const entrada = await api.abrirProyectoLocal(ruta, () => {
         throw new ErrorBackend('validacion', 'Solo en la app de escritorio');
       });
       setOcupado(false);
@@ -396,12 +370,6 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
       }
     } catch (e) {
       setOcupado(false);
-      // El proyecto tiene contraseña: recién ahí se muestra el campo.
-      if (e instanceof ErrorBackend && e.codigo === 'llave_cifrada') {
-        setPideClave(true);
-        setError(null);
-        return;
-      }
       setError(mensajeDeError(e));
     }
   };
@@ -483,8 +451,7 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
                     onClick={() => {
                       setCarpeta(p.ruta);
                       setError(null);
-                      setPideClave(false);
-                    }}
+                                      }}
                     className={`flex w-full flex-col items-start rounded-lg border px-3 py-2 text-left transition hover:border-primary ${
                       carpeta === p.ruta ? 'border-primary bg-primary-soft' : 'border-border bg-surface-2'
                     }`}
@@ -503,35 +470,13 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
               onChange={(v) => {
                 setCarpeta(v);
                 setError(null);
-                setPideClave(false);
-              }}
+                          }}
               placeholder="Carpeta del proyecto"
               titulo="Carpeta del proyecto de BranchBoard"
             />
           </label>
           {wsDeUnity && (
             <p className="text-[11px] text-faint">Proyecto de Unity VC: {nombreDeRepo(wsDeUnity)}</p>
-          )}
-          {/* La contraseña solo aparece si el proyecto que se intentó abrir la tiene. */}
-          {pideClave && (
-            <label className="block">
-              <span className="mb-1 block text-xs text-faint">Este proyecto tiene contraseña</span>
-              <EntradaClave
-                className="input"
-                type="password"
-                autoComplete="current-password"
-                autoFocus
-                value={clave}
-                onFocus={() => setError(null)}
-                onChange={(e) => {
-                  setClave(e.target.value);
-                  setError(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void abrirCarpeta();
-                }}
-              />
-            </label>
           )}
           {avisoError}
           <div className="flex justify-end gap-2 pt-1">
