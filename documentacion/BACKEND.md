@@ -343,7 +343,8 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 - **No borra la sesión guardada**: pausado no es "sesión inválida", y sirve igual cuando lo reactiven.
 - Los cambios esperan en la bandeja (#238). `EstadoBandeja.servidor_pausado` lo marca y el Topbar muestra **"Servidor pausado · N cambios pendientes de enviar"** (punto rojo), con la explicación al pasar el mouse.
 - Al iniciar sesión con Unity VC, `aviso_servidor` trae el mismo mensaje.
-- Probado con un servidor HTTP local que responde 540 (`con_el_proyecto_pausado_se_avisa_y_la_sesion_no_se_pierde`): `llamar`, `renovar`, `iniciar_sesion`, `iniciar_sesion_con_unity` e `insertar_eventos`. No se probó pausando el proyecto de pruebas, porque lo usan otras pruebas al mismo tiempo.
+- Storage (#242, `supabase/storage.rs`) también lo traduce a `ServidorPausado`.
+- Probado con un servidor HTTP local que responde 540 (`con_el_proyecto_pausado_se_avisa_y_la_sesion_no_se_pierde`): `llamar`, `renovar`, `iniciar_sesion`, `iniciar_sesion_con_unity` e `insertar_eventos`. Storage, con `con_el_proyecto_pausado_storage_avisa_igual`. No se probó pausando el proyecto de pruebas, porque lo usan otras pruebas al mismo tiempo.
 
 **Reactivarlo** (solo el dueño de la cuenta de Supabase):
 1. Entrar a [supabase.com/dashboard](https://supabase.com/dashboard), organización BranchBoard, y abrir el proyecto (`branchboard` o `branchboard-pruebas`). Un proyecto pausado lo dice en su página.

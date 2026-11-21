@@ -104,6 +104,10 @@ fn tipo_contenido(ruta: &str) -> &'static str {
 /// (`{"statusCode":"…","error":"…","message":"…","code":"…"}`); respuestas reales de branchboard-pruebas
 /// (2026-11-21) en las pruebas de abajo.
 fn error_storage(status: u16, cuerpo: &str) -> Error {
+    // Proyecto pausado (#246): mismo código en Storage que en el resto de Supabase.
+    if status == super::cliente::HTTP_PROYECTO_PAUSADO {
+        return Error::ServidorPausado;
+    }
     let json: Value = serde_json::from_str(cuerpo).unwrap_or(Value::Null);
     let texto = |c: &str| json.get(c).and_then(Value::as_str).unwrap_or_default();
     let mensaje = texto("message");
@@ -292,6 +296,11 @@ mod tests {
             matches!(&e, Error::Validacion(m) if m.contains("modelo.fbx") && m.contains("50 MB")),
             "{e:?}"
         );
+    }
+
+    #[test]
+    fn con_el_proyecto_pausado_storage_avisa_igual() {
+        assert!(matches!(error_storage(540, ""), Error::ServidorPausado));
     }
 
     #[test]

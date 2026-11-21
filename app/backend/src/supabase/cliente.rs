@@ -26,7 +26,7 @@ use crate::servidor::pat::Llavero;
 
 const TIEMPO_POR_PETICION: Duration = Duration::from_secs(20);
 /// Código propio de Supabase para "project paused" (docs: Troubleshooting → HTTP status codes, 54X).
-const HTTP_PROYECTO_PAUSADO: u16 = 540;
+pub(crate) const HTTP_PROYECTO_PAUSADO: u16 = 540;
 /// La sesión se renueva si le queda menos que esto (segundos).
 const MARGEN_RENOVAR: i64 = 60;
 
