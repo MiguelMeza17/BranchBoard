@@ -94,10 +94,6 @@ pub fn crear(datos: &Path, nombre: &str, sesion: &Sesion) -> Resultado<Db> {
         },
     )?;
     tx.commit()?;
-    crate::eventos::fijar_carpeta_compartida_local(
-        &carpeta,
-        &carpeta.join(super::CARPETA_EVENTOS_LOCALES),
-    )?;
     Ok(db)
 }
 

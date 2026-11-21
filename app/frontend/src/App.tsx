@@ -81,7 +81,7 @@ export function App() {
     return () => dejarDeEscuchar?.();
   }, [showToast]);
 
-  // Dentro de un proyecto, los cambios de las demás máquinas llegan solos (ops/, #92).
+  // Dentro de un proyecto, los cambios de las demás máquinas llegan del servidor (#239).
   useSincronizacionEventos(cmSesionActiva && accesoCompletado);
   useEventosServidor(accesoCompletado && !!proyectoActual);
 

@@ -485,11 +485,11 @@ mod tests {
     fn entorno_real_abrir_en_unity() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
+
         use crate::comandos::tareas::{
             abrir_en_unity_preparar_en, hacer_checkin_en, listar_commits_en, tomar_en,
         };
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+
         use crate::modelo::{ahora_iso, hoy_local, Rol};
         use crate::tareas::{crear, AutorTarea, DatosNuevaTarea};
 
@@ -501,7 +501,6 @@ mod tests {
         let estado = AppState::default();
         let ws = tempfile::tempdir().unwrap();
         let datos = tempfile::tempdir().unwrap();
-        let compartida = tempfile::tempdir().unwrap();
         let ruta_ws = ws.path().to_string_lossy().to_string();
         let mut ramas_creadas = Vec::new();
 
@@ -515,17 +514,12 @@ mod tests {
 
         let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             entrar_en(&estado, datos.path(), ws.path()).unwrap();
-            let local = carpeta_abierta(&estado).unwrap();
-            configurar_carpeta_compartida(&local, &compartida.path().to_string_lossy(), true)
-                .unwrap();
-            let ops = carpeta_ops(&local).unwrap();
 
             let admin = estado.exigir_permiso("tomar_tarea").unwrap().email;
             let tarea = estado
                 .con_db(|db| {
                     crear(
                         db.conexion(),
-                        &ops,
                         &AutorTarea {
                             email: &admin,
                             rol: Rol::Administrador,

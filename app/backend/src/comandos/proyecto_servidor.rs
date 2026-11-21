@@ -163,6 +163,9 @@ mod tests {
         let id = &listado[0].id;
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");
+        let carpeta = proyecto_servidor::carpeta_datos(datos.path(), id).unwrap();
+        assert!(!carpeta.join(crate::eventos::ARCHIVO_LOCAL).exists());
+        assert!(!carpeta.join("eventos-locales").exists());
         estado.cerrar_proyecto();
         abrir_en(&estado, datos.path(), &cliente, id).unwrap();
         let otro = LlaveroMemoria::default();
@@ -219,8 +222,6 @@ mod tests {
             .con_db(|db| proyectos::proyecto_guardado(db.conexion()))
             .unwrap()
             .unwrap();
-        let carpeta = proyecto_servidor::carpeta_datos(datos.path(), &id).unwrap();
-        let ops = crate::eventos::carpeta_ops(&carpeta).unwrap();
         let autor = AutorTarea {
             email: &sesion.correo,
             rol: Rol::Administrador,
@@ -229,7 +230,6 @@ mod tests {
             .con_db(|db| {
                 tareas::crear(
                     db.conexion(),
-                    &ops,
                     &autor,
                     &DatosNuevaTarea {
                         titulo: "Creada sin conexión".into(),
@@ -374,8 +374,6 @@ mod tests {
 
     impl Pc {
         fn crear_tarea(&self, titulo: &str) -> String {
-            let carpeta = crate::comandos::datos::carpeta_abierta(&self.estado).unwrap();
-            let ops = crate::eventos::carpeta_ops(&carpeta).unwrap();
             let yo = self.estado.exigir_permiso("crear_tarea").unwrap();
             let autor = AutorTarea {
                 email: &yo.email,
@@ -395,7 +393,6 @@ mod tests {
                 .con_db(|db| {
                     tareas::crear(
                         db.conexion(),
-                        &ops,
                         &autor,
                         &datos,
                         &crate::modelo::ahora_iso(),

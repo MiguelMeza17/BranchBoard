@@ -228,7 +228,6 @@ fn crear_en(
     configuracion::guardar(&tx, CLAVE_NOMBRE_PROYECTO, proyecto, correo, hoy)?;
     tx.commit()?;
     drop(db);
-    std::fs::create_dir_all(carpeta.join(CARPETA_COMPARTIDA).join("ops"))?;
     // La marca va al final: sin ella, una creación fallida no parece un proyecto.
     let marca = MarcaLocal {
         aplicacion: NOMBRE_APP.into(),
@@ -274,7 +273,6 @@ pub fn abrir(
     let proyecto =
         configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO)?.unwrap_or(marca.nombre.clone());
     let vistos_usuario = vistos::listar_vistos(db.conexion(), &email)?;
-    eventos::fijar_carpeta_compartida_local(&datos, &carpeta.join(CARPETA_COMPARTIDA))?;
 
     estado.cerrar_proyecto();
     estado.fijar_usuario(Some(&email));
@@ -318,7 +316,7 @@ pub fn carpeta_abierta(estado: &AppState) -> Resultado<PathBuf> {
         .filter(|p| datos.file_name().is_some_and(|n| n == CARPETA_DATOS) && p.join(ARCHIVO_MARCA).is_file())
         .ok_or_else(|| {
             Error::Validacion(
-                "Solo se pueden exportar los proyectos sin Unity VC: los de Unity VC ya están en su repositorio y en la carpeta compartida."
+                "Solo se pueden exportar los proyectos locales. Exportar desde el servidor todavía no está disponible."
                     .into(),
             )
         })?;
@@ -482,7 +480,6 @@ pub fn importar(archivo: &Path, carpeta: &str) -> Resultado<ProyectoLocal> {
             let mut salida = File::create(&ruta)?;
             std::io::copy(&mut entrada.by_ref().take(MAXIMO_IMPORTADO), &mut salida)?;
         }
-        std::fs::create_dir_all(temporal.join(CARPETA_COMPARTIDA).join("ops"))?;
         std::fs::rename(&temporal, &destino)?;
         Ok(())
     })();
@@ -588,12 +585,9 @@ mod tests {
                 vistos: BTreeMap::new(),
             }
         );
-        // Queda como Administrador con permisos y la carpeta compartida dentro del proyecto.
+        // Queda como Administrador con permisos; desde #244 sin carpeta compartida.
         assert!(estado.exigir_permiso("exportar_proyecto_local").is_ok());
-        assert_eq!(
-            eventos::carpeta_compartida(&carpeta.join(CARPETA_DATOS)).unwrap(),
-            Some(carpeta.join(CARPETA_COMPARTIDA))
-        );
+        assert!(!carpeta.join(CARPETA_COMPARTIDA).exists());
         let usuario = estado
             .con_db(|db| usuarios::buscar(db.conexion(), "ana@ejemplo.dev"))
             .unwrap()
@@ -655,11 +649,6 @@ mod tests {
         let carpeta = crear(&nuevo(base.path(), "Juego"), AHORA, HOY).unwrap();
         let estado = AppState::default();
         abrir(&estado, app.path(), &carpeta, false).unwrap();
-        std::fs::write(
-            carpeta.join(CARPETA_COMPARTIDA).join("ops").join("e1.json"),
-            "{}",
-        )
-        .unwrap();
         estado
             .con_db(|db| {
                 configuracion::guardar(db.conexion(), "prueba", "42", "ana@ejemplo.dev", HOY)
@@ -675,7 +664,6 @@ mod tests {
         };
         assert!(nombres.contains(&ARCHIVO_MARCA.to_string()));
         assert!(nombres.contains(&"datos/branchboard.db".to_string()));
-        assert!(nombres.contains(&"compartida/ops/e1.json".to_string()));
         assert!(!nombres
             .iter()
             .any(|n| n.contains("backups") || n == "datos/local.json" || n.ends_with("-wal")));
@@ -703,16 +691,6 @@ mod tests {
             .con_db(|db| configuracion::leer(db.conexion(), "prueba"))
             .unwrap();
         assert_eq!(valor.as_deref(), Some("42"));
-        assert_eq!(
-            eventos::carpeta_compartida(&ruta.join(CARPETA_DATOS)).unwrap(),
-            Some(ruta.join(CARPETA_COMPARTIDA)),
-            "la carpeta compartida apunta a la copia nueva, no a la original"
-        );
-        assert!(ruta
-            .join(CARPETA_COMPARTIDA)
-            .join("ops")
-            .join("e1.json")
-            .is_file());
     }
 
     #[test]

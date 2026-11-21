@@ -6,7 +6,7 @@ use tauri::State;
 use crate::comandos::datos::carpeta_abierta;
 use crate::comandos::documentos::proyecto_en_servidor;
 use crate::db::configuracion::Ajuste;
-use crate::error::Resultado;
+use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos;
 use crate::modelo::ahora_iso;
@@ -53,7 +53,7 @@ pub fn obtener_configuracion_proyecto_en(estado: &AppState) -> Resultado<Configu
         }
         return estado.con_db(|db| proyecto::leer(db.conexion(), Some(&cache)));
     }
-    // Sin carpeta compartida configurada todavía no hay imagen que leer.
+    // Sin servidor: la imagen de antes, si quedó en la carpeta compartida (solo se lee, #244).
     let carpeta = eventos::carpeta_imagen_proyecto(&local).ok();
     estado.con_db(|db| proyecto::leer(db.conexion(), carpeta.as_deref()))
 }
@@ -67,10 +67,7 @@ pub fn renombrar_proyecto(estado: State<'_, AppState>, nombre: String) -> Result
 /// Versión sin envoltorio Tauri de [`renombrar_proyecto`].
 pub fn renombrar_proyecto_en(estado: &AppState, nombre: &str) -> Resultado<Ajuste> {
     let yo = estado.exigir_permiso("renombrar_proyecto")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
-    estado.con_db(|db| {
-        proyecto::renombrar(db.conexion(), &ops, &yo.email, yo.rol, nombre, &ahora_iso())
-    })
+    estado.con_db(|db| proyecto::renombrar(db.conexion(), &yo.email, yo.rol, nombre, &ahora_iso()))
 }
 
 /// Crea o cambia un ajuste del proyecto entero (`configuracion_proyecto`).
@@ -90,17 +87,8 @@ pub fn actualizar_configuracion_proyecto_en(
     valor: &str,
 ) -> Resultado<Ajuste> {
     let yo = estado.exigir_permiso("actualizar_configuracion_proyecto")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     estado.con_db(|db| {
-        proyecto::actualizar(
-            db.conexion(),
-            &ops,
-            &yo.email,
-            yo.rol,
-            clave,
-            valor,
-            &ahora_iso(),
-        )
+        proyecto::actualizar(db.conexion(), &yo.email, yo.rol, clave, valor, &ahora_iso())
     })
 }
 
@@ -115,50 +103,33 @@ pub fn subir_imagen_proyecto(estado: State<'_, AppState>, ruta: String) -> Resul
 pub fn subir_imagen_proyecto_en(estado: &AppState, ruta: &str) -> Resultado<String> {
     let yo = estado.exigir_permiso("subir_imagen_proyecto")?;
     let carpeta = carpeta_abierta(estado)?;
-    let ops = eventos::carpeta_ops(&carpeta)?;
-    if let Some(proyecto_id) = proyecto_en_servidor(estado)? {
-        let supabase = Entorno::actual().proyecto();
-        let cliente = ClienteSupabase::new(supabase, LlaveroSistema);
-        let storage = Storage::new(&cliente, supabase);
-        let (nombre, png) = proyecto::preparar_imagen(ruta)?;
-        let nueva = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &nombre)?;
-        storage.subir(&nueva, &png)?;
-        let publicado = estado.con_db(|db| {
-            proyecto::publicar_imagen(
-                db.conexion(),
-                &ops,
-                &yo.email,
-                yo.rol,
-                &nombre,
-                &ahora_iso(),
-            )
-        });
-        let anterior = match publicado {
-            Ok(a) => a,
-            Err(e) => {
-                let _ = storage.borrar(&nueva);
-                return Err(e);
-            }
-        };
-        // La anterior ya no la usa nadie. Si no se puede borrar, solo ocupa espacio.
-        if let Some(vieja) = anterior {
-            if let Ok(r) = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &vieja) {
-                let _ = storage.borrar(&r);
-            }
+    let Some(proyecto_id) = proyecto_en_servidor(estado)? else {
+        return Err(Error::Validacion(
+            "Para cambiar la imagen, primero pasa el proyecto al servidor de BranchBoard".into(),
+        ));
+    };
+    let supabase = Entorno::actual().proyecto();
+    let cliente = ClienteSupabase::new(supabase, LlaveroSistema);
+    let storage = Storage::new(&cliente, supabase);
+    let (nombre, png) = proyecto::preparar_imagen(ruta)?;
+    let nueva = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &nombre)?;
+    storage.subir(&nueva, &png)?;
+    let publicado = estado.con_db(|db| {
+        proyecto::publicar_imagen(db.conexion(), &yo.email, yo.rol, &nombre, &ahora_iso())
+    });
+    let anterior = match publicado {
+        Ok(a) => a,
+        Err(e) => {
+            let _ = storage.borrar(&nueva);
+            return Err(e);
         }
-        let _ = proyecto::guardar_en_cache(&carpeta.join(CACHE_IMAGEN), &nombre, &png);
-        return Ok(proyecto::imagen_como_data_url(&png));
+    };
+    // La anterior ya no la usa nadie. Si no se puede borrar, solo ocupa espacio.
+    if let Some(vieja) = anterior {
+        if let Ok(r) = storage::ruta_objeto(&proyecto_id, Carpeta::Proyecto, &vieja) {
+            let _ = storage.borrar(&r);
+        }
     }
-    let imagen = eventos::carpeta_imagen_proyecto(&carpeta)?;
-    estado.con_db(|db| {
-        proyecto::subir_imagen(
-            db.conexion(),
-            &ops,
-            &imagen,
-            &yo.email,
-            yo.rol,
-            ruta,
-            &ahora_iso(),
-        )
-    })
+    let _ = proyecto::guardar_en_cache(&carpeta.join(CACHE_IMAGEN), &nombre, &png);
+    Ok(proyecto::imagen_como_data_url(&png))
 }

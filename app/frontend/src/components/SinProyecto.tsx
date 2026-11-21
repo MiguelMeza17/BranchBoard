@@ -43,7 +43,7 @@ export const useVentanasProyecto = create<{
 /** Hay sesión de BranchBoard pero todavía no se entró a ningún proyecto. */
 export const useSinProyecto = () => useStore((s) => !s.proyectoActual);
 
-// Proyecto sin Unity VC: no hay workspace ni carpeta compartida que elegir (va dentro del proyecto).
+// Proyecto sin Unity VC: no hay workspace que elegir.
 function terminarEntradaLocal(entrada: EntradaDentro, ruta: string) {
   const st = useStore.getState();
   if (!st.usuarios.some((u) => u.email === entrada.email)) {
@@ -431,8 +431,7 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
               setWorkspaces([...workspaces.filter((w) => w.repo !== ws.repo), ws]);
               cerrar();
               showToast(`${nombreDeRepo(ws)} quedó en ${ws.ruta}`);
-              // Se entra directo al proyecto: el menú del proyecto lo configura (como "Traer") y pide la
-              // carpeta compartida si falta.
+              // Se entra directo al proyecto: el menú lo configura como al traerlo.
               useVentanasProyecto.getState().setTrasClonar(ws);
             }}
           />

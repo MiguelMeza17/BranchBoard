@@ -72,8 +72,6 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("instalar_actualizacion", Acceso::Libre),
     ("listar_backups", Acceso::Roles(SOLO_ADMIN)),
     ("restaurar_backup", Acceso::Roles(SOLO_ADMIN)),
-    ("carpeta_compartida", Acceso::Roles(TODOS)),
-    ("configurar_carpeta_compartida", Acceso::Roles(TODOS)),
     ("sincronizar_eventos", Acceso::Roles(TODOS)),
     ("revisar_actualizaciones", Acceso::Roles(TODOS)),
     ("eventos_por_subir", Acceso::Libre),

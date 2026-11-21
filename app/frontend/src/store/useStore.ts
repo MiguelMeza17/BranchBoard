@@ -351,12 +351,6 @@ interface State {
   /** `workspace`: el workspace de Unity VC por el que se entró, si su nombre no es el del proyecto. */
   entrarAProyecto: (nombre: string, workspace?: string, carpetaLocal?: string) => void;
   /**
-   * Mockup de la carpeta compartida (Drive/OneDrive) de cada proyecto en esta máquina, por nombre del
-   * proyecto. En la app real la guarda el backend (`configurar_carpeta_compartida`).
-   */
-  carpetasCompartidas: Record<string, string>;
-  setCarpetaCompartida: (proyecto: string, ruta: string) => void;
-  /**
    * Sube cada vez que llegan cambios de otras máquinas (`sincronizar_eventos`). Las pantallas que leen
    * del backend lo ponen como dependencia para volver a pedir sus datos solas.
    */
@@ -397,7 +391,7 @@ interface State {
   subirDocumentos: (archivos: File[]) => void;
   /**
    * App de escritorio: sube los archivos por su ruta en el equipo (`subir_documentos`, #120); el backend
-   * los copia a la carpeta compartida. Las rutas salen del explorador de archivos o de soltarlos en la ventana.
+   * los sube a Storage cuando el proyecto está en el servidor. Las rutas salen del explorador de archivos o de soltarlos en la ventana.
    */
   subirDocumentosRutas: (rutas: string[]) => Promise<void>;
   /** Trae los documentos del proyecto desde el backend (#120); en el navegador no cambia nada. */
@@ -645,10 +639,6 @@ export const useStore = create<State>((set, get) => {
   proyectosServidor: fx.proyectosServidor.map((p) => ({ ...p, org: 'MIGUELMEZA' })),
   proyectoAClonar: null,
   proyectoRepoAClonar: null,
-  // El proyecto de ejemplo ya tiene carpeta; uno recién configurado la pide al entrar.
-  carpetasCompartidas: (enTauri() ? {} : { [fx.PROYECTO_NOMBRE]: `C:\\Users\\ana\\OneDrive\\${fx.PROYECTO_NOMBRE}` }) as Record<string, string>,
-  setCarpetaCompartida: (proyecto, ruta) =>
-    set((s) => ({ carpetasCompartidas: { ...s.carpetasCompartidas, [proyecto]: ruta } })),
   versionDatos: 0,
   subirVersionDatos: () => set((s) => ({ versionDatos: s.versionDatos + 1 })),
   cargarTareas: async () => {

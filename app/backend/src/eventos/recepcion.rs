@@ -211,8 +211,7 @@ fn pendientes(c: &Connection, proyecto: &str) -> Resultado<Vec<Pendiente>> {
         lista.push(Pendiente {
             id,
             evento,
-            orden: momento,
-            orden_servidor: Some(orden_servidor),
+            orden_servidor,
         });
     }
     Ok(lista)
@@ -233,7 +232,6 @@ pub fn aplicar(
     let lista = pendientes(c, proyecto)?;
     lectura::aplicar_pendientes(
         c,
-        None,
         ahora,
         lista,
         &mut resumen,
@@ -563,7 +561,6 @@ mod tests {
             )
             .unwrap();
         }
-        let ops_a = tempfile::tempdir().unwrap();
         let autor = AutorTarea {
             email: &correo,
             rol: Rol::Administrador,
@@ -581,7 +578,6 @@ mod tests {
             };
             tareas::crear(
                 pc_a.conexion(),
-                ops_a.path(),
                 &autor,
                 &datos,
                 &crate::modelo::ahora_iso(),

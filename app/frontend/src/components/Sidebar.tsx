@@ -194,20 +194,12 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const sinBranchBoard = unoPorRepo(workspaces.filter((w) => !w.tiene_db_branchboard));
   const setWorkspaces = useStore((s) => s.setWorkspaces);
   const setRolActual = useStore((s) => s.setRolActual);
-  const setCarpetaCompartida = useStore((s) => s.setCarpetaCompartida);
   const normalizada = (p: string) => p.replace(/\//g, '\\').toLowerCase();
   const [proyectoUnityNuevo, setProyectoUnityNuevo] = useState('');
   const [nombreNuevo, setNombreNuevo] = useState('');
   const [carpetaNueva, setCarpetaNueva] = useState(() => (enTauri() ? '' : 'D:\\Unity'));
-  const [ocupadoNuevo, setOcupadoNuevo] = useState<'creando' | 'compartida' | string | null>(null);
+  const [ocupadoNuevo, setOcupadoNuevo] = useState<'creando' | string | null>(null);
   const [errorNuevoProyecto, setErrorNuevoProyecto] = useState<string | null>(null);
-  const [pendienteCompartida, setPendienteCompartida] = useState<{
-    workspace: WorkspaceUnityVC;
-    proyecto: string;
-    rol: Rol;
-    email: string;
-  } | null>(null);
-  const [rutaCompartidaNueva, setRutaCompartidaNueva] = useState('');
   const proyectoUnityEfectivo = proyectoUnityNuevo || proyectosUnity[0] || '';
   // Configurar en BranchBoard un proyecto de Unity VC que aún no lo usa en este equipo: crea sus datos y una
   // llave de Administrador nueva, así que se confirma antes (un clic suelto en la lista no debe hacerlo).
@@ -219,7 +211,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
     const ws = trasClonar;
     useVentanasProyecto.getState().setTrasClonar(null);
     setErrorNuevoProyecto(null);
-    setPendienteCompartida(null);
     setNuevoProyecto(true);
     void traer(ws);
     // traer() se recrea en cada render; solo importa el aviso de clonado.
@@ -251,23 +242,13 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
         ...workspaces.filter((w) => normalizada(w.ruta) !== normalizada(res.workspace.ruta)),
         res.workspace,
       ]);
-      const carpeta = await api.carpetaCompartida(() => null);
-      if (carpeta) {
-        setCarpetaCompartida(res.entrada.proyecto, carpeta);
-        setEmail(res.entrada.email);
-        setRolActual(res.entrada.rol);
-        entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
-        showToast(`Proyecto ${res.workspace.nombre} configurado — eres su ${res.entrada.rol}`);
-        setNuevoProyecto(false);
-        setNombreNuevo('');
-      } else {
-        setPendienteCompartida({
-          workspace: res.workspace,
-          proyecto: res.entrada.proyecto,
-          rol: res.entrada.rol,
-          email: res.entrada.email,
-        });
-      }
+      // Sin carpeta compartida (#244): se entra directo.
+      setEmail(res.entrada.email);
+      setRolActual(res.entrada.rol);
+      entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
+      showToast(`Proyecto ${res.workspace.nombre} configurado — eres su ${res.entrada.rol}`);
+      setNuevoProyecto(false);
+      setNombreNuevo('');
     } catch (e) {
       setErrorNuevoProyecto(mensajeDeError(e));
     } finally {
@@ -280,8 +261,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
     setProyectoUnityNuevo('');
     setNombreNuevo('');
     setErrorNuevoProyecto(null);
-    setPendienteCompartida(null);
-    setRutaCompartidaNueva('');
   };
   const proyectoActual = useStore((s) => s.proyectoActual);
   const workspaceActual = useStore((s) => s.workspaceActual);
@@ -476,14 +455,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                           showToast(`Revisa el acceso para ${ws.nombre}`, 'info');
                           return;
                         }
-                        const carpeta = await api.carpetaCompartida(
-                          () => useStore.getState().carpetasCompartidas[ws.nombre] ?? null
-                        );
-                        if (!carpeta) {
-                          cambiarDeProyecto();
-                          showToast(`Configura la carpeta compartida para ${ws.nombre}`, 'info');
-                          return;
-                        }
                         setEmail(res.email);
                         setRolActual(res.rol);
                         entrarAProyecto(res.proyecto, ws.nombre);
@@ -555,8 +526,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                 setMenuProyecto(false);
                 if (enTauri()) void cargarWorkspacesYProyectos();
                 setErrorNuevoProyecto(null);
-                setPendienteCompartida(null);
-                setRutaCompartidaNueva('');
                 setNuevoProyecto(true);
               }}
             >
@@ -632,81 +601,10 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
       <Modal
         open={nuevoProyecto}
         onClose={cerrarNuevo}
-        title={pendienteCompartida ? 'Carpeta compartida del proyecto' : 'Nuevo proyecto'}
-        subtitle={
-          pendienteCompartida
-            ? `${pendienteCompartida.workspace.nombre} quedó listo — eres su ${pendienteCompartida.rol}`
-            : 'Trae un proyecto de Unity VC que ya tienes en este equipo, o crea uno nuevo'
-        }
+        title="Nuevo proyecto"
+        subtitle="Trae un proyecto de Unity VC que ya tienes en este equipo, o crea uno nuevo"
         size="md"
       >
-        {pendienteCompartida ? (
-          <div className="space-y-4 text-sm">
-            <p className="text-[12px] text-muted">
-              Elige la carpeta compartida (Drive o OneDrive) donde BranchBoard sincronizará los cambios de{' '}
-              <span className="font-semibold text-text">{pendienteCompartida.workspace.nombre}</span> con el equipo.
-            </p>
-            <div>
-              <label className="label">Carpeta compartida</label>
-              <SelectorCarpeta
-                value={rutaCompartidaNueva}
-                disabled={ocupadoNuevo !== null}
-                onChange={(v) => {
-                  setRutaCompartidaNueva(v);
-                  setErrorNuevoProyecto(null);
-                }}
-                placeholder="Ej. C:\Users\...\OneDrive\Proyecto"
-              />
-            </div>
-            {errorNuevoProyecto && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                {errorNuevoProyecto}
-              </div>
-            )}
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                className="btn-ghost btn-sm"
-                disabled={ocupadoNuevo !== null}
-                onClick={cerrarNuevo}
-              >
-                Configurar después
-              </button>
-              <button
-                type="button"
-                className="btn-primary btn-sm"
-                disabled={ocupadoNuevo !== null || !rutaCompartidaNueva.trim()}
-                onClick={async () => {
-                  if (!pendienteCompartida || !rutaCompartidaNueva.trim() || ocupadoNuevo) return;
-                  setOcupadoNuevo('compartida');
-                  setErrorNuevoProyecto(null);
-                  try {
-                    const guardada = await api.configurarCarpetaCompartida(
-                      rutaCompartidaNueva.trim(),
-                      () => rutaCompartidaNueva.trim()
-                    );
-                    const { workspace, proyecto, rol, email } = pendienteCompartida;
-                    setCarpetaCompartida(proyecto, guardada);
-                    setEmail(email);
-                    setRolActual(rol);
-                    entrarAProyecto(proyecto, workspace.nombre);
-                    showToast(`Proyecto ${workspace.nombre} listo — eres su ${rol}`);
-                    setPendienteCompartida(null);
-                    setRutaCompartidaNueva('');
-                    setNombreNuevo('');
-                    setNuevoProyecto(false);
-                  } catch (e) {
-                    setErrorNuevoProyecto(mensajeDeError(e));
-                  } finally {
-                    setOcupadoNuevo(null);
-                  }
-                }}
-              >
-                {ocupadoNuevo === 'compartida' ? 'Guardando…' : 'Guardar y entrar'}
-              </button>
-            </div>
-          </div>
-        ) : (
           <div className="space-y-5 text-sm">
             {errorNuevoProyecto && (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
@@ -832,24 +730,12 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                         res.workspace,
                       ]);
                       if (res.entrada.estado === 'dentro') {
-                        const carpeta = await api.carpetaCompartida(() => null);
-                        if (carpeta) {
-                          setCarpetaCompartida(res.entrada.proyecto, carpeta);
-                          setEmail(res.entrada.email);
-                          setRolActual(res.entrada.rol);
-                          entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
-                          showToast(`Proyecto ${res.workspace.nombre} creado — eres su ${res.entrada.rol}`);
-                          setNombreNuevo('');
-                          setNuevoProyecto(false);
-                        } else {
-                          showToast(`Proyecto ${res.workspace.nombre} creado en Unity VC`);
-                          setPendienteCompartida({
-                            workspace: res.workspace,
-                            proyecto: res.entrada.proyecto,
-                            rol: res.entrada.rol,
-                            email: res.entrada.email,
-                          });
-                        }
+                        setEmail(res.entrada.email);
+                        setRolActual(res.entrada.rol);
+                        entrarAProyecto(res.entrada.proyecto, res.workspace.nombre);
+                        showToast(`Proyecto ${res.workspace.nombre} creado — eres su ${res.entrada.rol}`);
+                        setNombreNuevo('');
+                        setNuevoProyecto(false);
                       }
                     } catch (e) {
                       setErrorNuevoProyecto(mensajeDeError(e));
@@ -863,7 +749,6 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
               </div>
             </div>
           </div>
-        )}
       </Modal>
       <Modal
         open={porTraer !== null}

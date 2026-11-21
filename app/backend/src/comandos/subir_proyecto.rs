@@ -303,15 +303,21 @@ mod tests {
         for (email, rol) in equipo {
             usuarios::insertar(c, &usuario(email, *rol)).unwrap();
         }
-        eventos::fijar_carpeta_compartida_local(carpeta, &carpeta.join("compartida")).unwrap();
+        // Este fixture representa un proyecto anterior a #244. La app nueva solo lee esta
+        // configuración para migrarlo; ya no existe un comando para crearla.
+        let compartida = carpeta.join("compartida-anterior");
+        std::fs::create_dir_all(&compartida).unwrap();
+        std::fs::write(
+            carpeta.join(eventos::ARCHIVO_LOCAL),
+            serde_json::json!({ "carpeta_compartida": compartida }).to_string(),
+        )
+        .unwrap();
         estado.cerrar_proyecto();
         estado.fijar_usuario(Some(admin));
         estado.abrir_proyecto(db);
     }
 
     fn crear_tarea(estado: &AppState, titulo: &str) {
-        let carpeta = carpeta_abierta(estado).unwrap();
-        let ops = eventos::carpeta_ops(&carpeta).unwrap();
         let yo = estado.exigir_permiso("crear_tarea").unwrap();
         let autor = AutorTarea {
             email: &yo.email,
@@ -328,16 +334,7 @@ mod tests {
             fecha_limite: None,
         };
         estado
-            .con_db(|db| {
-                tareas::crear(
-                    db.conexion(),
-                    &ops,
-                    &autor,
-                    &datos,
-                    &ahora_iso(),
-                    &hoy_local(),
-                )
-            })
+            .con_db(|db| tareas::crear(db.conexion(), &autor, &datos, &ahora_iso(), &hoy_local()))
             .unwrap();
     }
 

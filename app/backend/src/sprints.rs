@@ -2,8 +2,6 @@
 //! de tareas (issue #113). Cada mutación compartida pasa por `ops/` y se aplica
 //! igual en todas las máquinas mediante [`aplicar_evento`].
 
-use std::path::Path;
-
 use chrono::{Days, NaiveDate};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -144,7 +142,6 @@ pub struct DatosNuevoSprint<'a> {
 /// o un backlog (`con_fecha = false`, sin duración ni fecha de fin), solo Líder/Admin (#113).
 pub fn crear_sprint(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     datos: &DatosNuevoSprint<'_>,
     ahora: &str,
@@ -191,7 +188,7 @@ pub fn crear_sprint(
             .map_err(|e| Error::Interno(format!("no se pudo serializar crear_sprint: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_crear_sprint(tx, &sprint))?;
+    eventos::publicar(c, &ev, |tx| aplicar_crear_sprint(tx, &sprint))?;
     db_sprints::obtener(c, &sprint.id)
 }
 
@@ -199,7 +196,6 @@ pub fn crear_sprint(
 /// Rechaza asignarla si ya pertenece a otro sprint.
 pub fn asignar_tarea_a_sprint(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     tarea_id: &str,
     sprint_id: Option<&str>,
@@ -220,9 +216,7 @@ pub fn asignar_tarea_a_sprint(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_asignar_tarea_a_sprint(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_asignar_tarea_a_sprint(tx, &payload))?;
     db_tareas::obtener(c, tarea_id)
 }
 
@@ -230,7 +224,6 @@ pub fn asignar_tarea_a_sprint(
 /// Rechaza asignarla si ya pertenece a otro backlog.
 pub fn asignar_tarea_a_backlog(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     tarea_id: &str,
     backlog_id: Option<&str>,
@@ -253,9 +246,7 @@ pub fn asignar_tarea_a_backlog(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_asignar_tarea_a_backlog(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_asignar_tarea_a_backlog(tx, &payload))?;
     db_tareas::obtener(c, tarea_id)
 }
 
@@ -263,7 +254,6 @@ pub fn asignar_tarea_a_backlog(
 /// que están en `backlog_id` (`None` = tareas sin backlog), solo Líder/Admin (#113).
 pub fn asignar_backlog_a_sprint(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     backlog_id: Option<&str>,
     sprint_id: &str,
@@ -297,9 +287,7 @@ pub fn asignar_backlog_a_sprint(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_asignar_backlog_a_sprint(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_asignar_backlog_a_sprint(tx, &payload))?;
 
     let mut actualizadas = Vec::with_capacity(elegibles.len());
     for id in elegibles {
@@ -313,7 +301,6 @@ pub fn asignar_backlog_a_sprint(
 /// (con `sprint_id = null`) las tareas no terminadas (#114). Exclusivo Administrador.
 pub fn cerrar_sprint(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     sprint_id: &str,
     ahora: &str,
@@ -333,7 +320,7 @@ pub fn cerrar_sprint(
             .map_err(|e| Error::Interno(format!("no se pudo serializar cerrar_sprint: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_cerrar_sprint(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| aplicar_cerrar_sprint(tx, &payload))?;
     obtener_con_reporte(c, id)
 }
 
@@ -345,7 +332,6 @@ pub fn cerrar_sprint(
 ///   Administrador (#114). Backlogs (`con_fecha = false`) nunca se cierran solos.
 pub fn evaluar_cierre_sprints(
     c: &Connection,
-    ops: Option<&Path>,
     usuario_email: &str,
     ahora: &str,
     hoy: &str,
@@ -388,7 +374,6 @@ pub fn evaluar_cierre_sprints(
             };
             publicar_o_aplicar_cierre(
                 c,
-                ops,
                 &email,
                 ahora,
                 "cerrar_sprint_automatico",
@@ -403,7 +388,6 @@ pub fn evaluar_cierre_sprints(
             };
             publicar_o_aplicar_cierre(
                 c,
-                ops,
                 &email,
                 ahora,
                 "reporte_sprint_fecha_fin",
@@ -416,32 +400,29 @@ pub fn evaluar_cierre_sprints(
     Ok(actualizados)
 }
 
+/// Publica el cierre automático o el reporte del día como evento (sube al servidor por la bandeja si el
+/// proyecto está vinculado, #238).
 fn publicar_o_aplicar_cierre(
     c: &Connection,
-    ops: Option<&Path>,
     email: &str,
     ahora: &str,
     tipo: &str,
     payload: &PayloadCerrarSprint,
     aplicar: fn(&Connection, &PayloadCerrarSprint) -> Resultado<()>,
 ) -> Resultado<()> {
-    if let Some(carpeta_ops) = ops {
-        let mut ev = Evento::nuevo(
-            tipo,
-            Some(&payload.sprint_id),
-            email,
-            serde_json::to_value(payload)
-                .map_err(|e| Error::Interno(format!("no se pudo serializar {tipo}: {e}")))?,
-        );
-        ev.timestamp = ahora.to_string();
-        eventos::publicar(c, carpeta_ops, &ev, |tx| aplicar(tx, payload))?;
-        Ok(())
-    } else {
-        aplicar(c, payload)
-    }
+    let mut ev = Evento::nuevo(
+        tipo,
+        Some(&payload.sprint_id),
+        email,
+        serde_json::to_value(payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar {tipo}: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, &ev, |tx| aplicar(tx, payload))?;
+    Ok(())
 }
 
-/// Reproduce un evento de planificación recibido de `ops/`.
+/// Reproduce un evento de planificación recibido de otra PC (#239).
 pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
     match evento.tipo.as_str() {
         "crear_sprint" => {
@@ -768,9 +749,6 @@ mod tests {
     use crate::db::sprints as db_sprints;
     use crate::db::tareas as db_tareas;
     use crate::db::{usuarios, Db};
-    use crate::eventos::carpeta_ops;
-    use crate::eventos::configurar_carpeta_compartida;
-    use crate::eventos::lectura::{self, sincronizar};
 
     use crate::modelo::{hoy_local, EstadoTarea, Rol};
     use crate::tareas::{cambiar_estado, crear, crear_en_espera, eliminar, DatosNuevaTarea};
@@ -784,10 +762,8 @@ mod tests {
     struct Entorno {
         _tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         local_a: PathBuf,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Entorno {
@@ -804,9 +780,6 @@ mod tests {
             .join("datos_b")
             .join("proyectos")
             .join("estudio-juego");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -835,18 +808,13 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(db_b.conexion(), &ops, &local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
 
         Entorno {
             _tmp: tmp,
             db_a,
-            ops,
             local_a,
             db_b,
-            local_b,
         }
     }
 
@@ -867,7 +835,6 @@ mod tests {
     fn crear_tarea_ok(e: &Entorno, titulo: &str, ts: &str) -> Tarea {
         crear(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevaTarea {
                 titulo: titulo.into(),
@@ -896,7 +863,6 @@ mod tests {
     ) -> Resultado<Sprint> {
         crear_sprint(
             e.db_a.conexion(),
-            &e.ops,
             autor,
             &DatosNuevoSprint {
                 nombre,
@@ -1066,7 +1032,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_dev(),
                 &t.id,
                 Some(&s1.id),
@@ -1077,7 +1042,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&b1.id),
@@ -1088,7 +1052,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_backlog(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&s1.id),
@@ -1100,7 +1063,6 @@ mod tests {
         // Asigna a S1 y B1 simultáneamente; no permite saltar directo a S2 ni B2 sin quitar antes.
         let t = asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t.id,
             Some(&s1.id),
@@ -1109,7 +1071,6 @@ mod tests {
         .unwrap();
         let t = asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t.id,
             Some(&b1.id),
@@ -1122,7 +1083,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&s2.id),
@@ -1133,7 +1093,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_backlog(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&b2.id),
@@ -1147,7 +1106,6 @@ mod tests {
         db_sprints::actualizar(e.db_a.conexion(), &s2).unwrap();
         let t = asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t.id,
             None,
@@ -1158,7 +1116,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&s2.id),
@@ -1168,7 +1125,6 @@ mod tests {
         ));
         let t = asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t.id,
             None,
@@ -1177,7 +1133,6 @@ mod tests {
         .unwrap();
         let t = asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t.id,
             Some(&b2.id),
@@ -1192,7 +1147,6 @@ mod tests {
         db_tareas::actualizar(e.db_a.conexion(), &t_padre).unwrap();
         let en_espera = crear_en_espera(
             e.db_a.conexion(),
-            &e.ops,
             &autor_dev(),
             &t_padre.id,
             1,
@@ -1203,7 +1157,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &en_espera.id,
                 Some(&s1.id),
@@ -1214,7 +1167,6 @@ mod tests {
 
         eliminar(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t.id,
             "Obsol",
@@ -1224,7 +1176,6 @@ mod tests {
         assert!(matches!(
             asignar_tarea_a_backlog(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 None,
@@ -1286,7 +1237,6 @@ mod tests {
 
         asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_libre_b1.id,
             Some(&b1.id),
@@ -1295,7 +1245,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_ocupada_b1.id,
             Some(&b1.id),
@@ -1304,7 +1253,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_ocupada_b1.id,
             Some(&s2.id),
@@ -1313,7 +1261,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_eliminada_b1.id,
             Some(&b1.id),
@@ -1322,7 +1269,6 @@ mod tests {
         .unwrap();
         eliminar(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_eliminada_b1.id,
             "Descartada",
@@ -1331,7 +1277,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_en_b2.id,
             Some(&b2.id),
@@ -1342,7 +1287,6 @@ mod tests {
         // Pasar B1 -> S1 solo mueve `t_libre_b1`.
         let movidas = asignar_backlog_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             Some(&b1.id),
             &s1.id,
@@ -1369,7 +1313,6 @@ mod tests {
         // Sin pendientes libres devuelve vacío.
         let repetidas = asignar_backlog_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             Some(&b1.id),
             &s1.id,
@@ -1381,7 +1324,6 @@ mod tests {
         // `backlog_id = None` mueve solo las tareas sin backlog y sin sprint (`t_sin_backlog`).
         let sin_backlog = asignar_backlog_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             None,
             &s1.id,
@@ -1418,15 +1360,13 @@ mod tests {
             .unwrap(),
         );
         ev_falso.timestamp = "2026-11-16T10:01:18.000Z".into();
-        eventos::escribir_evento(&e.ops, &ev_falso).unwrap();
+        crate::eventos::servidor_de_prueba::agregar(&ev_falso);
 
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.descartados, 1);
         assert_eq!(
             listar(e.db_b.conexion()).unwrap(),
@@ -1457,7 +1397,7 @@ mod tests {
     ///   cargo test --lib entorno_real_sprints_y_backlogs -- --ignored --nocapture --test-threads=1
     /// ```
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_sprints_y_backlogs() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1470,10 +1410,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-113-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1499,11 +1437,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1569,7 +1502,6 @@ mod tests {
                 .con_db(|db_a| {
                     let t1 = crear(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &DatosNuevaTarea {
                             titulo: "Tarea libre de B-1".into(),
@@ -1586,7 +1518,6 @@ mod tests {
                     )?;
                     let t2 = crear(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &DatosNuevaTarea {
                             titulo: "Tarea ya en S-2".into(),
@@ -1603,7 +1534,6 @@ mod tests {
                     )?;
                     let t3 = crear(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &DatosNuevaTarea {
                             titulo: "Tarea sin backlog".into(),
@@ -1622,7 +1552,6 @@ mod tests {
                     assert!(matches!(
                         crear_sprint(
                             db_a.conexion(),
-                            &ops_a,
                             &autor_dev(),
                             &DatosNuevoSprint {
                                 nombre: "Ilegal",
@@ -1638,7 +1567,6 @@ mod tests {
                     assert!(matches!(
                         super::asignar_tarea_a_sprint(
                             db_a.conexion(),
-                            &ops_a,
                             &autor_dev(),
                             &t1.id,
                             Some(&s1.id),
@@ -1698,17 +1626,15 @@ mod tests {
                 .unwrap(),
             );
             ev_falso.timestamp = crate::modelo::ahora_iso();
-            eventos::escribir_evento(&ops_a, &ev_falso).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev_falso);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             // 3. Máquina B sincroniza desde OneDrive y obtiene idénticos sprints y tareas.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza planificación desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza planificación por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.descartados, 1);
 
             let sprints_a = listar_sprints_en(&estado_a).unwrap();
@@ -1770,7 +1696,6 @@ mod tests {
 
         asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_libre.id,
             Some(&b1.id),
@@ -1779,7 +1704,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_hecha.id,
             Some(&s1.id),
@@ -1788,7 +1712,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_libre.id,
             Some(&s1.id),
@@ -1797,7 +1720,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_hecha.id,
             EstadoTarea::Terminada,
@@ -1806,7 +1728,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_dev(),
             &t_libre.id,
             EstadoTarea::EnProduccion,
@@ -1818,7 +1739,6 @@ mod tests {
         assert!(matches!(
             cerrar_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &s1.id,
                 "2026-11-16T10:01:09.000Z",
@@ -1829,7 +1749,6 @@ mod tests {
         assert!(matches!(
             cerrar_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_dev(),
                 &b1.id,
                 "2026-11-16T10:01:10.000Z",
@@ -1841,7 +1760,6 @@ mod tests {
         // Administrador cierra S-1 antes de fecha_fin (2026-11-30): cierra el 2026-11-20.
         let cerrado = cerrar_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_admin(),
             &s1.id,
             "2026-11-16T10:01:11.000Z",
@@ -1867,7 +1785,6 @@ mod tests {
         // Cambiar la tarea libre después NO altera la copia histórica del reporte.
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_libre.id,
             EstadoTarea::Terminada,
@@ -1894,7 +1811,6 @@ mod tests {
         assert!(matches!(
             cerrar_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_admin(),
                 &s1.id,
                 "2026-11-16T10:01:13.000Z",
@@ -1906,7 +1822,6 @@ mod tests {
         // El Administrador también puede cerrar manualmente el backlog B-1.
         let b1_cerrado = cerrar_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_admin(),
             &b1.id,
             "2026-11-16T10:01:14.000Z",
@@ -1928,15 +1843,13 @@ mod tests {
             .unwrap(),
         );
         ev_falso.timestamp = "2026-11-16T10:01:15.000Z".into();
-        eventos::escribir_evento(&e.ops, &ev_falso).unwrap();
+        crate::eventos::servidor_de_prueba::agregar(&ev_falso);
 
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.descartados, 1);
         assert_eq!(
             listar(e.db_b.conexion()).unwrap(),
@@ -1985,7 +1898,6 @@ mod tests {
 
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t1.id,
             Some(&s1.id),
@@ -1994,7 +1906,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2a.id,
             Some(&s2.id),
@@ -2003,7 +1914,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2b.id,
             Some(&s2.id),
@@ -2013,7 +1923,6 @@ mod tests {
 
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t1.id,
             EstadoTarea::Terminada,
@@ -2022,7 +1931,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2a.id,
             EstadoTarea::Terminada,
@@ -2031,7 +1939,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_dev(),
             &t2b.id,
             EstadoTarea::EnRevision,
@@ -2042,7 +1949,6 @@ mod tests {
         // Antes de fecha_fin (2026-11-20) no cambia nada.
         assert!(evaluar_cierre_sprints(
             e.db_a.conexion(),
-            Some(&e.ops),
             DEV,
             "2026-11-16T10:01:12.000Z",
             "2026-11-20",
@@ -2053,7 +1959,6 @@ mod tests {
         // Al llegar fecha_fin (2026-11-21): S-1 cierra solo; S-2 genera reporte del día pero sigue abierto.
         let cam = evaluar_cierre_sprints(
             e.db_a.conexion(),
-            Some(&e.ops),
             DEV,
             "2026-11-16T10:01:13.000Z",
             "2026-11-21",
@@ -2077,7 +1982,6 @@ mod tests {
         // Correr otra vez al día siguiente sin cambios no duplica el reporte de S-2.
         assert!(evaluar_cierre_sprints(
             e.db_a.conexion(),
-            Some(&e.ops),
             LIDER,
             "2026-11-16T10:01:14.000Z",
             "2026-11-22",
@@ -2094,7 +1998,6 @@ mod tests {
         // Cuando termina t2b el 2026-11-23, S-2 se cierra solo con reporte final.
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2b.id,
             EstadoTarea::Terminada,
@@ -2104,7 +2007,6 @@ mod tests {
 
         let cierre_s2 = evaluar_cierre_sprints(
             e.db_a.conexion(),
-            Some(&e.ops),
             LIDER,
             "2026-11-23T10:01:16.000Z",
             "2026-11-23",
@@ -2147,15 +2049,13 @@ mod tests {
             .unwrap(),
         );
         ev_premature.timestamp = "2026-11-23T10:01:18.000Z".into();
-        eventos::escribir_evento(&e.ops, &ev_premature).unwrap();
+        crate::eventos::servidor_de_prueba::agregar(&ev_premature);
 
         let ahora = DateTime::parse_from_rfc3339("2026-11-23T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.descartados, 1);
         assert_eq!(
             listar(e.db_b.conexion()).unwrap(),
@@ -2181,7 +2081,7 @@ mod tests {
     ///
     /// Al terminar borra el workspace y la subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cierre_sprints_y_reportes() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -2196,10 +2096,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-114-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -2225,11 +2123,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -2296,7 +2189,6 @@ mod tests {
                 .con_db(|db_a| {
                     let s2 = crear_sprint(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &DatosNuevoSprint {
                             nombre: "Sprint Auto Cierre",
@@ -2309,7 +2201,6 @@ mod tests {
                     )?;
                     let s3 = crear_sprint(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &DatosNuevoSprint {
                             nombre: "Sprint Con Pendiente Hoy",
@@ -2323,7 +2214,6 @@ mod tests {
                     let mk = |titulo: &str| {
                         crear(
                             db_a.conexion(),
-                            &ops_a,
                             &autor_lider(),
                             &DatosNuevaTarea {
                                 titulo: titulo.into(),
@@ -2346,7 +2236,6 @@ mod tests {
 
                     asignar_tarea_a_sprint(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &t_s2_ok.id,
                         Some(&s2.id),
@@ -2354,7 +2243,6 @@ mod tests {
                     )?;
                     asignar_tarea_a_sprint(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &t_s3_pend.id,
                         Some(&s3.id),
@@ -2374,7 +2262,6 @@ mod tests {
                 estado_a.con_db(|db_a| {
                     cerrar_sprint(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &s1.id,
                         &crate::modelo::ahora_iso(),
@@ -2464,16 +2351,14 @@ mod tests {
                 .unwrap(),
             );
             ev_falso.timestamp = crate::modelo::ahora_iso();
-            eventos::escribir_evento(&ops_a, &ev_falso).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev_falso);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza cierres y reportes desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza cierres y reportes por el servidor de prueba: {sync_b:?}");
             if sync_b.descartados != 1 {
                 eprintln!(
                     "eventos.log B:\n{}",

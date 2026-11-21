@@ -7,8 +7,6 @@
 //! aplica en la misma transacción local, y las demás máquinas lo reproducen con
 //! [`aplicar_evento`] al sincronizar.
 
-use std::path::Path;
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -542,7 +540,6 @@ pub fn listar_papelera(c: &Connection) -> Resultado<Vec<Tarea>> {
 /// Queda `pendiente_aprobacion = true` si quien la crea no es Líder ni Administrador.
 pub fn crear(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     datos: &DatosNuevaTarea,
     ahora: &str,
@@ -566,9 +563,7 @@ pub fn crear(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_crear_tarea(tx, &nueva, ahora, true)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_crear_tarea(tx, &nueva, ahora, true))?;
     db_tareas::obtener(c, &nueva.id)
 }
 
@@ -577,7 +572,6 @@ pub fn crear(
 /// viene vacío, delega en [`crear`].
 pub fn crear_con_subtareas(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     datos: &DatosNuevaTareaConSubtareas,
     ahora: &str,
@@ -594,7 +588,7 @@ pub fn crear_con_subtareas(
         fecha_limite: datos.fecha_limite.clone(),
     };
     if datos.subtareas.is_empty() {
-        let unica = crear(c, ops, autor, &raiz_datos, ahora, hoy)?;
+        let unica = crear(c, autor, &raiz_datos, ahora, hoy)?;
         return Ok(vec![unica]);
     }
 
@@ -644,7 +638,7 @@ pub fn crear_con_subtareas(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_crear_tarea_con_subtareas(tx, &payload, ahora)
     })?;
 
@@ -665,7 +659,6 @@ pub fn crear_con_subtareas(
 ///   tarea mientras siga `pendiente_aprobacion = true`.
 pub fn editar(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     cambios: &CambiosTarea,
@@ -685,7 +678,7 @@ pub fn editar(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_editar_tarea(tx, autor.email, Some(autor.rol), &payload)
     })?;
     db_tareas::obtener(c, id)
@@ -816,7 +809,6 @@ pub fn cadena_para_tomar(
 /// Devuelve todas las tareas de `cadena` actualizadas (ancestros + la tarea tomada).
 pub fn registrar_toma(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     cadena: &[TareaDeCadena],
     creadas: &[(String, Rama)],
@@ -838,7 +830,7 @@ pub fn registrar_toma(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_tomar_tarea(tx, autor.email, Some(autor.rol), &payload, ahora)
     })?;
 
@@ -853,7 +845,6 @@ pub fn registrar_toma(
 /// servidor + `cm switch` en el workspace local) y publica el evento en `ops/`.
 pub fn tomar(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     preparar_ramas_y_workspace: impl FnOnce(&[TareaDeCadena]) -> Resultado<Vec<(String, Rama)>>,
@@ -861,7 +852,7 @@ pub fn tomar(
 ) -> Resultado<Vec<Tarea>> {
     let cadena = cadena_para_tomar(c, autor, id)?;
     let creadas = preparar_ramas_y_workspace(&cadena)?;
-    registrar_toma(c, ops, autor, &cadena, &creadas, ahora)
+    registrar_toma(c, autor, &cadena, &creadas, ahora)
 }
 
 /// Valida que `autor` (Líder/Admin) pueda asignar `id` a `email_destinatario`
@@ -916,7 +907,6 @@ pub fn cadena_para_asignar(
 /// A diferencia de `tomar_tarea`, nunca cambia el workspace de quien asigna.
 pub fn registrar_asignacion(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     cadena: &[TareaDeCadena],
     creadas: &[(String, Rama)],
@@ -934,7 +924,7 @@ pub fn registrar_asignacion(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_asignar_tarea(tx, autor.email, Some(autor.rol), &payload, ahora)
     })?;
 
@@ -949,7 +939,6 @@ pub fn registrar_asignacion(
 /// y publica el evento en `ops/` con notificación `tarea_asignada`.
 pub fn asignar(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     email_destinatario: &str,
@@ -962,7 +951,7 @@ pub fn asignar(
     } else {
         Vec::new()
     };
-    registrar_asignacion(c, ops, autor, &cadena, &creadas, email_destinatario, ahora)
+    registrar_asignacion(c, autor, &cadena, &creadas, email_destinatario, ahora)
 }
 
 fn descendientes_activos(c: &Connection, padre_id: &str) -> Resultado<Vec<Tarea>> {
@@ -983,7 +972,6 @@ fn descendientes_activos(c: &Connection, padre_id: &str) -> Resultado<Vec<Tarea>
 /// tarea y sus subtareas activas en `'por hacer'`. Rechaza si hay check-ins.
 pub fn desasignar(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1035,7 +1023,7 @@ pub fn desasignar(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| aplicar_desasignar_tarea(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| aplicar_desasignar_tarea(tx, &payload))?;
     db_tareas::obtener(c, &tarea.id)
 }
 
@@ -1069,7 +1057,6 @@ fn prestamos_con_tocados_origenes(c: &Connection, ids: &[String]) -> Resultado<V
 /// propagación hacia atrás y recálculo de padres de abajo hacia arriba).
 pub fn cambiar_estado(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     estado: EstadoTarea,
@@ -1092,7 +1079,7 @@ pub fn cambiar_estado(
     ev.timestamp = ahora.to_string();
 
     let mut aviso_prestamos = Vec::new();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aviso_prestamos =
             aplicar_cambiar_estado(tx, autor.email, Some(autor.rol), &payload, ahora)?;
         Ok(())
@@ -1128,7 +1115,6 @@ pub fn ramas_de_subarbol(c: &Connection, id: &str) -> Resultado<Vec<String>> {
 /// la tarea tomada y con su rama en `'por hacer'`.
 pub fn borrar_progreso(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1144,7 +1130,7 @@ pub fn borrar_progreso(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| aplicar_borrar_progreso(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| aplicar_borrar_progreso(tx, &payload))?;
     db_tareas::listar(c)
 }
 
@@ -1152,7 +1138,6 @@ pub fn borrar_progreso(
 /// Tope 3 reaperturas; a partir de 3, solo el Administrador puede volver a reabrirla.
 pub fn reabrir(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     motivo: &str,
@@ -1172,7 +1157,7 @@ pub fn reabrir(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_reabrir_tarea(tx, Some(autor.rol), &payload, ahora)
     })?;
     db_tareas::obtener(c, id)
@@ -1191,7 +1176,6 @@ fn exigir_lider_o_admin(rol_conocido: Option<Rol>) -> Resultado<()> {
 /// Pone `pendiente_aprobacion = false` sin tocar `estado`.
 pub fn aprobar_tarea(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1206,7 +1190,7 @@ pub fn aprobar_tarea(
             .map_err(|e| Error::Interno(format!("no se pudo serializar aprobar_tarea: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_aprobar_tareas(tx, Some(autor.rol), std::slice::from_ref(&payload.id))
     })?;
     db_tareas::obtener(c, id)
@@ -1215,7 +1199,6 @@ pub fn aprobar_tarea(
 /// Aprueba varias tareas pendientes en una sola operación (`aprobar_tareas`, #101).
 pub fn aprobar_tareas(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     ids: &[String],
     ahora: &str,
@@ -1239,7 +1222,7 @@ pub fn aprobar_tareas(
             .map_err(|e| Error::Interno(format!("no se pudo serializar aprobar_tareas: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_aprobar_tareas(tx, Some(autor.rol), &payload.ids)
     })?;
     db_tareas::listar(c)
@@ -1249,7 +1232,6 @@ pub fn aprobar_tareas(
 /// (`editar_y_aprobar_tarea`, #101). Emite notificación `editada_aprobada` (#11).
 pub fn editar_y_aprobar(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     cambios: &CambiosTarea,
@@ -1269,7 +1251,7 @@ pub fn editar_y_aprobar(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_editar_y_aprobar_tarea(tx, Some(autor.rol), &payload, ahora)
     })?;
     db_tareas::obtener(c, id)
@@ -1279,7 +1261,6 @@ pub fn editar_y_aprobar(
 /// (`advertir_tarea_pendiente`, #101). Emite notificación `advertencia` (#12).
 pub fn advertir_pendiente(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     mensaje: &str,
@@ -1301,7 +1282,7 @@ pub fn advertir_pendiente(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_advertir_tarea_pendiente(tx, Some(autor.rol), &payload, ahora)
     })?;
     Ok(())
@@ -1317,7 +1298,6 @@ pub fn listar_ediciones_pendientes(c: &Connection) -> Resultado<Vec<ediciones::E
 #[allow(clippy::too_many_arguments)]
 pub fn proponer_edicion(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     titulo: &str,
@@ -1343,7 +1323,7 @@ pub fn proponer_edicion(
             .map_err(|e| Error::Interno(format!("no se pudo serializar proponer_edicion: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_proponer_edicion(tx, &ev.usuario, &payload, ahora)
     })?;
     Ok(ResultadoProponerEdicion {
@@ -1356,7 +1336,6 @@ pub fn proponer_edicion(
 /// Líder/Admin confirma la edición pendiente de `id` (`aprobar_modificacion`, #102).
 pub fn aprobar_modificacion(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1372,7 +1351,7 @@ pub fn aprobar_modificacion(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_aprobar_modificaciones(tx, Some(autor.rol), std::slice::from_ref(&payload.id))
     })?;
     db_tareas::obtener(c, id)
@@ -1381,7 +1360,6 @@ pub fn aprobar_modificacion(
 /// Líder/Admin confirma varias ediciones pendientes en una operación (`aprobar_modificaciones`, #102).
 pub fn aprobar_modificaciones(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     ids: &[String],
     ahora: &str,
@@ -1406,7 +1384,7 @@ pub fn aprobar_modificaciones(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_aprobar_modificaciones(tx, Some(autor.rol), &payload.ids)
     })?;
     db_tareas::listar(c)
@@ -1415,7 +1393,6 @@ pub fn aprobar_modificaciones(
 /// Líder/Admin rechaza la edición pendiente de `id` y restaura sus valores anteriores (#102).
 pub fn rechazar_modificacion(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1431,7 +1408,7 @@ pub fn rechazar_modificacion(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_rechazar_modificacion(tx, Some(autor.rol), &payload.id)
     })?;
     db_tareas::obtener(c, id)
@@ -1443,7 +1420,6 @@ pub fn rechazar_modificacion(
 /// Devuelve todas las tareas actualizadas (primero la raíz, luego las arrastradas).
 pub fn eliminar(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     justificacion: &str,
@@ -1463,7 +1439,7 @@ pub fn eliminar(
     );
     ev.timestamp = ahora.to_string();
     let mut afectadas = Vec::new();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         afectadas = aplicar_eliminar_tarea(tx, Some(autor.rol), &payload, ahora)?;
         Ok(())
     })?;
@@ -1475,7 +1451,6 @@ pub fn eliminar(
 /// para que la capa de comandos pueda purgar sus ramas de hojas hacia raíz.
 pub fn eliminar_definitivamente(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1494,7 +1469,7 @@ pub fn eliminar_definitivamente(
     );
     ev.timestamp = ahora.to_string();
     let mut purgadas = Vec::new();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         purgadas = aplicar_eliminar_definitivamente(tx, Some(autor.rol), id)?;
         Ok(())
     })?;
@@ -1532,7 +1507,6 @@ pub fn actualizar_deteccion_local(
 /// padre en Unity VC (`tarea_cerrada_por_deteccion`, #104), emitiendo evento en `ops/`.
 pub fn cerrar_por_deteccion(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     ahora: &str,
@@ -1554,7 +1528,7 @@ pub fn cerrar_por_deteccion(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_cerrar_por_deteccion(tx, id, fecha_completada)
     })?;
     db_tareas::obtener(c, id)
@@ -1642,7 +1616,6 @@ pub fn armar_comentario_checkin(
 /// Publica en `ops/` el check-in ejecutado desde BranchBoard conservando `tipo` (#105).
 pub fn registrar_checkin(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     datos: &DatosCheckin<'_>,
     ahora: &str,
@@ -1678,7 +1651,7 @@ pub fn registrar_checkin(
             .map_err(|e| Error::Interno(format!("no se pudo serializar hacer_checkin: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_hacer_checkin(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| aplicar_hacer_checkin(tx, &payload))?;
     Ok(commit)
 }
 
@@ -1686,7 +1659,6 @@ pub fn registrar_checkin(
 /// cambios sin check-in en una rama con subtareas (#106), publicándola en `ops/`.
 pub fn crear_en_espera(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     padre_id: &str,
     cambios: usize,
@@ -1716,14 +1688,13 @@ pub fn crear_en_espera(
             .map_err(|e| Error::Interno(format!("no se pudo serializar crear_en_espera: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_crear_en_espera(tx, &espera))?;
+    eventos::publicar(c, &ev, |tx| aplicar_crear_en_espera(tx, &espera))?;
     db_tareas::obtener(c, &espera.id)
 }
 
 /// Quita la subtarea temporal `"En espera"` cuando la rama padre vuelve a quedar limpia (#106).
 pub fn quitar_en_espera(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     espera_id: &str,
     ahora: &str,
@@ -1738,7 +1709,7 @@ pub fn quitar_en_espera(
             .map_err(|e| Error::Interno(format!("no se pudo serializar quitar_en_espera: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_quitar_en_espera(tx, &payload.id))?;
+    eventos::publicar(c, &ev, |tx| aplicar_quitar_en_espera(tx, &payload.id))?;
     Ok(())
 }
 
@@ -1809,7 +1780,6 @@ pub fn preparar_rama_desde_espera(
 /// Convierte la subtarea `"En espera"` en subtarea normal ya apuntando a su nueva rama (#106).
 pub fn convertir_espera_en_subtarea(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     datos: &DatosRamaDesdeEspera<'_>,
     ahora: &str,
@@ -1834,7 +1804,7 @@ pub fn convertir_espera_en_subtarea(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_crear_rama_desde_espera(tx, &payload, ahora)
     })?;
     db_tareas::obtener(c, &payload.id)
@@ -2003,7 +1973,6 @@ pub fn preparar_traer_cambios(
 /// Publica en `ops/` el préstamo ejecutado en Unity VC (`traer_cambios`, #108).
 pub fn registrar_traer_cambios(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     datos: &DatosTraerCambios<'_>,
     ahora: &str,
@@ -2037,7 +2006,7 @@ pub fn registrar_traer_cambios(
             .map_err(|e| Error::Interno(format!("no se pudo serializar traer_cambios: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_traer_cambios(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| aplicar_traer_cambios(tx, &payload))?;
     Ok(prestamo)
 }
 
@@ -2228,7 +2197,6 @@ pub fn preparar_eliminar_cambios_ajenos(
 /// `eliminar_cambios_ajenos` en `ops/` (#109).
 pub fn registrar_eliminar_cambios_ajenos(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     prestamo_id: &str,
     changeset_limpio: Option<i64>,
@@ -2250,9 +2218,7 @@ pub fn registrar_eliminar_cambios_ajenos(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
-        aplicar_eliminar_cambios_ajenos(tx, &payload)
-    })?;
+    eventos::publicar(c, &ev, |tx| aplicar_eliminar_cambios_ajenos(tx, &payload))?;
     commits::obtener_prestamo(c, &prestamo.id)
 }
 
@@ -2260,7 +2226,6 @@ pub fn registrar_eliminar_cambios_ajenos(
 /// conservando la fila como historial (`quitado_en`, `quitado_por`, #108).
 pub fn registrar_devolver_cambios(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     prestamo_id: &str,
     ahora: &str,
@@ -2282,7 +2247,7 @@ pub fn registrar_devolver_cambios(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_devolver_cambios(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| aplicar_devolver_cambios(tx, &payload))?;
     commits::obtener_prestamo(c, &prestamo.id)
 }
 
@@ -2410,7 +2375,6 @@ pub fn evaluar_alerta_rama_ajena(
 /// Notifica al revisor (`revision_asignada`, #6).
 pub fn asignar_revision(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     revisor: &str,
@@ -2429,7 +2393,7 @@ pub fn asignar_revision(
             .map_err(|e| Error::Interno(format!("no se pudo serializar asignar_revision: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_asignar_revision(tx, Some(autor.rol), &payload, ahora)
     })?;
     db_tareas::obtener(c, id)
@@ -2540,7 +2504,6 @@ pub fn plan_de_autorizacion(
 /// (`autorizar_merge`, #107), emitiendo el evento en `ops/`.
 pub fn registrar_merge_autorizado(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     destino: &str,
@@ -2562,7 +2525,7 @@ pub fn registrar_merge_autorizado(
             .map_err(|e| Error::Interno(format!("no se pudo serializar autorizar_merge: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_autorizar_merge(tx, autor.email, Some(autor.rol), &payload)
     })?;
     db_tareas::listar(c)
@@ -2573,7 +2536,6 @@ pub fn registrar_merge_autorizado(
 /// responsable (`tarea_rechazada`, #2). Sigue en la misma rama.
 pub fn rechazar_revision(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     id: &str,
     motivo: &str,
@@ -2592,7 +2554,7 @@ pub fn rechazar_revision(
             .map_err(|e| Error::Interno(format!("no se pudo serializar rechazar_revision: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_rechazar_revision(tx, autor.email, Some(autor.rol), &payload, ahora)
     })?;
     db_tareas::listar(c)
@@ -4207,13 +4169,12 @@ fn aplicar_rechazar_revision(
     Ok(())
 }
 
-/// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`) choca
-/// contra una toma previa de otra persona sobre la misma tarea (#97).
-/// Determina quién ganó y quién perdió: por `(timestamp, usuario, archivo)` si el
-/// evento vino de `ops/`, o por el `orden` del servidor si vino de Supabase (#239).
+/// Comprueba si un evento `tomar_tarea` entrante (`evento_id`, `evento`, con su `orden` en el servidor)
+/// choca contra una toma previa de otra persona sobre la misma tarea (#97). Gana la que llegó antes al
+/// servidor (#239). Hasta #244, con `ops/`, se comparaba `(timestamp, usuario, archivo)`.
 pub fn detectar_doble_toma(
     c: &Connection,
-    fuente: FuenteToma<'_>,
+    orden: i64,
     evento_id: &str,
     evento: &Evento,
 ) -> Resultado<Option<InfoDobleToma>> {
@@ -4244,27 +4205,8 @@ pub fn detectar_doble_toma(
         Err(_) => return Ok(None),
     };
 
-    let (actual_en_ops, entrante_gana) = match fuente {
-        // Buscamos en `ops/` el evento con el que se asignó `actual_email` para comparar
-        // orden determinista `(timestamp, usuario, id)` incluso si la máquina local
-        // aplicó su propio evento antes de recibir el remoto.
-        FuenteToma::Ops(ops) => {
-            let rival = buscar_evento_toma_en_ops(ops, &tarea.id, actual_email);
-            let gana = rival.as_ref().is_some_and(|(id_actual, ev_actual)| {
-                (&evento.timestamp, &entrante_email, evento_id)
-                    < (
-                        &ev_actual.timestamp,
-                        &normalizar_email(&ev_actual.usuario),
-                        id_actual.as_str(),
-                    )
-            });
-            (rival, gana)
-        }
-        // Con el servidor (#239) manda su `orden`: gana la toma que llegó antes al servidor.
-        FuenteToma::Servidor { orden } => {
-            buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?
-        }
-    };
+    let (actual_en_ops, entrante_gana) =
+        buscar_toma_rival_servidor(c, &tarea.id, actual_email, orden)?;
 
     if entrante_gana {
         let (id_actual, ev_actual) = actual_en_ops.unwrap();
@@ -4297,15 +4239,6 @@ pub fn detectar_doble_toma(
             revertir_a_entrante: None,
         }))
     }
-}
-
-/// De dónde vino el evento `tomar_tarea` que se revisa en [`detectar_doble_toma`].
-#[derive(Debug, Clone, Copy)]
-pub enum FuenteToma<'a> {
-    /// De la carpeta `ops/` (Drive/OneDrive, hasta #244).
-    Ops(&'a Path),
-    /// De la tabla `eventos` del servidor, con su número de `orden` (#239).
-    Servidor { orden: i64 },
 }
 
 /// La toma rival (la de `usuario` sobre `tarea_id`) cuando el entrante viene del servidor con `orden`,
@@ -4369,41 +4302,6 @@ fn buscar_toma_rival_servidor(
         }
     }
     Ok((None, false))
-}
-
-fn buscar_evento_toma_en_ops(
-    ops: &Path,
-    tarea_id: &str,
-    usuario: &str,
-) -> Option<(String, Evento)> {
-    let usuario = normalizar_email(usuario);
-    let entradas = std::fs::read_dir(ops).ok()?;
-    let mut mejor: Option<(String, Evento)> = None;
-    for entrada in entradas.flatten() {
-        let nombre = entrada.file_name().to_string_lossy().to_string();
-        if nombre.starts_with('.') || !nombre.ends_with(".json") {
-            continue;
-        }
-        let Ok(texto) = std::fs::read_to_string(entrada.path()) else {
-            continue;
-        };
-        let Ok(ev) = serde_json::from_str::<Evento>(&texto) else {
-            continue;
-        };
-        if ev.tipo == "tomar_tarea"
-            && ev.tarea_id.as_deref() == Some(tarea_id)
-            && normalizar_email(&ev.usuario) == usuario
-        {
-            let reemplazar = match &mejor {
-                None => true,
-                Some((m_id, m_ev)) => (&ev.timestamp, &nombre) < (&m_ev.timestamp, m_id),
-            };
-            if reemplazar {
-                mejor = Some((nombre, ev));
-            }
-        }
-    }
-    mejor
 }
 
 /// Resuelve una colisión de doble toma (#97) una vez comprobado si la rama del
@@ -4501,7 +4399,7 @@ mod tests {
     use super::*;
     use crate::db::notificaciones;
     use crate::db::Db;
-    use crate::eventos::lectura::{self, sincronizar};
+    use crate::eventos::lectura::{self};
 
     use chrono::{DateTime, Utc};
     use std::path::PathBuf;
@@ -4515,19 +4413,12 @@ mod tests {
     const HOY: &str = "2026-11-15";
 
     struct Escenario {
-        _dir: tempfile::TempDir,
-        ops: PathBuf,
-        local_b: PathBuf,
         db_a: Db,
         db_b: Db,
     }
 
     impl Escenario {
         fn nuevo() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let ops = dir.path().join("ops");
-            let local_b = dir.path().join("local_b");
-
             let db_a = Db::en_memoria().unwrap();
             let db_b = Db::en_memoria().unwrap();
             for db in [&db_a, &db_b] {
@@ -4544,13 +4435,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            let esc = Self {
-                _dir: dir,
-                ops,
-                local_b,
-                db_a,
-                db_b,
-            };
+            let esc = Self { db_a, db_b };
             for (correo, rol) in [
                 (LIDER, Rol::Lider),
                 (DEV, Rol::Desarrollador),
@@ -4579,14 +4464,7 @@ mod tests {
             let ahora = DateTime::parse_from_rfc3339("2026-11-15T23:00:00.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
-            sincronizar(
-                self.db_b.conexion(),
-                &self.ops,
-                &self.local_b,
-                ahora,
-                lectura::aplicar_evento,
-            )
-            .unwrap()
+            crate::eventos::servidor_de_prueba::entregar(self.db_b.conexion(), ahora).unwrap()
         }
     }
 
@@ -4611,7 +4489,6 @@ mod tests {
         // Líder y Administrador: aprobada de entrada (`pendiente_aprobacion = false`).
         let t_admin = crear(
             c,
-            &e.ops,
             &AutorTarea {
                 email: ADMIN,
                 rol: Rol::Administrador,
@@ -4626,7 +4503,6 @@ mod tests {
 
         let t_lider = crear(
             c,
-            &e.ops,
             &AutorTarea {
                 email: LIDER,
                 rol: Rol::Lider,
@@ -4652,7 +4528,6 @@ mod tests {
         ] {
             let t = crear(
                 c,
-                &e.ops,
                 &AutorTarea { email: correo, rol },
                 &datos_base(&format!("Tarea de {correo}")),
                 ts,
@@ -4684,7 +4559,6 @@ mod tests {
 
         let creadas = crear_con_subtareas(
             c,
-            &e.ops,
             &dev,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Sistema de inventario".into(),
@@ -4730,7 +4604,6 @@ mod tests {
         // Subtarea de subtarea (`T-101-1-1`, 5° nivel en Unity VC): permitida.
         let nieto = crear(
             c,
-            &e.ops,
             &dev,
             &DatosNuevaTarea {
                 tarea_padre_id: Some("T-101-1".into()),
@@ -4745,7 +4618,6 @@ mod tests {
         // Un nivel más (`T-101-1-1-1`, 6° nivel) se rechaza.
         let err = crear(
             c,
-            &e.ops,
             &dev,
             &DatosNuevaTarea {
                 tarea_padre_id: Some("T-101-1-1".into()),
@@ -4783,13 +4655,12 @@ mod tests {
             rol: Rol::Lider,
         };
 
-        let t = crear(c, &e.ops, &dev, &datos_base(" Combate v1 "), AHORA, HOY).unwrap();
+        let t = crear(c, &dev, &datos_base(" Combate v1 "), AHORA, HOY).unwrap();
         assert!(t.pendiente_aprobacion);
 
         // El creador puede editar su tarea mientras sigue pendiente.
         let editada = editar(
             c,
-            &e.ops,
             &dev,
             &t.id,
             &CambiosTarea {
@@ -4806,7 +4677,6 @@ mod tests {
         // Otro Desarrollador/Tester NO puede editar la tarea ajena.
         let err = editar(
             c,
-            &e.ops,
             &tester,
             &t.id,
             &CambiosTarea {
@@ -4821,7 +4691,6 @@ mod tests {
         // No se puede cambiar directamente de un sprint a otro sin quitarla primero.
         let err_sprint = editar(
             c,
-            &e.ops,
             &lider,
             &t.id,
             &CambiosTarea {
@@ -4836,7 +4705,6 @@ mod tests {
         // Quitarla del sprint (`Some(None)`) y luego asignarla a otro sí vale.
         editar(
             c,
-            &e.ops,
             &lider,
             &t.id,
             &CambiosTarea {
@@ -4848,7 +4716,6 @@ mod tests {
         .unwrap();
         let con_s2 = editar(
             c,
-            &e.ops,
             &lider,
             &t.id,
             &CambiosTarea {
@@ -4869,7 +4736,6 @@ mod tests {
 
         let err_creador = editar(
             c,
-            &e.ops,
             &dev,
             &t.id,
             &CambiosTarea {
@@ -4883,7 +4749,6 @@ mod tests {
 
         let por_lider = editar(
             c,
-            &e.ops,
             &lider,
             &t.id,
             &CambiosTarea {
@@ -4939,7 +4804,6 @@ mod tests {
         // Crea T-101 con dos subtareas T-101-1 y T-101-2 (ninguna tiene rama todavía).
         crear_con_subtareas(
             c,
-            &e.ops,
             &dev,
             &DatosNuevaTareaConSubtareas {
                 titulo: "IA de enemigo".into(),
@@ -4972,7 +4836,6 @@ mod tests {
         // T-101-1 recibe además `asignado_a = dev`.
         let actualizadas = tomar(
             c,
-            &e.ops,
             &dev,
             "T-101-1",
             simular_ramas_cadena,
@@ -5003,7 +4866,6 @@ mod tests {
         // Intentar volver a tomar T-101-1 ya tomada se rechaza.
         let err = tomar(
             c,
-            &e.ops,
             &tester,
             "T-101-1",
             simular_ramas_cadena,
@@ -5015,7 +4877,6 @@ mod tests {
         // Tester toma T-101-2: el padre ya tiene rama, solo se crea la de T-101-2.
         let segunda = tomar(
             c,
-            &e.ops,
             &tester,
             "T-101-2",
             simular_ramas_cadena,
@@ -5055,7 +4916,6 @@ mod tests {
         // T-101 con subtarea T-101-1, y T-102 individual.
         crear_con_subtareas(
             c,
-            &e.ops,
             &lider,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Tarea grande".into(),
@@ -5078,7 +4938,6 @@ mod tests {
         .unwrap();
         crear(
             c,
-            &e.ops,
             &lider,
             &datos_base("Modelo 3D suelto"),
             "2026-11-15T15:00:02.000Z",
@@ -5090,7 +4949,6 @@ mod tests {
         for id in ["T-101", "T-101-1"] {
             let err = tomar(
                 c,
-                &e.ops,
                 &colab,
                 id,
                 simular_ramas_cadena,
@@ -5104,7 +4962,6 @@ mod tests {
         // Sí puede tomar la tarea individual (T-102).
         let tomada = tomar(
             c,
-            &e.ops,
             &colab,
             "T-102",
             simular_ramas_cadena,
@@ -5134,7 +4991,7 @@ mod tests {
             .unwrap(),
         );
         falso.timestamp = "2026-11-15T15:00:05.000Z".into();
-        eventos::escribir_evento(&e.ops, &falso).unwrap();
+        crate::eventos::servidor_de_prueba::agregar(&falso);
 
         let r = e.sincronizar_b();
         assert_eq!(r.aplicados, 3);
@@ -5147,117 +5004,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn doble_toma_sin_changesets_gana_el_primero_y_avisa_al_perdedor() {
-        let e = Escenario::nuevo();
-        let dev = AutorTarea {
-            email: DEV,
-            rol: Rol::Desarrollador,
-        };
-        let tester = AutorTarea {
-            email: TESTER,
-            rol: Rol::Tester,
-        };
-
-        // A crea T-101 y B la recibe al sincronizar.
-        crear(
-            e.db_a.conexion(),
-            &e.ops,
-            &dev,
-            &datos_base("Colisión"),
-            "2026-11-15T15:00:01.000Z",
-            HOY,
-        )
-        .unwrap();
-        assert_eq!(e.sincronizar_b().aplicados, 1);
-
-        // B toma T-101 en su máquina con timestamp posterior (15:00:05), antes de recibir a A.
-        tomar(
-            e.db_b.conexion(),
-            &e.ops,
-            &tester,
-            "T-101",
-            |_| {
-                Ok(vec![(
-                    "T-101".into(),
-                    Rama {
-                        id: 202,
-                        name: "/main/dev/T-101-colision-b".into(),
-                        head_changeset: 50,
-                    },
-                )])
-            },
-            "2026-11-15T15:00:05.000Z",
-        )
-        .unwrap();
-
-        // A toma T-101 con timestamp anterior (15:00:02) → A es el ganador real.
-        tomar(
-            e.db_a.conexion(),
-            &e.ops,
-            &dev,
-            "T-101",
-            |_| {
-                Ok(vec![(
-                    "T-101".into(),
-                    Rama {
-                        id: 201,
-                        name: "/main/dev/T-101-colision-a".into(),
-                        head_changeset: 50,
-                    },
-                )])
-            },
-            "2026-11-15T15:00:02.000Z",
-        )
-        .unwrap();
-
-        // Ahora ambas máquinas sincronizan (sin changesets reales en la rama perdedora).
-        let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:10:00.000Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let sync_a = lectura::sincronizar_con_doble_toma(
-            e.db_a.conexion(),
-            &e.ops,
-            &e.local_b,
-            ahora,
-            lectura::aplicar_evento,
-            |_| Ok(false),
-        )
-        .unwrap();
-        let sync_b = lectura::sincronizar_con_doble_toma(
-            e.db_b.conexion(),
-            &e.ops,
-            &e.local_b,
-            ahora,
-            lectura::aplicar_evento,
-            |_| Ok(false),
-        )
-        .unwrap();
-
-        assert_eq!(sync_a.descartados, 1);
-        assert_eq!(sync_b.aplicados, 1, "B revierte su toma local a A");
-
-        // Ambas máquinas convergen al ganador (DEV) y su rama.
-        for db in [&e.db_a, &e.db_b] {
-            let t = db_tareas::obtener(db.conexion(), "T-101").unwrap();
-            assert_eq!(t.asignado_a.as_deref(), Some(DEV));
-            assert_eq!(
-                t.rama_asociada.as_deref(),
-                Some("/main/dev/T-101-colision-a")
-            );
-            let notifs_b = notificaciones::de_usuario(db.conexion(), TESTER).unwrap();
-            assert_eq!(notifs_b.len(), 1);
-            assert!(notifs_b[0].accionable);
-            assert!(notifs_b[0].cuerpo.contains("Volver mi workspace a dev"));
-            assert!(notificaciones::de_usuario(db.conexion(), DEV)
-                .unwrap()
-                .is_empty());
-        }
-    }
-
-    /// Lo mismo que la prueba anterior pero sincronizando por el servidor (#239): manda el `orden` del
-    /// servidor, no el reloj de cada PC. B toma con un reloj **más tardío** pero su toma **llega antes** al
-    /// servidor, así que gana B en las dos máquinas (por `ops/` habría ganado A).
+    /// Doble toma por el servidor (#239): manda el `orden` del servidor, no el reloj de cada PC. B toma
+    /// con un reloj **más tardío** pero su toma **llega antes** al servidor, así que gana B en las dos
+    /// máquinas y al perdedor le llega el aviso accionable. (Con `ops/`, hasta #244, habría ganado A.)
     #[test]
     fn doble_toma_por_el_servidor_gana_la_que_llego_antes() {
         use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
@@ -5355,7 +5104,6 @@ mod tests {
         // A crea T-101, la sube y B la recibe del servidor.
         crear(
             e.db_a.conexion(),
-            &e.ops,
             &dev,
             &datos_base("Colisión"),
             "2026-11-15T15:00:01.000Z",
@@ -5368,7 +5116,6 @@ mod tests {
         // B toma con reloj 15:00:05 y sube primero; A toma con reloj 15:00:02 y sube después.
         tomar(
             e.db_b.conexion(),
-            &e.ops,
             &tester,
             "T-101",
             rama(202, "/main/dev/T-101-colision-b"),
@@ -5378,7 +5125,6 @@ mod tests {
         subir(&e.db_b, "uuid-tester");
         tomar(
             e.db_a.conexion(),
-            &e.ops,
             &dev,
             "T-101",
             rama(201, "/main/dev/T-101-colision-a"),
@@ -5425,7 +5171,6 @@ mod tests {
         };
         let creada = crear(
             c,
-            &e.ops,
             &dev,
             &datos_base("Colisión"),
             "2026-11-15T15:00:01.000Z",
@@ -5435,7 +5180,6 @@ mod tests {
         // A toma la tarea; su evento queda en la bandeja (sin subir).
         tomar(
             c,
-            &e.ops,
             &dev,
             "T-101",
             |_| {
@@ -5523,7 +5267,6 @@ mod tests {
 
         crear(
             e.db_a.conexion(),
-            &e.ops,
             &dev,
             &datos_base("Colisión con commits"),
             "2026-11-15T15:00:01.000Z",
@@ -5534,7 +5277,6 @@ mod tests {
 
         tomar(
             e.db_b.conexion(),
-            &e.ops,
             &tester,
             "T-101",
             |_| {
@@ -5553,7 +5295,6 @@ mod tests {
 
         tomar(
             e.db_a.conexion(),
-            &e.ops,
             &dev,
             "T-101",
             |_| {
@@ -5573,15 +5314,11 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = lectura::sincronizar_con_doble_toma(
-            e.db_b.conexion(),
-            &e.ops,
-            &e.local_b,
-            ahora,
-            lectura::aplicar_evento,
-            |_| Ok(true),
-        )
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar_con(e.db_b.conexion(), ahora, |_| {
+                Ok(true)
+            })
+            .unwrap();
         assert_eq!(sync_b.aplicados, 0, "con changesets no revierte en local");
         assert_eq!(sync_b.descartados, 1);
 
@@ -5625,20 +5362,17 @@ mod tests {
     ///   cargo test --lib entorno_real_crear_editar_y_listar_tareas -- --ignored --nocapture --test-threads=1
     /// ```
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_crear_editar_y_listar_tareas_por_ops() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::estado::AppState;
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-95-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -5665,11 +5399,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -5707,7 +5436,6 @@ mod tests {
                     // 1. El Desarrollador crea una tarea general con 2 subtareas (quedan pendientes).
                     let creadas = crear_con_subtareas(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: DEV,
                             rol: Rol::Desarrollador,
@@ -5743,7 +5471,6 @@ mod tests {
                     // 2. El mismo Desarrollador edita su tarea pendiente.
                     let editada = editar(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: DEV,
                             rol: Rol::Desarrollador,
@@ -5761,7 +5488,6 @@ mod tests {
                     // 3. El Líder crea una tarea individual (nace aprobada).
                     let del_lider = crear(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: LIDER,
                             rol: Rol::Lider,
@@ -5791,11 +5517,9 @@ mod tests {
             let ahora = DateTime::parse_from_rfc3339("2026-11-15T15:05:00.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza tareas desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza tareas por el servidor de prueba: {sync_b:?}");
             // Las 3 altas de tareas (desde #243 los usuarios ya no viajan por `ops/`: B los tiene de antes).
             assert_eq!(sync_b.aplicados, 3);
             assert_eq!(sync_b.descartados, 0);
@@ -5832,7 +5556,7 @@ mod tests {
     /// Al terminar borra el workspace, las ramas de prueba en Unity VC y la
     /// subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_tomar_tarea_crea_rama_cambia_workspace_y_sincroniza() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
@@ -5840,15 +5564,12 @@ mod tests {
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::tareas::tomar_en;
         use crate::estado::AppState;
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
         let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-96-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -5876,11 +5597,6 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-
             let admin_fila = estado_a
                 .con_db(|db| {
                     let todos = usuarios::listar(db.conexion())?;
@@ -5895,7 +5611,6 @@ mod tests {
                 .con_db(|db_a| {
                     crear_con_subtareas(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: &admin_fila.email,
                             rol: Rol::Administrador,
@@ -5947,11 +5662,9 @@ mod tests {
             let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza tomar_tarea desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza tomar_tarea por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.aplicados, 2);
             assert_eq!(sync_b.descartados, 0);
             assert_eq!(
@@ -5993,24 +5706,22 @@ mod tests {
     /// Al terminar borra workspace, ramas (con `--delete-changesets`) y carpeta
     /// de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_doble_toma_resuelve_sin_y_con_changesets() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_como_dueno_en;
         use crate::comandos::datos::carpeta_abierta;
         use crate::comandos::eventos::revisar_y_cerrar_rama_perdedor;
         use crate::estado::AppState;
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
+
         use crate::ramas::{cambiar_a_rama, crear_rama_tarea, RAMA_DEV};
         use crate::servidor::{conectar, LlaveroSistema};
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
         let repo_cm = format!("{repo}@{org}@unity");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-97-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -6038,11 +5749,6 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-
             let admin_fila = estado_a
                 .con_db(|db| {
                     let todos = usuarios::listar(db.conexion())?;
@@ -6069,7 +5775,6 @@ mod tests {
                     })?;
                     crear(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: DEV,
                             rol: Rol::Desarrollador,
@@ -6080,7 +5785,6 @@ mod tests {
                     )?;
                     crear(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: DEV,
                             rol: Rol::Desarrollador,
@@ -6093,16 +5797,13 @@ mod tests {
                 })
                 .unwrap();
 
-            // B sincroniza DEV, T-101 y T-102.
+            // B ya tiene el equipo; recibe los dos eventos de creación de tareas.
             let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_init =
-                lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                    lectura::aplicar_evento(c, e)
-                })
-                .unwrap();
-            assert_eq!(sync_init.aplicados, 3);
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            assert_eq!(sync_init.aplicados, 2);
 
             // --- CASO 1: Sin changesets en la rama del perdedor (T-101) ---
             let rama_g1 =
@@ -6114,47 +5815,41 @@ mod tests {
                     .unwrap();
             ramas_creadas.push(rama_p1.name.clone());
 
-            // B toma T-101 con timestamp posterior (15:00:10).
-            tomar(
-                db_b.conexion(),
-                &ops_b,
-                &AutorTarea {
-                    email: &admin_fila.email,
-                    rol: Rol::Administrador,
-                },
-                "T-101",
-                |_| Ok(vec![("T-101".into(), rama_p1.clone())]),
-                "2026-11-15T15:00:10.000Z",
-            )
-            .unwrap();
-            // A (DEV) toma T-101 con timestamp anterior (15:00:05).
+            // A llega primero al servidor, aunque su reloj marque una hora posterior.
             estado_a
                 .con_db(|db_a| {
                     tomar(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: DEV,
                             rol: Rol::Desarrollador,
                         },
                         "T-101",
                         |_| Ok(vec![("T-101".into(), rama_g1.clone())]),
-                        "2026-11-15T15:00:05.000Z",
+                        "2026-11-15T15:00:10.000Z",
                     )
                     .map(|_| ())
                 })
                 .unwrap();
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let sync_b1 = lectura::sincronizar_con_doble_toma(
+            // B toma en su base antes de recibir A; llega después al servidor.
+            tomar(
                 db_b.conexion(),
-                &ops_b,
-                &local_b,
-                ahora,
-                lectura::aplicar_evento,
-                |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
+                &AutorTarea {
+                    email: &admin_fila.email,
+                    rol: Rol::Administrador,
+                },
+                "T-101",
+                |_| Ok(vec![("T-101".into(), rama_p1.clone())]),
+                "2026-11-15T15:00:05.000Z",
             )
             .unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let sync_b1 =
+                crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| {
+                    revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info)
+                })
+                .unwrap();
             println!("Caso 1 (sin changesets) B sync: {sync_b1:?}");
             assert_eq!(sync_b1.aplicados, 1);
             assert!(
@@ -6205,45 +5900,40 @@ mod tests {
                 .unwrap();
             cambiar_a_rama(&estado_a, ws_a.path(), RAMA_DEV).unwrap();
 
-            tomar(
-                db_b.conexion(),
-                &ops_b,
-                &AutorTarea {
-                    email: &admin_fila.email,
-                    rol: Rol::Administrador,
-                },
-                "T-102",
-                |_| Ok(vec![("T-102".into(), rama_p2.clone())]),
-                "2026-11-15T15:00:20.000Z",
-            )
-            .unwrap();
+            // A llega primero; B conserva su rama con trabajo real al recibir esa toma.
             estado_a
                 .con_db(|db_a| {
                     tomar(
                         db_a.conexion(),
-                        &ops_a,
                         &AutorTarea {
                             email: DEV,
                             rol: Rol::Desarrollador,
                         },
                         "T-102",
                         |_| Ok(vec![("T-102".into(), rama_g2.clone())]),
-                        "2026-11-15T15:00:15.000Z",
+                        "2026-11-15T15:00:20.000Z",
                     )
                     .map(|_| ())
                 })
                 .unwrap();
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let sync_b2 = lectura::sincronizar_con_doble_toma(
+            tomar(
                 db_b.conexion(),
-                &ops_b,
-                &local_b,
-                ahora,
-                lectura::aplicar_evento,
-                |info| revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info),
+                &AutorTarea {
+                    email: &admin_fila.email,
+                    rol: Rol::Administrador,
+                },
+                "T-102",
+                |_| Ok(vec![("T-102".into(), rama_p2.clone())]),
+                "2026-11-15T15:00:15.000Z",
             )
             .unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let sync_b2 =
+                crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| {
+                    revisar_y_cerrar_rama_perdedor(&estado_a, &admin_fila.email, info)
+                })
+                .unwrap();
             println!("Caso 2 (con changeset) B sync: {sync_b2:?}");
             assert_eq!(sync_b2.descartados, 1);
             assert!(
@@ -6314,7 +6004,6 @@ mod tests {
 
         crear_con_subtareas(
             c,
-            &e.ops,
             &autor_lider,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Padre con hija".into(),
@@ -6339,7 +6028,6 @@ mod tests {
         // Desarrollador no puede asignar.
         let err = asignar(
             c,
-            &e.ops,
             &autor_dev,
             "T-101-1",
             DEV,
@@ -6352,7 +6040,6 @@ mod tests {
         // No se puede asignar una tarea que tiene subtareas.
         let err = asignar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             DEV,
@@ -6365,7 +6052,6 @@ mod tests {
         // Colaborador externo no puede recibir una subtarea.
         let err = asignar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-1",
             externo,
@@ -6378,7 +6064,6 @@ mod tests {
         // Líder asigna T-101-1 a DEV: crea rama del padre y de la hija + notificación.
         let res = asignar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-1",
             DEV,
@@ -6420,7 +6105,6 @@ mod tests {
         // Reasignar cuando ya tiene rama no llama a preparar_ramas y conserva la rama.
         let res2 = asignar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-1",
             LIDER,
@@ -6462,7 +6146,6 @@ mod tests {
 
         crear(
             c,
-            &e.ops,
             &autor_lider,
             &datos_base("Con progreso"),
             "2026-11-15T10:00:00Z",
@@ -6472,7 +6155,6 @@ mod tests {
 
         tomar(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             |_| {
@@ -6490,14 +6172,13 @@ mod tests {
         .unwrap();
 
         // Sin commits: se puede soltar y vuelve a 'por hacer' sin asignado.
-        let soltada = desasignar(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:02:00Z").unwrap();
+        let soltada = desasignar(c, &autor_dev, "T-101", "2026-11-15T10:02:00Z").unwrap();
         assert_eq!(soltada.asignado_a, None);
         assert_eq!(soltada.estado, EstadoTarea::PorHacer);
 
         // Volver a tomar y registrar un commit: ya no se puede soltar.
         tomar(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             |_| Ok(vec![]),
@@ -6519,7 +6200,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = desasignar(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err();
+        let err = desasignar(c, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err();
         assert!(err.to_string().contains("check-ins"));
     }
 
@@ -6532,9 +6213,6 @@ mod tests {
         ws_ruta: PathBuf,
         _datos_a: tempfile::TempDir,
         _maquina_b: tempfile::TempDir,
-        local_b: PathBuf,
-        ops_a: PathBuf,
-        ops_b: PathBuf,
         admin_fila: usuarios::Usuario,
         ramas_creadas: Vec<String>,
     }
@@ -6545,15 +6223,12 @@ mod tests {
             use crate::comandos::acceso::entrar_como_dueno_en;
             use crate::comandos::datos::carpeta_abierta;
             use crate::estado::AppState;
-            use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
 
             let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
             let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
             let repo_cm = format!("{repo}@{org}@unity");
-            let nube = PathBuf::from(
-                std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                    .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-            );
+            let nube_tmp = tempfile::tempdir().unwrap();
+            let nube = nube_tmp.path().to_path_buf();
             let sufijo = chrono::Local::now().format("%H%M%S").to_string();
             let compartida = nube.join(format!("BranchBoard-prueba-{etiqueta}-{sufijo}"));
             std::fs::create_dir_all(&compartida).unwrap();
@@ -6587,11 +6262,6 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-
             let admin_fila = estado_a
                 .con_db(|db| {
                     let todos = usuarios::listar(db.conexion())?;
@@ -6610,9 +6280,6 @@ mod tests {
                 ws_ruta,
                 _datos_a: datos_a,
                 _maquina_b: maquina_b,
-                local_b,
-                ops_a,
-                ops_b,
                 admin_fila,
                 ramas_creadas: Vec::new(),
             }
@@ -6656,7 +6323,6 @@ mod tests {
                 .con_db(|db_a| {
                     crear(
                         db_a.conexion(),
-                        &self.ops_a,
                         &autor,
                         &DatosNuevaTarea {
                             titulo: titulo.into(),
@@ -6687,7 +6353,6 @@ mod tests {
                 .con_db(|db_a| {
                     crear_con_subtareas(
                         db_a.conexion(),
-                        &self.ops_a,
                         &autor,
                         &DatosNuevaTareaConSubtareas {
                             titulo: titulo.into(),
@@ -6738,14 +6403,8 @@ mod tests {
         fn sincronizar_b(&self) -> crate::eventos::lectura::ResumenSincronizacion {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let ahora = Utc::now() + chrono::Duration::minutes(5);
-            let sync = lectura::sincronizar(
-                self.db_b.conexion(),
-                &self.ops_b,
-                &self.local_b,
-                ahora,
-                lectura::aplicar_evento,
-            )
-            .unwrap();
+            let sync =
+                crate::eventos::servidor_de_prueba::entregar(self.db_b.conexion(), ahora).unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
             sync
         }
@@ -6810,7 +6469,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_asignar_y_soltar_tarea() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -6910,7 +6569,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambiar_estado() {
         use crate::comandos::eventos::revisar_actualizaciones_en;
         use crate::comandos::tareas::{aprobar_tareas_en, cambiar_estado_en, tomar_en};
@@ -7086,7 +6745,6 @@ mod tests {
         // 1. Tarea pendiente de aprobación no puede ir a revisión.
         crear(
             c,
-            &e.ops,
             &autor_dev,
             &datos_base("Pendiente"),
             "2026-11-15T10:00:00Z",
@@ -7095,7 +6753,6 @@ mod tests {
         .unwrap();
         let err = cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             EstadoTarea::EnRevision,
@@ -7107,7 +6764,6 @@ mod tests {
         // 2. Tarea padre con dos subtareas: calcular estado de abajo hacia arriba.
         crear_con_subtareas(
             c,
-            &e.ops,
             &autor_lider,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Sistema de UI".into(),
@@ -7139,7 +6795,6 @@ mod tests {
         // Al pasar una hija a EnProduccion, el padre pasa a EnProduccion y hereda responsable.
         let r1 = cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-102-1",
             EstadoTarea::EnProduccion,
@@ -7153,7 +6808,6 @@ mod tests {
         // Padre no puede ir a EnRevision si T-102-2 sigue abierta.
         let err = cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-102",
             EstadoTarea::EnRevision,
@@ -7184,7 +6838,6 @@ mod tests {
 
         cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-102-1",
             EstadoTarea::EnRevision,
@@ -7193,7 +6846,6 @@ mod tests {
         .unwrap();
         let r2 = cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-102-2",
             EstadoTarea::EnRevision,
@@ -7208,7 +6860,6 @@ mod tests {
         // Desarrollador no puede mandar a Terminada.
         let err = cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-102-1",
             EstadoTarea::Terminada,
@@ -7220,7 +6871,6 @@ mod tests {
         // No puede terminar T-102-2 mientras tenga préstamo vigente; al quitarlo sí puede.
         let err = cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-102-2",
             EstadoTarea::Terminada,
@@ -7233,7 +6883,6 @@ mod tests {
         // Mover hacia atrás (EnProduccion) baja todo el subárbol; con commits no vuelve a PorHacer.
         let r3 = cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-102",
             EstadoTarea::EnProduccion,
@@ -7262,7 +6911,6 @@ mod tests {
         .unwrap();
         let err = cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-102",
             EstadoTarea::PorHacer,
@@ -7302,7 +6950,6 @@ mod tests {
 
         crear(
             c,
-            &e.ops,
             &autor_lider,
             &datos_base("Tarea para borrar progreso y reabrir"),
             "2026-11-15T10:00:00Z",
@@ -7311,7 +6958,6 @@ mod tests {
         .unwrap();
         tomar(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             |_| {
@@ -7329,7 +6975,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             EstadoTarea::EnProduccion,
@@ -7369,8 +7014,7 @@ mod tests {
         )
         .unwrap();
 
-        let lista =
-            borrar_progreso(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:04:00Z").unwrap();
+        let lista = borrar_progreso(c, &autor_dev, "T-101", "2026-11-15T10:04:00Z").unwrap();
         let t = lista.iter().find(|x| x.id == "T-101").unwrap();
         assert_eq!(t.estado, EstadoTarea::PorHacer);
         assert_eq!(t.asignado_a.as_deref(), Some(DEV));
@@ -7379,19 +7023,10 @@ mod tests {
         assert!(commits::prestamos_de_tarea(c, "T-101").unwrap().is_empty());
 
         // Motivo vacío o tarea no terminada rechaza reabrir.
-        let err = reabrir(
-            c,
-            &e.ops,
-            &autor_lider,
-            "T-101",
-            "   ",
-            "2026-11-15T10:05:00Z",
-        )
-        .unwrap_err();
+        let err = reabrir(c, &autor_lider, "T-101", "   ", "2026-11-15T10:05:00Z").unwrap_err();
         assert!(err.to_string().contains("motivo"));
         let err = reabrir(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             "Falta prueba",
@@ -7406,7 +7041,6 @@ mod tests {
             let m_re = n * 2 + 1;
             cambiar_estado(
                 c,
-                &e.ops,
                 &autor_lider,
                 "T-101",
                 EstadoTarea::Terminada,
@@ -7415,7 +7049,6 @@ mod tests {
             .unwrap();
             let r = reabrir(
                 c,
-                &e.ops,
                 &autor_lider,
                 "T-101",
                 &format!("Motivo {n}"),
@@ -7428,27 +7061,18 @@ mod tests {
 
         cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             EstadoTarea::Terminada,
             "2026-11-15T10:30:00Z",
         )
         .unwrap();
-        let err = reabrir(
-            c,
-            &e.ops,
-            &autor_lider,
-            "T-101",
-            "Motivo 4",
-            "2026-11-15T10:31:00Z",
-        )
-        .unwrap_err();
+        let err =
+            reabrir(c, &autor_lider, "T-101", "Motivo 4", "2026-11-15T10:31:00Z").unwrap_err();
         assert!(err.to_string().contains("Administrador"));
 
         let r4 = reabrir(
             c,
-            &e.ops,
             &autor_admin,
             "T-101",
             "Motivo 4 admin",
@@ -7470,7 +7094,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_borrar_progreso() {
         use crate::cm::Comando;
         use crate::comandos::tareas::{
@@ -7653,7 +7277,6 @@ mod tests {
         {
             crear(
                 c,
-                &e.ops,
                 &autor_dev,
                 &datos_base(titulo),
                 &format!("2026-11-15T10:0{i}:00Z"),
@@ -7664,26 +7287,18 @@ mod tests {
 
         // Desarrollador no puede aprobar, editar_y_aprobar ni advertir.
         assert!(matches!(
-            aprobar_tarea(c, &e.ops, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err(),
+            aprobar_tarea(c, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err(),
             Error::SinPermiso
         ));
         assert!(matches!(
-            advertir_pendiente(
-                c,
-                &e.ops,
-                &autor_dev,
-                "T-101",
-                "Falta info",
-                "2026-11-15T10:05:00Z"
-            )
-            .unwrap_err(),
+            advertir_pendiente(c, &autor_dev, "T-101", "Falta info", "2026-11-15T10:05:00Z")
+                .unwrap_err(),
             Error::SinPermiso
         ));
 
         // Advertir deja pendiente_aprobacion = true y crea notificación #12 al creador.
         advertir_pendiente(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             "Detalla mejor la meta",
@@ -7699,7 +7314,6 @@ mod tests {
         // Editar y aprobar cambia campos y aprueba en un solo evento + notificación #11.
         let editada = editar_y_aprobar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             &CambiosTarea {
@@ -7719,7 +7333,6 @@ mod tests {
         // aprobar_tareas aprueba T-102 y T-103 en una operación sin tocar estado.
         let lista = aprobar_tareas(
             c,
-            &e.ops,
             &autor_lider,
             &["T-102".into(), "T-103".into()],
             "2026-11-15T10:08:00Z",
@@ -7749,7 +7362,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_aprobar_editar_y_advertir() {
         use crate::comandos::tareas::{
             advertir_pendiente_en, aprobar_tarea_en, aprobar_tareas_en, editar_y_aprobar_en,
@@ -7837,34 +7450,17 @@ mod tests {
 
         // Padre T-101 creado por DEV, con dos subtareas:
         // T-101-1 (activa) y T-101-2 (terminada). Además T-102 independiente.
-        crear(c, &e.ops, &autor_dev, &datos_base("Padre"), AHORA, HOY).unwrap();
+        crear(c, &autor_dev, &datos_base("Padre"), AHORA, HOY).unwrap();
 
         let mut sub_activa = datos_base("Sub activa");
         sub_activa.tarea_padre_id = Some("T-101".into());
-        crear(
-            c,
-            &e.ops,
-            &autor_dev,
-            &sub_activa,
-            "2026-11-15T15:00:01Z",
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_dev, &sub_activa, "2026-11-15T15:00:01Z", HOY).unwrap();
 
         let mut sub_term = datos_base("Sub terminada");
         sub_term.tarea_padre_id = Some("T-101".into());
-        crear(
-            c,
-            &e.ops,
-            &autor_lider,
-            &sub_term,
-            "2026-11-15T15:00:02Z",
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_lider, &sub_term, "2026-11-15T15:00:02Z", HOY).unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-2",
             EstadoTarea::EnProduccion,
@@ -7873,7 +7469,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-2",
             EstadoTarea::Terminada,
@@ -7883,7 +7478,6 @@ mod tests {
 
         crear(
             c,
-            &e.ops,
             &autor_dev,
             &datos_base("Otra tarea"),
             "2026-11-15T15:00:05Z",
@@ -7893,41 +7487,23 @@ mod tests {
 
         // Desarrollador no puede eliminar; justificación vacía rechazada.
         assert!(matches!(
-            eliminar(
-                c,
-                &e.ops,
-                &autor_dev,
-                "T-101",
-                "Motivo",
-                "2026-11-15T15:00:06Z"
-            )
-            .unwrap_err(),
+            eliminar(c, &autor_dev, "T-101", "Motivo", "2026-11-15T15:00:06Z").unwrap_err(),
             Error::SinPermiso
         ));
         assert!(matches!(
-            eliminar(
-                c,
-                &e.ops,
-                &autor_lider,
-                "T-101",
-                "   ",
-                "2026-11-15T15:00:06Z"
-            )
-            .unwrap_err(),
+            eliminar(c, &autor_lider, "T-101", "   ", "2026-11-15T15:00:06Z").unwrap_err(),
             Error::Validacion(_)
         ));
 
         // No se puede purgar definitivamente una tarea que no está en Papelera.
         assert!(matches!(
-            eliminar_definitivamente(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:00:06Z")
-                .unwrap_err(),
+            eliminar_definitivamente(c, &autor_lider, "T-101", "2026-11-15T15:00:06Z").unwrap_err(),
             Error::Validacion(_)
         ));
 
         // Eliminar T-102 primero (más antigua), luego T-101 (más reciente).
         eliminar(
             c,
-            &e.ops,
             &autor_lider,
             "T-102",
             "Duplicada",
@@ -7936,7 +7512,6 @@ mod tests {
         .unwrap();
         let afectadas = eliminar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             "Ya no aplica",
@@ -7972,8 +7547,7 @@ mod tests {
 
         // Purga definitiva sobre T-101 borra T-101 y T-101-1 en cascada, dejando T-101-2.
         let purgadas =
-            eliminar_definitivamente(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:00:09Z")
-                .unwrap();
+            eliminar_definitivamente(c, &autor_lider, "T-101", "2026-11-15T15:00:09Z").unwrap();
         assert_eq!(purgadas.len(), 2);
         assert!(db_tareas::buscar(c, "T-101").unwrap().is_none());
         assert!(db_tareas::buscar(c, "T-101-1").unwrap().is_none());
@@ -7981,12 +7555,7 @@ mod tests {
 
         // Máquina B sincroniza y llega al mismo estado.
         let sync = e.sincronizar_b();
-        let log = std::fs::read_to_string(e.local_b.join("eventos.log")).unwrap_or_default();
-        assert_eq!(
-            sync.descartados, 0,
-            "descartados: {:?}\nlog:\n{}",
-            sync, log
-        );
+        assert_eq!(sync.descartados, 0, "descartados: {sync:?}");
         assert!(db_tareas::buscar(e.db_b.conexion(), "T-101")
             .unwrap()
             .is_none());
@@ -8001,7 +7570,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_eliminar_y_purgar() {
         use crate::cm::Comando;
         use crate::comandos::tareas::{
@@ -8175,15 +7744,7 @@ mod tests {
             rol: Rol::Desarrollador,
         };
 
-        crear(
-            c,
-            &e.ops,
-            &autor_dev,
-            &datos_base("Tarea polling"),
-            AHORA,
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_dev, &datos_base("Tarea polling"), AHORA, HOY).unwrap();
         assert!(actualizar_deteccion_local(c, "T-101", Some(12), true).unwrap());
         // Llamar de nuevo con los mismos datos no vuelve a mutar.
         assert!(!actualizar_deteccion_local(c, "T-101", Some(12), true).unwrap());
@@ -8193,8 +7754,7 @@ mod tests {
         assert!(t.modificada);
 
         let cerrada =
-            cerrar_por_deteccion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:00:01Z", HOY)
-                .unwrap();
+            cerrar_por_deteccion(c, &autor_dev, "T-101", "2026-11-15T15:00:01Z", HOY).unwrap();
         assert_eq!(cerrada.estado, EstadoTarea::Terminada);
         assert_eq!(cerrada.fecha_completada.as_deref(), Some(HOY));
         assert!(!cerrada.modificada);
@@ -8208,7 +7768,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_polling_unity_vc() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -8311,7 +7871,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_entrantes() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
@@ -8418,30 +7978,13 @@ mod tests {
 
         let mut d_vacio = datos_base("Original 102");
         d_vacio.detalles = String::new();
-        crear(c, &e.ops, &autor_lider, &d_vacio, AHORA, HOY).unwrap();
-        crear(c, &e.ops, &autor_lider, &datos_base("En curso"), AHORA, HOY).unwrap();
-        crear(
-            c,
-            &e.ops,
-            &autor_lider,
-            &datos_base("Aprobar lote A"),
-            AHORA,
-            HOY,
-        )
-        .unwrap();
-        crear(
-            c,
-            &e.ops,
-            &autor_lider,
-            &datos_base("Aprobar lote B"),
-            AHORA,
-            HOY,
-        )
-        .unwrap();
+        crear(c, &autor_lider, &d_vacio, AHORA, HOY).unwrap();
+        crear(c, &autor_lider, &datos_base("En curso"), AHORA, HOY).unwrap();
+        crear(c, &autor_lider, &datos_base("Aprobar lote A"), AHORA, HOY).unwrap();
+        crear(c, &autor_lider, &datos_base("Aprobar lote B"), AHORA, HOY).unwrap();
 
         cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-102",
             EstadoTarea::EnProduccion,
@@ -8450,7 +7993,6 @@ mod tests {
         .unwrap();
         assert!(proponer_edicion(
             c,
-            &e.ops,
             &autor_dev,
             "T-102",
             "No debe",
@@ -8464,7 +8006,6 @@ mod tests {
         // Primera edición sobre T-101 (detalles vacíos originalmente): aplica de inmediato y guarda lo anterior.
         let r1 = proponer_edicion(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             "Editada v1",
@@ -8483,7 +8024,6 @@ mod tests {
         // Segunda edición se suma conservando el valor anterior original ("Original 102" y "").
         let r2 = proponer_edicion(
             c,
-            &e.ops,
             &autor_dev,
             "T-101",
             "Editada v2",
@@ -8500,20 +8040,17 @@ mod tests {
 
         // Desarrollador no puede aprobar ni rechazar.
         assert!(matches!(
-            aprobar_modificacion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
-                .unwrap_err(),
+            aprobar_modificacion(c, &autor_dev, "T-101", "2026-11-15T15:05:00Z").unwrap_err(),
             Error::SinPermiso
         ));
         assert!(matches!(
-            rechazar_modificacion(c, &e.ops, &autor_dev, "T-101", "2026-11-15T15:05:00Z")
-                .unwrap_err(),
+            rechazar_modificacion(c, &autor_dev, "T-101", "2026-11-15T15:05:00Z").unwrap_err(),
             Error::SinPermiso
         ));
 
         // Rechazar T-101 restaura título y detalles vacíos originales, y borra la fila pendiente.
         let revertida =
-            rechazar_modificacion(c, &e.ops, &autor_lider, "T-101", "2026-11-15T15:06:00Z")
-                .unwrap();
+            rechazar_modificacion(c, &autor_lider, "T-101", "2026-11-15T15:06:00Z").unwrap();
         assert_eq!(revertida.titulo, "Original 102");
         assert_eq!(revertida.detalles, "");
         assert!(!revertida.edicion_pendiente);
@@ -8521,7 +8058,6 @@ mod tests {
         // T-103 y T-104 se proponen y se aprueban en lote.
         proponer_edicion(
             c,
-            &e.ops,
             &autor_dev,
             "T-103",
             "Lote A v1",
@@ -8533,7 +8069,6 @@ mod tests {
         .unwrap();
         proponer_edicion(
             c,
-            &e.ops,
             &autor_dev,
             "T-104",
             "Lote B v1",
@@ -8545,7 +8080,6 @@ mod tests {
         .unwrap();
         let tras_lote = aprobar_modificaciones(
             c,
-            &e.ops,
             &autor_lider,
             &["T-103".into(), "T-104".into()],
             "2026-11-15T15:09:00Z",
@@ -8577,7 +8111,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_ediciones_pendientes() {
         use crate::comandos::tareas::{
             aprobar_modificacion_en, aprobar_modificaciones_en, asignar_en, cambiar_estado_en,
@@ -8702,7 +8236,6 @@ mod tests {
 
         crear_con_subtareas(
             c,
-            &e.ops,
             &autor_lider,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Padre 105".into(),
@@ -8726,7 +8259,6 @@ mod tests {
 
         tomar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-1",
             |_| {
@@ -8772,7 +8304,6 @@ mod tests {
 
         let commit = registrar_checkin(
             c,
-            &e.ops,
             &autor_lider,
             &DatosCheckin {
                 tarea_id: "T-101-1",
@@ -8823,7 +8354,7 @@ mod tests {
         };
 
         for titulo in ["Origen prestamo", "Destino prestamo", "Sin rama"] {
-            crear(c, &e.ops, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
+            crear(c, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
         }
         // T-101 = origen; T-102 = destino; T-103 = sin rama.
         let mut con_rama = vec![
@@ -8833,7 +8364,6 @@ mod tests {
         for (id, rama) in con_rama.drain(..) {
             tomar(
                 c,
-                &e.ops,
                 &autor_dev,
                 id,
                 |_| {
@@ -8857,15 +8387,7 @@ mod tests {
         assert!(preparar_traer_cambios(c, &autor_dev, "T-103", "T-101", None).is_err());
 
         // Origen pasa a producción con commit 12; destino sigue en 'por hacer' (ya tomada) -> permitido.
-        cambiar_estado(
-            c,
-            &e.ops,
-            &autor_dev,
-            "T-101",
-            EstadoTarea::EnProduccion,
-            AHORA,
-        )
-        .unwrap();
+        cambiar_estado(c, &autor_dev, "T-101", EstadoTarea::EnProduccion, AHORA).unwrap();
         assert!(preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).is_err());
         commits::guardar(
             c,
@@ -8890,15 +8412,7 @@ mod tests {
         assert_eq!(cs, Some(12));
 
         // En EnRevision solo Líder/Admin pueden traer cambios.
-        cambiar_estado(
-            c,
-            &e.ops,
-            &autor_dev,
-            "T-102",
-            EstadoTarea::EnRevision,
-            AHORA,
-        )
-        .unwrap();
+        cambiar_estado(c, &autor_dev, "T-102", EstadoTarea::EnRevision, AHORA).unwrap();
         assert!(matches!(
             preparar_traer_cambios(c, &autor_dev, "T-102", "T-101", None).unwrap_err(),
             Error::SinPermiso
@@ -8908,7 +8422,6 @@ mod tests {
         // Registrar préstamo viaja por ops/ guardando changeset_merge y archivos.
         let p = registrar_traer_cambios(
             c,
-            &e.ops,
             &autor_lider,
             &DatosTraerCambios {
                 destino_id: "T-102",
@@ -8947,8 +8460,7 @@ mod tests {
         assert_eq!(pb[0].changeset_merge, Some(30));
 
         let devuelto =
-            registrar_devolver_cambios(c, &e.ops, &autor_lider, &p.id, "2026-11-15T16:05:00Z")
-                .unwrap();
+            registrar_devolver_cambios(c, &autor_lider, &p.id, "2026-11-15T16:05:00Z").unwrap();
         assert_eq!(devuelto.quitado_por.as_deref(), Some(LIDER));
         assert!(commits::prestamos_vigentes(c, "T-102").unwrap().is_empty());
 
@@ -8972,7 +8484,7 @@ mod tests {
         };
 
         for titulo in ["Origen 109", "Destino 109"] {
-            crear(c, &e.ops, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
+            crear(c, &autor_lider, &datos_base(titulo), AHORA, HOY).unwrap();
         }
         for (id, rama) in [
             ("T-101", "/main/dev/T-101-origen"),
@@ -8980,7 +8492,6 @@ mod tests {
         ] {
             tomar(
                 c,
-                &e.ops,
                 &autor_dev,
                 id,
                 |_| {
@@ -9000,7 +8511,6 @@ mod tests {
 
         let prestamo = registrar_traer_cambios(
             c,
-            &e.ops,
             &autor_dev,
             &DatosTraerCambios {
                 destino_id: "T-102",
@@ -9047,7 +8557,6 @@ mod tests {
         // Bloquea pasar a Terminada (aunque tuviera que fallar antes incluso que el préstamo) y rechaza sin tocados tras limpiar.
         cambiar_estado(
             c,
-            &e.ops,
             &autor_dev,
             "T-102",
             EstadoTarea::EnRevision,
@@ -9056,7 +8565,6 @@ mod tests {
         .unwrap();
         let err_term = cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-102",
             EstadoTarea::Terminada,
@@ -9078,7 +8586,6 @@ mod tests {
         assert_eq!(e.sincronizar_b().descartados, 0);
         let limpio = registrar_eliminar_cambios_ajenos(
             c,
-            &e.ops,
             &autor_lider,
             &prestamo.id,
             Some(32),
@@ -9178,7 +8685,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_hacer_checkin() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9322,7 +8829,6 @@ mod tests {
 
         crear_con_subtareas(
             c,
-            &e.ops,
             &autor_lider,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Padre 106".into(),
@@ -9345,7 +8851,6 @@ mod tests {
         .unwrap();
         tomar(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-1",
             |_| {
@@ -9373,7 +8878,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-101-1",
             EstadoTarea::EnRevision,
@@ -9382,16 +8886,8 @@ mod tests {
         .unwrap();
 
         // Crear subtarea "En espera" en T-101: bloquea EnRevision en padre y en sí misma.
-        let esp = crear_en_espera(
-            c,
-            &e.ops,
-            &autor_lider,
-            "T-101",
-            2,
-            "2026-11-15T15:03:00Z",
-            HOY,
-        )
-        .unwrap();
+        let esp =
+            crear_en_espera(c, &autor_lider, "T-101", 2, "2026-11-15T15:03:00Z", HOY).unwrap();
         assert_eq!(esp.tipo, TipoTarea::SinDefinir);
         assert_eq!(esp.estado, EstadoTarea::EnProduccion);
         assert_eq!(
@@ -9400,7 +8896,6 @@ mod tests {
         );
         assert!(cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             "T-101",
             EstadoTarea::EnRevision,
@@ -9409,7 +8904,6 @@ mod tests {
         .is_err());
         assert!(cambiar_estado(
             c,
-            &e.ops,
             &autor_lider,
             &esp.id,
             EstadoTarea::EnRevision,
@@ -9420,7 +8914,6 @@ mod tests {
         // Convertir "En espera" en subtarea con rama propia.
         let conv = convertir_espera_en_subtarea(
             c,
-            &e.ops,
             &autor_lider,
             &DatosRamaDesdeEspera {
                 espera_id: &esp.id,
@@ -9442,17 +8935,9 @@ mod tests {
         );
 
         // Segunda En espera -> quitar_en_espera la elimina limpiamente.
-        let esp2 = crear_en_espera(
-            c,
-            &e.ops,
-            &autor_lider,
-            "T-101",
-            1,
-            "2026-11-15T15:06:00Z",
-            HOY,
-        )
-        .unwrap();
-        quitar_en_espera(c, &e.ops, &autor_lider, &esp2.id, "2026-11-15T15:07:00Z").unwrap();
+        let esp2 =
+            crear_en_espera(c, &autor_lider, "T-101", 1, "2026-11-15T15:06:00Z", HOY).unwrap();
+        quitar_en_espera(c, &autor_lider, &esp2.id, "2026-11-15T15:07:00Z").unwrap();
         assert!(db_tareas::buscar(c, &esp2.id).unwrap().is_none());
 
         // Máquina B sincroniza vía ops/ y llega al mismo estado.
@@ -9467,7 +8952,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_subtarea_en_espera() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9609,7 +9094,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_prestados() {
         use crate::cm::Comando;
         use crate::comandos::tareas::{
@@ -9820,7 +9305,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_ajenos_tocados() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -9990,7 +9475,7 @@ mod tests {
     /// autorizado los devuelve a `dev` sin conflictos. Al final borra de `/main/dev`
     /// todos los changesets que creó (y la rama de la tarea).
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_cambios_directos() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -10214,7 +9699,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_alerta_rama_ajena() {
         use crate::cm::Comando;
         use crate::comandos::eventos::revisar_actualizaciones_en;
@@ -10357,13 +9842,9 @@ mod tests {
     #[test]
     #[ignore = "acompaña a la app abierta: correr a mano con BB_UI_PROYECTO_LOCAL, BB_UI_CARPETA_COMPARTIDA y BB_UI_ACCION"]
     fn entorno_real_ui_maquina_b() {
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
-
         let local_a = PathBuf::from(
             std::env::var("BB_UI_PROYECTO_LOCAL").expect("falta BB_UI_PROYECTO_LOCAL"),
         );
-        let compartida =
-            std::env::var("BB_UI_CARPETA_COMPARTIDA").expect("falta BB_UI_CARPETA_COMPARTIDA");
         let accion = std::env::var("BB_UI_ACCION").expect("falta BB_UI_ACCION");
         let dev = std::env::var("BB_UI_DEV").unwrap_or_else(|_| DEV.to_string());
 
@@ -10381,17 +9862,13 @@ mod tests {
             .path()
             .join("proyectos")
             .join(local_a.file_name().unwrap());
-        configurar_carpeta_compartida(&local_b, &compartida, false).unwrap();
-        let ops_b = carpeta_ops(&local_b).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
         usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
 
         let sincronizar_b = || {
             let ahora = Utc::now() + chrono::Duration::minutes(5);
-            let sync = lectura::sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
+            let sync =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
             assert_eq!(sync.descartados, 0, "no debe descartar eventos válidos");
             sync
         };
@@ -10413,7 +9890,6 @@ mod tests {
                 for n in 1..=3 {
                     let t = crear(
                         db_b.conexion(),
-                        &ops_b,
                         &autor,
                         &DatosNuevaTarea {
                             titulo: format!("A1 pendiente UI {n}"),
@@ -10441,7 +9917,6 @@ mod tests {
                 for t in editables {
                     let r = proponer_edicion(
                         db_b.conexion(),
-                        &ops_b,
                         &autor,
                         &t.id,
                         &format!("{} (editada por B)", t.titulo),
@@ -10490,7 +9965,6 @@ mod tests {
         };
         let tarea = crear(
             c,
-            &e.ops,
             &admin,
             &datos_base("Fecha local"),
             "2026-11-17T00:59:00.000Z",
@@ -10509,7 +9983,7 @@ mod tests {
             serde_json::to_value(&nuevo).unwrap(),
         );
         evento.timestamp = ahora.into();
-        eventos::publicar(c, &e.ops, &evento, |tx| {
+        eventos::publicar(c, &evento, |tx| {
             aplicar_cambiar_estado(tx, ADMIN, Some(Rol::Administrador), &nuevo, ahora).map(|_| ())
         })
         .unwrap();
@@ -10555,7 +10029,6 @@ mod tests {
         // T-101 (Líder) con T-101-1 y T-101-2; T-102 individual (Líder).
         crear_con_subtareas(
             c,
-            &e.ops,
             &lider,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Sistema".into(),
@@ -10585,7 +10058,6 @@ mod tests {
         .unwrap();
         crear(
             c,
-            &e.ops,
             &lider,
             &datos_base("Individual"),
             "2026-11-15T16:00:02.000Z",
@@ -10596,7 +10068,6 @@ mod tests {
         // Dev toma T-101-1 y la manda a revisión: T-101 hereda a dev como responsable.
         tomar(
             c,
-            &e.ops,
             &dev,
             "T-101-1",
             simular_ramas_cadena,
@@ -10605,7 +10076,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &dev,
             "T-101-1",
             EstadoTarea::EnProduccion,
@@ -10614,7 +10084,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &dev,
             "T-101-1",
             EstadoTarea::EnRevision,
@@ -10631,39 +10100,17 @@ mod tests {
 
         // 1. Elegir revisor: solo Líder/Admin, solo a un Líder/Admin, solo en revisión;
         //    con revisor puesto, solo el Administrador lo cambia.
-        let err = asignar_revision(
-            c,
-            &e.ops,
-            &dev,
-            "T-101-1",
-            LIDER,
-            "2026-11-15T16:00:06.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &dev, "T-101-1", LIDER, "2026-11-15T16:00:06.000Z").unwrap_err();
         assert_eq!(err.codigo(), "sin_permiso");
-        let err = asignar_revision(
-            c,
-            &e.ops,
-            &lider,
-            "T-101-1",
-            TESTER,
-            "2026-11-15T16:00:07.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &lider, "T-101-1", TESTER, "2026-11-15T16:00:07.000Z").unwrap_err();
         assert!(err.to_string().contains("no es Líder ni Administrador"));
-        let err = asignar_revision(
-            c,
-            &e.ops,
-            &lider,
-            "T-101-2",
-            LIDER,
-            "2026-11-15T16:00:08.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &lider, "T-101-2", LIDER, "2026-11-15T16:00:08.000Z").unwrap_err();
         assert!(err.to_string().contains("en revisión"));
         let t = asignar_revision(
             c,
-            &e.ops,
             &lider,
             "T-101-1",
             " Lider@VirusTF.dev ",
@@ -10676,25 +10123,10 @@ mod tests {
             .iter()
             .any(|n| n.tipo == TipoNotificacion::RevisionAsignada
                 && n.tarea_id.as_deref() == Some("T-101-1")));
-        let err = asignar_revision(
-            c,
-            &e.ops,
-            &lider,
-            "T-101-1",
-            ADMIN,
-            "2026-11-15T16:00:10.000Z",
-        )
-        .unwrap_err();
+        let err =
+            asignar_revision(c, &lider, "T-101-1", ADMIN, "2026-11-15T16:00:10.000Z").unwrap_err();
         assert!(err.to_string().contains("solo el Administrador"));
-        let t = asignar_revision(
-            c,
-            &e.ops,
-            &admin,
-            "T-101-1",
-            ADMIN,
-            "2026-11-15T16:00:11.000Z",
-        )
-        .unwrap();
+        let t = asignar_revision(c, &admin, "T-101-1", ADMIN, "2026-11-15T16:00:11.000Z").unwrap();
         assert_eq!(t.lider_revision_asignado.as_deref(), Some(ADMIN));
 
         // 2. Plan de autorización, sin tocar el servidor.
@@ -10721,7 +10153,6 @@ mod tests {
         //    Líder sobre su propia tarea en producción: merge directo hacia /main/dev.
         tomar(
             c,
-            &e.ops,
             &lider,
             "T-102",
             simular_ramas_cadena,
@@ -10730,7 +10161,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &lider,
             "T-102",
             EstadoTarea::EnProduccion,
@@ -10770,7 +10200,6 @@ mod tests {
         // 3. Merge hecho: T-101-1 termina y T-101 se recalcula (T-101-2 sigue por hacer).
         let tareas = registrar_merge_autorizado(
             c,
-            &e.ops,
             &dev,
             "T-101-1",
             &rama_padre,
@@ -10792,7 +10221,6 @@ mod tests {
         //    motivo y notifica al responsable.
         cambiar_estado(
             c,
-            &e.ops,
             &lider,
             "T-102",
             EstadoTarea::EnRevision,
@@ -10800,17 +10228,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            rechazar_revision(c, &e.ops, &dev, "T-102", "x", "2026-11-15T16:00:16.000Z")
+            rechazar_revision(c, &dev, "T-102", "x", "2026-11-15T16:00:16.000Z")
                 .unwrap_err()
                 .codigo(),
             "sin_permiso"
         );
-        let err = rechazar_revision(c, &e.ops, &lider, "T-102", "  ", "2026-11-15T16:00:17.000Z")
-            .unwrap_err();
+        let err =
+            rechazar_revision(c, &lider, "T-102", "  ", "2026-11-15T16:00:17.000Z").unwrap_err();
         assert!(err.to_string().contains("motivo"));
         let err = rechazar_revision(
             c,
-            &e.ops,
             &lider,
             "T-101-1",
             "ya terminó",
@@ -10820,7 +10247,6 @@ mod tests {
         assert!(err.to_string().contains("en revisión"));
         let tareas = rechazar_revision(
             c,
-            &e.ops,
             &admin,
             "T-102",
             "Falta pulir",
@@ -10840,7 +10266,6 @@ mod tests {
         //    Rechazar una tarea general baja todo su subárbol (también la subtarea ya terminada).
         tomar(
             c,
-            &e.ops,
             &dev,
             "T-101-2",
             simular_ramas_cadena,
@@ -10849,7 +10274,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             c,
-            &e.ops,
             &dev,
             "T-101-2",
             EstadoTarea::EnProduccion,
@@ -10858,7 +10282,6 @@ mod tests {
         .unwrap();
         let r = cambiar_estado(
             c,
-            &e.ops,
             &dev,
             "T-101-2",
             EstadoTarea::EnRevision,
@@ -10869,15 +10292,8 @@ mod tests {
             r.tareas.iter().find(|t| t.id == "T-101").unwrap().estado,
             EstadoTarea::EnRevision
         );
-        let tareas = rechazar_revision(
-            c,
-            &e.ops,
-            &lider,
-            "T-101",
-            "Rehacer",
-            "2026-11-15T16:00:23.000Z",
-        )
-        .unwrap();
+        let tareas =
+            rechazar_revision(c, &lider, "T-101", "Rehacer", "2026-11-15T16:00:23.000Z").unwrap();
         assert!(tareas
             .iter()
             .filter(|t| t.id.starts_with("T-101"))
@@ -10908,7 +10324,7 @@ mod tests {
     /// que chocó y no cambia de rama si hay cambios sin check-in. No abre Unity VC
     /// (eso es `cm::sesion::abrir_plastic_en_workspace`, probado a mano).
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_preparar_resolucion_de_conflicto() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;
@@ -10990,7 +10406,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_revision_autorizar_merge_y_rechazar() {
         use crate::cm::lectura::rama_actual_workspace;
         use crate::cm::Comando;

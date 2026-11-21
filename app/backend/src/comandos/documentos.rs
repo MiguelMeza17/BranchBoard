@@ -1,5 +1,5 @@
 //! Comandos Tauri para gestionar documentos del proyecto (#120). Los archivos van a Supabase Storage si
-//! el proyecto ya está en el servidor (#242); si no, a la carpeta compartida (se quita en #244).
+//! el proyecto ya está en el servidor (#242); si no, pide vincularlo primero (#244).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -9,10 +9,9 @@ use tauri::State;
 use crate::comandos::datos::carpeta_abierta;
 use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::documentos::Documento;
-use crate::documentos::{self, AlmacenServidor, CarpetaCompartida};
-use crate::error::Resultado;
+use crate::documentos::{self, AlmacenServidor};
+use crate::error::{Error, Resultado};
 use crate::estado::AppState;
-use crate::eventos;
 use crate::modelo::{ahora_iso, hoy_local};
 use crate::servidor::pat::LlaveroSistema;
 use crate::supabase::storage::Storage;
@@ -21,14 +20,14 @@ use crate::supabase::{ClienteSupabase, Entorno};
 /// Carpeta local (de este equipo) donde se guardan los documentos bajados del servidor para abrirlos.
 const CACHE_DOCUMENTOS: &str = "documentos-servidor";
 
-/// Id del proyecto en el servidor, si ya está vinculado (#240). Sin él se usa la carpeta compartida.
+/// Id del proyecto en el servidor, si ya está vinculado (#240). Sin él no se pueden guardar ni abrir archivos.
 pub(crate) fn proyecto_en_servidor(estado: &AppState) -> Resultado<Option<String>> {
     let id = estado.con_db(|db| configuracion::leer(db.conexion(), CLAVE_PROYECTO_SERVIDOR))?;
     Ok(id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
 
-/// Hace `con` con el almacén del proyecto abierto: Storage (con la sesión del servidor) o la carpeta
-/// compartida.
+/// Hace `con` con el almacén del proyecto abierto: Supabase Storage (con la sesión del servidor). Desde
+/// #244 no hay carpeta compartida: sin servidor, los documentos piden pasar el proyecto al servidor (#245).
 fn con_almacen<T>(
     estado: &AppState,
     con: impl FnOnce(&dyn documentos::Almacen) -> Resultado<T>,
@@ -46,12 +45,10 @@ fn con_almacen<T>(
                 cache: &cache,
             })
         }
-        None => {
-            let docs = eventos::carpeta_documentos(&carpeta)?;
-            con(&CarpetaCompartida {
-                carpeta_docs: &docs,
-            })
-        }
+        None => Err(Error::Validacion(
+            "Para guardar o abrir documentos, primero pasa el proyecto al servidor de BranchBoard"
+                .into(),
+        )),
     }
 }
 
@@ -80,14 +77,12 @@ pub fn subir_documentos(
 /// (con el servidor puede tardar); después se publica el evento.
 pub fn subir_documentos_en(estado: &AppState, archivos: &[String]) -> Resultado<Vec<Documento>> {
     let yo = estado.exigir_permiso("subir_documentos")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     con_almacen(estado, |almacen| {
         let creados =
             documentos::guardar_archivos(almacen, &yo.email, yo.rol, archivos, &hoy_local())?;
         let publicado = estado.con_db(|db| {
             documentos::publicar_subida(
                 db.conexion(),
-                &ops,
                 almacen,
                 &yo.email,
                 yo.rol,
@@ -114,9 +109,7 @@ pub fn aprobar_documento(estado: State<'_, AppState>, id: String) -> Resultado<D
 /// Versión sin envoltorio Tauri de [`aprobar_documento`].
 pub fn aprobar_documento_en(estado: &AppState, id: &str) -> Resultado<Documento> {
     let yo = estado.exigir_permiso("aprobar_documento")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
-    estado
-        .con_db(|db| documentos::aprobar(db.conexion(), &ops, &yo.email, yo.rol, id, &ahora_iso()))
+    estado.con_db(|db| documentos::aprobar(db.conexion(), &yo.email, yo.rol, id, &ahora_iso()))
 }
 
 /// Elimina un documento del proyecto y su archivo (Líder o Administrador, #120, #242).
@@ -129,10 +122,9 @@ pub fn eliminar_documento(estado: State<'_, AppState>, id: String) -> Resultado<
 /// sin bloquear la base.
 pub fn eliminar_documento_en(estado: &AppState, id: &str) -> Resultado<Documento> {
     let yo = estado.exigir_permiso("eliminar_documento")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     con_almacen(estado, |almacen| {
         let doc = estado.con_db(|db| {
-            documentos::eliminar_registro(db.conexion(), &ops, &yo.email, yo.rol, id, &ahora_iso())
+            documentos::eliminar_registro(db.conexion(), &yo.email, yo.rol, id, &ahora_iso())
         })?;
         almacen.borrar(&doc.ruta);
         Ok(doc)

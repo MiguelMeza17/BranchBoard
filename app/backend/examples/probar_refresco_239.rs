@@ -5,7 +5,7 @@ use branchboard_lib::{
     db::usuarios,
     error::{Error, Resultado},
     estado::AppState,
-    eventos::{self, bandeja, lectura, recepcion},
+    eventos::{bandeja, lectura, recepcion},
     modelo::{ahora_iso, hoy_local, Rol, TipoTarea},
     servidor::pat::Llavero,
     supabase::{entorno::PRUEBAS, miembros, proyectos, ClienteSupabase},
@@ -61,12 +61,6 @@ fn datos_prueba(estado: State<'_, AppState>, ensayo: State<'_, Ensayo>) -> Resul
 #[tauri::command]
 async fn cambio_remoto(ensayo: State<'_, Ensayo>, editar: bool) -> Resultado<()> {
     let yo = ensayo.autor.exigir_permiso("crear_tarea")?;
-    let carpeta = ensayo.autor.con_db(|db| {
-        db.carpeta()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| Error::Validacion("falta carpeta de la PC emisora".into()))
-    })?;
-    let ops = eventos::carpeta_ops(&carpeta)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -81,7 +75,6 @@ async fn cambio_remoto(ensayo: State<'_, Ensayo>, editar: bool) -> Resultado<()>
         ensayo.autor.con_db(|db| {
             tareas::editar(
                 db.conexion(),
-                &ops,
                 &autor,
                 &id,
                 &CambiosTarea {
@@ -103,14 +96,7 @@ async fn cambio_remoto(ensayo: State<'_, Ensayo>, editar: bool) -> Resultado<()>
             fecha_limite: None,
         };
         let nueva = ensayo.autor.con_db(|db| {
-            tareas::crear(
-                db.conexion(),
-                &ops,
-                &autor,
-                &datos,
-                &ahora_iso(),
-                &hoy_local(),
-            )
+            tareas::crear(db.conexion(), &autor, &datos, &ahora_iso(), &hoy_local())
         })?;
         *ensayo.tarea.lock().unwrap() = Some(nueva.id);
     }

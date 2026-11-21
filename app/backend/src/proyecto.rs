@@ -33,7 +33,7 @@ use crate::tareas::rol_de;
 
 pub mod eliminacion;
 
-/// Tipos de evento de los ajustes del proyecto que viajan por `ops/`.
+/// Tipos de evento de los ajustes del proyecto que viajan por el servidor.
 pub const TIPOS: &[&str] = &["actualizar_configuracion_proyecto"];
 
 /// Largo máximo del nombre del proyecto (en caracteres).
@@ -63,7 +63,7 @@ pub struct ConfiguracionProyecto {
     /// Nombre dentro de BranchBoard; `None` si nunca se configuró.
     pub nombre: Option<String>,
     /// La imagen como `data:image/png;base64,…`; `None` si no hay imagen o si su
-    /// archivo todavía no llegó a esta máquina por Drive/OneDrive.
+    /// archivo no está disponible.
     pub imagen: Option<String>,
 }
 
@@ -173,7 +173,6 @@ fn aplicar_ajuste(
 /// Publica `actualizar_configuracion_proyecto` y lo aplica en la misma transacción.
 fn publicar_ajuste(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     clave: &str,
@@ -202,7 +201,7 @@ fn publicar_ajuste(
     );
     ev.timestamp = ahora.to_string();
     let mut guardado = None;
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         guardado = Some(aplicar_ajuste(tx, Some(rol), &actor, ahora, &payload)?);
         Ok(())
     })?;
@@ -215,7 +214,6 @@ fn publicar_ajuste(
 /// La imagen no se cambia por aquí (va por [`subir_imagen`], que crea el archivo).
 pub fn actualizar(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     clave: &str,
@@ -228,13 +226,12 @@ pub fn actualizar(
             "La imagen del proyecto se cambia con subir_imagen_proyecto".into(),
         ));
     }
-    publicar_ajuste(c, ops, actor, rol, clave, valor, ahora)
+    publicar_ajuste(c, actor, rol, clave, valor, ahora)
 }
 
 /// `renombrar_proyecto(nombre)`: cambia el nombre en BranchBoard, no el repositorio de Unity VC.
 pub fn renombrar(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     nombre: &str,
@@ -245,7 +242,7 @@ pub fn renombrar(
     if configuracion::leer(c, CLAVE_NOMBRE_PROYECTO)?.as_deref() == Some(nuevo.as_str()) {
         return Err(Error::Validacion("El proyecto ya tiene ese nombre".into()));
     }
-    publicar_ajuste(c, ops, actor, rol, CLAVE_NOMBRE_PROYECTO, &nuevo, ahora)
+    publicar_ajuste(c, actor, rol, CLAVE_NOMBRE_PROYECTO, &nuevo, ahora)
 }
 
 /// Lee, valida y procesa la imagen elegida: PNG del lado [`LADO_IMAGEN`].
@@ -314,7 +311,6 @@ fn data_url_png(bytes: &[u8]) -> String {
 /// y borra la imagen anterior. Devuelve la imagen nueva como `data:` URL.
 pub fn subir_imagen(
     c: &Connection,
-    ops: &Path,
     carpeta_imagen: &Path,
     actor: &str,
     rol: Rol,
@@ -348,7 +344,7 @@ pub fn subir_imagen(
     }
 
     let anterior = configuracion::leer(c, CLAVE_ICONO_PROYECTO)?;
-    if let Err(e) = publicar_ajuste(c, ops, actor, rol, CLAVE_ICONO_PROYECTO, &nombre, ahora) {
+    if let Err(e) = publicar_ajuste(c, actor, rol, CLAVE_ICONO_PROYECTO, &nombre, ahora) {
         let _ = fs::remove_file(&destino);
         return Err(e);
     }
@@ -406,7 +402,6 @@ pub fn preparar_imagen(ruta_origen: &str) -> Resultado<(String, Vec<u8>)> {
 /// Publica `icono_proyecto = nombre` (solo Administrador). Devuelve el ícono anterior, para borrarlo.
 pub fn publicar_imagen(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     nombre: &str,
@@ -414,7 +409,7 @@ pub fn publicar_imagen(
 ) -> Resultado<Option<String>> {
     exigir_admin(Some(rol))?;
     let anterior = configuracion::leer(c, CLAVE_ICONO_PROYECTO)?;
-    publicar_ajuste(c, ops, actor, rol, CLAVE_ICONO_PROYECTO, nombre, ahora)?;
+    publicar_ajuste(c, actor, rol, CLAVE_ICONO_PROYECTO, nombre, ahora)?;
     Ok(anterior.filter(|a| a != nombre && es_nombre_icono(a)))
 }
 
@@ -476,8 +471,6 @@ mod tests {
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::lectura::{self, sincronizar};
-    use crate::eventos::{carpeta_imagen_proyecto, carpeta_ops, configurar_carpeta_compartida};
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
@@ -488,10 +481,8 @@ mod tests {
     struct Escenario {
         tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         imagen_a: PathBuf,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Escenario {
@@ -500,10 +491,7 @@ mod tests {
         fs::create_dir_all(&compartida).unwrap();
         let local_a = tmp.path().join("datos_a").join("proyectos").join("p127");
         let local_b = tmp.path().join("datos_b").join("proyectos").join("p127");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
-        let imagen_a = carpeta_imagen_proyecto(&local_a).unwrap();
+        let imagen_a = compartida.join(crate::eventos::CARPETA_PROYECTO);
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -525,10 +513,8 @@ mod tests {
         Escenario {
             tmp,
             db_a,
-            ops,
             imagen_a,
             db_b,
-            local_b,
         }
     }
 
@@ -579,13 +565,13 @@ mod tests {
         let c = e.db_a.conexion();
         for (quien, rol) in [(LIDER, Rol::Lider), (DEV, Rol::Desarrollador)] {
             assert_eq!(
-                renombrar(c, &e.ops, quien, rol, "Otro", AHORA)
+                renombrar(c, quien, rol, "Otro", AHORA)
                     .unwrap_err()
                     .codigo(),
                 "sin_permiso"
             );
             assert_eq!(
-                actualizar(c, &e.ops, quien, rol, "tema", "oscuro", AHORA)
+                actualizar(c, quien, rol, "tema", "oscuro", AHORA)
                     .unwrap_err()
                     .codigo(),
                 "sin_permiso"
@@ -593,7 +579,6 @@ mod tests {
         }
         let ajuste = renombrar(
             c,
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             "  Virus TF  ",
@@ -603,15 +588,14 @@ mod tests {
         assert_eq!(ajuste.valor, "Virus TF");
         assert_eq!(ajuste.actualizado_por, ADMIN);
         assert_eq!(
-            renombrar(c, &e.ops, ADMIN, Rol::Administrador, "Virus TF", AHORA)
+            renombrar(c, ADMIN, Rol::Administrador, "Virus TF", AHORA)
                 .unwrap_err()
                 .codigo(),
             "validacion"
         );
-        assert!(renombrar(c, &e.ops, ADMIN, Rol::Administrador, "", AHORA).is_err());
+        assert!(renombrar(c, ADMIN, Rol::Administrador, "", AHORA).is_err());
         actualizar(
             c,
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             "tema",
@@ -622,7 +606,6 @@ mod tests {
         // La imagen no se cambia por el comando genérico, ni con claves inválidas.
         assert!(actualizar(
             c,
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             CLAVE_ICONO_PROYECTO,
@@ -630,7 +613,7 @@ mod tests {
             AHORA
         )
         .is_err());
-        assert!(actualizar(c, &e.ops, ADMIN, Rol::Administrador, "../x", "v", AHORA).is_err());
+        assert!(actualizar(c, ADMIN, Rol::Administrador, "../x", "v", AHORA).is_err());
 
         // Eventos forjados en `ops/`: un Líder que renombra y un icono con traversal.
         let forjado = |usuario: &str, clave: &str, valor: &str, ts: &str| {
@@ -645,7 +628,7 @@ mod tests {
                 .unwrap(),
             );
             ev.timestamp = ts.into();
-            eventos::escribir_evento(&e.ops, &ev).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev);
         };
         forjado(
             LIDER,
@@ -663,10 +646,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync.aplicados, 2);
         assert_eq!(sync.descartados, 2);
         let en_b = leer(e.db_b.conexion(), None).unwrap();
@@ -705,24 +685,15 @@ mod tests {
 
         // Permisos y archivos rechazados (sin dejar nada en `proyecto/`).
         assert_eq!(
-            subir_imagen(
-                c,
-                &e.ops,
-                &e.imagen_a,
-                LIDER,
-                Rol::Lider,
-                &ruta(&png),
-                AHORA
-            )
-            .unwrap_err()
-            .codigo(),
+            subir_imagen(c, &e.imagen_a, LIDER, Rol::Lider, &ruta(&png), AHORA)
+                .unwrap_err()
+                .codigo(),
             "sin_permiso"
         );
         for mala in [&disfrazado, &gif, &pesado, &origen] {
             assert_eq!(
                 subir_imagen(
                     c,
-                    &e.ops,
                     &e.imagen_a,
                     ADMIN,
                     Rol::Administrador,
@@ -737,7 +708,6 @@ mod tests {
         }
         assert!(subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -750,7 +720,6 @@ mod tests {
         // PNG y WebP: quedan en 256×256 y solo existe la última.
         let url = subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -770,7 +739,6 @@ mod tests {
 
         subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -780,7 +748,6 @@ mod tests {
         .unwrap();
         let url = subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -808,224 +775,10 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync.aplicados, 3);
-        let imagen_b = carpeta_imagen_proyecto(&e.local_b).unwrap();
+        let imagen_b = e.imagen_a.clone();
         let en_b = leer(e.db_b.conexion(), Some(&imagen_b)).unwrap();
         assert_eq!(en_b.imagen.as_deref(), Some(url.as_str()));
-    }
-
-    /// **Prueba en el entorno real** (CLAUDE.md, issue #127): contra
-    /// `BranchBoard-Pruebas/BranchBoard-Pruebas@MiguelM17@unity` + OneDrive real,
-    /// ejerce los comandos `obtener_configuracion_proyecto_en`, `renombrar_proyecto_en`,
-    /// `actualizar_configuracion_proyecto_en` y `subir_imagen_proyecto_en`:
-    /// 1. Al entrar, el nombre es el del repositorio y no hay imagen.
-    /// 2. Un Líder no puede renombrar, cambiar ajustes ni la imagen (`sin_permiso`).
-    /// 3. El Administrador renombra, guarda un ajuste y sube dos imágenes: quedan en
-    ///    `<OneDrive>/proyecto/icono-<uuid>.png` en 256×256 y solo sobrevive la última.
-    /// 4. Un renombre forjado por el Líder y un icono con path traversal en `ops/` se
-    ///    descartan; la máquina B sincroniza por OneDrive y ve el mismo nombre e imagen.
-    ///
-    /// Al terminar borra el workspace y la subcarpeta de OneDrive.
-    #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
-    fn entorno_real_ajustes_del_proyecto() {
-        use crate::cm::Comando;
-        use crate::comandos::acceso::entrar_en;
-        use crate::comandos::datos::carpeta_abierta;
-        use crate::comandos::proyecto::{
-            actualizar_configuracion_proyecto_en, obtener_configuracion_proyecto_en,
-            renombrar_proyecto_en, subir_imagen_proyecto_en,
-        };
-        use crate::estado::AppState;
-
-        use crate::modelo::hoy_local;
-
-        let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
-        let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
-        let sufijo = chrono::Local::now().format("%H%M%S").to_string();
-        let compartida = nube.join(format!("BranchBoard-prueba-127-{sufijo}"));
-        fs::create_dir_all(&compartida).unwrap();
-
-        let estado_a = AppState::default();
-        let ws_a = tempfile::tempdir().unwrap();
-        let datos_a = tempfile::tempdir().unwrap();
-        let maquina_b = tempfile::tempdir().unwrap();
-        let origen = tempfile::tempdir().unwrap();
-        let ruta_ws = ws_a.path().to_string_lossy().to_string();
-
-        Comando::cm()
-            .args(["workspace", "create"])
-            .arg(format!("bb-prueba-127-{sufijo}"))
-            .arg(&ruta_ws)
-            .arg(format!("rep:{repo}@{org}@unity"))
-            .exigir_exito(&estado_a)
-            .unwrap();
-
-        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            entrar_en(&estado_a, datos_a.path(), ws_a.path()).unwrap();
-            let local_a = carpeta_abierta(&estado_a).unwrap();
-            let local_b = maquina_b
-                .path()
-                .join("proyectos")
-                .join(local_a.file_name().unwrap());
-
-            // 1. Sin carpeta compartida todavía: el nombre es el del repositorio, sin imagen.
-            let inicial = obtener_configuracion_proyecto_en(&estado_a).unwrap();
-            let nombre_repo = repo.rsplit('/').next().unwrap().to_string();
-            assert_eq!(inicial.nombre.as_deref(), Some(nombre_repo.as_str()));
-            assert_eq!(inicial.imagen, None);
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-            let imagen_a = carpeta_imagen_proyecto(&local_a).unwrap();
-
-            let admin_fila = estado_a
-                .con_db(|db| {
-                    let todos = usuarios::listar(db.conexion())?;
-                    Ok(todos.into_iter().next().unwrap())
-                })
-                .unwrap();
-            let db_b = Db::abrir(&local_b).unwrap();
-            usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
-
-            let pausa = || std::thread::sleep(std::time::Duration::from_millis(5));
-            estado_a
-                .con_db(|db_a| {
-                    Ok::<_, crate::error::Error>({
-                        let u = crate::identidad::equipo::alta_de_prueba(
-                            db_a.conexion(),
-                            LIDER,
-                            Rol::Lider,
-                            &hoy_local(),
-                        );
-                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
-                        u
-                    })
-                })
-                .unwrap();
-
-            let png = origen.path().join("logo.png");
-            let jpg = origen.path().join("foto.jpg");
-            imagen_de_prueba(&png, 1024, 768);
-            imagen_de_prueba(&jpg, 400, 1200);
-            let ruta = |p: &Path| p.to_string_lossy().to_string();
-
-            // 2. El Líder no puede tocar los ajustes del proyecto.
-            estado_a.fijar_usuario(Some(LIDER));
-            for err in [
-                renombrar_proyecto_en(&estado_a, "Del Lider").unwrap_err(),
-                actualizar_configuracion_proyecto_en(&estado_a, "tema", "claro").unwrap_err(),
-                subir_imagen_proyecto_en(&estado_a, &ruta(&png)).unwrap_err(),
-            ] {
-                assert_eq!(err.codigo(), "sin_permiso");
-            }
-
-            // 3. El Administrador renombra, guarda un ajuste y cambia dos veces la imagen.
-            estado_a.fijar_usuario(Some(&admin_fila.email));
-            let nuevo_nombre = format!("Prueba 127 {sufijo}");
-            pausa();
-            let ajuste = renombrar_proyecto_en(&estado_a, &format!("  {nuevo_nombre} ")).unwrap();
-            assert_eq!(ajuste.valor, nuevo_nombre);
-            assert_eq!(
-                renombrar_proyecto_en(&estado_a, &nuevo_nombre)
-                    .unwrap_err()
-                    .codigo(),
-                "validacion"
-            );
-            pausa();
-            actualizar_configuracion_proyecto_en(&estado_a, "tema", "oscuro").unwrap();
-            pausa();
-            let url_1 = subir_imagen_proyecto_en(&estado_a, &ruta(&png)).unwrap();
-            let img_1 = png_de_data_url(&url_1);
-            assert_eq!((img_1.width(), img_1.height()), (LADO_IMAGEN, LADO_IMAGEN));
-            let archivos = |carpeta: &Path| -> Vec<String> {
-                fs::read_dir(carpeta)
-                    .unwrap()
-                    .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-                    .collect()
-            };
-            let primera = archivos(&imagen_a);
-            assert_eq!(primera.len(), 1);
-            assert!(es_nombre_icono(&primera[0]));
-            pausa();
-            let url_2 = subir_imagen_proyecto_en(&estado_a, &ruta(&jpg)).unwrap();
-            let segunda = archivos(&imagen_a);
-            assert_eq!(segunda.len(), 1);
-            assert_ne!(primera, segunda);
-            let en_a = obtener_configuracion_proyecto_en(&estado_a).unwrap();
-            assert_eq!(en_a.nombre.as_deref(), Some(nuevo_nombre.as_str()));
-            assert_eq!(en_a.imagen.as_deref(), Some(url_2.as_str()));
-            println!(
-                "OneDrive/proyecto tras dos subidas: {:?} ({} bytes en data URL)",
-                segunda,
-                url_2.len()
-            );
-
-            // 4. Eventos forjados: renombre de un Líder e icono con path traversal.
-            for (usuario, clave, valor) in [
-                (LIDER, CLAVE_NOMBRE_PROYECTO, "Hackeado"),
-                (
-                    admin_fila.email.as_str(),
-                    CLAVE_ICONO_PROYECTO,
-                    "../../ops/x.png",
-                ),
-            ] {
-                let mut ev = Evento::nuevo(
-                    "actualizar_configuracion_proyecto",
-                    None,
-                    usuario,
-                    serde_json::to_value(PayloadAjuste {
-                        clave: clave.into(),
-                        valor: valor.into(),
-                    })
-                    .unwrap(),
-                );
-                pausa();
-                ev.timestamp = crate::modelo::ahora_iso();
-                eventos::escribir_evento(&ops_a, &ev).unwrap();
-            }
-
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            // La máquina B sincroniza por OneDrive.
-            let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza ajustes del proyecto desde OneDrive: {sync_b:?}");
-            assert_eq!(sync_b.descartados, 2);
-            let imagen_b = carpeta_imagen_proyecto(&local_b).unwrap();
-            let en_b = leer(db_b.conexion(), Some(&imagen_b)).unwrap();
-            assert_eq!(en_b.nombre.as_deref(), Some(nuevo_nombre.as_str()));
-            assert_eq!(en_b.imagen.as_deref(), Some(url_2.as_str()));
-            assert_eq!(
-                configuracion::leer(db_b.conexion(), "tema")
-                    .unwrap()
-                    .as_deref(),
-                Some("oscuro")
-            );
-        }));
-
-        estado_a.cerrar_proyecto();
-        let _ = Comando::cm()
-            .args(["workspace", "delete"])
-            .arg(&ruta_ws)
-            .ejecutar(&estado_a);
-        let _ = fs::remove_dir_all(&compartida);
-        println!("subcarpeta de prueba borrada: {}", !compartida.exists());
-        if let Err(p) = resultado {
-            std::panic::resume_unwind(p);
-        }
     }
 }

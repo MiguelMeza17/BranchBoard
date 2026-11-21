@@ -8,7 +8,6 @@
 //!   `marcar_leida`, `desmarcar_leida`, `marcar_todas_leidas`).
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 use rusqlite::Connection;
@@ -92,20 +91,18 @@ pub fn emitir_a_roles_si_falta(
 /// Función común para crear una notificación para un destinatario y replicarla por `ops/` (#116).
 pub fn crear(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     datos: &DatosNotificacion<'_>,
     ahora: &str,
 ) -> Resultado<Notificacion> {
     let id = format!("noti_{}", eventos::uuid());
-    crear_con_id(c, ops, emisor, &id, datos, ahora)
+    crear_con_id(c, emisor, &id, datos, ahora)
 }
 
 /// Igual que [`crear`], pero usando un `id` determinista para evitar duplicados cuando varias
 /// máquinas detectan el mismo suceso antes de sincronizar `ops/` (p. ej. inactividad #117).
 pub fn crear_con_id(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     id: &str,
     datos: &DatosNotificacion<'_>,
@@ -147,7 +144,7 @@ pub fn crear_con_id(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| emitir_si_falta(tx, &noti))?;
+    eventos::publicar(c, &ev, |tx| emitir_si_falta(tx, &noti))?;
     Ok(noti)
 }
 
@@ -155,7 +152,6 @@ pub fn crear_con_id(
 /// evento de `ops/` (#116).
 pub fn crear_para_roles(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     datos: &DatosNotificacionRoles<'_>,
     ahora: &str,
@@ -208,7 +204,7 @@ pub fn crear_para_roles(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_lote(tx, &lote))?;
+    eventos::publicar(c, &ev, |tx| aplicar_lote(tx, &lote))?;
     Ok(lote)
 }
 
@@ -308,7 +304,6 @@ fn id_notificacion_inactividad(
 /// Emite una notificación `inactividad` al dueño por `ops/` deduplicada por ciclo.
 pub fn evaluar_inactividad(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     filtro_tarea: Option<&str>,
     ahora: &str,
@@ -396,7 +391,6 @@ pub fn evaluar_inactividad(
         );
         let noti = crear_con_id(
             c,
-            ops,
             emisor,
             &id,
             &DatosNotificacion {
@@ -431,7 +425,6 @@ fn nombre_visible_usuario(c: &Connection, email: &str) -> Resultado<String> {
 /// Envía un mensaje manual de `emisor` hacia `para` (máx. [`MAX_CARACTERES_MENSAJE`]) vía `ops/` (#118).
 pub fn enviar_mensaje(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     para: &str,
     texto: &str,
@@ -462,7 +455,6 @@ pub fn enviar_mensaje(
     let titulo = format!("Mensaje de {nombre}");
     crear(
         c,
-        ops,
         &emisor_norm,
         &DatosNotificacion {
             tipo: TipoNotificacion::Mensaje,
@@ -480,7 +472,6 @@ pub fn enviar_mensaje(
 /// Solo Líder o Desarrollador pueden emitirlo.
 pub fn solicitar_accion_bd(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     rol_emisor: Rol,
     motivo: &str,
@@ -503,7 +494,6 @@ pub fn solicitar_accion_bd(
     );
     let emitidas = crear_para_roles(
         c,
-        ops,
         &emisor_norm,
         &DatosNotificacionRoles {
             tipo: TipoNotificacion::AccionBd,
@@ -525,16 +515,13 @@ pub fn solicitar_accion_bd(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use chrono::{DateTime, Utc};
     use tempfile::TempDir;
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::carpeta_ops;
-    use crate::eventos::configurar_carpeta_compartida;
-    use crate::eventos::lectura::{self, sincronizar};
+
     use crate::modelo::{Rol, TipoTarea};
     use crate::tareas::{
         asignar, cambiar_estado, crear as crear_tarea, crear_con_subtareas, eliminar, reabrir,
@@ -551,9 +538,7 @@ mod tests {
     struct Entorno {
         _tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         db_b: Db,
-        local_b: PathBuf,
     }
 
     fn setup() -> Entorno {
@@ -570,9 +555,6 @@ mod tests {
             .join("datos_b")
             .join("proyectos")
             .join("estudio-notis");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -596,9 +578,7 @@ mod tests {
         Entorno {
             _tmp: tmp,
             db_a,
-            ops,
             db_b,
-            local_b,
         }
     }
 
@@ -607,7 +587,6 @@ mod tests {
         let e = setup();
         let n1 = crear(
             e.db_a.conexion(),
-            &e.ops,
             DEV,
             &DatosNotificacion {
                 tipo: TipoNotificacion::Mensaje,
@@ -622,7 +601,6 @@ mod tests {
         .unwrap();
         let lote = crear_para_roles(
             e.db_a.conexion(),
-            &e.ops,
             DEV,
             &DatosNotificacionRoles {
                 tipo: TipoNotificacion::AccionBd,
@@ -657,15 +635,13 @@ mod tests {
             .unwrap(),
         );
         falso.timestamp = "2026-11-16T10:01:02.000Z".into();
-        eventos::escribir_evento(&e.ops, &falso).unwrap();
+        crate::eventos::servidor_de_prueba::agregar(&falso);
 
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync_b = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        let sync_b =
+            crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         assert_eq!(sync_b.aplicados, 2);
         assert_eq!(sync_b.descartados, 1);
 
@@ -702,7 +678,6 @@ mod tests {
         // 1. Tarea con subtareas creada por Desarrollador -> 1 sola notificación `aprobacion_tarea` para Líder/Admin.
         let creadas = crear_con_subtareas(
             e.db_a.conexion(),
-            &e.ops,
             &dev,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Sistema de combate".into(),
@@ -737,7 +712,6 @@ mod tests {
         // 2. Tarea creada por Líder -> NO emite `aprobacion_tarea`; asignar -> revisión -> terminada -> reabrir -> eliminar.
         let t_ok = crear_tarea(
             e.db_a.conexion(),
-            &e.ops,
             &lider,
             &DatosNuevaTarea {
                 titulo: "Hud".into(),
@@ -755,7 +729,6 @@ mod tests {
         .unwrap();
         asignar(
             e.db_a.conexion(),
-            &e.ops,
             &lider,
             &t_ok.id,
             DEV,
@@ -774,7 +747,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &dev,
             &t_ok.id,
             crate::modelo::EstadoTarea::EnRevision,
@@ -783,7 +755,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &lider,
             &t_ok.id,
             crate::modelo::EstadoTarea::Terminada,
@@ -792,7 +763,6 @@ mod tests {
         .unwrap();
         reabrir(
             e.db_a.conexion(),
-            &e.ops,
             &lider,
             &t_ok.id,
             "Falta contraste",
@@ -801,7 +771,6 @@ mod tests {
         .unwrap();
         eliminar(
             e.db_a.conexion(),
-            &e.ops,
             &lider,
             &creadas[0].id,
             "Duplicada",
@@ -812,10 +781,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
 
         let tipos_lider: Vec<_> = listar_de_usuario(e.db_b.conexion(), LIDER)
             .unwrap()
@@ -851,7 +817,6 @@ mod tests {
         //    el reloj debe arrancar desde la toma (`actividad_desde = 2026-11-10`).
         let mut t = crear_tarea(
             e.db_a.conexion(),
-            &e.ops,
             &admin,
             &DatosNuevaTarea {
                 titulo: "Salto doble".into(),
@@ -869,7 +834,6 @@ mod tests {
         .unwrap();
         crate::tareas::tomar(
             e.db_a.conexion(),
-            &e.ops,
             &dev_autor,
             &t.id,
             |cadena| {
@@ -888,7 +852,6 @@ mod tests {
 
         t = cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &dev_autor,
             &t.id,
             EstadoTarea::EnProduccion,
@@ -904,7 +867,6 @@ mod tests {
         // Padre con subtarea activa (el padre se excluye; solo la subtarea con rama se vigila).
         let grupo = crear_con_subtareas(
             e.db_a.conexion(),
-            &e.ops,
             &admin,
             &DatosNuevaTareaConSubtareas {
                 titulo: "Padre con subs".into(),
@@ -928,7 +890,6 @@ mod tests {
         let sub_id = grupo[1].id.clone();
         crate::tareas::tomar(
             e.db_a.conexion(),
-            &e.ops,
             &dev_autor,
             &sub_id,
             |cadena| {
@@ -967,7 +928,6 @@ mod tests {
         // Día 12 (2 días): < 3 días -> 0 notificaciones (tampoco dispara por fecha_creacion 2026-11-01).
         assert!(evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             None,
             "2026-11-12T10:00:00Z",
@@ -979,7 +939,6 @@ mod tests {
         // Día 13 (3 días): emite 1 recordatorio para `t.id` al Desarrollador dueño vía `ops/`.
         let dia_3 = evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             None,
             "2026-11-13T10:00:00Z",
@@ -996,7 +955,6 @@ mod tests {
         // Misma ventana (día 13 y día 14): NO duplica el recordatorio.
         assert!(evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             None,
             "2026-11-13T12:00:00Z",
@@ -1006,7 +964,6 @@ mod tests {
         .is_empty());
         assert!(evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             None,
             "2026-11-14T10:00:00Z",
@@ -1018,7 +975,6 @@ mod tests {
         // Día 16 (6 días = ciclo 2): vuelve a recordar para `t.id`.
         let dia_6 = evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             Some(&t.id),
             "2026-11-16T10:00:00Z",
@@ -1045,7 +1001,6 @@ mod tests {
         .unwrap();
         assert!(evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             Some(&t.id),
             "2026-11-18T10:00:00Z",
@@ -1057,7 +1012,6 @@ mod tests {
         // Subtarea en revisión + padre con subtareas nunca disparan recordatorio de inactividad.
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &admin,
             &sub_id,
             EstadoTarea::EnRevision,
@@ -1066,7 +1020,6 @@ mod tests {
         .unwrap();
         assert!(evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             Some(&grupo[0].id),
             "2026-11-25T10:00:00Z",
@@ -1076,7 +1029,6 @@ mod tests {
         .is_empty());
         assert!(evaluar_inactividad(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             Some(&sub_id),
             "2026-11-25T10:00:00Z",
@@ -1089,10 +1041,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-30T00:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
         let inactivas_b: Vec<_> = listar_de_usuario(e.db_b.conexion(), DEV)
             .unwrap()
             .into_iter()
@@ -1117,16 +1066,15 @@ mod tests {
         usuarios::insertar(e.db_b.conexion(), &tester_fila).unwrap();
 
         // Validaciones de `enviar_mensaje`: vacío, >500 caracteres Unicode, autoenvío y usuario inexistente.
-        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, LIDER, "   ", AHORA).is_err());
+        assert!(enviar_mensaje(e.db_a.conexion(), DEV, LIDER, "   ", AHORA).is_err());
         let largo_501 = "á".repeat(501);
-        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, LIDER, &largo_501, AHORA).is_err());
-        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, DEV, "hola", AHORA).is_err());
-        assert!(enviar_mensaje(e.db_a.conexion(), &e.ops, DEV, INTRUSO, "hola", AHORA).is_err());
+        assert!(enviar_mensaje(e.db_a.conexion(), DEV, LIDER, &largo_501, AHORA).is_err());
+        assert!(enviar_mensaje(e.db_a.conexion(), DEV, DEV, "hola", AHORA).is_err());
+        assert!(enviar_mensaje(e.db_a.conexion(), DEV, INTRUSO, "hola", AHORA).is_err());
 
         let exacto_500 = "ñ".repeat(500);
         let msg = enviar_mensaje(
             e.db_a.conexion(),
-            &e.ops,
             DEV,
             "LIDER@estudio.com",
             &format!("  {exacto_500}  "),
@@ -1140,32 +1088,18 @@ mod tests {
         assert!(!msg.accionable);
 
         // `solicitar_accion_bd`: vacío rechazado, Tester y Admin rechazados (`sin_permiso`).
-        assert!(solicitar_accion_bd(
-            e.db_a.conexion(),
-            &e.ops,
-            DEV,
-            Rol::Desarrollador,
-            "   ",
-            AHORA,
-        )
-        .is_err());
+        assert!(
+            solicitar_accion_bd(e.db_a.conexion(), DEV, Rol::Desarrollador, "   ", AHORA,).is_err()
+        );
         assert_eq!(
-            solicitar_accion_bd(
-                e.db_a.conexion(),
-                &e.ops,
-                TESTER,
-                Rol::Tester,
-                "Tabla rota",
-                AHORA,
-            )
-            .unwrap_err()
-            .codigo(),
+            solicitar_accion_bd(e.db_a.conexion(), TESTER, Rol::Tester, "Tabla rota", AHORA,)
+                .unwrap_err()
+                .codigo(),
             "sin_permiso"
         );
         assert_eq!(
             solicitar_accion_bd(
                 e.db_a.conexion(),
-                &e.ops,
                 ADMIN,
                 Rol::Administrador,
                 "Soy admin",
@@ -1178,7 +1112,6 @@ mod tests {
 
         let req_dev = solicitar_accion_bd(
             e.db_a.conexion(),
-            &e.ops,
             DEV,
             Rol::Desarrollador,
             "Registros duplicados en T-104",
@@ -1191,7 +1124,6 @@ mod tests {
 
         let req_lider = solicitar_accion_bd(
             e.db_a.conexion(),
-            &e.ops,
             LIDER,
             Rol::Lider,
             "Diferencia tras rollback",
@@ -1204,10 +1136,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
-        .unwrap();
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora).unwrap();
 
         let notis_admin_b = listar_de_usuario(e.db_b.conexion(), ADMIN).unwrap();
         assert_eq!(
@@ -1241,7 +1170,7 @@ mod tests {
     ///
     /// Al terminar borra el workspace y la subcarpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_notificaciones() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1256,10 +1185,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-116-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1285,11 +1212,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1328,7 +1250,6 @@ mod tests {
                     // 1. Desarrollador crea tarea -> emite `aprobacion_tarea` para Admin.
                     crear_tarea(
                         db_a.conexion(),
-                        &ops_a,
                         &dev_autor,
                         &DatosNuevaTarea {
                             titulo: "Pendiente para campana".into(),
@@ -1346,7 +1267,6 @@ mod tests {
                     // 2. Función común vía ops/ hacia Admin.
                     crear_para_roles(
                         db_a.conexion(),
-                        &ops_a,
                         DEV,
                         &DatosNotificacionRoles {
                             tipo: TipoNotificacion::AccionBd,
@@ -1364,7 +1284,6 @@ mod tests {
                     };
                     let t_flujo = crear_tarea(
                         db_a.conexion(),
-                        &ops_a,
                         &admin_autor,
                         &DatosNuevaTarea {
                             titulo: "Flujo campana real".into(),
@@ -1465,18 +1384,16 @@ mod tests {
                 .unwrap(),
             );
             ev_falso.timestamp = crate::modelo::ahora_iso();
-            eventos::escribir_evento(&ops_a, &ev_falso).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev_falso);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             // 5. Máquina B sincroniza vía OneDrive: recibe las mismas notificaciones, descarta la falsa
             //    y conserva `leida = false` localmente (no se filtra lo marcado en A).
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza notificaciones desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza notificaciones por el servidor de prueba: {sync_b:?}");
             assert_eq!(sync_b.descartados, 1);
 
             let notis_b = listar_de_usuario(db_b.conexion(), &admin_fila.email).unwrap();
@@ -1514,7 +1431,7 @@ mod tests {
     ///
     /// Al terminar borra workspace, ramas con `--delete-changesets` y carpeta en OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_recordatorio_inactividad() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1527,10 +1444,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-117-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1558,11 +1473,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1599,7 +1509,6 @@ mod tests {
                     };
                     let t1 = crear_tarea(
                         db_a.conexion(),
-                        &ops_a,
                         &admin_autor,
                         &DatosNuevaTarea {
                             titulo: format!("Inactiva 117 {sufijo}"),
@@ -1616,7 +1525,6 @@ mod tests {
                     )?;
                     let t2 = crear_tarea(
                         db_a.conexion(),
-                        &ops_a,
                         &admin_autor,
                         &DatosNuevaTarea {
                             titulo: format!("Con checkin 117 {sufijo}"),
@@ -1674,11 +1582,11 @@ mod tests {
 
             // 3. Máquina B sincroniza vía OneDrive y recibe `inactividad` para DEV.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza recordatorio de inactividad desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!(
+                "B sincroniza recordatorio de inactividad por el servidor de prueba: {sync_b:?}"
+            );
             let notis_dev_b: Vec<_> = listar_de_usuario(db_b.conexion(), DEV)
                 .unwrap()
                 .into_iter()
@@ -1726,7 +1634,6 @@ mod tests {
                 .con_db(|db_a| {
                     evaluar_inactividad(
                         db_a.conexion(),
-                        &ops_a,
                         &admin_fila.email,
                         Some(&t_propia.id),
                         &crate::modelo::ahora_iso(),
@@ -1769,7 +1676,7 @@ mod tests {
     ///
     /// Al terminar borra workspace y carpeta de OneDrive.
     #[test]
-    #[ignore = "usa Unity VC y OneDrive de verdad: correr a mano con BB_PRUEBA_ORG, BB_PRUEBA_REPO y BB_PRUEBA_CARPETA_COMPARTIDA"]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
     fn entorno_real_mensajes_y_accion_bd() {
         use crate::cm::Comando;
         use crate::comandos::acceso::entrar_en;
@@ -1783,10 +1690,8 @@ mod tests {
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
         let repo = std::env::var("BB_PRUEBA_REPO").expect("falta BB_PRUEBA_REPO");
-        let nube = PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
+        let nube_tmp = tempfile::tempdir().unwrap();
+        let nube = nube_tmp.path().to_path_buf();
         let sufijo = chrono::Local::now().format("%H%M%S").to_string();
         let compartida = nube.join(format!("BranchBoard-prueba-118-{sufijo}"));
         std::fs::create_dir_all(&compartida).unwrap();
@@ -1812,10 +1717,6 @@ mod tests {
                 .path()
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
-
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1899,11 +1800,9 @@ mod tests {
 
             // 4. Máquina B sincroniza vía OneDrive y valida cada destinatario.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
-            .unwrap();
-            println!("B sincroniza mensajes y accion_bd desde OneDrive: {sync_b:?}");
+            let sync_b =
+                crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
+            println!("B sincroniza mensajes y accion_bd por el servidor de prueba: {sync_b:?}");
 
             let notis_admin_b = listar_de_usuario(db_b.conexion(), &admin_fila.email).unwrap();
             let bd_b: Vec<_> = notis_admin_b

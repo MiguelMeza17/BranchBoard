@@ -312,11 +312,12 @@ pub fn listar_proyectos_servidor_en(
     };
 
     // Los proyectos de la cuenta en el servidor (#240). Sin internet o sin sesión, la lista sale igual.
-    let de_la_cuenta = crate::supabase::proyectos::listar_mios(&crate::supabase::ClienteSupabase::new(
-        crate::supabase::Entorno::actual().proyecto(),
-        crate::servidor::LlaveroSistema,
-    ))
-    .unwrap_or_default();
+    let de_la_cuenta =
+        crate::supabase::proyectos::listar_mios(&crate::supabase::ClienteSupabase::new(
+            crate::supabase::Entorno::actual().proyecto(),
+            crate::servidor::LlaveroSistema,
+        ))
+        .unwrap_or_default();
     for p in &mut proyectos {
         if let Some(r) = RepoUnityVc::desde_especificacion(&p.repo) {
             p.rol_servidor = rol_en_el_servidor(&de_la_cuenta, &r);
@@ -1144,10 +1145,26 @@ Grupo/__DELETED__Sub|MiguelM17@unity
                 Entrada::Dentro {
                     rol: crate::modelo::Rol::Administrador,
                     rol_verificado: true,
-                    configurado_ahora: true,
                     ..
                 }
             ));
+            if matches!(
+                traido.entrada,
+                Entrada::Dentro {
+                    configurado_ahora: false,
+                    ..
+                }
+            ) {
+                // En una PC nueva, un proyecto que ya existe en el servidor se abre con
+                // sus miembros; no se configura de nuevo como si fuera un proyecto vacío.
+                assert!(estado
+                    .con_db(|db| crate::db::configuracion::leer(
+                        db.conexion(),
+                        crate::db::configuracion::CLAVE_PROYECTO_SERVIDOR,
+                    ))
+                    .unwrap()
+                    .is_some());
+            }
             // Si ya tiene `.db` en esta máquina, rechaza traerlo otra vez.
             assert!(
                 traer_proyecto_en(&estado, datos_traer.path(), Path::new(&clonado.ruta)).is_err()
