@@ -43,8 +43,7 @@ pub fn enviar_chat(estado: State<'_, AppState>, para: String, texto: String) -> 
 /// Versión sin envoltorio Tauri de [`enviar_chat`].
 pub fn enviar_chat_en(estado: &AppState, para: &str, texto: &str) -> Resultado<Mensaje> {
     let yo = estado.exigir_permiso("enviar_chat")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
-    estado.con_db(|db| chat::enviar(db.conexion(), &ops, &yo.email, para, texto, &ahora_iso()))
+    estado.con_db(|db| chat::enviar(db.conexion(), &yo.email, para, texto, &ahora_iso()))
 }
 
 /// Crea un grupo de chat con los miembros indicados (siempre incluye al creador, #119).
@@ -64,11 +63,9 @@ pub fn crear_grupo_chat_en(
     miembros: &[String],
 ) -> Resultado<GrupoChat> {
     let yo = estado.exigir_permiso("crear_grupo_chat")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     estado.con_db(|db| {
         chat::crear_grupo(
             db.conexion(),
-            &ops,
             &yo.email,
             nombre,
             miembros,

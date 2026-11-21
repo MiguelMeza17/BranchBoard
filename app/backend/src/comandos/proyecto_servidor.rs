@@ -140,7 +140,6 @@ mod tests {
     impl Pc {
         fn crear_tarea(&self, titulo: &str) -> String {
             let carpeta = crate::comandos::datos::carpeta_abierta(&self.estado).unwrap();
-            let ops = crate::eventos::carpeta_ops(&carpeta).unwrap();
             let yo = self.estado.exigir_permiso("crear_tarea").unwrap();
             let autor = AutorTarea {
                 email: &yo.email,
@@ -158,7 +157,7 @@ mod tests {
             };
             self.estado
                 .con_db(|db| {
-                    tareas::crear(db.conexion(), &ops, &autor, &datos, &crate::modelo::ahora_iso(), &hoy_local())
+                    tareas::crear(db.conexion(), &autor, &datos, &crate::modelo::ahora_iso(), &hoy_local())
                 })
                 .unwrap()
                 .id

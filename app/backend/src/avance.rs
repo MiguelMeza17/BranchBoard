@@ -414,9 +414,7 @@ mod tests {
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::carpeta_ops;
-    use crate::eventos::configurar_carpeta_compartida;
-    use crate::eventos::lectura::{self, sincronizar};
+    use crate::eventos::lectura::{self};
 
     use crate::modelo::{EstadoTarea, Rol, TipoTarea};
     use crate::sprints::{
@@ -432,7 +430,6 @@ mod tests {
     struct Entorno {
         _tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         db_b: Db,
         local_b: PathBuf,
     }
@@ -451,9 +448,6 @@ mod tests {
             .join("datos_b")
             .join("proyectos")
             .join("estudio-avance");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -481,7 +475,6 @@ mod tests {
         Entorno {
             _tmp: tmp,
             db_a,
-            ops,
             db_b,
             local_b,
         }
@@ -504,7 +497,6 @@ mod tests {
     fn mk_tarea(e: &Entorno, titulo: &str, fecha: &str, ts: &str) -> Tarea {
         crear(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevaTarea {
                 titulo: titulo.into(),
@@ -528,7 +520,6 @@ mod tests {
         // Sprint de 4 días (nov 10 -> nov 14 => 5 días calendario, ideal 4 -> 0).
         let s1 = crear_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevoSprint {
                 nombre: "Sprint Burndown",
@@ -548,7 +539,6 @@ mod tests {
         for (i, t) in [&t1, &t2, &t3, &t4].into_iter().enumerate() {
             asignar_tarea_a_sprint(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&s1.id),
@@ -577,7 +567,6 @@ mod tests {
         // Completa T1 el nov 10 y T2 el nov 11 => en curso el nov 12: [3, 2, 2], regresión m = -0.5, a tiempo? no (dia 16 > 14) / o en nov 11: [3, 2], m = -1, x=4 => nov 14 exacto!
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t1.id,
             EstadoTarea::Terminada,
@@ -586,7 +575,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2.id,
             EstadoTarea::Terminada,
@@ -606,7 +594,6 @@ mod tests {
         // Sin avance (solo 1 tarea en curso sin completar entre nov 10..12 en un sprint paralelo S-2).
         let s2 = crear_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevoSprint {
                 nombre: "Plano",
@@ -621,7 +608,6 @@ mod tests {
         let tp = mk_tarea(&e, "TP", "2026-11-10", "2026-11-10T09:02:01.000Z");
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &tp.id,
             Some(&s2.id),
@@ -636,7 +622,6 @@ mod tests {
         // del sprint cerrado usa `reportes_sprint` (sigue mostrando 4 tareas totales).
         cerrar_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_admin(),
             &s1.id,
             "2026-11-11T20:00:00.000Z",
@@ -655,7 +640,6 @@ mod tests {
         let e = setup();
         let s1 = crear_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevoSprint {
                 nombre: "S1",
@@ -669,7 +653,6 @@ mod tests {
         .unwrap();
         let b1 = crear_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevoSprint {
                 nombre: "Backlog Juego",
@@ -683,7 +666,6 @@ mod tests {
         .unwrap();
         let b2 = crear_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &DatosNuevoSprint {
                 nombre: "Backlog Terminado",
@@ -729,7 +711,6 @@ mod tests {
         for (i, t) in [&t1, &t2, &t3, &t4, &t5].into_iter().enumerate() {
             asignar_tarea_a_backlog(
                 e.db_a.conexion(),
-                &e.ops,
                 &autor_lider(),
                 &t.id,
                 Some(&b1.id),
@@ -739,7 +720,6 @@ mod tests {
         }
         asignar_tarea_a_sprint(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2.id,
             Some(&s1.id),
@@ -748,7 +728,6 @@ mod tests {
         .unwrap();
         asignar_tarea_a_backlog(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_b2.id,
             Some(&b2.id),
@@ -758,7 +737,6 @@ mod tests {
 
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t1.id,
             EstadoTarea::Terminada,
@@ -767,7 +745,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t2.id,
             EstadoTarea::Terminada,
@@ -776,7 +753,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t3.id,
             EstadoTarea::Terminada,
@@ -785,7 +761,6 @@ mod tests {
         .unwrap();
         cambiar_estado(
             e.db_a.conexion(),
-            &e.ops,
             &autor_lider(),
             &t_b2.id,
             EstadoTarea::Terminada,
@@ -829,9 +804,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T12:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
         .unwrap();
         assert_eq!(datos_general(e.db_b.conexion(), hoy).unwrap(), gen);
     }
@@ -895,10 +868,6 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -943,7 +912,6 @@ mod tests {
                 .con_db(|db_a| {
                     crear_sprint(
                         db_a.conexion(),
-                        &ops_a,
                         &autor_lider(),
                         &DatosNuevoSprint {
                             nombre: "Sprint En Curso",
@@ -965,7 +933,6 @@ mod tests {
                     let mk = |titulo: &str, f: &str| {
                         crear(
                             db_a.conexion(),
-                            &ops_a,
                             &autor_lider(),
                             &DatosNuevaTarea {
                                 titulo: titulo.into(),
@@ -1035,9 +1002,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
+            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
             .unwrap();
             println!("B sincroniza datos de avance desde OneDrive: {sync_b:?}");
             assert_eq!(sync_b.descartados, 0);

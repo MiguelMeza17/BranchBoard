@@ -20,72 +20,23 @@ use crate::ramas::{self, RAMA_DEV};
 use crate::servidor::{conectar, Changeset, LlaveroSistema};
 use crate::tareas::{self, AlertaRamaAjena, AutorTarea, InfoDobleToma};
 
-/// Ruta de la carpeta compartida del proyecto abierto, o `None` si no se configuró.
-#[tauri::command]
-pub fn carpeta_compartida(estado: State<'_, AppState>) -> Resultado<Option<String>> {
-    estado.exigir_permiso("carpeta_compartida")?;
-    Ok(eventos::carpeta_compartida(&carpeta_abierta(&estado)?)?
-        .map(|r| r.to_string_lossy().to_string()))
-}
-
-/// Guarda la carpeta compartida del proyecto abierto en esta máquina y devuelve
-/// la ruta completa que quedó guardada.
-#[tauri::command]
-pub fn configurar_carpeta_compartida(
-    estado: State<'_, AppState>,
-    ruta: String,
-) -> Resultado<String> {
-    let yo = estado.exigir_permiso("configurar_carpeta_compartida")?;
-    // Solo el Administrador deja una carpeta nueva como la del proyecto (ver `eventos`).
-    let guardada = eventos::configurar_carpeta_compartida(
-        &carpeta_abierta(&estado)?,
-        &ruta,
-        yo.rol == Rol::Administrador,
-    )?;
-    Ok(guardada.to_string_lossy().to_string())
-}
-
-/// Trae los cambios del equipo y los aplica: los de `ops/` si hay carpeta compartida (#92) y los del
-/// servidor si el proyecto está vinculado (#239; antes sube la bandeja de salida). El frontend lo llama
-/// al entrar al proyecto, al volver a primer plano y cada 2 minutos; además el backend consulta el
-/// servidor cada 5 s (ver `lib.rs`). Si ya hay una sincronización en curso, no hace nada.
+/// Trae los cambios del equipo del servidor y los aplica (#239; antes sube la bandeja de salida, #238).
+/// El frontend lo llama al entrar al proyecto, al volver a primer plano y cada 2 minutos; además el
+/// backend consulta el servidor cada 5 s (ver `lib.rs`). Si ya hay una sincronización en curso, no hace
+/// nada. Hasta #244 también leía `ops/` de la carpeta compartida.
 #[tauri::command]
 pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSincronizacion> {
     let yo = estado.exigir_permiso("sincronizar_eventos")?;
     let Some(_escaneo) = estado.iniciar_sincronizacion() else {
         return Ok(ResumenSincronizacion::default());
     };
-    let carpeta = carpeta_abierta(&estado)?;
-    let mut resumen = if eventos::carpeta_compartida(&carpeta)?.is_some() {
-        sincronizar_ops(&estado, &yo.email, &carpeta)?
-    } else {
-        ResumenSincronizacion::default()
-    };
+    let mut resumen = ResumenSincronizacion::default();
     // Sin internet o sin sesión del servidor no es un error de este comando: se reintenta en 5 s.
     if let Ok(servidor) = sincronizar_con_servidor_sin_guardia(&estado) {
         resumen.sumar(&servidor.recibidos);
     }
     let _ = crate::comandos::sprints::evaluar_cierres_en(&estado, &yo.email)?;
     Ok(resumen)
-}
-
-/// Escaneo de `ops/` (#92), hasta que #244 quite la carpeta compartida.
-fn sincronizar_ops(
-    estado: &AppState,
-    email: &str,
-    carpeta: &std::path::Path,
-) -> Resultado<ResumenSincronizacion> {
-    let ops = eventos::carpeta_ops(carpeta)?;
-    estado.con_db(|db| {
-        eventos::lectura::sincronizar_con_doble_toma(
-            db.conexion(),
-            &ops,
-            carpeta,
-            Utc::now(),
-            eventos::lectura::aplicar_evento,
-            |info| revisar_y_cerrar_rama_perdedor(estado, email, info),
-        )
-    })
 }
 
 /// Evento Tauri emitido cuando llegaron y se aplicaron cambios del equipo desde el servidor (#239).
@@ -421,10 +372,7 @@ pub fn revisar_actualizaciones_en(
         }
     }
 
-    // 3. Aplicar resultados en SQLite (y `ops/` si se cerró alguna rama o hay cambios En espera).
-    let ops = carpeta_abierta(estado)
-        .ok()
-        .and_then(|carpeta| eventos::carpeta_ops(&carpeta).ok());
+    // 3. Aplicar resultados en SQLite (y publicar si se cerró alguna rama o hay cambios En espera).
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -462,10 +410,9 @@ pub fn revisar_actualizaciones_en(
                 resumen.tocados_detectados.push(id.clone());
             }
             if cerrada {
-                if let Some(ref carpeta_ops) = ops {
+                {
                     tareas::cerrar_por_deteccion(
                         db.conexion(),
-                        carpeta_ops,
                         &autor,
                         &id,
                         &ahora,
@@ -507,11 +454,10 @@ pub fn revisar_actualizaciones_en(
                     .find(|h| h.tipo == TipoTarea::SinDefinir);
 
                 if tiene_normales {
-                    if let Some(ref carpeta_ops) = ops {
+                    {
                         if !pendientes_ws.is_empty() && espera_existente.is_none() {
                             let creada = tareas::crear_en_espera(
                                 db.conexion(),
-                                carpeta_ops,
                                 &autor,
                                 &padre.id,
                                 pendientes_ws.len(),
@@ -526,7 +472,6 @@ pub fn revisar_actualizaciones_en(
                                 if mia {
                                     tareas::quitar_en_espera(
                                         db.conexion(),
-                                        carpeta_ops,
                                         &autor,
                                         &esp.id,
                                         &ahora,
@@ -540,10 +485,9 @@ pub fn revisar_actualizaciones_en(
             }
         }
 
-        if let Some(ref carpeta_ops) = ops {
+        {
             let inactivas = crate::notificaciones::evaluar_inactividad(
                 db.conexion(),
-                carpeta_ops,
                 &yo.email,
                 filtro,
                 &ahora,

@@ -73,9 +73,8 @@ pub fn enviar_mensaje(
 /// Versión sin envoltorio Tauri de [`enviar_mensaje`].
 pub fn enviar_mensaje_en(estado: &AppState, para: &str, texto: &str) -> Resultado<Notificacion> {
     let yo = estado.exigir_permiso("enviar_mensaje")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     estado.con_db(|db| {
-        notificaciones::enviar_mensaje(db.conexion(), &ops, &yo.email, para, texto, &ahora_iso())
+        notificaciones::enviar_mensaje(db.conexion(), &yo.email, para, texto, &ahora_iso())
     })
 }
 
@@ -91,11 +90,9 @@ pub fn solicitar_accion_bd(
 /// Versión sin envoltorio Tauri de [`solicitar_accion_bd`].
 pub fn solicitar_accion_bd_en(estado: &AppState, motivo: &str) -> Resultado<Vec<Notificacion>> {
     let yo = estado.exigir_permiso("solicitar_accion_bd")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     estado.con_db(|db| {
         notificaciones::solicitar_accion_bd(
             db.conexion(),
-            &ops,
             &yo.email,
             yo.rol,
             motivo,

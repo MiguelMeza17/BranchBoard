@@ -303,7 +303,6 @@ mod tests {
         for (email, rol) in equipo {
             usuarios::insertar(c, &usuario(email, *rol)).unwrap();
         }
-        eventos::fijar_carpeta_compartida_local(carpeta, &carpeta.join("compartida")).unwrap();
         estado.cerrar_proyecto();
         estado.fijar_usuario(Some(admin));
         estado.abrir_proyecto(db);
@@ -311,7 +310,6 @@ mod tests {
 
     fn crear_tarea(estado: &AppState, titulo: &str) {
         let carpeta = carpeta_abierta(estado).unwrap();
-        let ops = eventos::carpeta_ops(&carpeta).unwrap();
         let yo = estado.exigir_permiso("crear_tarea").unwrap();
         let autor = AutorTarea {
             email: &yo.email,
@@ -331,7 +329,6 @@ mod tests {
             .con_db(|db| {
                 tareas::crear(
                     db.conexion(),
-                    &ops,
                     &autor,
                     &datos,
                     &ahora_iso(),

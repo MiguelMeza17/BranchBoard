@@ -20,9 +20,6 @@ use crate::eventos;
 use crate::identidad::acceso::Entrada;
 use crate::modelo::normalizar_email;
 
-/// Carpeta local de `ops/` mientras exista (#244): no es compartida, solo deja funcionar `publicar`.
-pub const CARPETA_EVENTOS_LOCALES: &str = "eventos-locales";
-
 /// Carpeta de datos del proyecto del servidor `id` en esta PC.
 pub fn carpeta_datos(datos_app: &Path, id: &str) -> Resultado<PathBuf> {
     if id.trim().is_empty() {
@@ -53,7 +50,6 @@ pub fn preparar(
     if !nombre.trim().is_empty() {
         configuracion::guardar(c, CLAVE_NOMBRE_PROYECTO, nombre.trim(), email, hoy)?;
     }
-    eventos::fijar_carpeta_compartida_local(&carpeta, &carpeta.join(CARPETA_EVENTOS_LOCALES))?;
     match refrescar(&db) {
         Ok(()) => {}
         // Sin red: sirve la copia que ya había; una PC nueva sin copia no puede saber el rol.
@@ -124,11 +120,6 @@ mod tests {
         assert_eq!(configuracion::leer(c, CLAVE_NOMBRE_PROYECTO).unwrap().as_deref(), Some("Juego"));
         let carpeta = carpeta_datos(datos.path(), ID).unwrap();
         assert!(carpeta.ends_with(format!("servidor-{ID}")));
-        // `publicar` tiene dónde escribir, y es una carpeta local de este proyecto.
-        assert_eq!(
-            eventos::carpeta_ops(&carpeta).unwrap(),
-            carpeta.join(CARPETA_EVENTOS_LOCALES).join("ops")
-        );
         assert!(matches!(
             decidir(&db, "Beto@VirusTF.dev", false).unwrap(),
             Entrada::Dentro { rol: Rol::Tester, rol_verificado: true, .. }

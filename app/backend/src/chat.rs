@@ -75,7 +75,6 @@ fn exigir_acceso_conversacion(
 /// compañero, y lo publica en `ops/` (#119). Quien envía ya lo cuenta como leído.
 pub fn enviar(
     c: &Connection,
-    ops: &Path,
     emisor: &str,
     para: &str,
     texto: &str,
@@ -111,14 +110,13 @@ pub fn enviar(
             .map_err(|e| Error::Interno(format!("no se pudo serializar enviar_chat: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_enviar_chat(tx, &de, &msg))?;
+    eventos::publicar(c, &ev, |tx| aplicar_enviar_chat(tx, &de, &msg))?;
     Ok(msg)
 }
 
 /// Crea un grupo de chat (cualquier rol, siempre incluyendo al creador) y lo replica por `ops/` (#119).
 pub fn crear_grupo(
     c: &Connection,
-    ops: &Path,
     creador: &str,
     nombre: &str,
     miembros: &[String],
@@ -161,7 +159,7 @@ pub fn crear_grupo(
             .map_err(|e| Error::Interno(format!("no se pudo serializar crear_grupo_chat: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_crear_grupo_chat(tx, &creador_norm, &grupo)
     })?;
     Ok(grupo)
@@ -278,9 +276,7 @@ mod tests {
 
     use super::*;
     use crate::db::Db;
-    use crate::eventos::carpeta_ops;
-    use crate::eventos::configurar_carpeta_compartida;
-    use crate::eventos::lectura::{self, sincronizar};
+    use crate::eventos::lectura::{self};
     use crate::modelo::Rol;
 
     const ANA: &str = "ana@estudio.com";
@@ -293,7 +289,6 @@ mod tests {
     struct Escenario {
         _tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         db_b: Db,
         local_b: PathBuf,
     }
@@ -312,9 +307,6 @@ mod tests {
             .join("datos_b")
             .join("proyectos")
             .join("estudio-chat");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -338,7 +330,6 @@ mod tests {
         Escenario {
             _tmp: tmp,
             db_a,
-            ops,
             db_b,
             local_b,
         }
@@ -349,24 +340,22 @@ mod tests {
         let e = setup();
 
         // Validaciones al crear grupo y enviar mensaje.
-        assert!(crear_grupo(e.db_a.conexion(), &e.ops, ANA, "  ", &[ZOE.into()], AHORA).is_err());
+        assert!(crear_grupo(e.db_a.conexion(), ANA, "  ", &[ZOE.into()], AHORA).is_err());
         assert!(crear_grupo(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             "Arte",
             &[INTRUSO.into()],
             AHORA
         )
         .is_err());
-        assert!(enviar(e.db_a.conexion(), &e.ops, ANA, ANA, "Hola yo", AHORA).is_err());
-        assert!(enviar(e.db_a.conexion(), &e.ops, ANA, INTRUSO, "Hola", AHORA).is_err());
-        assert!(enviar(e.db_a.conexion(), &e.ops, ANA, GRUPO_GENERAL, "  ", AHORA).is_err());
+        assert!(enviar(e.db_a.conexion(), ANA, ANA, "Hola yo", AHORA).is_err());
+        assert!(enviar(e.db_a.conexion(), ANA, INTRUSO, "Hola", AHORA).is_err());
+        assert!(enviar(e.db_a.conexion(), ANA, GRUPO_GENERAL, "  ", AHORA).is_err());
 
         // Grupo creado por Ana con Zoe (Leo queda fuera).
         let grupo = crear_grupo(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             "Arte 3D",
             &["ZOE@estudio.com".into(), ANA.into()],
@@ -377,7 +366,6 @@ mod tests {
         assert_eq!(
             enviar(
                 e.db_a.conexion(),
-                &e.ops,
                 LEO,
                 &grupo.id,
                 "No soy miembro",
@@ -397,7 +385,6 @@ mod tests {
         // 2 mensajes en "grupo", 1 en grupo Arte 3D y 1 privado Ana -> Zoe.
         enviar(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             GRUPO_GENERAL,
             "Buenos días equipo",
@@ -406,7 +393,6 @@ mod tests {
         .unwrap();
         enviar(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             GRUPO_GENERAL,
             "Revisen backlog",
@@ -415,7 +401,6 @@ mod tests {
         .unwrap();
         enviar(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             &grupo.id,
             "Modelos listos",
@@ -424,7 +409,6 @@ mod tests {
         .unwrap();
         enviar(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             "ZOE@estudio.com",
             "¿Puedes ver mi rama?",
@@ -465,9 +449,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:05:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
         .unwrap();
         assert_eq!(sync.aplicados, 5);
 
@@ -508,7 +490,6 @@ mod tests {
         // Nuevo mensaje de Ana tras la eliminación revive el chat solo con ese mensaje.
         let m_nuevo = enviar(
             e.db_a.conexion(),
-            &e.ops,
             ANA,
             ZOE,
             "Seguimos después de comida",
@@ -518,9 +499,7 @@ mod tests {
         let ahora2 = DateTime::parse_from_rfc3339("2026-11-16T10:07:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora2, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora2)
         .unwrap();
         let revivida: Vec<_> = obtener_estado(e.db_b.conexion(), ZOE)
             .unwrap()
@@ -594,10 +573,6 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -709,15 +684,13 @@ mod tests {
                 .unwrap(),
             );
             ev_falso.timestamp = crate::modelo::ahora_iso();
-            eventos::escribir_evento(&ops_a, &ev_falso).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev_falso);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             // 2. Máquina B sincroniza desde OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
+            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
             .unwrap();
             println!("B sincroniza chat desde OneDrive: {sync_b:?}");
             assert_eq!(sync_b.descartados, 1);

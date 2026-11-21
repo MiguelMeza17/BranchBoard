@@ -594,7 +594,7 @@ mod tests {
                 &correo,
                 serde_json::json!({ "prueba": 238 }),
             );
-            ids.push(super::super::publicar(c, ops.path(), &e, |_| Ok(())).unwrap());
+            ids.push(super::super::publicar(c, &e, |_| Ok(())).unwrap());
         }
         assert_eq!(pendientes(c).unwrap(), 2);
 

@@ -20,20 +20,10 @@ pub fn listar_sprints(estado: State<'_, AppState>) -> Resultado<Vec<Sprint>> {
     listar_sprints_en(&estado)
 }
 
-/// Evalúa los sprints vencidos del proyecto abierto si ya existe una carpeta de datos
-/// (publica en `ops/` cuando está configurada, #114).
+/// Evalúa los sprints vencidos del proyecto abierto (#114) y publica lo que corresponda.
 pub(crate) fn evaluar_cierres_en(estado: &AppState, email: &str) -> Resultado<Vec<String>> {
-    let ops = carpeta_abierta(estado)
-        .ok()
-        .and_then(|c| eventos::carpeta_ops(&c).ok());
     estado.con_db(|db| {
-        sprints::evaluar_cierre_sprints(
-            db.conexion(),
-            ops.as_deref(),
-            email,
-            &ahora_iso(),
-            &hoy_local(),
-        )
+        sprints::evaluar_cierre_sprints(db.conexion(), email, &ahora_iso(), &hoy_local())
     })
 }
 
@@ -66,7 +56,6 @@ pub fn crear_sprint_en(
     duracion_dias: Option<u32>,
 ) -> Resultado<Sprint> {
     let yo = estado.exigir_permiso("crear_sprint")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -74,7 +63,6 @@ pub fn crear_sprint_en(
     estado.con_db(|db| {
         sprints::crear_sprint(
             db.conexion(),
-            &ops,
             &autor,
             &sprints::DatosNuevoSprint {
                 nombre,
@@ -105,7 +93,6 @@ pub fn asignar_tarea_a_sprint_en(
     sprint_id: Option<&str>,
 ) -> Resultado<Tarea> {
     let yo = estado.exigir_permiso("asignar_tarea_a_sprint")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -113,7 +100,6 @@ pub fn asignar_tarea_a_sprint_en(
     estado.con_db(|db| {
         sprints::asignar_tarea_a_sprint(
             db.conexion(),
-            &ops,
             &autor,
             tarea_id,
             sprint_id,
@@ -139,7 +125,6 @@ pub fn asignar_tarea_a_backlog_en(
     backlog_id: Option<&str>,
 ) -> Resultado<Tarea> {
     let yo = estado.exigir_permiso("asignar_tarea_a_backlog")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -147,7 +132,6 @@ pub fn asignar_tarea_a_backlog_en(
     estado.con_db(|db| {
         sprints::asignar_tarea_a_backlog(
             db.conexion(),
-            &ops,
             &autor,
             tarea_id,
             backlog_id,
@@ -173,7 +157,6 @@ pub fn asignar_backlog_a_sprint_en(
     sprint_id: &str,
 ) -> Resultado<Vec<Tarea>> {
     let yo = estado.exigir_permiso("asignar_backlog_a_sprint")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -181,7 +164,6 @@ pub fn asignar_backlog_a_sprint_en(
     estado.con_db(|db| {
         sprints::asignar_backlog_a_sprint(
             db.conexion(),
-            &ops,
             &autor,
             backlog_id,
             sprint_id,
@@ -199,7 +181,6 @@ pub fn cerrar_sprint(estado: State<'_, AppState>, sprint_id: String) -> Resultad
 /// Versión sin envoltorio Tauri de [`cerrar_sprint`].
 pub fn cerrar_sprint_en(estado: &AppState, sprint_id: &str) -> Resultado<Sprint> {
     let yo = estado.exigir_permiso("cerrar_sprint")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
@@ -207,7 +188,6 @@ pub fn cerrar_sprint_en(estado: &AppState, sprint_id: &str) -> Resultado<Sprint>
     estado.con_db(|db| {
         sprints::cerrar_sprint(
             db.conexion(),
-            &ops,
             &autor,
             sprint_id,
             &ahora_iso(),

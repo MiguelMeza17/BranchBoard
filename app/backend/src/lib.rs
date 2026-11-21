@@ -172,8 +172,6 @@ pub fn run() {
             actualizaciones::instalar_actualizacion,
             datos::listar_backups,
             datos::restaurar_backup,
-            comandos_eventos::carpeta_compartida,
-            comandos_eventos::configurar_carpeta_compartida,
             comandos_eventos::sincronizar_eventos,
             comandos_eventos::revisar_actualizaciones,
             comandos_eventos::eventos_por_subir,

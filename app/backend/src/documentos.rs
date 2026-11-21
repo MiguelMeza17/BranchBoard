@@ -336,7 +336,6 @@ pub fn listar(c: &Connection) -> Resultado<Vec<Documento>> {
 #[allow(clippy::too_many_arguments)]
 pub fn subir(
     c: &Connection,
-    ops: &Path,
     carpeta_docs: &Path,
     emisor: &str,
     rol_emisor: Rol,
@@ -345,7 +344,7 @@ pub fn subir(
     hoy: &str,
 ) -> Resultado<Vec<Documento>> {
     let almacen = CarpetaCompartida { carpeta_docs };
-    subir_en(c, ops, &almacen, emisor, rol_emisor, archivos, ahora, hoy)
+    subir_en(c, &almacen, emisor, rol_emisor, archivos, ahora, hoy)
 }
 
 /// Sube uno o varios archivos al almacén con nombre interno único y publica el evento
@@ -355,7 +354,6 @@ pub fn subir(
 #[allow(clippy::too_many_arguments)]
 pub fn subir_en(
     c: &Connection,
-    ops: &Path,
     almacen: &dyn Almacen,
     emisor: &str,
     rol_emisor: Rol,
@@ -364,7 +362,7 @@ pub fn subir_en(
     hoy: &str,
 ) -> Resultado<Vec<Documento>> {
     let creados = guardar_archivos(almacen, emisor, rol_emisor, archivos, hoy)?;
-    publicar_subida(c, ops, almacen, emisor, rol_emisor, creados, ahora)
+    publicar_subida(c, almacen, emisor, rol_emisor, creados, ahora)
 }
 
 /// Primera mitad de [`subir_en`]: valida y guarda los archivos, sin tocar la base. Con el servidor es
@@ -419,7 +417,6 @@ pub fn guardar_archivos(
 /// borra los archivos guardados para no dejar huérfanos.
 pub fn publicar_subida(
     c: &Connection,
-    ops: &Path,
     almacen: &dyn Almacen,
     emisor: &str,
     rol_emisor: Rol,
@@ -439,7 +436,7 @@ pub fn publicar_subida(
     );
     ev.timestamp = ahora.to_string();
 
-    if let Err(e) = eventos::publicar(c, ops, &ev, |tx| {
+    if let Err(e) = eventos::publicar(c, &ev, |tx| {
         aplicar_subir_documentos(tx, &emisor_norm, Some(rol_emisor), &payload)
     }) {
         for d in &creados {
@@ -454,7 +451,6 @@ pub fn publicar_subida(
 /// Aprueba un documento pendiente (Líder o Administrador) y publica en `ops/` (#120).
 pub fn aprobar(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol_actor: Rol,
     id: &str,
@@ -476,7 +472,7 @@ pub fn aprobar(
             .map_err(|e| Error::Interno(format!("no se pudo serializar aprobar_documento: {e}")))?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_aprobar_documento(tx, Some(rol_actor), id_limpio)
     })?;
     db_docs::obtener(c, id_limpio)
@@ -485,7 +481,6 @@ pub fn aprobar(
 /// Elimina un documento de `<compartida>/documentos/` (ver [`eliminar_en`]).
 pub fn eliminar(
     c: &Connection,
-    ops: &Path,
     carpeta_docs: &Path,
     actor: &str,
     rol_actor: Rol,
@@ -493,21 +488,20 @@ pub fn eliminar(
     ahora: &str,
 ) -> Resultado<Documento> {
     let almacen = CarpetaCompartida { carpeta_docs };
-    eliminar_en(c, ops, &almacen, actor, rol_actor, id, ahora)
+    eliminar_en(c, &almacen, actor, rol_actor, id, ahora)
 }
 
 /// Elimina un documento del proyecto (Líder o Administrador), publica el evento y borra su archivo del
 /// almacén (#120, #242).
 pub fn eliminar_en(
     c: &Connection,
-    ops: &Path,
     almacen: &dyn Almacen,
     actor: &str,
     rol_actor: Rol,
     id: &str,
     ahora: &str,
 ) -> Resultado<Documento> {
-    let doc = eliminar_registro(c, ops, actor, rol_actor, id, ahora)?;
+    let doc = eliminar_registro(c, actor, rol_actor, id, ahora)?;
     almacen.borrar(&doc.ruta);
     Ok(doc)
 }
@@ -516,7 +510,6 @@ pub fn eliminar_en(
 /// documento para borrar después su archivo (con el servidor, fuera del bloqueo de la base).
 pub fn eliminar_registro(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol_actor: Rol,
     id: &str,
@@ -541,7 +534,7 @@ pub fn eliminar_registro(
     ev.timestamp = ahora.to_string();
 
     let mut eliminado = None;
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         let doc = db_docs::borrar(tx, id_limpio)?;
         eliminado = Some(doc);
         Ok(())
@@ -663,8 +656,8 @@ mod tests {
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::lectura::{self, sincronizar};
-    use crate::eventos::{carpeta_documentos, carpeta_ops, configurar_carpeta_compartida};
+    use crate::eventos::lectura::{self};
+    use crate::eventos::carpeta_documentos;
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
@@ -676,7 +669,6 @@ mod tests {
     struct Escenario {
         tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         docs: PathBuf,
         db_b: Db,
         local_b: PathBuf,
@@ -696,10 +688,7 @@ mod tests {
             .join("datos_b")
             .join("proyectos")
             .join("estudio-docs");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
-        let docs = carpeta_documentos(&local_a).unwrap();
+        let docs = compartida.join(crate::eventos::CARPETA_DOCUMENTOS);
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -723,7 +712,6 @@ mod tests {
         Escenario {
             tmp,
             db_a,
-            ops,
             docs,
             db_b,
             local_b,
@@ -743,7 +731,6 @@ mod tests {
         // Rechaza lista vacía, ruta inexistente y directorios.
         assert!(subir(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             DEV,
             Rol::Desarrollador,
@@ -754,7 +741,6 @@ mod tests {
         .is_err());
         assert!(subir(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             DEV,
             Rol::Desarrollador,
@@ -765,7 +751,6 @@ mod tests {
         .is_err());
         assert!(subir(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             DEV,
             Rol::Desarrollador,
@@ -778,7 +763,6 @@ mod tests {
         // Desarrollador sube archivo -> `pendiente = true` y archivo renombrado a `D-<uuid>.txt`.
         let subidos_dev = subir(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             DEV,
             Rol::Desarrollador,
@@ -799,7 +783,6 @@ mod tests {
         // Líder sube archivo -> publicado (`pendiente = false`).
         let subidos_lider = subir(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             LIDER,
             Rol::Lider,
@@ -815,7 +798,6 @@ mod tests {
         assert_eq!(
             aprobar(
                 e.db_a.conexion(),
-                &e.ops,
                 DEV,
                 Rol::Desarrollador,
                 &d_dev.id,
@@ -827,7 +809,6 @@ mod tests {
         );
         let aprobado = aprobar(
             e.db_a.conexion(),
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             &d_dev.id,
@@ -889,7 +870,6 @@ mod tests {
         assert!(ruta_lider.is_file());
         eliminar(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             LIDER,
             Rol::Lider,
@@ -903,9 +883,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
         .unwrap();
         assert_eq!(sync.aplicados, 4);
         let en_b = listar(e.db_b.conexion()).unwrap();
@@ -977,7 +955,6 @@ mod tests {
         // El Desarrollador sube: queda pendiente y el archivo está en el servidor, no en la carpeta compartida.
         let subidos = subir_en(
             e.db_a.conexion(),
-            &e.ops,
             &alm_a,
             DEV,
             Rol::Desarrollador,
@@ -1010,9 +987,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
         .unwrap();
         assert!(matches!(
             resolver_archivo_en(e.db_b.conexion(), &alm_b, &doc.id),
@@ -1029,7 +1004,6 @@ mod tests {
         assert!(matches!(
             subir_en(
                 e.db_a.conexion(),
-                &e.ops,
                 &alm_a,
                 LIDER,
                 Rol::Lider,
@@ -1045,7 +1019,6 @@ mod tests {
         // El Líder elimina: se borra del servidor y de la copia local.
         eliminar_en(
             e.db_a.conexion(),
-            &e.ops,
             &alm_a,
             LIDER,
             Rol::Lider,
@@ -1081,7 +1054,6 @@ mod tests {
 
         let r = subir_en(
             e.db_a.conexion(),
-            &e.ops,
             &alm,
             ADMIN,
             Rol::Administrador,
@@ -1103,7 +1075,6 @@ mod tests {
         // En la carpeta compartida no hay límite (no cambia lo de antes).
         assert!(subir(
             e.db_a.conexion(),
-            &e.ops,
             &e.docs,
             ADMIN,
             Rol::Administrador,
@@ -1175,11 +1146,7 @@ mod tests {
                 .join("proyectos")
                 .join(local_a.file_name().unwrap());
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-            let docs_a = carpeta_documentos(&local_a).unwrap();
+            let docs_a = compartida.join(crate::eventos::CARPETA_DOCUMENTOS);
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -1283,7 +1250,7 @@ mod tests {
                 .unwrap(),
             );
             ev_trav.timestamp = crate::modelo::ahora_iso();
-            eventos::escribir_evento(&ops_a, &ev_trav).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev_trav);
 
             let mut ev_intruso = Evento::nuevo(
                 "subir_documentos",
@@ -1303,15 +1270,13 @@ mod tests {
                 .unwrap(),
             );
             ev_intruso.timestamp = crate::modelo::ahora_iso();
-            eventos::escribir_evento(&ops_a, &ev_intruso).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev_intruso);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             // 4. Máquina B sincroniza vía OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
+            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
             .unwrap();
             println!("B sincroniza documentos desde OneDrive: {sync_b:?}");
             assert_eq!(sync_b.descartados, 2);

@@ -173,7 +173,6 @@ fn aplicar_ajuste(
 /// Publica `actualizar_configuracion_proyecto` y lo aplica en la misma transacción.
 fn publicar_ajuste(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     clave: &str,
@@ -202,7 +201,7 @@ fn publicar_ajuste(
     );
     ev.timestamp = ahora.to_string();
     let mut guardado = None;
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         guardado = Some(aplicar_ajuste(tx, Some(rol), &actor, ahora, &payload)?);
         Ok(())
     })?;
@@ -215,7 +214,6 @@ fn publicar_ajuste(
 /// La imagen no se cambia por aquí (va por [`subir_imagen`], que crea el archivo).
 pub fn actualizar(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     clave: &str,
@@ -228,13 +226,12 @@ pub fn actualizar(
             "La imagen del proyecto se cambia con subir_imagen_proyecto".into(),
         ));
     }
-    publicar_ajuste(c, ops, actor, rol, clave, valor, ahora)
+    publicar_ajuste(c, actor, rol, clave, valor, ahora)
 }
 
 /// `renombrar_proyecto(nombre)`: cambia el nombre en BranchBoard, no el repositorio de Unity VC.
 pub fn renombrar(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     nombre: &str,
@@ -245,7 +242,7 @@ pub fn renombrar(
     if configuracion::leer(c, CLAVE_NOMBRE_PROYECTO)?.as_deref() == Some(nuevo.as_str()) {
         return Err(Error::Validacion("El proyecto ya tiene ese nombre".into()));
     }
-    publicar_ajuste(c, ops, actor, rol, CLAVE_NOMBRE_PROYECTO, &nuevo, ahora)
+    publicar_ajuste(c, actor, rol, CLAVE_NOMBRE_PROYECTO, &nuevo, ahora)
 }
 
 /// Lee, valida y procesa la imagen elegida: PNG del lado [`LADO_IMAGEN`].
@@ -314,7 +311,6 @@ fn data_url_png(bytes: &[u8]) -> String {
 /// y borra la imagen anterior. Devuelve la imagen nueva como `data:` URL.
 pub fn subir_imagen(
     c: &Connection,
-    ops: &Path,
     carpeta_imagen: &Path,
     actor: &str,
     rol: Rol,
@@ -348,7 +344,7 @@ pub fn subir_imagen(
     }
 
     let anterior = configuracion::leer(c, CLAVE_ICONO_PROYECTO)?;
-    if let Err(e) = publicar_ajuste(c, ops, actor, rol, CLAVE_ICONO_PROYECTO, &nombre, ahora) {
+    if let Err(e) = publicar_ajuste(c, actor, rol, CLAVE_ICONO_PROYECTO, &nombre, ahora) {
         let _ = fs::remove_file(&destino);
         return Err(e);
     }
@@ -406,7 +402,6 @@ pub fn preparar_imagen(ruta_origen: &str) -> Resultado<(String, Vec<u8>)> {
 /// Publica `icono_proyecto = nombre` (solo Administrador). Devuelve el ícono anterior, para borrarlo.
 pub fn publicar_imagen(
     c: &Connection,
-    ops: &Path,
     actor: &str,
     rol: Rol,
     nombre: &str,
@@ -414,7 +409,7 @@ pub fn publicar_imagen(
 ) -> Resultado<Option<String>> {
     exigir_admin(Some(rol))?;
     let anterior = configuracion::leer(c, CLAVE_ICONO_PROYECTO)?;
-    publicar_ajuste(c, ops, actor, rol, CLAVE_ICONO_PROYECTO, nombre, ahora)?;
+    publicar_ajuste(c, actor, rol, CLAVE_ICONO_PROYECTO, nombre, ahora)?;
     Ok(anterior.filter(|a| a != nombre && es_nombre_icono(a)))
 }
 
@@ -476,8 +471,8 @@ mod tests {
 
     use super::*;
     use crate::db::{usuarios, Db};
-    use crate::eventos::lectura::{self, sincronizar};
-    use crate::eventos::{carpeta_imagen_proyecto, carpeta_ops, configurar_carpeta_compartida};
+    use crate::eventos::lectura::{self};
+    use crate::eventos::carpeta_imagen_proyecto;
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
@@ -488,7 +483,6 @@ mod tests {
     struct Escenario {
         tmp: TempDir,
         db_a: Db,
-        ops: PathBuf,
         imagen_a: PathBuf,
         db_b: Db,
         local_b: PathBuf,
@@ -500,10 +494,7 @@ mod tests {
         fs::create_dir_all(&compartida).unwrap();
         let local_a = tmp.path().join("datos_a").join("proyectos").join("p127");
         let local_b = tmp.path().join("datos_b").join("proyectos").join("p127");
-        configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-        configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-        let ops = carpeta_ops(&local_a).unwrap();
-        let imagen_a = carpeta_imagen_proyecto(&local_a).unwrap();
+        let imagen_a = compartida.join(crate::eventos::CARPETA_PROYECTO);
 
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
@@ -525,7 +516,6 @@ mod tests {
         Escenario {
             tmp,
             db_a,
-            ops,
             imagen_a,
             db_b,
             local_b,
@@ -579,13 +569,13 @@ mod tests {
         let c = e.db_a.conexion();
         for (quien, rol) in [(LIDER, Rol::Lider), (DEV, Rol::Desarrollador)] {
             assert_eq!(
-                renombrar(c, &e.ops, quien, rol, "Otro", AHORA)
+                renombrar(c, quien, rol, "Otro", AHORA)
                     .unwrap_err()
                     .codigo(),
                 "sin_permiso"
             );
             assert_eq!(
-                actualizar(c, &e.ops, quien, rol, "tema", "oscuro", AHORA)
+                actualizar(c, quien, rol, "tema", "oscuro", AHORA)
                     .unwrap_err()
                     .codigo(),
                 "sin_permiso"
@@ -593,7 +583,6 @@ mod tests {
         }
         let ajuste = renombrar(
             c,
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             "  Virus TF  ",
@@ -603,15 +592,14 @@ mod tests {
         assert_eq!(ajuste.valor, "Virus TF");
         assert_eq!(ajuste.actualizado_por, ADMIN);
         assert_eq!(
-            renombrar(c, &e.ops, ADMIN, Rol::Administrador, "Virus TF", AHORA)
+            renombrar(c, ADMIN, Rol::Administrador, "Virus TF", AHORA)
                 .unwrap_err()
                 .codigo(),
             "validacion"
         );
-        assert!(renombrar(c, &e.ops, ADMIN, Rol::Administrador, "", AHORA).is_err());
+        assert!(renombrar(c, ADMIN, Rol::Administrador, "", AHORA).is_err());
         actualizar(
             c,
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             "tema",
@@ -622,7 +610,6 @@ mod tests {
         // La imagen no se cambia por el comando genérico, ni con claves inválidas.
         assert!(actualizar(
             c,
-            &e.ops,
             ADMIN,
             Rol::Administrador,
             CLAVE_ICONO_PROYECTO,
@@ -630,7 +617,7 @@ mod tests {
             AHORA
         )
         .is_err());
-        assert!(actualizar(c, &e.ops, ADMIN, Rol::Administrador, "../x", "v", AHORA).is_err());
+        assert!(actualizar(c, ADMIN, Rol::Administrador, "../x", "v", AHORA).is_err());
 
         // Eventos forjados en `ops/`: un Líder que renombra y un icono con traversal.
         let forjado = |usuario: &str, clave: &str, valor: &str, ts: &str| {
@@ -645,7 +632,7 @@ mod tests {
                 .unwrap(),
             );
             ev.timestamp = ts.into();
-            eventos::escribir_evento(&e.ops, &ev).unwrap();
+            crate::eventos::servidor_de_prueba::agregar(&ev);
         };
         forjado(
             LIDER,
@@ -663,9 +650,7 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
         .unwrap();
         assert_eq!(sync.aplicados, 2);
         assert_eq!(sync.descartados, 2);
@@ -707,7 +692,6 @@ mod tests {
         assert_eq!(
             subir_imagen(
                 c,
-                &e.ops,
                 &e.imagen_a,
                 LIDER,
                 Rol::Lider,
@@ -722,7 +706,6 @@ mod tests {
             assert_eq!(
                 subir_imagen(
                     c,
-                    &e.ops,
                     &e.imagen_a,
                     ADMIN,
                     Rol::Administrador,
@@ -737,7 +720,6 @@ mod tests {
         }
         assert!(subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -750,7 +732,6 @@ mod tests {
         // PNG y WebP: quedan en 256×256 y solo existe la última.
         let url = subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -770,7 +751,6 @@ mod tests {
 
         subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -780,7 +760,6 @@ mod tests {
         .unwrap();
         let url = subir_imagen(
             c,
-            &e.ops,
             &e.imagen_a,
             ADMIN,
             Rol::Administrador,
@@ -808,12 +787,10 @@ mod tests {
         let ahora = DateTime::parse_from_rfc3339("2026-11-16T10:10:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
-        let sync = sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, ev)
-        })
+        let sync = crate::eventos::servidor_de_prueba::entregar(e.db_b.conexion(), ahora)
         .unwrap();
         assert_eq!(sync.aplicados, 3);
-        let imagen_b = carpeta_imagen_proyecto(&e.local_b).unwrap();
+        let imagen_b = e.imagen_a.clone();
         let en_b = leer(e.db_b.conexion(), Some(&imagen_b)).unwrap();
         assert_eq!(en_b.imagen.as_deref(), Some(url.as_str()));
     }
@@ -883,11 +860,7 @@ mod tests {
             assert_eq!(inicial.nombre.as_deref(), Some(nombre_repo.as_str()));
             assert_eq!(inicial.imagen, None);
 
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-            let imagen_a = carpeta_imagen_proyecto(&local_a).unwrap();
+            let imagen_a = compartida.join(crate::eventos::CARPETA_PROYECTO);
 
             let admin_fila = estado_a
                 .con_db(|db| {
@@ -992,16 +965,14 @@ mod tests {
                 );
                 pausa();
                 ev.timestamp = crate::modelo::ahora_iso();
-                eventos::escribir_evento(&ops_a, &ev).unwrap();
+                crate::eventos::servidor_de_prueba::agregar(&ev);
             }
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             // La máquina B sincroniza por OneDrive.
             let ahora = Utc::now() + chrono::Duration::minutes(1);
-            let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, e)
-            })
+            let sync_b = crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora)
             .unwrap();
             println!("B sincroniza ajustes del proyecto desde OneDrive: {sync_b:?}");
             assert_eq!(sync_b.descartados, 2);

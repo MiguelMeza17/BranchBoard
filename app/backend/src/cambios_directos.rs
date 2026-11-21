@@ -156,7 +156,6 @@ fn nombre_corto(rama: &str) -> &'static str {
 /// Líderes y Administrador. Devuelve el id de la tarea, o `None` si no había nada.
 pub fn registrar_deteccion(
     c: &Connection,
-    ops: &Path,
     detector: &str,
     rama: &str,
     directos: Vec<ChangesetDirecto>,
@@ -188,7 +187,7 @@ pub fn registrar_deteccion(
             })?,
         );
         ev.timestamp = ahora.to_string();
-        eventos::publicar(c, ops, &ev, |tx| aplicar_agregar(tx, &payload))?;
+        eventos::publicar(c, &ev, |tx| aplicar_agregar(tx, &payload))?;
         return Ok(Some(abierta.id));
     }
 
@@ -227,7 +226,7 @@ pub fn registrar_deteccion(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| aplicar_detectar(tx, &tarea, &detector))?;
+    eventos::publicar(c, &ev, |tx| aplicar_detectar(tx, &tarea, &detector))?;
 
     let cs_texto = tarea
         .cambios_directos
@@ -242,7 +241,6 @@ pub fn registrar_deteccion(
         .unwrap_or_default();
     notificaciones::crear_para_roles(
         c,
-        ops,
         &detector,
         &DatosNotificacionRoles {
             tipo: TipoNotificacion::Advertencia,
@@ -418,7 +416,6 @@ pub fn changeset_base(cd: &CambiosDirectos, cabeza_dev: i64) -> Resultado<i64> {
 /// trabajándose en `rama_traslado`.
 pub fn registrar_traslado(
     c: &Connection,
-    ops: &Path,
     autor: &AutorTarea<'_>,
     payload: &PayloadTrasladar,
     ahora: &str,
@@ -435,7 +432,7 @@ pub fn registrar_traslado(
         })?,
     );
     ev.timestamp = ahora.to_string();
-    eventos::publicar(c, ops, &ev, |tx| {
+    eventos::publicar(c, &ev, |tx| {
         aplicar_trasladar(tx, payload, &email, Some(autor.rol), ahora)
     })?;
     db_tareas::obtener(c, &payload.tarea_id)
@@ -513,9 +510,6 @@ pub fn revisar_en(estado: &AppState, email: &str) -> Resultado<Vec<String>> {
     let Ok(repo) = estado.repo_abierto() else {
         return Ok(Vec::new());
     };
-    let Ok(ops) = carpeta_abierta(estado).and_then(|carpeta| eventos::carpeta_ops(&carpeta)) else {
-        return Ok(Vec::new());
-    };
     let (desde, vistos) = estado.con_db(|db| {
         let desde = desde_del_proyecto(db.conexion())?;
         let mut vistos = Vec::new();
@@ -566,7 +560,6 @@ pub fn revisar_en(estado: &AppState, email: &str) -> Resultado<Vec<String>> {
             marcar_revisados(db.conexion(), rama, &merges)?;
             registrar_deteccion(
                 db.conexion(),
-                &ops,
                 email,
                 rama,
                 directos,
@@ -585,7 +578,6 @@ pub fn revisar_en(estado: &AppState, email: &str) -> Resultado<Vec<String>> {
 /// excepción a "nunca check-in a main/dev"), y publica el traslado.
 pub fn trasladar_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
     let yo = estado.exigir_permiso("trasladar_cambios_directos")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let repo = estado.repo_abierto()?;
     let autor = AutorTarea {
@@ -646,7 +638,7 @@ pub fn trasladar_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
     };
     estado.con_db(|db| {
         marcar_revisados(db.conexion(), &cd.rama, &reversion)?;
-        registrar_traslado(db.conexion(), &ops, &autor, &payload, &ahora_iso())
+        registrar_traslado(db.conexion(), &autor, &payload, &ahora_iso())
     })
 }
 

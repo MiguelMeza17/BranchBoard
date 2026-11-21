@@ -22,18 +22,18 @@ use crate::tareas::{
 };
 use crate::unity::{self, ResultadoAbrirUnity};
 
+/// Corre `f` con la base y quien pide `comando` (si su rol lo permite).
 fn con_ops<T>(
     estado: &AppState,
     comando: &str,
-    f: impl FnOnce(&rusqlite::Connection, &Path, &AutorTarea<'_>) -> Resultado<T>,
+    f: impl FnOnce(&rusqlite::Connection, &AutorTarea<'_>) -> Resultado<T>,
 ) -> Resultado<T> {
     let yo = estado.exigir_permiso(comando)?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
     };
-    estado.con_db(|db| f(db.conexion(), &ops, &autor))
+    estado.con_db(|db| f(db.conexion(), &autor))
 }
 
 /// Todas las tareas del proyecto abierto (incluye las de la Papelera y el campo
@@ -46,8 +46,8 @@ pub fn listar_tareas(estado: State<'_, AppState>) -> Resultado<Vec<Tarea>> {
 
 #[tauri::command]
 pub fn crear_tarea(estado: State<'_, AppState>, datos: DatosNuevaTarea) -> Resultado<Tarea> {
-    con_ops(&estado, "crear_tarea", |c, ops, autor| {
-        tareas::crear(c, ops, autor, &datos, &ahora_iso(), &hoy_local())
+    con_ops(&estado, "crear_tarea", |c, autor| {
+        tareas::crear(c, autor, &datos, &ahora_iso(), &hoy_local())
     })
 }
 
@@ -56,8 +56,8 @@ pub fn crear_tarea_con_subtareas(
     estado: State<'_, AppState>,
     datos: DatosNuevaTareaConSubtareas,
 ) -> Resultado<Vec<Tarea>> {
-    con_ops(&estado, "crear_tarea_con_subtareas", |c, ops, autor| {
-        tareas::crear_con_subtareas(c, ops, autor, &datos, &ahora_iso(), &hoy_local())
+    con_ops(&estado, "crear_tarea_con_subtareas", |c, autor| {
+        tareas::crear_con_subtareas(c, autor, &datos, &ahora_iso(), &hoy_local())
     })
 }
 
@@ -67,8 +67,8 @@ pub fn editar_tarea(
     id: String,
     campos: CambiosTarea,
 ) -> Resultado<Tarea> {
-    con_ops(&estado, "editar_tarea", |c, ops, autor| {
-        tareas::editar(c, ops, autor, &id, &campos, &ahora_iso())
+    con_ops(&estado, "editar_tarea", |c, autor| {
+        tareas::editar(c, autor, &id, &campos, &ahora_iso())
     })
 }
 
@@ -86,7 +86,6 @@ pub async fn tomar_tarea(estado: State<'_, AppState>, id: String) -> Resultado<V
 /// entorno real).
 pub fn tomar_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
     let yo = estado.exigir_permiso("tomar_tarea")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let repo = estado.repo_abierto()?;
     let autor = AutorTarea {
@@ -119,7 +118,7 @@ pub fn tomar_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
     ramas::cambiar_a_rama(estado, &workspace, &rama_final)?;
 
     estado.con_db(|db| {
-        tareas::registrar_toma(db.conexion(), &ops, &autor, &cadena, &creadas, &ahora_iso())
+        tareas::registrar_toma(db.conexion(), &autor, &cadena, &creadas, &ahora_iso())
     })
 }
 
@@ -149,7 +148,6 @@ pub async fn asignar_tarea(
 /// entorno real).
 pub fn asignar_en(estado: &AppState, id: &str, email_destinatario: &str) -> Resultado<Vec<Tarea>> {
     let yo = estado.exigir_permiso("asignar_tarea")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let repo = estado.repo_abierto()?;
     let autor = AutorTarea {
         email: &yo.email,
@@ -169,7 +167,6 @@ pub fn asignar_en(estado: &AppState, id: &str, email_destinatario: &str) -> Resu
     estado.con_db(|db| {
         tareas::registrar_asignacion(
             db.conexion(),
-            &ops,
             &autor,
             &cadena,
             &creadas,
@@ -188,8 +185,8 @@ pub async fn desasignar_tarea(estado: State<'_, AppState>, id: String) -> Result
 
 /// Lo mismo que [`desasignar_tarea`], sin el envoltorio de Tauri.
 pub fn desasignar_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
-    con_ops(estado, "desasignar_tarea", |c, ops, autor| {
-        tareas::desasignar(c, ops, autor, id, &ahora_iso())
+    con_ops(estado, "desasignar_tarea", |c, autor| {
+        tareas::desasignar(c, autor, id, &ahora_iso())
     })
 }
 
@@ -211,8 +208,8 @@ pub fn cambiar_estado_en(
     id: &str,
     nuevo_estado: EstadoTarea,
 ) -> Resultado<ResultadoCambioEstado> {
-    con_ops(estado, "cambiar_estado", |c, ops, autor| {
-        tareas::cambiar_estado(c, ops, autor, id, nuevo_estado, &ahora_iso())
+    con_ops(estado, "cambiar_estado", |c, autor| {
+        tareas::cambiar_estado(c, autor, id, nuevo_estado, &ahora_iso())
     })
 }
 
@@ -228,7 +225,6 @@ pub async fn borrar_progreso(estado: State<'_, AppState>, id: String) -> Resulta
 /// el entorno real).
 pub fn borrar_progreso_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
     let yo = estado.exigir_permiso("borrar_progreso")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let repo = estado.repo_abierto()?;
     let autor = AutorTarea {
@@ -248,7 +244,7 @@ pub fn borrar_progreso_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> 
         )?;
     }
 
-    estado.con_db(|db| tareas::borrar_progreso(db.conexion(), &ops, &autor, id, &ahora_iso()))
+    estado.con_db(|db| tareas::borrar_progreso(db.conexion(), &autor, id, &ahora_iso()))
 }
 
 /// `reabrir_tarea(id, motivo)`: devuelve una tarea `'terminada'` a `'en revisión'`
@@ -265,8 +261,8 @@ pub async fn reabrir_tarea(
 
 /// Lo mismo que [`reabrir_tarea`], sin el envoltorio de Tauri.
 pub fn reabrir_en(estado: &AppState, id: &str, motivo: &str) -> Resultado<Tarea> {
-    con_ops(estado, "reabrir_tarea", |c, ops, autor| {
-        tareas::reabrir(c, ops, autor, id, motivo, &ahora_iso())
+    con_ops(estado, "reabrir_tarea", |c, autor| {
+        tareas::reabrir(c, autor, id, motivo, &ahora_iso())
     })
 }
 
@@ -278,8 +274,8 @@ pub async fn aprobar_tarea(estado: State<'_, AppState>, id: String) -> Resultado
 
 /// Lo mismo que [`aprobar_tarea`], sin el envoltorio de Tauri.
 pub fn aprobar_tarea_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
-    con_ops(estado, "aprobar_tarea", |c, ops, autor| {
-        tareas::aprobar_tarea(c, ops, autor, id, &ahora_iso())
+    con_ops(estado, "aprobar_tarea", |c, autor| {
+        tareas::aprobar_tarea(c, autor, id, &ahora_iso())
     })
 }
 
@@ -294,8 +290,8 @@ pub async fn aprobar_tareas(
 
 /// Lo mismo que [`aprobar_tareas`], sin el envoltorio de Tauri.
 pub fn aprobar_tareas_en(estado: &AppState, ids: &[String]) -> Resultado<Vec<Tarea>> {
-    con_ops(estado, "aprobar_tareas", |c, ops, autor| {
-        tareas::aprobar_tareas(c, ops, autor, ids, &ahora_iso())
+    con_ops(estado, "aprobar_tareas", |c, autor| {
+        tareas::aprobar_tareas(c, autor, ids, &ahora_iso())
     })
 }
 
@@ -311,8 +307,8 @@ pub async fn editar_y_aprobar_tarea(
 
 /// Lo mismo que [`editar_y_aprobar_tarea`], sin el envoltorio de Tauri.
 pub fn editar_y_aprobar_en(estado: &AppState, id: &str, campos: &CambiosTarea) -> Resultado<Tarea> {
-    con_ops(estado, "editar_y_aprobar_tarea", |c, ops, autor| {
-        tareas::editar_y_aprobar(c, ops, autor, id, campos, &ahora_iso())
+    con_ops(estado, "editar_y_aprobar_tarea", |c, autor| {
+        tareas::editar_y_aprobar(c, autor, id, campos, &ahora_iso())
     })
 }
 
@@ -328,8 +324,8 @@ pub async fn advertir_tarea_pendiente(
 
 /// Lo mismo que [`advertir_tarea_pendiente`], sin el envoltorio de Tauri.
 pub fn advertir_pendiente_en(estado: &AppState, id: &str, mensaje: &str) -> Resultado<()> {
-    con_ops(estado, "advertir_tarea_pendiente", |c, ops, autor| {
-        tareas::advertir_pendiente(c, ops, autor, id, mensaje, &ahora_iso())
+    con_ops(estado, "advertir_tarea_pendiente", |c, autor| {
+        tareas::advertir_pendiente(c, autor, id, mensaje, &ahora_iso())
     })
 }
 
@@ -367,10 +363,9 @@ pub fn proponer_edicion_en(
     detalles: &str,
     motivo: Option<&str>,
 ) -> Resultado<ResultadoProponerEdicion> {
-    con_ops(estado, "proponer_edicion", |c, ops, autor| {
+    con_ops(estado, "proponer_edicion", |c, autor| {
         tareas::proponer_edicion(
             c,
-            ops,
             autor,
             id,
             titulo,
@@ -390,8 +385,8 @@ pub async fn aprobar_modificacion(estado: State<'_, AppState>, id: String) -> Re
 
 /// Lo mismo que [`aprobar_modificacion`], sin el envoltorio de Tauri.
 pub fn aprobar_modificacion_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
-    con_ops(estado, "aprobar_modificacion", |c, ops, autor| {
-        tareas::aprobar_modificacion(c, ops, autor, id, &ahora_iso())
+    con_ops(estado, "aprobar_modificacion", |c, autor| {
+        tareas::aprobar_modificacion(c, autor, id, &ahora_iso())
     })
 }
 
@@ -406,8 +401,8 @@ pub async fn aprobar_modificaciones(
 
 /// Lo mismo que [`aprobar_modificaciones`], sin el envoltorio de Tauri.
 pub fn aprobar_modificaciones_en(estado: &AppState, ids: &[String]) -> Resultado<Vec<Tarea>> {
-    con_ops(estado, "aprobar_modificaciones", |c, ops, autor| {
-        tareas::aprobar_modificaciones(c, ops, autor, ids, &ahora_iso())
+    con_ops(estado, "aprobar_modificaciones", |c, autor| {
+        tareas::aprobar_modificaciones(c, autor, ids, &ahora_iso())
     })
 }
 
@@ -419,8 +414,8 @@ pub async fn rechazar_modificacion(estado: State<'_, AppState>, id: String) -> R
 
 /// Lo mismo que [`rechazar_modificacion`], sin el envoltorio de Tauri.
 pub fn rechazar_modificacion_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
-    con_ops(estado, "rechazar_modificacion", |c, ops, autor| {
-        tareas::rechazar_modificacion(c, ops, autor, id, &ahora_iso())
+    con_ops(estado, "rechazar_modificacion", |c, autor| {
+        tareas::rechazar_modificacion(c, autor, id, &ahora_iso())
     })
 }
 
@@ -454,13 +449,12 @@ pub fn eliminar_tarea_en(
     justificacion: &str,
 ) -> Resultado<Vec<Tarea>> {
     let yo = estado.exigir_permiso("eliminar_tarea")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
     };
     let afectadas = estado.con_db(|db| {
-        tareas::eliminar(db.conexion(), &ops, &autor, id, justificacion, &ahora_iso())
+        tareas::eliminar(db.conexion(), &autor, id, justificacion, &ahora_iso())
     })?;
     if let Ok(repo) = estado.repo_abierto() {
         let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
@@ -490,13 +484,12 @@ pub async fn eliminar_definitivamente(
 /// Versión sin envoltorio Tauri de [`eliminar_definitivamente`] (para pruebas reales).
 pub fn eliminar_definitivamente_en(estado: &AppState, id: &str) -> Resultado<Vec<Tarea>> {
     let yo = estado.exigir_permiso("eliminar_definitivamente")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let autor = AutorTarea {
         email: &yo.email,
         rol: yo.rol,
     };
     let purgadas = estado.con_db(|db| {
-        tareas::eliminar_definitivamente(db.conexion(), &ops, &autor, id, &ahora_iso())
+        tareas::eliminar_definitivamente(db.conexion(), &autor, id, &ahora_iso())
     })?;
     if let Ok(repo) = estado.repo_abierto() {
         let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
@@ -588,7 +581,6 @@ pub fn hacer_checkin_en(
     tipo: TipoTarea,
 ) -> Resultado<Commit> {
     let yo = estado.exigir_permiso("hacer_checkin")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let autor = AutorTarea {
         email: &yo.email,
@@ -622,7 +614,6 @@ pub fn hacer_checkin_en(
     estado.con_db(|db| {
         let commit = tareas::registrar_checkin(
             db.conexion(),
-            &ops,
             &autor,
             &DatosCheckin {
                 tarea_id: &tarea.id,
@@ -669,7 +660,6 @@ pub fn crear_rama_desde_espera_en(
     tipo: TipoTarea,
 ) -> Resultado<Tarea> {
     let yo = estado.exigir_permiso("crear_rama_desde_espera")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let repo = estado.repo_abierto()?;
     let autor = AutorTarea {
@@ -710,7 +700,6 @@ pub fn crear_rama_desde_espera_en(
     estado.con_db(|db| {
         tareas::convertir_espera_en_subtarea(
             db.conexion(),
-            &ops,
             &autor,
             &DatosRamaDesdeEspera {
                 espera_id: &espera.id,
@@ -765,7 +754,6 @@ pub fn traer_cambios_en(
     hash: Option<&str>,
 ) -> Resultado<CambioPrestado> {
     let yo = estado.exigir_permiso("traer_cambios")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let repo = estado.repo_abierto()?;
     let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
@@ -802,7 +790,6 @@ pub fn traer_cambios_en(
     estado.con_db(|db| {
         tareas::registrar_traer_cambios(
             db.conexion(),
-            &ops,
             &autor,
             &DatosTraerCambios {
                 destino_id: &info.destino_id,
@@ -833,7 +820,6 @@ pub fn devolver_cambios_prestados_en(
     prestamo_id: &str,
 ) -> Resultado<CambioPrestado> {
     let yo = estado.exigir_permiso("devolver_cambios_prestados")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let autor = AutorTarea {
         email: &yo.email,
@@ -850,7 +836,7 @@ pub fn devolver_cambios_prestados_en(
     ramas::devolver_cambios_workspace(estado, &workspace, &rama_destino, cs_merge, &comentario)?;
 
     estado.con_db(|db| {
-        tareas::registrar_devolver_cambios(db.conexion(), &ops, &autor, &prestamo.id, &ahora_iso())
+        tareas::registrar_devolver_cambios(db.conexion(), &autor, &prestamo.id, &ahora_iso())
     })
 }
 
@@ -871,7 +857,6 @@ pub fn eliminar_cambios_ajenos_en(
     prestamo_id: &str,
 ) -> Resultado<CambioPrestado> {
     let yo = estado.exigir_permiso("eliminar_cambios_ajenos")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let workspace = estado.workspace_abierto()?;
     let repo = estado.repo_abierto()?;
     let repo_cm = format!("{}@{}@unity", repo.repo, repo.org);
@@ -901,7 +886,6 @@ pub fn eliminar_cambios_ajenos_en(
     estado.con_db(|db| {
         tareas::registrar_eliminar_cambios_ajenos(
             db.conexion(),
-            &ops,
             &autor,
             &prestamo.id,
             cs_limpio,
@@ -1055,8 +1039,8 @@ pub async fn asignar_revision(
 
 /// Lo mismo que [`asignar_revision`], sin el envoltorio de Tauri.
 pub fn asignar_revision_en(estado: &AppState, id: &str, email: &str) -> Resultado<Tarea> {
-    con_ops(estado, "asignar_revision", |c, ops, autor| {
-        tareas::asignar_revision(c, ops, autor, id, email, &ahora_iso())
+    con_ops(estado, "asignar_revision", |c, autor| {
+        tareas::asignar_revision(c, autor, id, email, &ahora_iso())
     })
 }
 
@@ -1081,7 +1065,6 @@ pub async fn autorizar_merge(
 /// el entorno real).
 pub fn autorizar_merge_en(estado: &AppState, id: &str) -> Resultado<ResultadoAutorizacion> {
     let yo = estado.exigir_permiso("autorizar_merge")?;
-    let ops = eventos::carpeta_ops(&carpeta_abierta(estado)?)?;
     let repo = estado.repo_abierto()?;
     let autor = AutorTarea {
         email: &yo.email,
@@ -1142,7 +1125,6 @@ pub fn autorizar_merge_en(estado: &AppState, id: &str) -> Resultado<ResultadoAut
     let tareas = estado.con_db(|db| {
         tareas::registrar_merge_autorizado(
             db.conexion(),
-            &ops,
             &autor,
             id,
             &plan.destino,
@@ -1169,7 +1151,7 @@ pub async fn rechazar_revision(
 
 /// Lo mismo que [`rechazar_revision`], sin el envoltorio de Tauri.
 pub fn rechazar_revision_en(estado: &AppState, id: &str, motivo: &str) -> Resultado<Vec<Tarea>> {
-    con_ops(estado, "rechazar_revision", |c, ops, autor| {
-        tareas::rechazar_revision(c, ops, autor, id, motivo, &ahora_iso())
+    con_ops(estado, "rechazar_revision", |c, autor| {
+        tareas::rechazar_revision(c, autor, id, motivo, &ahora_iso())
     })
 }

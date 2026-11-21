@@ -1,33 +1,22 @@
-//! Leer `ops/` y aplicar lo que le falta a esta máquina (issue #92).
+//! Aplicar los eventos que llegan de las demás PCs (issues #92 y #239).
 //! Ver "Sincronización entre máquinas" en BACKEND.md.
 //!
-//! - Solo se leen los `.json` que no están en `eventos_aplicados` (los temporales
-//!   `.…tmp` de quien está escribiendo se ignoran). Un archivo que no se puede leer
-//!   o que no es un evento se salta y se reintenta en el próximo escaneo: puede ser
-//!   que Drive/OneDrive todavía lo esté bajando.
-//! - Todas las máquinas los aplican **en el mismo orden**: por `timestamp`, luego
-//!   por `usuario` y al final por nombre de archivo, así todas llegan al mismo estado.
-//! - Un evento marcado más de **5 minutos en el futuro** respecto al reloj de esta
-//!   máquina se ordena por su **hora de llegada** a `ops/` (fecha del archivo) y se
-//!   anota en `eventos.log` de la carpeta local del proyecto (no se avisa al equipo).
-//! - Cada evento se aplica en su propia transacción con el aplicador de su tipo:
-//!   aplicado o descartado (ej. una toma doble que perdió) → se anota y no se repite;
-//!   tipo desconocido (lo escribió una versión más nueva de la app) → queda
-//!   pendiente para cuando esta máquina se actualice.
+//! - Los eventos llegan del servidor (`recepcion`, #239), en el orden del servidor, y cada uno se
+//!   aplica en su propia transacción con el aplicador de su tipo ([`aplicar_evento`]):
+//!   aplicado o descartado (ej. una toma doble que perdió) → se anota y no se repite; tipo desconocido
+//!   (lo escribió una versión más nueva de la app) → queda pendiente para cuando esta PC se actualice.
 //! - Los cambios de equipo y la compactación (`eventos::TIPOS_RETIRADOS`) se descartan siempre: iban
 //!   firmados y desde #243 no hay firmas (los roles los cambia el servidor, #241).
-//! - Un snapshot de la compactación de antes (`ops/snapshot_<fecha>.json`, #94) es un evento
-//!   `compactar_eventos` más: se descarta. Lo que ya tenía aplicado esta base se queda.
+//! - Hasta #244 también se leían de `ops/` (Drive/OneDrive), ordenados por `timestamp`.
 
 use std::io::Write;
 use std::path::Path;
-use std::time::SystemTime;
 
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use super::{marcar_aplicado, ya_aplicado, Evento};
+use super::{marcar_aplicado, Evento};
 use crate::chat;
 use crate::documentos;
 use crate::error::{Error, Resultado};
@@ -37,8 +26,6 @@ use crate::proyecto;
 use crate::sprints;
 use crate::tareas::{self, InfoDobleToma};
 
-/// Cuánto puede adelantarse el reloj de otra máquina antes de desconfiar.
-const TOLERANCIA_FUTURO_MIN: i64 = 5;
 /// Avisos internos de la sincronización, en la carpeta local del proyecto.
 pub const ARCHIVO_LOG: &str = "eventos.log";
 
@@ -62,7 +49,7 @@ pub struct ResumenSincronizacion {
     pub descartados: usize,
     /// De un tipo que esta versión no conoce (quedan pendientes).
     pub desconocidos: usize,
-    /// Archivos que no se pudieron leer (se reintentan en el próximo escaneo).
+    /// Eventos que no se pudieron leer (se reintentan en la próxima vuelta).
     pub ilegibles: usize,
 }
 
@@ -72,7 +59,7 @@ impl ResumenSincronizacion {
         self.aplicados > 0
     }
 
-    /// Suma lo de `otro` (p. ej. lo de `ops/` más lo del servidor, #239).
+    /// Suma lo de `otro`.
     pub fn sumar(&mut self, otro: &ResumenSincronizacion) {
         self.aplicados += otro.aplicados;
         self.descartados += otro.descartados;
@@ -81,68 +68,19 @@ impl ResumenSincronizacion {
     }
 }
 
-/// Un evento pendiente, con lo que hace falta para ordenarlo.
+/// Un evento que bajó del servidor y esta base todavía no aplicó.
 #[derive(Debug, Clone)]
 pub(super) struct Pendiente {
     pub id: String,
     pub evento: Evento,
-    /// Momento por el que se ordena (el declarado, o la llegada si es sospechoso).
-    pub orden: DateTime<Utc>,
-    /// Si vino del servidor (#239), su número de `orden` allí. `None` = vino de `ops/`.
-    pub orden_servidor: Option<i64>,
-}
-
-/// Escanea `ops/` y aplica, en orden, todo lo que esta base todavía no tiene.
-/// `aplicar` decide qué hace cada tipo de evento. `ahora` es el reloj de esta
-/// máquina. Los avisos van a `carpeta_proyecto/eventos.log`.
-pub fn sincronizar(
-    c: &Connection,
-    ops: &Path,
-    carpeta_proyecto: &Path,
-    ahora: DateTime<Utc>,
-    aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
-) -> Resultado<ResumenSincronizacion> {
-    sincronizar_con_doble_toma(c, ops, carpeta_proyecto, ahora, aplicar, |_| Ok(false))
-}
-
-/// Igual que [`sincronizar`], pero al detectar una doble toma (`tomar_tarea`
-/// sobre una tarea ya asignada) consulta `revisar_rama_perdedor` para saber si
-/// la rama del perdedor ya tiene changesets reales (y cerrarla si no tiene)
-/// antes de aplicar la resolución en SQLite (#97).
-pub fn sincronizar_con_doble_toma(
-    c: &Connection,
-    ops: &Path,
-    carpeta_proyecto: &Path,
-    ahora: DateTime<Utc>,
-    aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
-    revisar_rama_perdedor: impl Fn(&InfoDobleToma) -> Resultado<bool>,
-) -> Resultado<ResumenSincronizacion> {
-    let mut resumen = ResumenSincronizacion::default();
-    let mut avisos = Vec::new();
-    let pendientes = leer_pendientes(c, ops, ahora, &mut resumen, &mut avisos)?;
-    aplicar_pendientes(
-        c,
-        Some(ops),
-        ahora,
-        pendientes,
-        &mut resumen,
-        &mut avisos,
-        aplicar,
-        revisar_rama_perdedor,
-    )?;
-    if !avisos.is_empty() {
-        registrar(carpeta_proyecto, ahora, &avisos);
-    }
-    Ok(resumen)
+    /// Su número de `orden` en el servidor (#239).
+    pub orden_servidor: i64,
 }
 
 /// Aplica `pendientes` en el orden en que vienen, cada uno en su transacción (ver el inicio del módulo).
-/// Lo usan la lectura de `ops/` y la recepción del servidor (#239). `ops` solo hace falta para los
-/// eventos que vinieron de `ops/` (doble toma por archivo).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn aplicar_pendientes(
     c: &Connection,
-    ops: Option<&Path>,
     ahora: DateTime<Utc>,
     pendientes: Vec<Pendiente>,
     resumen: &mut ResumenSincronizacion,
@@ -159,16 +97,10 @@ pub(super) fn aplicar_pendientes(
                 resumen.aplicados += 1;
             }
             Aplicacion::Descartado(motivo) => {
-                let fuente = match (p.orden_servidor, ops) {
-                    (Some(orden), _) => Some(tareas::FuenteToma::Servidor { orden }),
-                    (None, Some(ops)) => Some(tareas::FuenteToma::Ops(ops)),
-                    (None, None) => None,
-                };
-                let doble = match fuente {
-                    Some(fuente) if p.evento.tipo == "tomar_tarea" => {
-                        tareas::detectar_doble_toma(&tx, fuente, &p.id, &p.evento)?
-                    }
-                    _ => None,
+                let doble = if p.evento.tipo == "tomar_tarea" {
+                    tareas::detectar_doble_toma(&tx, p.orden_servidor, &p.id, &p.evento)?
+                } else {
+                    None
                 };
                 // Lo que haya escrito el aplicador antes de descartar no se guarda.
                 drop(tx);
@@ -202,71 +134,6 @@ pub(super) fn aplicar_pendientes(
         }
     }
     Ok(())
-}
-
-fn leer_pendientes(
-    c: &Connection,
-    ops: &Path,
-    ahora: DateTime<Utc>,
-    resumen: &mut ResumenSincronizacion,
-    avisos: &mut Vec<String>,
-) -> Resultado<Vec<Pendiente>> {
-    let entradas = match std::fs::read_dir(ops) {
-        Ok(e) => e,
-        // Todavía nadie escribió nada.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let limite = ahora + Duration::minutes(TOLERANCIA_FUTURO_MIN);
-    let mut pendientes = Vec::new();
-    for entrada in entradas {
-        let entrada = entrada?;
-        let id = entrada.file_name().to_string_lossy().to_string();
-        if id.starts_with('.') || !id.ends_with(".json") || ya_aplicado(c, &id)? {
-            continue;
-        }
-        let Some(evento) = std::fs::read_to_string(entrada.path())
-            .ok()
-            .and_then(|t| serde_json::from_str::<Evento>(&t).ok())
-        else {
-            resumen.ilegibles += 1;
-            continue;
-        };
-        let Ok(declarado) = DateTime::parse_from_rfc3339(&evento.timestamp) else {
-            resumen.ilegibles += 1;
-            continue;
-        };
-        let declarado = declarado.with_timezone(&Utc);
-        let orden = if declarado > limite {
-            let llegada = entrada
-                .metadata()
-                .and_then(|m| m.modified())
-                .map(DateTime::<Utc>::from)
-                .unwrap_or_else(|_| DateTime::<Utc>::from(SystemTime::now()));
-            avisos.push(format!(
-                "{id} viene {} min en el futuro (declara {}); se ordena por su llegada ({})",
-                (declarado - ahora).num_minutes(),
-                evento.timestamp,
-                ahora_iso(llegada)
-            ));
-            llegada
-        } else {
-            declarado
-        };
-        pendientes.push(Pendiente {
-            id,
-            evento,
-            orden,
-            orden_servidor: None,
-        });
-    }
-    pendientes.sort_by(|a, b| {
-        a.orden
-            .cmp(&b.orden)
-            .then_with(|| a.evento.usuario.cmp(&b.evento.usuario))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    Ok(pendientes)
 }
 
 fn ahora_iso(momento: DateTime<Utc>) -> String {
@@ -347,233 +214,15 @@ fn es_regla_rota(e: &Error) -> bool {
 mod tests {
     use super::*;
     use crate::db::Db;
-    use crate::error::Error;
-    use crate::eventos::{escribir_evento, publicar};
+    use crate::eventos::servidor_de_prueba;
     use serde_json::json;
 
-    fn momento(texto: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(texto)
-            .unwrap()
-            .with_timezone(&Utc)
-    }
+    const AHORA: &str = "2026-11-14T18:00:00.000Z";
 
     fn evento(cuando: &str, usuario: &str, n: i64) -> Evento {
         let mut e = Evento::nuevo("prueba", None, usuario, json!({ "n": n }));
-        e.timestamp = cuando.to_string();
+        e.timestamp = cuando.into();
         e
-    }
-
-    /// Aplicador de prueba: guarda el orden en `meta` (`orden` = lista de `n`).
-    /// `n` negativo se descarta; tipo `nuevo` es desconocido.
-    fn aplicador(c: &Connection, e: &Evento) -> Resultado<Aplicacion> {
-        if e.tipo == "nuevo" {
-            return Ok(Aplicacion::Desconocido);
-        }
-        let n = e.payload["n"].as_i64().unwrap();
-        c.execute(
-            "INSERT INTO meta (clave, valor) VALUES ('orden', ?1)
-             ON CONFLICT (clave) DO UPDATE SET valor = valor || ',' || excluded.valor",
-            [n.to_string()],
-        )?;
-        if n < 0 {
-            return Ok(Aplicacion::Descartado("regla rota".into()));
-        }
-        Ok(Aplicacion::Aplicado)
-    }
-
-    fn orden(c: &Connection) -> String {
-        c.query_row("SELECT valor FROM meta WHERE clave = 'orden'", [], |f| {
-            f.get(0)
-        })
-        .unwrap_or_default()
-    }
-
-    struct Escenario {
-        _dir: tempfile::TempDir,
-        ops: std::path::PathBuf,
-        local: std::path::PathBuf,
-        db: Db,
-    }
-
-    fn escenario() -> Escenario {
-        let dir = tempfile::tempdir().unwrap();
-        let ops = dir.path().join("ops");
-        let local = dir.path().join("local");
-        Escenario {
-            _dir: dir,
-            ops,
-            local,
-            db: Db::en_memoria().unwrap(),
-        }
-    }
-
-    const AHORA: &str = "2026-11-14T19:00:00.000Z";
-
-    #[test]
-    fn sin_carpeta_ops_no_hay_nada_que_hacer() {
-        let e = escenario();
-        let r = sincronizar(e.db.conexion(), &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(r, ResumenSincronizacion::default());
-        assert!(!r.hubo_cambios());
-    }
-
-    #[test]
-    fn aplica_en_orden_por_hora_y_desempata_por_usuario() {
-        let e = escenario();
-        let c = e.db.conexion();
-        // Se escriben desordenados; dos con la misma hora.
-        escribir_evento(&e.ops, &evento("2026-11-14T18:00:03.000Z", "ana@x.dev", 3)).unwrap();
-        escribir_evento(&e.ops, &evento("2026-11-14T18:00:01.000Z", "luis@x.dev", 2)).unwrap();
-        escribir_evento(&e.ops, &evento("2026-11-14T18:00:01.000Z", "ana@x.dev", 1)).unwrap();
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(r.aplicados, 3);
-        assert_eq!(
-            orden(c),
-            "1,2,3",
-            "hora, y con la misma hora, ana antes que luis"
-        );
-
-        // Otra vez: no repite nada.
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(r, ResumenSincronizacion::default());
-        assert_eq!(orden(c), "1,2,3");
-    }
-
-    #[test]
-    fn dos_maquinas_llegan_al_mismo_orden() {
-        let e = escenario();
-        for (i, (cuando, quien)) in [
-            ("2026-11-14T18:00:05.000Z", "b@x.dev"),
-            ("2026-11-14T18:00:05.000Z", "a@x.dev"),
-            ("2026-11-14T17:59:00.000Z", "c@x.dev"),
-        ]
-        .iter()
-        .enumerate()
-        {
-            escribir_evento(&e.ops, &evento(cuando, quien, i as i64)).unwrap();
-        }
-        let otra = Db::en_memoria().unwrap();
-        sincronizar(e.db.conexion(), &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        sincronizar(otra.conexion(), &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(orden(e.db.conexion()), "2,1,0");
-        assert_eq!(orden(otra.conexion()), orden(e.db.conexion()));
-    }
-
-    #[test]
-    fn lo_que_publico_esta_maquina_no_se_aplica_otra_vez() {
-        let e = escenario();
-        let c = e.db.conexion();
-        publicar(
-            c,
-            &e.ops,
-            &evento("2026-11-14T18:00:00.000Z", "ana@x.dev", 7),
-            |tx| aplicador(tx, &evento("2026-11-14T18:00:00.000Z", "ana@x.dev", 7)).map(|_| ()),
-        )
-        .unwrap();
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(r.aplicados, 0);
-        assert_eq!(orden(c), "7", "una sola vez");
-    }
-
-    #[test]
-    fn descartado_se_anota_sin_aplicar_y_desconocido_queda_pendiente() {
-        let e = escenario();
-        let c = e.db.conexion();
-        escribir_evento(&e.ops, &evento("2026-11-14T18:00:00.000Z", "ana@x.dev", -1)).unwrap();
-        let mut nuevo = evento("2026-11-14T18:00:01.000Z", "ana@x.dev", 9);
-        nuevo.tipo = "nuevo".into();
-        escribir_evento(&e.ops, &nuevo).unwrap();
-
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!((r.aplicados, r.descartados, r.desconocidos), (0, 1, 1));
-        assert_eq!(orden(c), "", "lo que escribió antes de descartar no quedó");
-        let log = std::fs::read_to_string(e.local.join(ARCHIVO_LOG)).unwrap();
-        assert!(
-            log.contains("descartado") && log.contains("regla rota"),
-            "{log}"
-        );
-
-        // El descartado no se repite; el desconocido sí se vuelve a intentar.
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!((r.descartados, r.desconocidos), (0, 1));
-    }
-
-    #[test]
-    fn ignora_temporales_y_reintenta_los_ilegibles() {
-        let e = escenario();
-        let c = e.db.conexion();
-        std::fs::create_dir_all(&e.ops).unwrap();
-        std::fs::write(e.ops.join(".algo.json.tmp"), "a medias").unwrap();
-        std::fs::write(e.ops.join("notas.txt"), "otra cosa").unwrap();
-        std::fs::write(
-            e.ops.join("20261114T180000000Z_ana@x.dev_roto.json"),
-            "{ a medias",
-        )
-        .unwrap();
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(r.ilegibles, 1);
-        assert_eq!(r.aplicados, 0);
-        // Cuando termina de bajar, se aplica.
-        std::fs::write(
-            e.ops.join("20261114T180000000Z_ana@x.dev_roto.json"),
-            serde_json::to_string(&evento("2026-11-14T18:00:00.000Z", "ana@x.dev", 4)).unwrap(),
-        )
-        .unwrap();
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!((r.aplicados, r.ilegibles), (1, 0));
-    }
-
-    #[test]
-    fn evento_del_futuro_se_ordena_por_su_llegada_y_se_registra() {
-        let e = escenario();
-        let c = e.db.conexion();
-        // Son las 19:00. "tramposo" declara las 23:00 (4 h en el futuro) para quedar
-        // último, pero su archivo llegó a las 18:30: se ordena por la llegada y va
-        // antes que el de ana (18:59). Por lo declarado habría ido después.
-        let id = escribir_evento(
-            &e.ops,
-            &evento("2026-11-14T23:00:00.000Z", "tramposo@x.dev", 1),
-        )
-        .unwrap();
-        let llegada: SystemTime = momento("2026-11-14T18:30:00.000Z").into();
-        std::fs::File::options()
-            .write(true)
-            .open(e.ops.join(&id))
-            .unwrap()
-            .set_modified(llegada)
-            .unwrap();
-        let ahora = momento(AHORA);
-        escribir_evento(&e.ops, &evento("2026-11-14T18:59:00.000Z", "ana@x.dev", 2)).unwrap();
-        let r = sincronizar(c, &e.ops, &e.local, ahora, aplicador).unwrap();
-        assert_eq!(r.aplicados, 2);
-        assert_eq!(
-            orden(c),
-            "1,2",
-            "ordenado por su llegada, no por lo que declara"
-        );
-        let log = std::fs::read_to_string(e.local.join(ARCHIVO_LOG)).unwrap();
-        assert!(
-            log.contains("tramposo@x.dev") && log.contains("en el futuro"),
-            "{log}"
-        );
-        // Dentro de la tolerancia (4 min) no se registra nada.
-        let e2 = escenario();
-        escribir_evento(&e2.ops, &evento("2026-11-14T19:04:00.000Z", "ana@x.dev", 5)).unwrap();
-        sincronizar(e2.db.conexion(), &e2.ops, &e2.local, ahora, aplicador).unwrap();
-        assert!(!e2.local.join(ARCHIVO_LOG).exists());
-    }
-
-    #[test]
-    fn un_error_de_la_base_detiene_y_no_marca() {
-        let e = escenario();
-        let c = e.db.conexion();
-        escribir_evento(&e.ops, &evento("2026-11-14T18:00:00.000Z", "ana@x.dev", 1)).unwrap();
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), |_, _| {
-            Err(Error::BaseDatos("disco lleno".into()))
-        });
-        assert!(r.is_err());
-        let r = sincronizar(c, &e.ops, &e.local, momento(AHORA), aplicador).unwrap();
-        assert_eq!(r.aplicados, 1, "se reintenta en el próximo escaneo");
     }
 
     #[test]
@@ -598,102 +247,22 @@ mod tests {
                 "{tipo}"
             );
         }
-        assert!(crate::db::usuarios::listar(db.conexion())
-            .unwrap()
-            .is_empty());
+        assert!(crate::db::usuarios::listar(db.conexion()).unwrap().is_empty());
     }
 
-    /// **Prueba en el entorno real** (CLAUDE.md): dos "máquinas" (cada una con su
-    /// base y su carpeta local) comparten una subcarpeta de la carpeta de
-    /// OneDrive/Drive de verdad. A (Administrador) configura la carpeta y publica;
-    /// B (sin ser Administrador) elige la misma carpeta, sincroniza y llega al mismo
-    /// estado; después B publica y A recibe solo lo de B. Borra la subcarpeta al final.
-    ///
-    /// ```text
-    /// BB_PRUEBA_CARPETA_COMPARTIDA=C:\Users\<tú>\OneDrive cargo test --lib entorno_real_dos_maquinas -- --ignored --nocapture
-    /// ```
     #[test]
-    #[ignore = "usa la carpeta de OneDrive/Drive de verdad: correr a mano con BB_PRUEBA_CARPETA_COMPARTIDA"]
-    fn entorno_real_dos_maquinas_por_la_carpeta_compartida() {
-        use crate::eventos::{carpeta_ops, configurar_carpeta_compartida};
-
-        let nube = std::path::PathBuf::from(
-            std::env::var("BB_PRUEBA_CARPETA_COMPARTIDA")
-                .expect("falta BB_PRUEBA_CARPETA_COMPARTIDA"),
-        );
-        let compartida = nube.join(format!(
-            "BranchBoard-prueba-92-{}",
-            chrono::Local::now().format("%H%M%S")
-        ));
-        std::fs::create_dir_all(&compartida).unwrap();
-        let maquina_a = tempfile::tempdir().unwrap();
-        let maquina_b = tempfile::tempdir().unwrap();
-        let local_a = maquina_a.path().join("proyectos").join("prueba-92");
-        let local_b = maquina_b.path().join("proyectos").join("prueba-92");
-
-        let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            configurar_carpeta_compartida(&local_a, &compartida.to_string_lossy(), true).unwrap();
-            configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
-            let ops_a = carpeta_ops(&local_a).unwrap();
-            let ops_b = carpeta_ops(&local_b).unwrap();
-            let db_a = Db::en_memoria().unwrap();
-            let db_b = Db::en_memoria().unwrap();
-
-            // A publica 3 cambios; el tercero con el reloj adelantado 2 h.
-            let ahora = Utc::now();
-            for (n, adelanto) in [(1, 0), (2, 0), (3, 120)] {
-                let mut e = Evento::nuevo("prueba_92", None, "admin@x.dev", json!({ "n": n }));
-                e.timestamp =
-                    ahora_iso(ahora + Duration::minutes(adelanto) + Duration::milliseconds(n));
-                publicar(db_a.conexion(), &ops_a, &e, |tx| {
-                    aplicador(tx, &e).map(|_| ())
-                })
-                .unwrap();
-            }
-            std::thread::sleep(std::time::Duration::from_secs(5));
-
-            // B trae los cambios de A.
-            let r = sincronizar(db_b.conexion(), &ops_b, &local_b, Utc::now(), aplicador).unwrap();
-            println!("B sincroniza: {r:?}, orden {}", orden(db_b.conexion()));
-            assert_eq!(r.aplicados, 3);
-            assert_eq!(
-                orden(db_b.conexion()),
-                orden(db_a.conexion()),
-                "mismo estado que A"
-            );
-            let log = std::fs::read_to_string(local_b.join(ARCHIVO_LOG)).unwrap();
-            println!("eventos.log de B: {}", log.trim());
-            assert!(log.contains("en el futuro"));
-
-            // B publica; A recibe solo eso, no lo suyo.
-            let e = Evento::nuevo("prueba_92", None, "dev@x.dev", json!({ "n": 4 }));
-            publicar(db_b.conexion(), &ops_b, &e, |tx| {
-                aplicador(tx, &e).map(|_| ())
-            })
-            .unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            let r = sincronizar(db_a.conexion(), &ops_a, &local_a, Utc::now(), aplicador).unwrap();
-            println!("A sincroniza: {r:?}, orden {}", orden(db_a.conexion()));
-            assert_eq!(r.aplicados, 1);
-            assert_eq!(orden(db_a.conexion()), "1,2,3,4");
-            assert_eq!(orden(db_b.conexion()), "1,2,3,4");
-
-            // Otra vuelta en las dos: nada nuevo.
-            assert!(
-                !sincronizar(db_a.conexion(), &ops_a, &local_a, Utc::now(), aplicador)
-                    .unwrap()
-                    .hubo_cambios()
-            );
-            assert!(
-                !sincronizar(db_b.conexion(), &ops_b, &local_b, Utc::now(), aplicador)
-                    .unwrap()
-                    .hubo_cambios()
-            );
-        }));
-        let borrada = std::fs::remove_dir_all(&compartida);
-        println!("subcarpeta de prueba borrada: {}", borrada.is_ok());
-        if let Err(p) = resultado {
-            std::panic::resume_unwind(p);
-        }
+    fn por_el_servidor_lo_descartado_se_anota_y_lo_desconocido_queda_pendiente() {
+        let db = Db::en_memoria().unwrap();
+        let c = db.conexion();
+        let mut retirado = evento(AHORA, "a@x.dev", 1);
+        retirado.tipo = "cambiar_rol".into();
+        servidor_de_prueba::agregar(&retirado);
+        servidor_de_prueba::agregar(&evento(AHORA, "a@x.dev", 2));
+        let ahora = DateTime::parse_from_rfc3339(AHORA).unwrap().with_timezone(&Utc);
+        let r = servidor_de_prueba::entregar(c, ahora).unwrap();
+        assert_eq!((r.aplicados, r.descartados, r.desconocidos), (0, 1, 1));
+        // La vuelta siguiente: el descartado no se repite y el desconocido sigue esperando.
+        let r = servidor_de_prueba::entregar(c, ahora).unwrap();
+        assert_eq!((r.descartados, r.desconocidos), (0, 1));
     }
 }
