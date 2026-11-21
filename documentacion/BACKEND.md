@@ -171,7 +171,7 @@ Migración `supabase/migrations/20261120230000_esquema_base.sql`:
 
 **Por qué los roles no son eventos**: hoy `crear_usuario`, `cambiar_rol`, `confirmar_usuario` y `eliminar_usuario` son eventos firmados (`TIPOS_FIRMADOS`). Sin firmas (decisión 3 de #231), cualquier miembro podría insertar un evento `cambiar_rol` y darse Administrador. Por eso los roles están en `miembros` y solo los cambiarán funciones del servidor (#234). Todo lo demás (tareas, sprints, chat, documentos, notificaciones) sigue siendo un evento con el mismo `tipo` y `payload` que hoy, así la aplicación de eventos de la app se reaprovecha (#238, #239).
 
-**Sin acceso hasta #234**: las cuatro tablas tienen RLS activado y **ninguna regla**, así que por la API (con la clave pública o con una sesión) no se puede leer ni escribir nada hasta que #234 agregue las reglas y funciones.
+**Acceso**: las cuatro tablas tienen RLS activado; las reglas y funciones que deciden quién puede qué llegaron en #234 (ver abajo).
 
 ### Reglas RLS y funciones de roles (#234)
 
