@@ -19,8 +19,15 @@ pub struct Cuenta {
 
 impl From<Sesion> for Cuenta {
     fn from(s: Sesion) -> Self {
+        // La sesión de "Iniciar sesión con Unity VC" (#237) no trae nombre: se usa la parte del correo
+        // antes de la @, como hace la app en ese caso.
+        let nombre = if s.nombre.trim().is_empty() {
+            s.correo.split('@').next().unwrap_or_default().to_string()
+        } else {
+            s.nombre
+        };
         Cuenta {
-            nombre: s.nombre,
+            nombre,
             apellido: s.apellido,
             correo: s.correo,
         }
@@ -57,4 +64,32 @@ pub async fn sesion_branchboard() -> Resultado<Option<Cuenta>> {
 #[tauri::command]
 pub async fn cerrar_sesion_branchboard() -> Resultado<()> {
     cliente().cerrar_sesion()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sesion(nombre: &str) -> Sesion {
+        Sesion {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            expira_en: 0,
+            usuario_id: "u".into(),
+            correo: "ana.perez@correo.com".into(),
+            nombre: nombre.into(),
+            apellido: String::new(),
+        }
+    }
+
+    #[test]
+    fn al_frontend_solo_llegan_nombre_apellido_y_correo() {
+        let json = serde_json::to_value(Cuenta::from(sesion("Ana"))).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "nombre": "Ana", "apellido": "", "correo": "ana.perez@correo.com" })
+        );
+        // Sesión abierta con Unity VC, sin nombre.
+        assert_eq!(Cuenta::from(sesion("")).nombre, "ana.perez");
+    }
 }
