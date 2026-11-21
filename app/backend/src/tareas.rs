@@ -5797,13 +5797,13 @@ mod tests {
                 })
                 .unwrap();
 
-            // B sincroniza DEV, T-101 y T-102.
+            // B ya tiene el equipo; recibe los dos eventos de creación de tareas.
             let ahora = DateTime::parse_from_rfc3339("2026-11-16T23:59:59.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
             let sync_init =
                 crate::eventos::servidor_de_prueba::entregar(db_b.conexion(), ahora).unwrap();
-            assert_eq!(sync_init.aplicados, 3);
+            assert_eq!(sync_init.aplicados, 2);
 
             // --- CASO 1: Sin changesets en la rama del perdedor (T-101) ---
             let rama_g1 =
@@ -5815,19 +5815,7 @@ mod tests {
                     .unwrap();
             ramas_creadas.push(rama_p1.name.clone());
 
-            // B toma T-101 con timestamp posterior (15:00:10).
-            tomar(
-                db_b.conexion(),
-                &AutorTarea {
-                    email: &admin_fila.email,
-                    rol: Rol::Administrador,
-                },
-                "T-101",
-                |_| Ok(vec![("T-101".into(), rama_p1.clone())]),
-                "2026-11-15T15:00:10.000Z",
-            )
-            .unwrap();
-            // A (DEV) toma T-101 con timestamp anterior (15:00:05).
+            // A llega primero al servidor, aunque su reloj marque una hora posterior.
             estado_a
                 .con_db(|db_a| {
                     tomar(
@@ -5838,12 +5826,24 @@ mod tests {
                         },
                         "T-101",
                         |_| Ok(vec![("T-101".into(), rama_g1.clone())]),
-                        "2026-11-15T15:00:05.000Z",
+                        "2026-11-15T15:00:10.000Z",
                     )
                     .map(|_| ())
                 })
                 .unwrap();
 
+            // B toma en su base antes de recibir A; llega después al servidor.
+            tomar(
+                db_b.conexion(),
+                &AutorTarea {
+                    email: &admin_fila.email,
+                    rol: Rol::Administrador,
+                },
+                "T-101",
+                |_| Ok(vec![("T-101".into(), rama_p1.clone())]),
+                "2026-11-15T15:00:05.000Z",
+            )
+            .unwrap();
             std::thread::sleep(std::time::Duration::from_secs(2));
             let sync_b1 =
                 crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| {
@@ -5900,17 +5900,7 @@ mod tests {
                 .unwrap();
             cambiar_a_rama(&estado_a, ws_a.path(), RAMA_DEV).unwrap();
 
-            tomar(
-                db_b.conexion(),
-                &AutorTarea {
-                    email: &admin_fila.email,
-                    rol: Rol::Administrador,
-                },
-                "T-102",
-                |_| Ok(vec![("T-102".into(), rama_p2.clone())]),
-                "2026-11-15T15:00:20.000Z",
-            )
-            .unwrap();
+            // A llega primero; B conserva su rama con trabajo real al recibir esa toma.
             estado_a
                 .con_db(|db_a| {
                     tomar(
@@ -5921,12 +5911,23 @@ mod tests {
                         },
                         "T-102",
                         |_| Ok(vec![("T-102".into(), rama_g2.clone())]),
-                        "2026-11-15T15:00:15.000Z",
+                        "2026-11-15T15:00:20.000Z",
                     )
                     .map(|_| ())
                 })
                 .unwrap();
 
+            tomar(
+                db_b.conexion(),
+                &AutorTarea {
+                    email: &admin_fila.email,
+                    rol: Rol::Administrador,
+                },
+                "T-102",
+                |_| Ok(vec![("T-102".into(), rama_p2.clone())]),
+                "2026-11-15T15:00:15.000Z",
+            )
+            .unwrap();
             std::thread::sleep(std::time::Duration::from_secs(2));
             let sync_b2 =
                 crate::eventos::servidor_de_prueba::entregar_con(db_b.conexion(), ahora, |info| {
