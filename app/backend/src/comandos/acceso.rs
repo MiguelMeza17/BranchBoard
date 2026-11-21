@@ -108,7 +108,7 @@ fn buscar_en_servidor<L: crate::servidor::pat::Llavero>(
 }
 
 /// Rehace la copia local de `miembros` del `proyecto` en `db` (#241).
-fn refrescar_equipo<L: crate::servidor::pat::Llavero>(
+pub(crate) fn refrescar_equipo<L: crate::servidor::pat::Llavero>(
     cliente: &ClienteSupabase<L>,
     db: &crate::db::Db,
     proyecto: &str,

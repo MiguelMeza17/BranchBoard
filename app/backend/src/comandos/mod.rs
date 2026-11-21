@@ -13,6 +13,7 @@ pub mod eventos;
 pub mod notificaciones;
 pub mod proyecto;
 pub mod proyecto_local;
+pub mod proyecto_servidor;
 pub mod sistema;
 pub mod sprints;
 pub mod tareas;

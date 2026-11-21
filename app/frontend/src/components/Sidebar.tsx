@@ -8,6 +8,7 @@ import type { Rol, WorkspaceUnityVC } from '../types';
 import * as fx from '../data/fixtures';
 import { Icono } from './Icono';
 import { useVentanasProyecto } from './SinProyecto';
+import { useProyectosDelServidor } from './ProyectosDelServidor';
 import logoB from '../assets/logo-b.png';
 
 interface NavItem {
@@ -286,6 +287,8 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
   const workspaceActual = useStore((s) => s.workspaceActual);
   const showToast = useStore((s) => s.showToast);
   const [menuProyecto, setMenuProyecto] = useState(false);
+  // Proyectos sin Unity VC de la cuenta en el servidor (#240): también son "Tus proyectos".
+  const delServidor = useProyectosDelServidor(menuProyecto);
   const [confirmarSalir, setConfirmarSalir] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -498,6 +501,43 @@ export function Sidebar({ colapsado, onToggle, cajon = false, abierto = false }:
                   </button>
                 );
               })}
+            {delServidor.map((p) => {
+              const actual = p.nombre === proyectoActual;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={actual}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition ${
+                    actual ? 'cursor-default bg-primary-soft text-text' : 'text-text hover:bg-surface-3'
+                  }`}
+                  onClick={async () => {
+                    setMenuProyecto(false);
+                    try {
+                      const res = await api.abrirProyectoServidor(p.id, () => {
+                        throw new Error('Solo en la app de escritorio');
+                      });
+                      if (res.estado !== 'dentro') {
+                        showToast(`Ya no estás en el equipo de ${p.nombre}`, 'info');
+                        return;
+                      }
+                      setEmail(res.email);
+                      setRolActual(res.rol);
+                      entrarAProyecto(res.proyecto, res.proyecto, '');
+                      showToast(`Cambiaste al proyecto ${res.proyecto}`);
+                    } catch (e) {
+                      showToast(mensajeDeError(e), 'danger');
+                    }
+                  }}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{p.nombre}</span>
+                    <span className="block truncate text-[10px] text-faint">En el servidor · {p.rol}</span>
+                  </span>
+                  {actual && <span className="shrink-0 text-[10px] text-primary">actual</span>}
+                </button>
+              );
+            })}
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary transition hover:bg-surface-3"

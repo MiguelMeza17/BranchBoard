@@ -17,6 +17,7 @@ import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { EntradaClave } from './EntradaClave';
 import { Modal } from './Modal';
+import { CrearProyectoEnServidor, ListaProyectosDelServidor } from './ProyectosDelServidor';
 import { Icono, IconoEnLinea } from './Icono';
 
 // Entrar a BranchBoard sin proyecto: tras iniciar sesión con la cuenta de BranchBoard no se crea nada ni se
@@ -225,6 +226,13 @@ function ModalCrearLocal({ open, onClose }: { open: boolean; onClose: () => void
       }
     >
       <div className="space-y-3 text-sm">
+        <CrearProyectoEnServidor
+          ocupado={creando}
+          alEntrar={(entrada) => {
+            onClose();
+            terminarEntradaLocal(entrada, '');
+          }}
+        />
         {enTauri() && (
           <label className="block">
             <span className="mb-1 block text-xs text-faint">Dónde guardarlo</span>
@@ -537,6 +545,14 @@ function ModalCargarProyecto({ open, onClose }: { open: boolean; onClose: () => 
         </div>
       ) : (
         <div className="space-y-5 text-sm">
+          <ListaProyectosDelServidor
+            abierta={open}
+            titulo={titulo}
+            alEntrar={(entrada) => {
+              cerrar();
+              terminarEntradaLocal(entrada, '');
+            }}
+          />
           <div>
             {titulo('De Unity VC')}
             {!cmSesionActiva ? (
