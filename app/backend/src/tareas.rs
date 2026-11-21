@@ -9468,6 +9468,92 @@ mod tests {
         });
     }
 
+    /// #283: ramas hijas de `/main/dev` creadas a mano (como desde Plastic) se vuelven
+    /// tareas: la primera vuelta solo las ve, la segunda crea la tarea general (En
+    /// producción, asignada a su dueño) y la subtarea de su rama hija; las ramas base
+    /// ya unidas a dev (`T-101`, `T-102`, `T-104`) entran terminadas y `T-103` en
+    /// producción; B las recibe iguales y otra vuelta no duplica nada.
+    #[test]
+    #[ignore = "usa Unity VC de verdad: correr a mano con BB_PRUEBA_ORG y BB_PRUEBA_REPO"]
+    fn entorno_real_ramas_existentes() {
+        use crate::cm::Comando;
+        use crate::ramas_existentes::revisar_en;
+
+        correr_entorno_real("283", |env| {
+            let sufijo = chrono::Local::now().format("%H%M%S").to_string();
+            let grande = format!("/main/dev/PruebaRamas{sufijo}");
+            let mini = format!("{grande}/MiniTarea");
+            for rama in [&grande, &mini] {
+                Comando::cm()
+                    .args(["branch", "create"])
+                    .arg(format!("br:{rama}@{}", env.repo_cm))
+                    .exigir_exito(&env.estado_a)
+                    .unwrap();
+                env.ramas_creadas.push(rama.clone());
+            }
+            let admin = env.admin_fila.email.clone();
+            let de_rama = |db: &Db, rama: &str| {
+                db_tareas::listar(db.conexion())
+                    .unwrap()
+                    .into_iter()
+                    .find(|t| {
+                        t.rama_asociada
+                            .as_deref()
+                            .is_some_and(|r| r.eq_ignore_ascii_case(rama))
+                    })
+            };
+
+            assert!(revisar_en(&env.estado_a, &admin).unwrap().is_empty());
+            let creadas = revisar_en(&env.estado_a, &admin).unwrap();
+            assert!(creadas.len() >= 2, "{creadas:?}");
+
+            let (g, m) = env
+                .estado_a
+                .con_db(|db| Ok((de_rama(db, &grande).unwrap(), de_rama(db, &mini).unwrap())))
+                .unwrap();
+            assert_eq!(g.titulo, format!("Prueba Ramas {sufijo}"));
+            assert_eq!(g.estado, EstadoTarea::EnProduccion);
+            assert_eq!(g.tarea_padre_id, None);
+            assert_eq!(g.asignado_a.as_deref(), Some(admin.as_str()));
+            assert_eq!(m.titulo, "Mini Tarea");
+            assert_eq!(m.tarea_padre_id.as_deref(), Some(g.id.as_str()));
+            assert_eq!(m.estado, EstadoTarea::EnProduccion);
+
+            let estado_base = |rama: &str| {
+                env.estado_a
+                    .con_db(|db| Ok(de_rama(db, rama).map(|t| t.estado)))
+                    .unwrap()
+            };
+            for rama in ["/main/dev/T-101", "/main/dev/T-102", "/main/dev/T-104"] {
+                assert_eq!(estado_base(rama), Some(EstadoTarea::Terminada), "{rama}");
+            }
+            assert_eq!(
+                estado_base("/main/dev/T-103"),
+                Some(EstadoTarea::EnProduccion)
+            );
+
+            // Otra vuelta no duplica; B recibe lo mismo.
+            assert!(revisar_en(&env.estado_a, &admin).unwrap().is_empty());
+            env.sincronizar_b();
+            let gb = de_rama(&env.db_b, &grande).unwrap();
+            let mb = de_rama(&env.db_b, &mini).unwrap();
+            assert_eq!(
+                (gb.id, gb.estado),
+                (g.id.clone(), EstadoTarea::EnProduccion)
+            );
+            assert_eq!(mb.tarea_padre_id.as_deref(), Some(g.id.as_str()));
+            let total_a = env
+                .estado_a
+                .con_db(|db| db_tareas::listar(db.conexion()))
+                .unwrap()
+                .len();
+            assert_eq!(
+                db_tareas::listar(env.db_b.conexion()).unwrap().len(),
+                total_a
+            );
+        });
+    }
+
     /// #225: check-ins directos en `/main/dev` (como desde Plastic) → tarea roja,
     /// sin duplicar, con los check-ins siguientes sumados; se replica en B; se
     /// puede mandar a revisión pero no autorizar; el traslado la saca de rojo, deja

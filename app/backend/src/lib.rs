@@ -36,6 +36,7 @@ pub mod proyecto;
 pub mod proyecto_local;
 pub mod proyecto_servidor;
 pub mod ramas;
+pub mod ramas_existentes;
 pub mod servidor;
 pub mod sprints;
 pub mod supabase;
@@ -60,7 +61,7 @@ const INTERVALO_POLLING_SEGUNDOS: u64 = 15;
 fn disparar_polling(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let estado = app.state::<estado::AppState>();
-        match comandos_eventos::revisar_actualizaciones_en(&estado, None) {
+        match comandos_eventos::revisar_todo_en(&estado) {
             Ok(resumen) => {
                 if resumen.hubo_cambios() {
                     let _ = app.emit(comandos_eventos::EVENTO_UNITY_ACTUALIZADO, &resumen);
