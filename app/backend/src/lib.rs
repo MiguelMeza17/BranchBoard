@@ -72,11 +72,20 @@ fn disparar_polling(app: tauri::AppHandle) {
             }
             Err(_) => {}
         }
-        // Sube lo que espera en la bandeja de salida (#238). Sin proyecto abierto no hay nada que subir.
-        if let Ok(bandeja) = comandos_eventos::subir_bandeja_en(&estado) {
-            let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &bandeja);
-        }
+        sincronizar_servidor(&app);
     });
+}
+
+/// Una vuelta con el servidor de Supabase: sube la bandeja de salida (#238) y baja y aplica lo nuevo
+/// (#239). Sin proyecto abierto, o con otra sincronización en curso, no hace nada.
+fn sincronizar_servidor(app: &tauri::AppHandle) {
+    let estado = app.state::<estado::AppState>();
+    if let Ok(Some(resumen)) = comandos_eventos::sincronizar_con_servidor_en(&estado) {
+        let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &resumen.bandeja);
+        if resumen.recibidos.hubo_cambios() {
+            let _ = app.emit(comandos_eventos::EVENTO_EVENTOS_RECIBIDOS, &resumen.recibidos);
+        }
+    }
 }
 
 /// Con una operación de `cm` corriendo, la ventana no se cierra: se cancela el
@@ -108,6 +117,14 @@ pub fn run() {
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(INTERVALO_POLLING_SEGUNDOS));
                 disparar_polling(handle.clone());
+            });
+            // El servidor se consulta más seguido que Unity VC (decisión de #239: ~5 s).
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(
+                    comandos_eventos::INTERVALO_SERVIDOR_SEGUNDOS,
+                ));
+                sincronizar_servidor(&handle);
             });
             Ok(())
         })

@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 12;
+pub const VERSION_ESQUEMA: u32 = 13;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -258,6 +258,20 @@ fn migraciones() -> Vec<String> {
             creado_en         TEXT NOT NULL,
             motivo            TEXT NOT NULL,
             rechazado_en      TEXT NOT NULL
+        ) STRICT;"
+            .to_string(),
+        // 13 — copia local de los eventos del servidor de Supabase (#239), tal como llegan de la tabla
+        // `eventos`: `orden` es el del servidor (lo que se pide la próxima vez: "lo nuevo desde X") y
+        // `usuario` el correo del autor. Qué eventos ya se aplicaron sigue en `eventos_aplicados`.
+        "CREATE TABLE eventos_servidor (
+            orden             INTEGER PRIMARY KEY,
+            id                TEXT NOT NULL UNIQUE,
+            proyecto_servidor TEXT NOT NULL,
+            tipo              TEXT NOT NULL,
+            tarea_id          TEXT,
+            usuario           TEXT NOT NULL,
+            payload           TEXT NOT NULL,
+            recibido_en       TEXT NOT NULL
         ) STRICT;"
             .to_string(),
     ]

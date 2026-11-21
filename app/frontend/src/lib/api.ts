@@ -670,6 +670,17 @@ export const api = {
       })
     ),
 
+  /**
+   * Escucha los cambios del equipo que llegaron del servidor y ya se aplicaron (#239). El backend
+   * consulta el servidor cada 5 s y solo avisa cuando aplicó algo.
+   */
+  alEventosRecibidos: async (
+    alRecibir: (resumen: ResumenSincronizacion) => void
+  ): Promise<() => void> => {
+    if (!enTauri()) return () => undefined;
+    return listen<ResumenSincronizacion>('eventos-recibidos', (e) => alRecibir(e.payload));
+  },
+
   /** Escucha actualizaciones periódicas detectadas en Unity VC (#104, #112). */
   alUnityActualizado: async (alActualizar: (resumen: ResumenPolling) => void): Promise<() => void> => {
     if (!enTauri()) return () => undefined;
