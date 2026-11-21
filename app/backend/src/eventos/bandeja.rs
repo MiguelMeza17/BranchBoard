@@ -8,7 +8,12 @@
 //!
 //! - **Sin duplicar**: el id del evento es la clave en el servidor; si una subida llegó pero se perdió la
 //!   respuesta, al reintentar el servidor ignora el repetido.
-//! - **En orden**: se suben por orden de llegada y, si un lote falla, se para ahí (no se saltan eventos).
+//! - **En orden**: se suben por orden de llegada y, si un lote falla por la red o la sesión, se para ahí
+//!   (no se saltan eventos).
+//! - **Rechazados**: si el servidor rechaza un evento de forma definitiva (sin permiso por el rol, #247, o
+//!   una regla del servidor), reintentarlo no sirve. El lote se reenvía de a uno, el rechazado se aparta a
+//!   `bandeja_rechazados` (con el motivo) y los demás siguen subiendo. El cambio ya está aplicado en el
+//!   SQLite de este equipo pero no en el servidor.
 //! - **Qué no sube**: los eventos de roles ([`super::TIPOS_FIRMADOS`]): en el servidor los roles los cambian
 //!   solo sus funciones (`agregar_miembro`, `cambiar_rol`…, #234/#241), no los eventos.
 //! - **Solo proyectos vinculados**: si el proyecto no tiene `proyecto_servidor_id` en su configuración
@@ -35,8 +40,21 @@ pub struct EstadoBandeja {
     pub pendientes: u64,
     /// Eventos subidos en esta vuelta.
     pub subidos: u64,
+    /// Eventos que el servidor rechazó y quedaron apartados (en total, no solo en esta vuelta).
+    pub rechazados: u64,
     /// Por qué se paró, si quedaron pendientes por un error (sin internet, sin sesión…).
     pub error: Option<String>,
+}
+
+/// `true` si reintentar el envío no va a servir: el servidor dijo que no (permiso, regla, datos).
+fn es_definitivo(e: &Error) -> bool {
+    match e {
+        Error::SinPermiso | Error::Validacion(_) => true,
+        Error::Servidor(m) => ["HTTP 400", "HTTP 403", "HTTP 409", "HTTP 422"]
+            .iter()
+            .any(|p| m.starts_with(p)),
+        _ => false,
+    }
 }
 
 /// Guarda `evento` (con id `id`) en la bandeja si el proyecto está vinculado al servidor. Devuelve si lo
@@ -73,6 +91,30 @@ pub fn pendientes(c: &Connection) -> Resultado<u64> {
     Ok(c.query_row("SELECT COUNT(*) FROM bandeja_salida", [], |f| {
         f.get::<_, i64>(0)
     })? as u64)
+}
+
+/// Cuántos eventos rechazó el servidor y quedaron apartados.
+pub fn rechazados(c: &Connection) -> Resultado<u64> {
+    Ok(
+        c.query_row("SELECT COUNT(*) FROM bandeja_rechazados", [], |f| {
+            f.get::<_, i64>(0)
+        })? as u64,
+    )
+}
+
+/// Mueve el evento `id` de la bandeja a `bandeja_rechazados` con el motivo.
+fn apartar(c: &Connection, id: &str, motivo: &str) -> Resultado<()> {
+    let tx = c.unchecked_transaction()?;
+    tx.execute(
+        "INSERT OR REPLACE INTO bandeja_rechazados
+            (id, proyecto_servidor, tipo, tarea_id, payload, creado_en, motivo, rechazado_en)
+         SELECT id, proyecto_servidor, tipo, tarea_id, payload, creado_en, ?2, ?3
+         FROM bandeja_salida WHERE id = ?1",
+        params![id, motivo, crate::modelo::ahora_iso()],
+    )?;
+    tx.execute("DELETE FROM bandeja_salida WHERE id = ?1", [id])?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Los primeros `max` pendientes, en orden, como filas para `POST /rest/v1/eventos`.
@@ -146,6 +188,37 @@ pub fn subir(
                 con_db(&mut |c| borrar(c, &ids))?;
                 estado.subidos += ids.len() as u64;
             }
+            // Un lote se acepta o se rechaza entero: de a uno se sabe cuál fue y los demás pasan.
+            Err(e) if es_definitivo(&e) && ids.len() == 1 => {
+                let motivo = e.to_string();
+                con_db(&mut |c| apartar(c, &ids[0], &motivo))?;
+            }
+            Err(e) if es_definitivo(&e) => {
+                let filas = filas.as_array().cloned().unwrap_or_default();
+                let mut parar = false;
+                for (id, fila) in ids.iter().zip(filas) {
+                    match enviar(&Value::Array(vec![fila])) {
+                        Ok(()) => {
+                            con_db(&mut |c| borrar(c, std::slice::from_ref(id)))?;
+                            estado.subidos += 1;
+                        }
+                        Err(e) if es_definitivo(&e) => {
+                            let motivo = e.to_string();
+                            con_db(&mut |c| apartar(c, id, &motivo))?;
+                        }
+                        Err(e) => {
+                            let mensaje = e.to_string();
+                            con_db(&mut |c| anotar_fallo(c, std::slice::from_ref(id), &mensaje))?;
+                            estado.error = Some(mensaje);
+                            parar = true;
+                            break;
+                        }
+                    }
+                }
+                if parar {
+                    break;
+                }
+            }
             Err(e) => {
                 let mensaje = e.to_string();
                 con_db(&mut |c| anotar_fallo(c, &ids, &mensaje))?;
@@ -156,6 +229,7 @@ pub fn subir(
     }
     con_db(&mut |c| {
         estado.pendientes = pendientes(c)?;
+        estado.rechazados = rechazados(c)?;
         Ok(())
     })?;
     Ok(estado)
@@ -235,6 +309,7 @@ mod tests {
             EstadoBandeja {
                 pendientes: 0,
                 subidos: (TAMANO_LOTE + 3) as u64,
+                rechazados: 0,
                 error: None
             }
         );
@@ -307,6 +382,101 @@ mod tests {
             (estado.subidos, estado.pendientes),
             (TAMANO_LOTE as u64, TAMANO_LOTE as u64)
         );
+    }
+
+    /// Lo que pasó con un evento al enviarlo de a uno: el id de la primera fila del lote.
+    fn primer_id(filas: &Value) -> String {
+        filas[0]["id"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn un_evento_rechazado_por_el_rol_se_aparta_y_los_demas_suben() {
+        let db = base();
+        let c = db.conexion();
+        vincular(c);
+        for i in 0..5 {
+            encolar(c, &format!("e{i}"), &evento("crear_tarea")).unwrap();
+        }
+        let subidos_al_servidor = RefCell::new(Vec::<String>::new());
+        let estado = subir(subir_en(c), |filas| {
+            let lote: Vec<String> = filas
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["id"].as_str().unwrap().to_string())
+                .collect();
+            // El servidor rechaza todo lote que traiga e2 (como la regla de #247).
+            if lote.iter().any(|id| id == "e2") {
+                return Err(Error::SinPermiso);
+            }
+            subidos_al_servidor.borrow_mut().extend(lote);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            subidos_al_servidor.into_inner(),
+            vec!["e0", "e1", "e3", "e4"],
+            "los demás suben en orden"
+        );
+        assert_eq!(
+            (estado.subidos, estado.pendientes, estado.rechazados),
+            (4, 0, 1)
+        );
+        assert_eq!(estado.error, None);
+        let (tipo, motivo): (String, String) = c
+            .query_row(
+                "SELECT tipo, motivo FROM bandeja_rechazados WHERE id = 'e2'",
+                [],
+                |f| Ok((f.get(0)?, f.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(tipo, "crear_tarea");
+        assert_eq!(motivo, Error::SinPermiso.to_string());
+
+        // La vuelta siguiente no lo reintenta.
+        let estado = subir(subir_en(c), |_| panic!("no queda nada que subir")).unwrap();
+        assert_eq!((estado.pendientes, estado.rechazados), (0, 1));
+    }
+
+    #[test]
+    fn un_solo_evento_rechazado_se_aparta_sin_reenviarlo() {
+        let db = base();
+        let c = db.conexion();
+        vincular(c);
+        encolar(c, "e1", &evento("aprobar_tarea")).unwrap();
+        let envios = RefCell::new(Vec::<String>::new());
+        let estado = subir(subir_en(c), |filas| {
+            envios.borrow_mut().push(primer_id(filas));
+            Err(Error::Validacion("regla del servidor".into()))
+        })
+        .unwrap();
+        assert_eq!(envios.into_inner(), vec!["e1"]);
+        assert_eq!((estado.pendientes, estado.rechazados), (0, 1));
+    }
+
+    #[test]
+    fn si_se_cae_la_red_al_reenviar_de_a_uno_se_para_ahi() {
+        let db = base();
+        let c = db.conexion();
+        vincular(c);
+        for i in 0..3 {
+            encolar(c, &format!("e{i}"), &evento("crear_tarea")).unwrap();
+        }
+        let llamadas = RefCell::new(0);
+        let estado = subir(subir_en(c), |_| {
+            *llamadas.borrow_mut() += 1;
+            match *llamadas.borrow() {
+                1 => Err(Error::SinPermiso),          // el lote entero
+                2 => Ok(()),                          // e0
+                _ => Err(Error::ServidorSinConexion), // e1: se cae la red
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            (estado.subidos, estado.pendientes, estado.rechazados),
+            (1, 2, 0)
+        );
+        assert!(estado.error.is_some());
     }
 
     #[test]
@@ -442,5 +612,76 @@ mod tests {
 
         servidor.cerrar_sesion().unwrap();
         println!("bandeja verificada en el proyecto {proyecto} de branchboard-pruebas ({correo})");
+    }
+    /// Contra branchboard-pruebas con las reglas de #247: un evento que el servidor rechaza por el rol
+    /// (`cambiar_rol`, que no acepta de nadie; aquí metido a mano como si viniera de una versión vieja de la
+    /// app) se aparta, y los de antes y después suben. Deja la cuenta y el proyecto "Prueba rechazados
+    /// #238": borrarlos después.
+    #[test]
+    #[ignore = "toca branchboard-pruebas y la sesión real de Unity VC: correr a mano con --ignored"]
+    fn entorno_real_un_rechazado_por_el_servidor_no_frena_a_los_demas() {
+        use crate::supabase::{entorno::PRUEBAS, login_unity, ClienteSupabase};
+
+        let estado = crate::estado::AppState::default();
+        let correo = crate::cm::lectura::whoami(&estado).expect("sin sesión de cm");
+        let carpeta = crate::cm::sesion::carpeta_config_plastic().unwrap();
+        let servidor = ClienteSupabase::new(&PRUEBAS, LlaveroCompartido::default());
+        login_unity::asegurar_sesion_servidor(
+            &servidor,
+            &carpeta,
+            &correo,
+            crate::servidor::region::webserver,
+            |org| login_unity::renovar_token_cm(&estado, org),
+        )
+        .unwrap();
+        let proyecto = servidor
+            .llamar(
+                "POST",
+                "/rest/v1/rpc/crear_proyecto",
+                Some(&serde_json::json!({ "p_nombre": "Prueba rechazados #238" })),
+            )
+            .unwrap();
+        let proyecto = proyecto.as_str().unwrap().to_string();
+        let db = base();
+        let c = db.conexion();
+        configuracion::guardar(
+            c,
+            CLAVE_PROYECTO_SERVIDOR,
+            &proyecto,
+            &correo,
+            "2026-11-21T00:00:00.000Z",
+        )
+        .unwrap();
+
+        encolar(c, "rechazo-238-a", &evento("crear_tarea")).unwrap();
+        c.execute(
+            "INSERT INTO bandeja_salida (id, proyecto_servidor, tipo, payload, creado_en)
+             VALUES ('rechazo-238-b', ?1, 'cambiar_rol', '{}', '2026-11-21T00:00:00.000Z')",
+            [&proyecto],
+        )
+        .unwrap();
+        encolar(c, "rechazo-238-c", &evento("crear_tarea")).unwrap();
+
+        let r = subir(subir_en(c), |f| servidor.insertar_eventos(f)).unwrap();
+        assert_eq!(
+            (r.subidos, r.pendientes, r.rechazados, r.error),
+            (2, 0, 1, None)
+        );
+        let motivo: String = c
+            .query_row(
+                "SELECT motivo FROM bandeja_rechazados WHERE id = 'rechazo-238-b'",
+                [],
+                |f| f.get(0),
+            )
+            .unwrap();
+        assert_eq!(motivo, Error::SinPermiso.to_string());
+
+        let ruta = format!("/rest/v1/eventos?select=id&proyecto_id=eq.{proyecto}&order=orden");
+        let filas = servidor.llamar("GET", &ruta, None).unwrap();
+        assert_eq!(
+            filas,
+            serde_json::json!([{ "id": "rechazo-238-a" }, { "id": "rechazo-238-c" }])
+        );
+        servidor.cerrar_sesion().unwrap();
     }
 }

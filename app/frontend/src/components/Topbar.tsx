@@ -16,6 +16,7 @@ import { Icono } from './Icono';
  */
 function CambiosPendientes() {
   const [pendientes, setPendientes] = useState(0);
+  const [rechazados, setRechazados] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +27,7 @@ function CambiosPendientes() {
       .catch(() => {});
     const dejar = api.alBandejaSalida((estado) => {
       setPendientes(estado.pendientes);
+      setRechazados(estado.rechazados);
       setError(estado.error);
     });
     return () => {
@@ -34,17 +36,33 @@ function CambiosPendientes() {
     };
   }, []);
 
-  if (pendientes === 0) return null;
-  const texto = `${pendientes} ${pendientes === 1 ? 'cambio pendiente' : 'cambios pendientes'} de enviar`;
+  if (pendientes === 0 && rechazados === 0) return null;
+  const partes = [
+    pendientes > 0 &&
+      `${pendientes} ${pendientes === 1 ? 'cambio pendiente' : 'cambios pendientes'} de enviar`,
+    rechazados > 0 &&
+      `${rechazados} ${rechazados === 1 ? 'cambio rechazado' : 'cambios rechazados'} por el servidor`,
+  ].filter(Boolean);
+  const texto = partes.join(' · ');
+  const detalle = [
+    pendientes > 0 && (error ? `Pendientes: ${error}` : 'Los pendientes se envían solos cuando hay conexión.'),
+    rechazados > 0 &&
+      'Los rechazados no se reintentan (por ejemplo, tu rol ya no permite ese cambio): los demás ven el proyecto sin ellos.',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
     <span
       className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-muted"
-      title={error ? `${texto}: ${error}` : `${texto}. Se envían solos cuando hay conexión.`}
+      title={`${texto}. ${detalle}`}
       role="status"
     >
-      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${rechazados > 0 ? 'bg-red-400' : 'bg-amber-400'}`}
+        aria-hidden="true"
+      />
       <span className="hidden sm:inline">{texto}</span>
-      <span className="sm:hidden">{pendientes}</span>
+      <span className="sm:hidden">{pendientes + rechazados}</span>
     </span>
   );
 }

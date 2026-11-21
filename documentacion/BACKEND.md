@@ -187,7 +187,7 @@ Migraciones `20261121000000_reglas_rls_y_roles.sql` y `20261121000100_ajustes_se
 | Cambiar un rol | `rpc/cambiar_rol(p_proyecto, p_usuario, p_rol)` |
 | Quitar a alguien (o salirse) | `rpc/quitar_miembro(p_proyecto, p_usuario)` |
 
-**Ojo con la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red y reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). Hoy la bandeja, ante un lote que falla "sin permiso", se para y no deja pasar a los siguientes; y como manda lotes de 50, un solo evento rechazado tumba el lote entero. **Pendiente**: que la bandeja aparte el evento rechazado en vez de quedarse atascada.
+**Ojo con la bandeja de salida (#238)**: un `42501` al subir un evento no es un fallo de red y reintentarlo no sirve (pasa si a alguien le bajaron el rol mientras tenía eventos esperando). Hoy la bandeja, ante un lote que falla "sin permiso", se para y no deja pasar a los siguientes; y como manda lotes de 50, un solo evento rechazado tumba el lote entero. **Resuelto (2026-11-21)**: la bandeja aparta el evento rechazado y sigue con los demás (ver [Bandeja de salida](#bandeja-de-salida-238)).
 
 Las funciones auxiliares que usan las reglas (`es_miembro`, `mi_rol`, `comparte_proyecto`, `puede_asignar`, `puede_quitar`, `exigir_otro_administrador`, `puede_publicar`) y los triggers viven en el esquema **`privado`**, que la API no expone. Errores: `42501` = sin permiso; `P0001` = regla de negocio (último Administrador, persona sin cuenta, ya está en el proyecto), con el mensaje en español.
 
@@ -276,12 +276,14 @@ cargo test --no-default-features --lib supabase::cliente -- --ignored --nocaptur
 - **Subida**: el temporizador de 15 s (`disparar_polling` en `lib.rs`) llama a `subir_bandeja_en`.
   - Manda lotes de 50 en orden de llegada a `POST /rest/v1/eventos?on_conflict=id` con `Prefer: resolution=ignore-duplicates` (`ClienteSupabase::insertar_eventos`). Un evento que ya estaba (la respuesta se perdió y se reintenta) se ignora, sin error ni duplicado.
   - Al confirmarse, se borra de la bandeja.
-  - Si un lote falla (sin internet, sin sesión, sin permiso), se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
+  - Si un lote falla por la red o la sesión, se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
+  - **Rechazo definitivo** (`SinPermiso` por la regla de #247, `Validacion` por una regla del servidor, o HTTP 400/403/409/422): reintentar no sirve. El lote se reenvía de a uno. El rechazado pasa a la tabla local `bandeja_rechazados` (migración 12, con `motivo` y `rechazado_en`) y los demás siguen subiendo. Pasa, por ejemplo, si a alguien le bajaron el rol mientras tenía cambios esperando. Ese cambio queda aplicado en el SQLite de ese equipo pero no en el servidor.
   - La base solo se presta para leer y borrar, nunca durante la red.
 - **Qué manda la app**: `id, proyecto_id, tipo, tarea_id, payload, creado_en_app`. El servidor pone `autor` (la cuenta de la sesión), `orden` y `recibido_en`.
-- **Interfaz**: comando `eventos_por_subir()` (libre; 0 sin proyecto abierto) y evento Tauri `bandeja-salida` (`{ pendientes, subidos, error }`) después de cada intento. El Topbar muestra **"N cambios pendientes de enviar"** mientras haya alguno; al pasar el mouse dice el motivo.
+- **Interfaz**: comando `eventos_por_subir()` (libre; 0 sin proyecto abierto) y evento Tauri `bandeja-salida` (`{ pendientes, subidos, rechazados, error }`) después de cada intento. El Topbar muestra **"N cambios pendientes de enviar"** y/o **"N cambios rechazados por el servidor"** mientras haya alguno; al pasar el mouse dice el motivo.
 - **Pruebas**:
-  - 6 unitarias: sin vincular no encola; roles no; sin duplicar; orden y lotes; sin red esperan; un lote que falla frena; sobrevive a cerrar.
+  - 9 unitarias: sin vincular no encola; roles no; sin duplicar; orden y lotes; sin red esperan; un lote que falla frena; sobrevive a cerrar; un rechazado se aparta y los demás suben en orden; un rechazado solo no se reenvía; si se cae la red al reenviar de a uno, se para ahí.
+  - Real, `eventos::bandeja::…::entorno_real_un_rechazado_por_el_servidor_no_frena_a_los_demas`: con las reglas de #247, un `cambiar_rol` metido a mano entre dos cambios (el servidor no lo acepta de nadie) se aparta con `SinPermiso` y los otros dos suben. Deja el proyecto "Prueba rechazados #238" y la cuenta: borrarlos después.
   - Real, `eventos::bandeja::…::entorno_real_sin_red_esperan_y_al_volver_se_suben`: contra branchboard-pruebas, entrando con la sesión de Unity VC del equipo (#237). Crea un proyecto en el servidor, vincula una base local, publica dos cambios, y sin red esperan (dirección que no resuelve, misma sesión). Al volver la red suben en orden con el autor de la sesión, y reenviar uno no duplica. Deja la cuenta y el proyecto "Prueba bandeja #238": borrarlos después con `delete from public.proyectos where nombre = 'Prueba bandeja #238'` y `delete from auth.users where lower(email) = '<correo>'`.
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
