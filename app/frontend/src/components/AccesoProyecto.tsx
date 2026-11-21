@@ -88,7 +88,6 @@ export function AccesoProyecto() {
     }
     const u = usuarios.find((x) => x.email === correo);
     if (!u) return { ...base, estado: 'no_registrado' };
-    if (!u.firma) return { ...base, estado: 'pendiente' };
     return { ...base, estado: 'dentro', rol: u.rol, rol_verificado: true, configurado_ahora: false };
   };
 
@@ -141,7 +140,7 @@ export function AccesoProyecto() {
       useStore.setState((s) => ({
         usuarios: [
           ...s.usuarios,
-          { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '', firma: 'backend', firmado_en: null },
+          { email: entrada.email, nombre, apellido, rol: entrada.rol, fecha_alta: '' },
         ],
       }));
     }
@@ -356,7 +355,7 @@ export function AccesoProyecto() {
           >
             {usuarios.map((u) => (
               <option key={u.email} value={u.email} className="bg-surface text-text">
-                {u.email} ({u.firma ? u.rol : 'sin confirmar'})
+                {u.email} ({u.rol})
               </option>
             ))}
             <option value={fx.CORREO_NO_REGISTRADO} className="bg-surface text-text">

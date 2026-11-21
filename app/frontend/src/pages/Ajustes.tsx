@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
-import {
-  esLiderOAdmin,
-  puedeCompactarEventos,
-  puedeEliminarProyecto,
-  puedeRestaurarBackup,
-} from '../lib/permisos';
+import { esLiderOAdmin, puedeEliminarProyecto, puedeRestaurarBackup } from '../lib/permisos';
 import { PageHeader, EmptyState } from '../components/primitives';
 import { Seccion } from '../components/Seccion';
 import { ConfirmLock } from '../components/ConfirmLock';
@@ -40,8 +35,8 @@ export function Ajustes() {
 }
 
 // Exportar proyecto (solo Administrador, proyectos sin Unity VC): guarda todo el proyecto en un archivo
-// `.bbproyecto` que se abre en otro equipo con "Ingresar a un proyecto existente" → "Importar". La llave
-// del Administrador va cifrada con la contraseña del proyecto.
+// `.bbproyecto` que se abre en otro equipo con "Ingresar a un proyecto existente" → "Importar". Sin
+// contraseña desde #243.
 function SeccionExportarProyecto({ carpeta }: { carpeta: string }) {
   const showToast = useStore((s) => s.showToast);
   const [exportando, setExportando] = useState(false);
@@ -149,10 +144,9 @@ function SeccionActualizar() {
 }
 
 // Carpeta compartida (Drive/OneDrive) del proyecto en esta máquina: todos los roles. Se elige al entrar
-// por primera vez; aquí se ve y se cambia (ej. si se movió la carpeta de OneDrive). El Administrador
-// además puede compactar en un snapshot los eventos de más de 30 días (#94).
+// por primera vez; aquí se ve y se cambia (ej. si se movió la carpeta de OneDrive). La compactación con
+// snapshots (#94) se quitó con las firmas en #243.
 function SeccionCarpetaCompartida() {
-  const user = useStore((s) => s.currentUser());
   const proyecto = useStore((s) => s.proyectoActual);
   const carpetasCompartidas = useStore((s) => s.carpetasCompartidas);
   const setCarpetaCompartida = useStore((s) => s.setCarpetaCompartida);
@@ -161,8 +155,6 @@ function SeccionCarpetaCompartida() {
   const [ruta, setRuta] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
-  const [confirmarCompactar, setConfirmarCompactar] = useState(false);
-  const [compactando, setCompactando] = useState(false);
 
   useEffect(() => {
     api
@@ -187,22 +179,6 @@ function SeccionCarpetaCompartida() {
     setGuardando(false);
   };
 
-  const compactar = async () => {
-    setConfirmarCompactar(false);
-    setCompactando(true);
-    try {
-      const r = await api.compactarEventos();
-      if (r.archivo) {
-        showToast(`Snapshot ${r.archivo} creado (${r.compactados} eventos compactados)`);
-      } else {
-        showToast('No hay eventos de más de 30 días por compactar', 'info');
-      }
-    } catch (e) {
-      showToast(mensajeDeError(e), 'danger');
-    }
-    setCompactando(false);
-  };
-
   return (
     <Seccion title="Carpeta compartida">
       <div className="space-y-2 text-sm">
@@ -219,18 +195,7 @@ function SeccionCarpetaCompartida() {
           titulo={`Carpeta compartida de ${proyecto}`}
         />
         {error && <p className="text-[11px] text-red-300">{error}</p>}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {puedeCompactarEventos(user.rol) ? (
-            <button
-              className="btn-outline btn-sm"
-              disabled={compactando || !actual}
-              onClick={() => setConfirmarCompactar(true)}
-            >
-              {compactando ? 'Compactando…' : 'Compactar eventos (+30 días)'}
-            </button>
-          ) : (
-            <span />
-          )}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             className="btn-outline btn-sm"
             disabled={guardando || !ruta.trim() || ruta.trim() === actual}
@@ -240,18 +205,6 @@ function SeccionCarpetaCompartida() {
           </button>
         </div>
       </div>
-      {puedeCompactarEventos(user.rol) && (
-        <ConfirmLock
-          open={confirmarCompactar}
-          onClose={() => setConfirmarCompactar(false)}
-          onConfirm={() => void compactar()}
-          title="Compactar eventos"
-          tone="primary"
-          palabra="compactar"
-          confirmLabel="Compactar eventos"
-          description="Confirma que el equipo se sincronizó hace poco antes de compactar los eventos de más de 30 días."
-        />
-      )}
     </Seccion>
   );
 }

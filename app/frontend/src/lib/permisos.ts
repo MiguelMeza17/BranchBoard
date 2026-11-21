@@ -7,7 +7,6 @@ export const esLiderOAdmin = (rol: Rol) => rol === 'Administrador' || rol === 'L
 
 export const puedeEliminarProyecto = (rol: Rol) => rol === 'Administrador';
 export const puedeRestaurarBackup = (rol: Rol) => rol === 'Administrador';
-export const puedeCompactarEventos = (rol: Rol) => rol === 'Administrador';
 // Roles a los que `actor` puede cambiar a `objetivo` (vacío = no puede cambiarlo). El Administrador
 // da cualquier rol, también Administrador (puede haber varios, #241); el servidor no deja degradar ni
 // quitar al último. El Líder solo mueve entre Desarrollador, Tester y Colaborador externo.

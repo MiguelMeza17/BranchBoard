@@ -5796,7 +5796,8 @@ mod tests {
             })
             .unwrap();
             println!("B sincroniza tareas desde OneDrive: {sync_b:?}");
-            assert_eq!(sync_b.aplicados, 5);
+            // Las 3 altas de tareas (desde #243 los usuarios ya no viajan por `ops/`: B los tiene de antes).
+            assert_eq!(sync_b.aplicados, 3);
             assert_eq!(sync_b.descartados, 0);
 
             let tareas_a = estado_a.con_db(|db_a| listar(db_a.conexion())).unwrap();

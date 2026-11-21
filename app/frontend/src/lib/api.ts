@@ -87,7 +87,6 @@ export type CodigoError =
   | 'servidor'
   | 'base_datos'
   | 'archivos'
-  | 'llave_cifrada'
   | 'actualizacion'
   | 'interno';
 
@@ -159,13 +158,6 @@ export interface ResumenSincronizacion {
   desconocidos: number;
   /** Archivos que todavía no se pueden leer (ej. a medio sincronizar): se reintentan. */
   ilegibles: number;
-}
-
-/** Resultado de compactar `ops/` (`compactar_eventos`, #94). */
-export interface ResumenCompactacion {
-  compactados: number;
-  /** `snapshot_<fecha>.json` creado en `ops/`, o `null` si no había eventos de más de 30 días. */
-  archivo: string | null;
 }
 
 /** Alerta en pantalla cuando hay cambios en `main`, `dev` o una rama ajena (#111). */
@@ -269,7 +261,6 @@ export interface NuevoProyectoLocal {
   proyecto: string;
   nombre: string;
   correo: string;
-  clave: string;
 }
 
 /** Estado concreto de Cloudflare WARP en esta máquina (#122). */
@@ -469,13 +460,13 @@ export const api = {
     llamar<EntradaProyecto>('entrar_a_proyecto', { carpeta }, mockup),
 
   // Proyectos sin Unity VC: una carpeta con `branchboard-proyecto-local.json` (ver "Proyectos sin Unity VC"
-  // en BACKEND.md). La contraseña cifra la llave del Administrador y se pide al abrirlo.
+  // en BACKEND.md). Sin contraseña desde #243.
   /** Crea la carpeta del proyecto dentro de `datos.carpeta` y lo abre como Administrador. */
   crearProyectoLocal: (datos: NuevoProyectoLocal, mockup: () => { ruta: string; entrada: EntradaProyecto }) =>
     llamar<{ ruta: string; entrada: EntradaProyecto }>('crear_proyecto_local', { datos }, mockup),
-  /** Abre el proyecto local de `carpeta` (si tiene la marca de BranchBoard) con su contraseña. */
-  abrirProyectoLocal: (carpeta: string, clave: string, mockup: () => EntradaProyecto) =>
-    llamar<EntradaProyecto>('abrir_proyecto_local', { carpeta, clave }, mockup),
+  /** Abre el proyecto local de `carpeta` (si tiene la marca de BranchBoard). */
+  abrirProyectoLocal: (carpeta: string, mockup: () => EntradaProyecto) =>
+    llamar<EntradaProyecto>('abrir_proyecto_local', { carpeta }, mockup),
   /** Crea un proyecto sin Unity VC en el servidor (la cuenta queda Administradora) y lo abre (#240). */
   crearProyectoServidor: (nombre: string, mockup: () => EntradaProyecto) =>
     llamar<EntradaProyecto>('crear_proyecto_servidor', { nombre }, mockup),
@@ -530,16 +521,6 @@ export const api = {
       descartados: 0,
       desconocidos: 0,
       ilegibles: 0,
-    })),
-
-  /**
-   * Compacta en un `snapshot_<fecha>.json` firmado los eventos de `ops/` con más de 30 días y los
-   * borra (#94). Solo Administrador; nunca automático.
-   */
-  compactarEventos: (passphrase?: string) =>
-    llamar<ResumenCompactacion>('compactar_eventos', { passphrase }, () => ({
-      compactados: 0,
-      archivo: null,
     })),
 
   /** Todas las tareas del proyecto abierto (#95). */
