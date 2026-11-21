@@ -12,7 +12,7 @@ import {
   type EntradaProyecto,
   type ProyectoServidor,
 } from '../lib/api';
-import { correosRecientes, ingresar, olvidarCorreo, registrarCuenta, type Cuenta } from '../lib/cuentas';
+import { correosRecientes, olvidarCorreo, recordarCorreo, type Cuenta } from '../lib/cuentas';
 import { SelectorCarpeta } from './SelectorCarpeta';
 import { LoginUnityVCModal } from './LoginUnityVCModal';
 import { FondoRamas } from './FondoRamas';
@@ -204,9 +204,9 @@ export function AccesoProyecto() {
         {paso === 'registro' && (
           <PasoRegistro
             onRegistrado={(c) => {
-              setCorreoRegistrado(c.correo);
-              showToast('Cuenta creada. Ya puedes iniciar sesión.');
-              setPaso('inicio');
+              // Sin confirmación de correo (#236): la cuenta queda con la sesión iniciada y se entra directo.
+              showToast(`Cuenta creada. Bienvenido, ${c.nombre}`);
+              entrarSinProyecto(c);
             }}
             onIniciarSesion={() => setPaso('inicio')}
           />
@@ -529,9 +529,11 @@ function PasoLogin({
     setEnviando(true);
     setError(null);
     try {
-      onIngresado(await ingresar(correo, clave));
+      const cuenta = await api.iniciarSesionBranchBoard(correo, clave);
+      recordarCorreo(cuenta.correo);
+      onIngresado(cuenta);
     } catch (err) {
-      setError(err instanceof Error ? err.message : mensajeDeError(err));
+      setError(mensajeDeError(err));
       setEnviando(false);
     }
   };
@@ -651,8 +653,8 @@ function PasoLogin({
   );
 }
 
-// Recuperar contraseña: pide el correo. Todavía no envía nada (no hay servidor de correo ni backend de
-// cuentas): al enviar solo avisa que la recuperación aún no está disponible.
+// Recuperar contraseña: pide el correo. Todavía no envía nada (fuera de alcance de #236, decidido el
+// 2026-11-20): al enviar solo avisa que la recuperación aún no está disponible.
 function PasoRecuperar({ correoInicial, onVolver }: { correoInicial: string; onVolver: () => void }) {
   const [correo, setCorreo] = useState(correoInicial);
   const [error, setError] = useState<string | null>(null);
@@ -710,7 +712,7 @@ function PasoRecuperar({ correoInicial, onVolver }: { correoInicial: string; onV
   );
 }
 
-// Registro: nombre, apellido, correo y contraseña. Al terminar vuelve a "Bienvenido" para iniciar sesión.
+// Registro: nombre, apellido, correo y contraseña. Crea la cuenta en Supabase y entra directo (#236).
 function PasoRegistro({
   onRegistrado,
   onIniciarSesion,
@@ -758,9 +760,11 @@ function PasoRegistro({
     setEnviando(true);
     setError(null);
     try {
-      onRegistrado(await registrarCuenta(datos));
+      const cuenta = await api.registrarCuenta(datos);
+      recordarCorreo(cuenta.correo);
+      onRegistrado(cuenta);
     } catch (err) {
-      setError(err instanceof Error ? err.message : mensajeDeError(err));
+      setError(mensajeDeError(err));
       setEnviando(false);
     }
   };

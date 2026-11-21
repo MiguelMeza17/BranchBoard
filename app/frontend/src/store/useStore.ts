@@ -606,7 +606,9 @@ export const useStore = create<State>((set, get) => {
       accesoCompletado: true,
       accesoIrAWorkspaces: false,
     }),
-  cerrarSesionBranchBoard: () =>
+  cerrarSesionBranchBoard: () => {
+    // Borra la sesión de Supabase del llavero (y avisa al servidor si hay red, #236).
+    void api.cerrarSesionBranchBoard().catch(() => undefined);
     set({
       cuentaBranchBoard: null,
       currentEmail: '',
@@ -621,7 +623,8 @@ export const useStore = create<State>((set, get) => {
       accesoCompletado: false,
       // Sin sesión de Unity VC, esto deja ver el login de BranchBoard en vez de la pantalla de Unity VC.
       modoSinUnityVc: true,
-    }),
+    });
+  },
   setModoSinUnityVc: (activo) => set({ modoSinUnityVc: activo }),
   proyectoLocal: null,
   sesionUnityVcCaducada: false,

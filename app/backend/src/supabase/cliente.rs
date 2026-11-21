@@ -38,6 +38,11 @@ pub struct Sesion {
     /// Id de la cuenta en Supabase Auth (`auth.uid()` en las reglas).
     pub usuario_id: String,
     pub correo: String,
+    /// Nombre y apellido con que se registró (metadatos de Auth, #236).
+    #[serde(default)]
+    pub nombre: String,
+    #[serde(default)]
+    pub apellido: String,
 }
 
 impl std::fmt::Debug for Sesion {
@@ -48,6 +53,8 @@ impl std::fmt::Debug for Sesion {
             .field("expira_en", &self.expira_en)
             .field("usuario_id", &self.usuario_id)
             .field("correo", &self.correo)
+            .field("nombre", &self.nombre)
+            .field("apellido", &self.apellido)
             .finish()
     }
 }
@@ -74,6 +81,17 @@ struct UsuarioAuth {
     id: String,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    user_metadata: Metadatos,
+}
+
+/// Lo que se manda como `data` al registrarse; el trigger de `perfiles` lo copia (#233).
+#[derive(Deserialize, Default)]
+struct Metadatos {
+    #[serde(default)]
+    nombre: String,
+    #[serde(default)]
+    apellido: String,
 }
 
 /// Respuesta de la Edge Function `login-unity` (#237).
@@ -100,6 +118,8 @@ fn sesion_desde(r: RespuestaToken, ahora: i64) -> Sesion {
         refresh_token: r.refresh_token,
         usuario_id: r.user.id,
         correo: r.user.email.unwrap_or_default().trim().to_lowercase(),
+        nombre: r.user.user_metadata.nombre,
+        apellido: r.user.user_metadata.apellido,
     }
 }
 
@@ -132,7 +152,7 @@ impl<L: Llavero> ClienteSupabase<L> {
     /// La sesión guardada, sin tocar la red (sirve para arrancar sin internet). Si lo guardado está dañado
     /// se borra y se trata como "sin sesión".
     pub fn sesion_guardada(&self) -> Resultado<Option<Sesion>> {
-        let Some(texto) = self.llavero.leer(&self.cuenta_llavero())? else {
+        let Some(texto) = self.llavero.leer_largo(&self.cuenta_llavero())? else {
             return Ok(None);
         };
         match serde_json::from_str(&texto) {
@@ -146,7 +166,7 @@ impl<L: Llavero> ClienteSupabase<L> {
 
     fn guardar(&self, sesion: &Sesion) -> Resultado<()> {
         let texto = serde_json::to_string(sesion).map_err(|e| Error::Interno(e.to_string()))?;
-        self.llavero.guardar(&self.cuenta_llavero(), &texto)
+        self.llavero.guardar_largo(&self.cuenta_llavero(), &texto)
     }
 
     /// Inicia sesión con correo y contraseña y guarda la sesión en el llavero.
@@ -159,6 +179,38 @@ impl<L: Llavero> ClienteSupabase<L> {
                 serde_json::json!({ "email": correo.trim().to_lowercase(), "password": clave }),
             );
         let token: RespuestaToken = leer_json(respuesta, error_auth)?;
+        let sesion = sesion_desde(token, Utc::now().timestamp());
+        self.guardar(&sesion)?;
+        Ok(sesion)
+    }
+
+    /// Crea la cuenta y deja la sesión iniciada. Sin confirmación de correo (decidido en #236), el
+    /// servidor devuelve la sesión en la misma respuesta.
+    pub fn registrar(
+        &self,
+        nombre: &str,
+        apellido: &str,
+        correo: &str,
+        clave: &str,
+    ) -> Resultado<Sesion> {
+        let respuesta = self
+            .agente
+            .post(&self.url("/auth/v1/signup"))
+            .set("apikey", self.proyecto.clave_publica)
+            .send_json(serde_json::json!({
+                "email": correo.trim().to_lowercase(),
+                "password": clave,
+                "data": { "nombre": nombre.trim(), "apellido": apellido.trim() }
+            }));
+        let valor: Value = leer_json(respuesta, error_auth)?;
+        // Si el proyecto volviera a pedir confirmar el correo, la respuesta no trae sesión.
+        if valor.get("access_token").is_none() {
+            return Err(Error::Validacion(
+                "Confirma tu correo antes de iniciar sesión.".into(),
+            ));
+        }
+        let token: RespuestaToken = serde_json::from_value(valor)
+            .map_err(|_| Error::Servidor("respuesta que la app no entiende".into()))?;
         let sesion = sesion_desde(token, Utc::now().timestamp());
         self.guardar(&sesion)?;
         Ok(sesion)
@@ -190,6 +242,7 @@ impl<L: Llavero> ClienteSupabase<L> {
                 user: UsuarioAuth {
                     id: r.usuario.id,
                     email: Some(r.usuario.correo),
+                    user_metadata: Metadatos::default(),
                 },
             },
             Utc::now().timestamp(),
@@ -345,6 +398,18 @@ fn error_auth(status: u16, cuerpo: &str) -> Error {
         Some("email_not_confirmed") => {
             Error::Validacion("Confirma tu correo antes de iniciar sesión.".into())
         }
+        Some("user_already_exists") | Some("email_exists") => {
+            Error::Validacion("Ya existe una cuenta con ese correo. Inicia sesión.".into())
+        }
+        Some("weak_password") => {
+            Error::Validacion("La contraseña debe tener al menos 8 caracteres.".into())
+        }
+        Some("email_address_invalid") => {
+            Error::Validacion("El correo no es válido (ej. nombre@correo.com).".into())
+        }
+        Some("signup_disabled") => {
+            Error::Validacion("El registro de cuentas nuevas está desactivado.".into())
+        }
         Some("over_request_rate_limit") | Some("over_email_send_rate_limit") => {
             Error::Validacion("Demasiados intentos. Espera un momento y vuelve a probar.".into())
         }
@@ -416,6 +481,8 @@ mod tests {
             expira_en,
             usuario_id: "u1".into(),
             correo: "ana@correo.com".into(),
+            nombre: "Ana".into(),
+            apellido: "Pérez".into(),
         }
     }
 
@@ -433,6 +500,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sesion_desde(sin_expires_at, 1000).expira_en, 4600);
+    }
+
+    #[test]
+    fn la_sesion_trae_nombre_y_apellido_del_registro() {
+        // Forma real de la respuesta de /auth/v1/signup sin confirmación (branchboard-pruebas, 2026-11-21).
+        let r: RespuestaToken = serde_json::from_str(
+            r#"{"access_token":"a","token_type":"bearer","expires_in":3600,"expires_at":5000,"refresh_token":"r",
+                "user":{"id":"u","email":"ana@correo.com","email_confirmed_at":"2026-11-21T00:35:22Z",
+                "user_metadata":{"apellido":"Registro","email_verified":true,"nombre":"Prueba","sub":"u"}}}"#,
+        )
+        .unwrap();
+        let s = sesion_desde(r, 1000);
+        assert_eq!(
+            (s.nombre.as_str(), s.apellido.as_str()),
+            ("Prueba", "Registro")
+        );
+        // Una sesión guardada antes de #236 (sin nombre) se sigue leyendo.
+        let vieja: Sesion = serde_json::from_str(
+            r#"{"access_token":"a","refresh_token":"r","expira_en":1,"usuario_id":"u","correo":"c"}"#,
+        )
+        .unwrap();
+        assert_eq!(vieja.nombre, "");
     }
 
     #[test]
@@ -503,6 +592,26 @@ mod tests {
         let e = error_auth(400, r#"{"error_code":"email_not_confirmed"}"#);
         assert_eq!(e.to_string(), "Confirma tu correo antes de iniciar sesión.");
         assert_eq!(error_auth(429, "").codigo(), "validacion");
+        let e = error_auth(
+            422,
+            r#"{"code":422,"error_code":"user_already_exists","msg":"User already registered"}"#,
+        );
+        assert_eq!(
+            e.to_string(),
+            "Ya existe una cuenta con ese correo. Inicia sesión."
+        );
+        let e = error_auth(
+            422,
+            r#"{"code":422,"error_code":"weak_password","msg":"Password should be at least 8 characters.","weak_password":{"reasons":["length"]}}"#,
+        );
+        assert_eq!(
+            e.to_string(),
+            "La contraseña debe tener al menos 8 caracteres."
+        );
+        assert_eq!(
+            error_auth(400, r#"{"error_code":"email_address_invalid"}"#).codigo(),
+            "validacion"
+        );
         assert_eq!(error_auth(500, r#"{"msg":"boom"}"#).codigo(), "servidor");
     }
 
@@ -591,17 +700,112 @@ mod tests {
         );
     }
 
-    /// Ciclo completo con una cuenta de prueba de branchboard-pruebas: iniciar sesión, llamar a la API,
-    /// forzar la renovación, volver a llamar y cerrar. Usa `BB_PRUEBA_SUPABASE_CORREO` y
-    /// `BB_PRUEBA_SUPABASE_CLAVE` (cuenta confirmada creada solo para esto; ver BACKEND.md).
+    /// Correo y clave para una cuenta nueva de branchboard-pruebas. La clave es aleatoria y no se imprime.
+    /// Las cuentas `ciclo-…@prueba.branchboard` se borran después con SQL (ver BACKEND.md).
+    fn cuenta_temporal() -> (String, String) {
+        use rand::{distributions::Alphanumeric, Rng};
+        let clave: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(24)
+            .map(char::from)
+            .collect();
+        let correo = format!(
+            "ciclo-{}@prueba.branchboard",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        (correo, clave)
+    }
+
+    /// Registro sin confirmación de correo (#236): la cuenta queda con la sesión iniciada, su perfil con
+    /// nombre y apellido, un segundo registro con el mismo correo se rechaza y se puede volver a entrar.
     #[test]
-    #[ignore = "necesita una cuenta de prueba en branchboard-pruebas: ver BACKEND.md"]
-    fn entorno_real_iniciar_llamar_renovar_y_cerrar() {
-        let correo =
-            std::env::var("BB_PRUEBA_SUPABASE_CORREO").expect("falta BB_PRUEBA_SUPABASE_CORREO");
-        let clave =
-            std::env::var("BB_PRUEBA_SUPABASE_CLAVE").expect("falta BB_PRUEBA_SUPABASE_CLAVE");
+    #[ignore = "crea una cuenta en branchboard-pruebas: correr a mano con --ignored y borrarla (BACKEND.md)"]
+    fn entorno_real_registrar_y_volver_a_entrar() {
+        let (correo, clave) = cuenta_temporal();
         let cliente = ClienteSupabase::new(&PRUEBAS, LlaveroMemoria::default());
+
+        let corta = cliente
+            .registrar("Prueba", "Registro", &correo, "corta")
+            .unwrap_err();
+        assert_eq!(
+            corta.to_string(),
+            "La contraseña debe tener al menos 8 caracteres."
+        );
+
+        let sesion = cliente
+            .registrar(" Prueba ", "Registro", &correo, &clave)
+            .unwrap();
+        assert_eq!(sesion.correo, correo);
+        assert_eq!(
+            (sesion.nombre.as_str(), sesion.apellido.as_str()),
+            ("Prueba", "Registro")
+        );
+        assert_eq!(cliente.sesion_guardada().unwrap(), Some(sesion.clone()));
+        // El trigger de #233 creó su perfil con los datos del registro.
+        let perfil = cliente
+            .llamar(
+                "GET",
+                "/rest/v1/perfiles?select=correo,nombre,apellido",
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            perfil,
+            serde_json::json!([{ "correo": correo, "nombre": "Prueba", "apellido": "Registro" }])
+        );
+
+        let repetida = cliente
+            .registrar("Otra", "Persona", &correo.to_uppercase(), &clave)
+            .unwrap_err();
+        assert_eq!(
+            repetida.to_string(),
+            "Ya existe una cuenta con ese correo. Inicia sesión."
+        );
+
+        cliente.cerrar_sesion().unwrap();
+        assert!(cliente.sesion_guardada().unwrap().is_none());
+        let otra_vez = cliente.iniciar_sesion(&correo, &clave).unwrap();
+        assert_eq!(otra_vez.usuario_id, sesion.usuario_id);
+        assert_eq!(otra_vez.nombre, "Prueba");
+        cliente.cerrar_sesion().unwrap();
+    }
+
+    /// La sesión real (con su JWT) cabe en el llavero de Windows y se lee igual. Usa una cuenta de llavero
+    /// propia (`supabase-branchboard-pruebas-test`) para no pisar la sesión de `npm run tauri dev`.
+    #[test]
+    #[ignore = "crea una cuenta en branchboard-pruebas y usa el llavero del sistema: correr a mano con --ignored"]
+    fn entorno_real_la_sesion_cabe_en_el_llavero_del_sistema() {
+        use crate::servidor::LlaveroSistema;
+        static PRUEBAS_TEST: ProyectoSupabase = ProyectoSupabase {
+            nombre: "branchboard-pruebas-test",
+            url: PRUEBAS.url,
+            clave_publica: PRUEBAS.clave_publica,
+        };
+        let (correo, clave) = cuenta_temporal();
+        let cliente = ClienteSupabase::new(&PRUEBAS_TEST, LlaveroSistema);
+        let sesion = cliente
+            .registrar("Prueba", "Llavero", &correo, &clave)
+            .unwrap();
+        println!(
+            "sesión guardada: {} bytes",
+            serde_json::to_string(&sesion).unwrap().len()
+        );
+        assert_eq!(cliente.sesion_guardada().unwrap(), Some(sesion));
+        cliente.cerrar_sesion().unwrap();
+        assert!(cliente.sesion_guardada().unwrap().is_none());
+    }
+
+    /// Ciclo completo con una cuenta nueva de branchboard-pruebas: iniciar sesión, llamar a la API,
+    /// forzar la renovación, volver a llamar y cerrar.
+    #[test]
+    #[ignore = "crea una cuenta en branchboard-pruebas: correr a mano con --ignored y borrarla (BACKEND.md)"]
+    fn entorno_real_iniciar_llamar_renovar_y_cerrar() {
+        let (correo, clave) = cuenta_temporal();
+        let cliente = ClienteSupabase::new(&PRUEBAS, LlaveroMemoria::default());
+        cliente
+            .registrar("Prueba", "Ciclo", &correo, &clave)
+            .unwrap();
+        cliente.cerrar_sesion().unwrap();
 
         let primera = cliente.iniciar_sesion(&correo, &clave).unwrap();
         assert_eq!(primera.correo, correo.to_lowercase());

@@ -111,8 +111,9 @@ mod tests {
         }
     }
 
-    /// Contra el proyecto de pruebas de verdad: la clave pública responde y Auth exige confirmar el
-    /// correo (decisión 1 de #231). Solo lee la configuración pública de Auth; no crea nada.
+    /// Contra el proyecto de pruebas de verdad: la clave pública responde, el registro por correo está
+    /// activo y **no** se confirma el correo (decidido en #236: el correo incluido de Supabase solo llega
+    /// al equipo de la organización). Solo lee la configuración pública de Auth; no crea nada.
     #[test]
     #[ignore = "toca el proyecto de pruebas de Supabase: correr a mano con --ignored"]
     fn entorno_real_la_clave_publica_de_pruebas_responde() {
@@ -126,8 +127,8 @@ mod tests {
             "registro por correo activado"
         );
         assert_eq!(
-            ajustes["mailer_autoconfirm"], false,
-            "hay que confirmar el correo"
+            ajustes["mailer_autoconfirm"], true,
+            "la cuenta queda lista sin confirmar el correo"
         );
         assert_eq!(ajustes["disable_signup"], false);
     }

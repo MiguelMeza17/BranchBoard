@@ -47,6 +47,11 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("estado_warp", Acceso::Libre),
     ("alternar_warp", Acceso::Libre),
     ("instalar_warp", Acceso::Libre),
+    // Cuenta de BranchBoard en Supabase (#236): antes de entrar a un proyecto, sin rol.
+    ("registrar_cuenta", Acceso::Libre),
+    ("iniciar_sesion_branchboard", Acceso::Libre),
+    ("sesion_branchboard", Acceso::Libre),
+    ("cerrar_sesion_branchboard", Acceso::Libre),
     ("estado_cm", Acceso::Libre),
     ("instalar_cm", Acceso::Libre),
     ("sesion_unity_vc", Acceso::Libre),
