@@ -192,11 +192,6 @@ pub fn filas_locales(equipo: &Equipo) -> Vec<Usuario> {
                 apellido,
                 rol: m.rol,
                 fecha_alta: m.agregado_en.chars().take(10).collect(),
-                firma: None,
-                firmado_en: None,
-                firmado_por: None,
-                llave_publica: None,
-                certificado: None,
             }
         })
         .collect()
@@ -244,15 +239,12 @@ mod tests {
     }
 
     #[test]
-    fn la_copia_local_no_lleva_firmas_y_completa_el_nombre() {
+    fn la_copia_local_completa_el_nombre() {
         let filas = filas_locales(&equipo());
         assert_eq!(filas.len(), 2);
         assert_eq!(filas[0].email, "ana@virustf.dev");
         assert_eq!(filas[0].rol, Rol::Administrador);
         assert_eq!(filas[0].fecha_alta, "2026-11-21");
-        assert!(filas
-            .iter()
-            .all(|u| u.firma.is_none() && u.certificado.is_none()));
         // Sin nombre en el perfil (cuenta de Unity VC): sale del correo.
         assert_eq!(filas[1].email, "beto.ruiz@virustf.dev");
         assert_eq!(

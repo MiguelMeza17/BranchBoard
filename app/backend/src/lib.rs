@@ -47,11 +47,10 @@ use tauri::{Emitter, Manager, WindowEvent};
 use comandos::{
     acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, cuenta, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
-    identidad as comandos_identidad, notificaciones as comandos_notificaciones,
-    proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local,
-    proyecto_servidor as comandos_proyecto_servidor, sistema,
-    sprints as comandos_sprints, tareas as comandos_tareas, usuarios, vistos as comandos_vistos,
-    warp as comandos_warp,
+    notificaciones as comandos_notificaciones, proyecto as comandos_proyecto,
+    proyecto_local as comandos_proyecto_local, proyecto_servidor as comandos_proyecto_servidor,
+    sistema, sprints as comandos_sprints, tareas as comandos_tareas, usuarios,
+    vistos as comandos_vistos, warp as comandos_warp,
 };
 
 /// Cadencia del temporizador en segundo plano mientras la app está abierta (#104, #117).
@@ -85,7 +84,10 @@ fn sincronizar_servidor(app: &tauri::AppHandle) {
     if let Ok(Some(resumen)) = comandos_eventos::sincronizar_con_servidor_en(&estado) {
         let _ = app.emit(comandos_eventos::EVENTO_BANDEJA_SALIDA, &resumen.bandeja);
         if resumen.recibidos.hubo_cambios() {
-            let _ = app.emit(comandos_eventos::EVENTO_EVENTOS_RECIBIDOS, &resumen.recibidos);
+            let _ = app.emit(
+                comandos_eventos::EVENTO_EVENTOS_RECIBIDOS,
+                &resumen.recibidos,
+            );
         }
     }
 }
@@ -175,12 +177,9 @@ pub fn run() {
             comandos_eventos::sincronizar_eventos,
             comandos_eventos::revisar_actualizaciones,
             comandos_eventos::eventos_por_subir,
-            comandos_eventos::compactar_eventos,
-            comandos_identidad::exportar_llave_firma,
             usuarios::listar_usuarios,
             usuarios::crear_usuario,
             usuarios::cambiar_rol,
-            usuarios::confirmar_usuario,
             usuarios::eliminar_usuario,
             comandos_tareas::listar_tareas,
             comandos_tareas::crear_tarea,
@@ -254,6 +253,8 @@ pub fn run() {
             comandos_proyecto_local::crear_proyecto_local,
             comandos_proyecto_servidor::crear_proyecto_servidor,
             comandos_proyecto_servidor::abrir_proyecto_servidor,
+            comandos::subir_proyecto::subir_proyecto_al_servidor,
+            comandos::subir_proyecto::proyecto_en_el_servidor,
             comandos_proyecto_local::abrir_proyecto_local,
             comandos_proyecto_local::listar_proyectos_locales,
             comandos_proyecto_local::exportar_proyecto_local,

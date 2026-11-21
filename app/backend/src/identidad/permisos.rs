@@ -16,7 +16,6 @@ use serde::Serialize;
 
 use crate::db::usuarios;
 use crate::error::{Error, Resultado};
-use crate::identidad::firmas::{verificar_usuarios, Verificacion};
 use crate::modelo::{normalizar_email, Rol};
 
 /// Quién puede usar un comando.
@@ -78,14 +77,11 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     ("sincronizar_eventos", Acceso::Roles(TODOS)),
     ("revisar_actualizaciones", Acceso::Roles(TODOS)),
     ("eventos_por_subir", Acceso::Libre),
-    ("compactar_eventos", Acceso::Roles(SOLO_ADMIN)),
-    ("exportar_llave_firma", Acceso::Roles(SOLO_ADMIN)),
     // Usuarios (issue #90). El detalle de quién cambia a quién está en `identidad::equipo`.
     ("listar_usuarios", Acceso::Roles(TODOS)),
     ("crear_usuario", Acceso::Roles(LIDER_O_ADMIN)),
     ("cambiar_rol", Acceso::Roles(LIDER_O_ADMIN)),
     ("eliminar_usuario", Acceso::Roles(LIDER_O_ADMIN)),
-    ("confirmar_usuario", Acceso::Roles(SOLO_ADMIN)),
     // Tareas (issues #95, #96, #97, #98). El detalle de quién puede editar, tomar o asignar qué tarea está en `tareas`.
     ("listar_tareas", Acceso::Roles(TODOS)),
     ("crear_tarea", Acceso::Roles(TODOS)),
@@ -166,6 +162,9 @@ pub const PERMISOS: &[(&str, Acceso)] = &[
     // Proyectos sin Unity VC en el servidor (#240): todavía no hay proyecto ni rol.
     ("crear_proyecto_servidor", Acceso::Libre),
     ("abrir_proyecto_servidor", Acceso::Libre),
+    // Subir al servidor un proyecto que ya existía (#245): solo su Administrador.
+    ("subir_proyecto_al_servidor", Acceso::Roles(SOLO_ADMIN)),
+    ("proyecto_en_el_servidor", Acceso::Roles(TODOS)),
     ("abrir_proyecto_local", Acceso::Libre),
     ("listar_proyectos_locales", Acceso::Libre),
     ("importar_proyecto_local", Acceso::Libre),
@@ -187,32 +186,21 @@ pub fn acceso(comando: &str) -> Option<Acceso> {
         .map(|(_, acceso)| *acceso)
 }
 
-/// La persona que está usando la app, con el rol que de verdad se le aplica.
+/// La persona que está usando la app y su rol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UsuarioActual {
     pub email: String,
     pub rol: Rol,
-    /// `false` si su firma no coincide y se le aplica Desarrollador.
-    pub rol_verificado: bool,
 }
 
-/// Busca a `email` (el de `cm whoami`) en la tabla `usuarios` y verifica su rol.
-/// Sin fila, o con la fila pendiente de confirmar, no puede usar nada.
-pub fn usuario_actual(
-    c: &Connection,
-    publica_admin: &str,
-    email: &str,
-) -> Resultado<UsuarioActual> {
+/// Busca a `email` en la tabla `usuarios` (la copia de `miembros` del servidor, #241). Sin fila no
+/// puede usar nada. Desde #243 no hay firmas: los roles los hace cumplir el servidor (#234, #247).
+pub fn usuario_actual(c: &Connection, email: &str) -> Resultado<UsuarioActual> {
     let email = normalizar_email(email);
-    let verificado = verificar_usuarios(publica_admin, usuarios::listar(c)?)
-        .into_iter()
-        .find(|u| u.usuario.email == email)
-        .ok_or(Error::SinPermiso)?;
-    let rol = verificado.rol_efectivo.ok_or(Error::SinPermiso)?;
+    let fila = usuarios::buscar(c, &email)?.ok_or(Error::SinPermiso)?;
     Ok(UsuarioActual {
         email,
-        rol,
-        rol_verificado: verificado.verificacion == Verificacion::Verificado,
+        rol: fila.rol,
     })
 }
 
@@ -230,9 +218,6 @@ mod tests {
     use super::*;
     use crate::db::usuarios::Usuario;
     use crate::db::Db;
-    use crate::identidad::{firmas, llaves};
-
-    const FECHA: &str = "2026-11-10T10:00:00Z";
 
     fn fila(email: &str, rol: Rol) -> Usuario {
         Usuario {
@@ -241,82 +226,43 @@ mod tests {
             apellido: "A".into(),
             rol,
             fecha_alta: "2026-11-10".into(),
-            firma: None,
-            firmado_en: None,
-            firmado_por: None,
-            llave_publica: None,
-            certificado: None,
         }
     }
 
-    /// Base con un Administrador, un Tester, alguien con el rol cambiado a mano
-    /// y alguien pendiente de confirmar.
-    fn proyecto() -> (tempfile::TempDir, Db, String) {
-        let dir = tempfile::tempdir().unwrap();
-        let publica = llaves::generar_llaves_admin(dir.path(), None).unwrap();
-        let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
-        let firmada = |email: &str, rol: Rol| Usuario {
-            firma: Some(firmas::firmar_rol(&admin, email, rol, FECHA).unwrap()),
-            firmado_en: Some(FECHA.into()),
-            ..fila(email, rol)
-        };
+    /// Base con un Administrador y un Tester (la copia de `miembros` del servidor).
+    fn proyecto() -> Db {
         let db = Db::en_memoria().unwrap();
         let c = db.conexion();
-        usuarios::insertar(c, &firmada("admin@virustf.dev", Rol::Administrador)).unwrap();
-        usuarios::insertar(c, &firmada("tester@virustf.dev", Rol::Tester)).unwrap();
-        usuarios::insertar(
-            c,
-            &Usuario {
-                rol: Rol::Administrador,
-                ..firmada("tramposo@virustf.dev", Rol::Tester)
-            },
-        )
-        .unwrap();
-        usuarios::insertar(c, &fila("nuevo@virustf.dev", Rol::Lider)).unwrap();
-        (dir, db, publica)
+        usuarios::insertar(c, &fila("admin@virustf.dev", Rol::Administrador)).unwrap();
+        usuarios::insertar(c, &fila("tester@virustf.dev", Rol::Tester)).unwrap();
+        db
     }
 
     #[test]
-    fn el_rol_sale_de_la_firma() {
-        let (_dir, db, publica) = proyecto();
+    fn el_rol_sale_de_la_tabla_usuarios() {
+        let db = proyecto();
         let c = db.conexion();
-        let admin = usuario_actual(c, &publica, "Admin@VirusTF.dev").unwrap();
-        assert_eq!(
-            (admin.rol, admin.rol_verificado),
-            (Rol::Administrador, true)
-        );
+        let admin = usuario_actual(c, "Admin@VirusTF.dev").unwrap();
+        assert_eq!(admin.rol, Rol::Administrador);
         assert_eq!(admin.email, "admin@virustf.dev");
-
-        // Se escribió Administrador a mano: se le aplica Desarrollador.
-        let tramposo = usuario_actual(c, &publica, "tramposo@virustf.dev").unwrap();
+        // Fuera del proyecto: nada.
         assert_eq!(
-            (tramposo.rol, tramposo.rol_verificado),
-            (Rol::Desarrollador, false)
+            usuario_actual(c, "nadie@virustf.dev").unwrap_err().codigo(),
+            "sin_permiso"
         );
-
-        // Pendiente de confirmar o fuera del proyecto: nada.
-        for email in ["nuevo@virustf.dev", "nadie@virustf.dev"] {
-            assert_eq!(
-                usuario_actual(c, &publica, email).unwrap_err().codigo(),
-                "sin_permiso"
-            );
-        }
     }
 
     #[test]
     fn exigir_aplica_la_tabla() {
-        let (_dir, db, publica) = proyecto();
+        let db = proyecto();
         let c = db.conexion();
-        let admin = usuario_actual(c, &publica, "admin@virustf.dev").unwrap();
-        let tester = usuario_actual(c, &publica, "tester@virustf.dev").unwrap();
-        let tramposo = usuario_actual(c, &publica, "tramposo@virustf.dev").unwrap();
+        let admin = usuario_actual(c, "admin@virustf.dev").unwrap();
+        let tester = usuario_actual(c, "tester@virustf.dev").unwrap();
 
         assert!(exigir("restaurar_backup", &admin).is_ok());
-        for u in [&tester, &tramposo] {
-            let error = exigir("restaurar_backup", u).unwrap_err();
-            assert_eq!(error.codigo(), "sin_permiso");
-            assert!(exigir("ping", u).is_ok());
-        }
+        let error = exigir("restaurar_backup", &tester).unwrap_err();
+        assert_eq!(error.codigo(), "sin_permiso");
+        assert!(exigir("ping", &tester).is_ok());
         // Un comando que no está en la tabla se niega, también al Administrador.
         assert!(exigir("comando_inventado", &admin).is_err());
     }

@@ -14,8 +14,10 @@
 //!   aplicado o descartado (ej. una toma doble que perdió) → se anota y no se repite;
 //!   tipo desconocido (lo escribió una versión más nueva de la app) → queda
 //!   pendiente para cuando esta máquina se actualice.
-//! - Los eventos administrativos (`eventos::TIPOS_FIRMADOS`) tienen que traer una
-//!   `firma_admin` válida; si falta o no coincide se descartan sin aplicar (#93).
+//! - Los cambios de equipo y la compactación (`eventos::TIPOS_RETIRADOS`) se descartan siempre: iban
+//!   firmados y desde #243 no hay firmas (los roles los cambia el servidor, #241).
+//! - Un snapshot de la compactación de antes (`ops/snapshot_<fecha>.json`, #94) es un evento
+//!   `compactar_eventos` más: se descarta. Lo que ya tenía aplicado esta base se queda.
 
 use std::io::Write;
 use std::path::Path;
@@ -25,13 +27,11 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use super::snapshot::{self, es_snapshot};
 use super::{marcar_aplicado, ya_aplicado, Evento};
 use crate::chat;
 use crate::documentos;
 use crate::error::{Error, Resultado};
-use crate::identidad::equipo;
-use crate::modelo::Rol;
+use crate::eventos::TIPOS_RETIRADOS;
 use crate::notificaciones;
 use crate::proyecto;
 use crate::sprints;
@@ -102,7 +102,7 @@ pub fn sincronizar(
     ahora: DateTime<Utc>,
     aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
 ) -> Resultado<ResumenSincronizacion> {
-    sincronizar_con_doble_toma(c, ops, carpeta_proyecto, ahora, "", aplicar, |_| Ok(false))
+    sincronizar_con_doble_toma(c, ops, carpeta_proyecto, ahora, aplicar, |_| Ok(false))
 }
 
 /// Igual que [`sincronizar`], pero al detectar una doble toma (`tomar_tarea`
@@ -114,7 +114,6 @@ pub fn sincronizar_con_doble_toma(
     ops: &Path,
     carpeta_proyecto: &Path,
     ahora: DateTime<Utc>,
-    publica_admin: &str,
     aplicar: impl Fn(&Connection, &Evento) -> Resultado<Aplicacion>,
     revisar_rama_perdedor: impl Fn(&InfoDobleToma) -> Resultado<bool>,
 ) -> Resultado<ResumenSincronizacion> {
@@ -125,7 +124,6 @@ pub fn sincronizar_con_doble_toma(
         c,
         Some(ops),
         ahora,
-        publica_admin,
         pendientes,
         &mut resumen,
         &mut avisos,
@@ -146,7 +144,6 @@ pub(super) fn aplicar_pendientes(
     c: &Connection,
     ops: Option<&Path>,
     ahora: DateTime<Utc>,
-    publica_admin: &str,
     pendientes: Vec<Pendiente>,
     resumen: &mut ResumenSincronizacion,
     avisos: &mut Vec<String>,
@@ -154,14 +151,6 @@ pub(super) fn aplicar_pendientes(
     revisar_rama_perdedor: impl Fn(&InfoDobleToma) -> Resultado<bool>,
 ) -> Resultado<()> {
     for p in pendientes {
-        // Los snapshots son de `ops/` (#94); con el servidor no hay compactación.
-        if p.orden_servidor.is_none()
-            && !es_snapshot(&p.id)
-            && snapshot::ultimo_snapshot_hasta(c)?.is_some_and(|corte| p.orden <= corte)
-        {
-            marcar_aplicado(c, &p.id, &ahora_iso(ahora))?;
-            continue;
-        }
         let tx = c.unchecked_transaction()?;
         match aplicar(&tx, &p.evento)? {
             Aplicacion::Aplicado => {
@@ -188,7 +177,6 @@ pub(super) fn aplicar_pendientes(
                     let tx2 = c.unchecked_transaction()?;
                     let aplicado = tareas::aplicar_resolucion_doble_toma(
                         &tx2,
-                        publica_admin,
                         &info,
                         tiene_changesets,
                         &ahora_iso(ahora),
@@ -272,18 +260,11 @@ fn leer_pendientes(
             orden_servidor: None,
         });
     }
-    pendientes.sort_by(|a, b| match (es_snapshot(&a.id), es_snapshot(&b.id)) {
-        // Los snapshots van antes que los eventos sueltos, del más reciente al
-        // más antiguo: al reconstruir el `.db` se parte del último snapshot
-        // válido (#94) y los anteriores quedan ya cubiertos.
-        (true, true) => b.orden.cmp(&a.orden).then_with(|| b.id.cmp(&a.id)),
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        (false, false) => a
-            .orden
+    pendientes.sort_by(|a, b| {
+        a.orden
             .cmp(&b.orden)
             .then_with(|| a.evento.usuario.cmp(&b.evento.usuario))
-            .then_with(|| a.id.cmp(&b.id)),
+            .then_with(|| a.id.cmp(&b.id))
     });
     Ok(pendientes)
 }
@@ -306,103 +287,50 @@ pub(super) fn registrar(carpeta_proyecto: &Path, ahora: DateTime<Utc>, avisos: &
     }
 }
 
-/// Aplicador de la app: cada tipo de evento compartido se registra aquí cuando su
-/// comando pasa a eventos (#93 usuarios, #95 tareas, …).
+/// Aplicador de la app: cada tipo de evento compartido se registra aquí.
 ///
-/// 1. Si el tipo exige firma (`eventos::TIPOS_FIRMADOS`), primero se comprueba
-///    `firma_admin` contra la llave del Administrador fijada en esta máquina
-///    (`publica_admin`) o la de un Líder con certificado vigente. Sin firma
-///    válida el evento se **descarta** sin mirar su contenido, sea del tipo que
-///    sea: no hay "rol mínimo" al que degradar un evento.
-/// 2. Eventos de usuarios → `identidad::equipo::aplicar_evento`, con las mismas
-///    reglas que en la máquina que lo emitió. Si ya no las cumple (ej. el correo
-///    ya existe), se descarta; un error de la base detiene el escaneo.
-/// 3. Lo demás todavía es desconocido (#95 tareas…).
-pub fn aplicar_evento(
-    c: &Connection,
-    publica_admin: &str,
-    evento: &Evento,
-) -> Resultado<Aplicacion> {
-    let rol_firmante = if evento.exige_firma() {
-        match equipo::firmante_del_evento(c, publica_admin, evento)? {
-            Some(rol) => Some(rol),
-            None => {
-                return Ok(Aplicacion::Descartado(
-                    "firma_admin falta o no coincide".into(),
-                ))
-            }
-        }
+/// 1. Los [`TIPOS_RETIRADOS`] (cambios de equipo y compactación, que iban firmados) se **descartan**
+///    siempre (#243).
+/// 2. Cada tipo va a su módulo, que revisa el rol del autor con la tabla `usuarios` y aplica las
+///    mismas reglas que en la máquina que lo emitió. Si ya no las cumple, se descarta; un error de la
+///    base detiene el escaneo.
+/// 3. Un tipo que no está aquí lo escribió una versión más nueva: queda pendiente.
+pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<Aplicacion> {
+    // Foto del estado de un proyecto que se subió al servidor (#245). Solo la manda un Administrador
+    // (lo revisa el servidor, `permisos_evento`) y solo se aplica en un proyecto vacío.
+    if evento.tipo == super::importacion::TIPO {
+        return match super::importacion::aplicar(c, evento) {
+            Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+            otro => otro,
+        };
+    }
+    if TIPOS_RETIRADOS.contains(&evento.tipo.as_str()) {
+        return Ok(Aplicacion::Descartado(
+            "los cambios de equipo y la compactación ya no viajan como eventos (#243)".into(),
+        ));
+    }
+    let tipo = evento.tipo.as_str();
+    let resultado = if crate::cambios_directos::TIPOS.contains(&tipo) {
+        crate::cambios_directos::aplicar_evento(c, evento)
+    } else if tareas::TIPOS.contains(&tipo) {
+        tareas::aplicar_evento(c, evento)
+    } else if sprints::TIPOS.contains(&tipo) {
+        sprints::aplicar_evento(c, evento)
+    } else if notificaciones::TIPOS.contains(&tipo) {
+        notificaciones::aplicar_evento(c, evento)
+    } else if chat::TIPOS.contains(&tipo) {
+        chat::aplicar_evento(c, evento)
+    } else if documentos::TIPOS.contains(&tipo) {
+        documentos::aplicar_evento(c, None, evento)
+    } else if proyecto::TIPOS.contains(&tipo) {
+        proyecto::aplicar_evento(c, evento)
     } else {
-        None
+        return Ok(Aplicacion::Desconocido);
     };
-    match rol_firmante {
-        Some(rol) if equipo::TIPOS.contains(&evento.tipo.as_str()) => {
-            match equipo::aplicar_evento(c, publica_admin, rol, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        Some(rol) if evento.tipo == "compactar_eventos" => {
-            if rol != Rol::Administrador {
-                return Ok(Aplicacion::Descartado(Error::SinPermiso.to_string()));
-            }
-            match snapshot::aplicar_evento(c, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if crate::cambios_directos::TIPOS.contains(&evento.tipo.as_str()) => {
-            match crate::cambios_directos::aplicar_evento(c, publica_admin, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if tareas::TIPOS.contains(&evento.tipo.as_str()) => {
-            match tareas::aplicar_evento(c, publica_admin, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if sprints::TIPOS.contains(&evento.tipo.as_str()) => {
-            match sprints::aplicar_evento(c, publica_admin, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if notificaciones::TIPOS.contains(&evento.tipo.as_str()) => {
-            match notificaciones::aplicar_evento(c, publica_admin, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if chat::TIPOS.contains(&evento.tipo.as_str()) => {
-            match chat::aplicar_evento(c, publica_admin, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if documentos::TIPOS.contains(&evento.tipo.as_str()) => {
-            match documentos::aplicar_evento(c, publica_admin, None, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        None if proyecto::TIPOS.contains(&evento.tipo.as_str()) => {
-            match proyecto::aplicar_evento(c, publica_admin, evento) {
-                Ok(()) => Ok(Aplicacion::Aplicado),
-                Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
-                Err(e) => Err(e),
-            }
-        }
-        _ => Ok(Aplicacion::Desconocido),
+    match resultado {
+        Ok(()) => Ok(Aplicacion::Aplicado),
+        Err(e) if es_regla_rota(&e) => Ok(Aplicacion::Descartado(e.to_string())),
+        Err(e) => Err(e),
     }
 }
 
@@ -649,40 +577,30 @@ mod tests {
     }
 
     #[test]
-    fn los_tipos_que_exigen_firma_se_descartan_sin_ella_y_los_demas_siguen_desconocidos() {
-        use crate::identidad::llaves;
-
+    fn los_cambios_de_equipo_y_la_compactacion_se_descartan_y_lo_demas_sigue_desconocido() {
         let db = Db::en_memoria().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let publica = llaves::generar_llaves_admin(dir.path(), None).unwrap();
-        let admin = llaves::cargar_llave_admin(dir.path(), None).unwrap();
-
-        // Un tipo cualquiera sin firma: todavía no lo conoce la app.
+        // Un tipo cualquiera: todavía no lo conoce la app.
         assert_eq!(
-            aplicar_evento(db.conexion(), &publica, &evento(AHORA, "a@x.dev", 1)).unwrap(),
+            aplicar_evento(db.conexion(), &evento(AHORA, "a@x.dev", 1)).unwrap(),
             Aplicacion::Desconocido
         );
-        // `compactar_eventos` (#94) exige firma del Administrador y un snapshot válido.
-        let mut compactar = evento(AHORA, "a@x.dev", 1);
-        compactar.tipo = "compactar_eventos".into();
-        assert!(matches!(
-            aplicar_evento(db.conexion(), &publica, &compactar).unwrap(),
-            Aplicacion::Descartado(motivo) if motivo.contains("firma_admin")
-        ));
-        let firmado = compactar.firmar(&admin);
-        assert!(matches!(
-            aplicar_evento(db.conexion(), &publica, &firmado).unwrap(),
-            Aplicacion::Descartado(_)
-        ));
-        // Un evento de usuarios bien firmado pero sin tabla `usuarios` detrás que lo
-        // respalde: regla rota, se descarta (no detiene el escaneo).
-        let mut usuario = evento(AHORA, "a@x.dev", 1);
-        usuario.tipo = "eliminar_usuario".into();
-        let usuario = usuario.firmar(&admin);
-        assert!(matches!(
-            aplicar_evento(db.conexion(), &publica, &usuario).unwrap(),
-            Aplicacion::Descartado(_)
-        ));
+        // Sin firmas (#243) nadie puede probar quién mandó un cambio de equipo o un snapshot: se
+        // descartan siempre, sin mirar su contenido, y el equipo no cambia.
+        for tipo in crate::eventos::TIPOS_RETIRADOS {
+            let mut e = evento(AHORA, "a@x.dev", 1);
+            e.tipo = (*tipo).into();
+            e.payload = json!({ "email": "a@x.dev", "rol": "Administrador" });
+            assert!(
+                matches!(
+                    aplicar_evento(db.conexion(), &e).unwrap(),
+                    Aplicacion::Descartado(motivo) if motivo.contains("#243")
+                ),
+                "{tipo}"
+            );
+        }
+        assert!(crate::db::usuarios::listar(db.conexion())
+            .unwrap()
+            .is_empty());
     }
 
     /// **Prueba en el entorno real** (CLAUDE.md): dos "máquinas" (cada una con su

@@ -10,7 +10,7 @@ use crate::error::{Error, Resultado};
 use crate::modelo::{EstadoTarea, Rol, TipoNotificacion, TipoTarea};
 
 /// Versión del esquema a la que queda un `.db` recién abierto.
-pub const VERSION_ESQUEMA: u32 = 13;
+pub const VERSION_ESQUEMA: u32 = 14;
 
 /// Una migración por versión, en orden. La posición `i` lleva de la versión `i` a la `i + 1`.
 fn migraciones() -> Vec<String> {
@@ -273,6 +273,14 @@ fn migraciones() -> Vec<String> {
             payload           TEXT NOT NULL,
             recibido_en       TEXT NOT NULL
         ) STRICT;"
+            .to_string(),
+        // 14 — sin firmas (#243): los roles los da el servidor (`miembros`, #241) y la tabla `usuarios`
+        // es su copia. Se quitan la firma del rol y la llave/certificado de los Líderes.
+        "ALTER TABLE usuarios DROP COLUMN firma;
+         ALTER TABLE usuarios DROP COLUMN firmado_en;
+         ALTER TABLE usuarios DROP COLUMN firmado_por;
+         ALTER TABLE usuarios DROP COLUMN llave_publica;
+         ALTER TABLE usuarios DROP COLUMN certificado;"
             .to_string(),
     ]
 }

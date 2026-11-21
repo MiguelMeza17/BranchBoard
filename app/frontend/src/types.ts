@@ -50,8 +50,6 @@ export interface Usuario {
   apellido: string;
   rol: Rol;
   fecha_alta: string;
-  firma: string | null; // null = pendiente de confirmar
-  firmado_en: string | null;
   // Con el proyecto en el servidor (#241): invitado por correo, todavía sin cuenta. Entra al registrarse
   // con ese correo; mientras tanto no tiene acceso.
   invitado?: boolean;

@@ -417,11 +417,7 @@ mod tests {
     use crate::eventos::carpeta_ops;
     use crate::eventos::configurar_carpeta_compartida;
     use crate::eventos::lectura::{self, sincronizar};
-    use crate::identidad::equipo::{self, Firmante};
-    use crate::identidad::firmas;
-    use crate::identidad::llaves::{
-        cargar_llave_admin, fijar_llave_publica_admin, generar_llaves_admin,
-    };
+
     use crate::modelo::{EstadoTarea, Rol, TipoTarea};
     use crate::sprints::{
         asignar_tarea_a_backlog, asignar_tarea_a_sprint, cerrar_sprint, crear_sprint,
@@ -431,7 +427,6 @@ mod tests {
 
     const ADMIN: &str = "admin@estudio.com";
     const LIDER: &str = "lider@estudio.com";
-    const AHORA: &str = "2026-11-01T10:00:00.000Z";
     const HOY_INICIO: &str = "2026-11-01";
 
     struct Entorno {
@@ -440,7 +435,6 @@ mod tests {
         ops: PathBuf,
         db_b: Db,
         local_b: PathBuf,
-        publica: String,
     }
 
     fn setup() -> Entorno {
@@ -461,10 +455,6 @@ mod tests {
         configurar_carpeta_compartida(&local_b, &compartida.to_string_lossy(), false).unwrap();
         let ops = carpeta_ops(&local_a).unwrap();
 
-        let publica = generar_llaves_admin(&local_a, None).unwrap();
-        fijar_llave_publica_admin(&local_b, &publica).unwrap();
-        let privada = cargar_llave_admin(&local_a, None).unwrap();
-
         let db_a = Db::abrir(&local_a).unwrap();
         let db_b = Db::abrir(&local_b).unwrap();
 
@@ -474,11 +464,6 @@ mod tests {
             apellido: "Uno".into(),
             rol: Rol::Administrador,
             fecha_alta: HOY_INICIO.into(),
-            firma: Some(firmas::firmar_rol(&privada, ADMIN, Rol::Administrador, AHORA).unwrap()),
-            firmado_en: Some(AHORA.into()),
-            firmado_por: Some(ADMIN.into()),
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(db_a.conexion(), &admin_fila).unwrap();
         usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
@@ -489,11 +474,6 @@ mod tests {
             apellido: "Uno".into(),
             rol: Rol::Lider,
             fecha_alta: HOY_INICIO.into(),
-            firma: Some(firmas::firmar_rol(&privada, LIDER, Rol::Lider, AHORA).unwrap()),
-            firmado_en: Some(AHORA.into()),
-            firmado_por: Some(ADMIN.into()),
-            llave_publica: None,
-            certificado: None,
         };
         usuarios::insertar(db_a.conexion(), &lider_fila).unwrap();
         usuarios::insertar(db_b.conexion(), &lider_fila).unwrap();
@@ -504,7 +484,6 @@ mod tests {
             ops,
             db_b,
             local_b,
-            publica,
         }
     }
 
@@ -851,7 +830,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         sincronizar(e.db_b.conexion(), &e.ops, &e.local_b, ahora, |c, ev| {
-            lectura::aplicar_evento(c, &e.publica, ev)
+            lectura::aplicar_evento(c, ev)
         })
         .unwrap();
         assert_eq!(datos_general(e.db_b.conexion(), hoy).unwrap(), gen);
@@ -881,7 +860,7 @@ mod tests {
             datos_avance_sprint_en,
         };
         use crate::comandos::tareas::cambiar_estado_en;
-        use crate::estado::{llave_publica_del_proyecto, AppState};
+        use crate::estado::AppState;
         use crate::modelo::hoy_local;
 
         let org = std::env::var("BB_PRUEBA_ORG").expect("falta BB_PRUEBA_ORG");
@@ -921,15 +900,12 @@ mod tests {
             let ops_a = carpeta_ops(&local_a).unwrap();
             let ops_b = carpeta_ops(&local_b).unwrap();
 
-            let (publica, admin_fila) = estado_a
+            let admin_fila = estado_a
                 .con_db(|db| {
-                    let pub_k = llave_publica_del_proyecto(db)?;
                     let todos = usuarios::listar(db.conexion())?;
-                    Ok((pub_k, todos.into_iter().next().unwrap()))
+                    Ok(todos.into_iter().next().unwrap())
                 })
                 .unwrap();
-            fijar_llave_publica_admin(&local_b, &publica).unwrap();
-            let llave_admin = cargar_llave_admin(&local_a, None).unwrap();
 
             let db_b = Db::abrir(&local_b).unwrap();
             usuarios::insertar(db_b.conexion(), &admin_fila).unwrap();
@@ -949,21 +925,16 @@ mod tests {
 
             estado_a
                 .con_db(|db_a| {
-                    let firmante_admin = Firmante {
-                        email: &admin_fila.email,
-                        rol: Rol::Administrador,
-                        llave: &llave_admin,
-                    };
-                    equipo::crear(
-                        db_a.conexion(),
-                        &ops_a,
-                        &publica,
-                        &firmante_admin,
-                        LIDER,
-                        Rol::Lider,
-                        &ahora_pausa(),
-                        &hoy_real,
-                    )
+                    Ok::<_, crate::error::Error>({
+                        let u = crate::identidad::equipo::alta_de_prueba(
+                            db_a.conexion(),
+                            LIDER,
+                            Rol::Lider,
+                            &hoy_real,
+                        );
+                        crate::db::usuarios::insertar(db_b.conexion(), &u).unwrap();
+                        u
+                    })
                 })
                 .unwrap();
 
@@ -1065,7 +1036,7 @@ mod tests {
 
             let ahora = Utc::now() + chrono::Duration::minutes(1);
             let sync_b = sincronizar(db_b.conexion(), &ops_b, &local_b, ahora, |c, e| {
-                lectura::aplicar_evento(c, &publica, e)
+                lectura::aplicar_evento(c, e)
             })
             .unwrap();
             println!("B sincroniza datos de avance desde OneDrive: {sync_b:?}");

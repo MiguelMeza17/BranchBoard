@@ -7,9 +7,8 @@ use std::sync::Mutex;
 use crate::db::Db;
 use crate::error::{Error, Resultado};
 use crate::identidad::acceso::RepoUnityVc;
-use crate::identidad::llaves::{self, LlavePrivada};
 use crate::identidad::permisos::{self, Acceso, UsuarioActual};
-use crate::modelo::{normalizar_email, Rol};
+use crate::modelo::normalizar_email;
 
 #[derive(Debug, Default)]
 pub struct AppState {
@@ -28,42 +27,12 @@ pub struct AppState {
     repo: Mutex<Option<RepoUnityVc>>,
     /// Correo de quien usa la app (`cm whoami`); `None` sin sesión de Unity VC.
     usuario: Mutex<Option<String>>,
-    /// Llave de firma ya abierta en esta sesión (de qué proyecto y con qué rol),
-    /// para no pedir su contraseña en cada firma. Solo en memoria.
-    llave_firma: Mutex<Option<(PathBuf, Rol, LlavePrivada)>>,
-}
-
-/// Llave pública del Administrador que esta máquina fijó para el proyecto de `db`.
-///
-/// **Vacía** si el proyecto está en el servidor (#241): ahí los roles los da el servidor (`miembros`) y
-/// la tabla `usuarios` es su copia, sin firmas; con la llave vacía la verificación la toma tal cual
-/// (`firmas::Verificador`, `tareas::rol_verificado_de`). Aunque esta máquina conserve `admin.pub` de
-/// cuando el proyecto iba por Drive/OneDrive, ya no se usa.
-pub fn llave_publica_del_proyecto(db: &Db) -> Resultado<String> {
-    if crate::db::configuracion::leer(
-        db.conexion(),
-        crate::db::configuracion::CLAVE_PROYECTO_SERVIDOR,
-    )?
-    .is_some_and(|id| !id.trim().is_empty())
-    {
-        return Ok(String::new());
-    }
-    let carpeta = db
-        .carpeta()
-        .ok_or_else(|| Error::Validacion("El proyecto abierto no tiene carpeta de datos".into()))?;
-    llaves::leer_llave_publica_admin(carpeta)?.ok_or_else(|| {
-        Error::Validacion(
-            "Esta máquina todavía no tiene la llave del Administrador del proyecto".into(),
-        )
-    })
 }
 
 impl AppState {
     /// Guarda quién usa la app (el correo de `cm whoami`), o `None` al cerrar sesión.
-    /// Cambiar de persona olvida la llave de firma abierta.
     pub fn fijar_usuario(&self, email: Option<&str>) {
         *self.usuario.lock().unwrap_or_else(|e| e.into_inner()) = email.map(normalizar_email);
-        *self.llave_firma.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Correo actual de `cm whoami` guardado en memoria, si hay sesión (#124).
@@ -74,43 +43,8 @@ impl AppState {
             .clone()
     }
 
-    /// La llave privada con la que firma `yo` en el proyecto de `db`: `admin.key`
-    /// si es Administrador, `lider.key` si es Líder. Si está cifrada, la primera
-    /// vez en la sesión hace falta `passphrase` (si no, error `llave_cifrada`);
-    /// después queda abierta en memoria.
-    pub fn llave_firma(
-        &self,
-        db: &Db,
-        yo: &UsuarioActual,
-        passphrase: Option<&str>,
-    ) -> Resultado<LlavePrivada> {
-        let carpeta = db.carpeta().ok_or_else(|| {
-            Error::Validacion("El proyecto abierto no tiene carpeta de datos".into())
-        })?;
-        let mut guardada = self.llave_firma.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((de, rol, llave)) = guardada.as_ref() {
-            if de == carpeta && *rol == yo.rol {
-                return Ok(llave.clone());
-            }
-        }
-        let llave = match yo.rol {
-            Rol::Administrador => llaves::cargar_llave_admin(carpeta, passphrase)?,
-            Rol::Lider => llaves::cargar_llave_lider(carpeta, passphrase)?,
-            _ => return Err(Error::SinPermiso),
-        };
-        *guardada = Some((carpeta.to_path_buf(), yo.rol, llave.clone()));
-        Ok(llave)
-    }
-
-    /// Deja abierta en memoria una llave ya desbloqueada (al abrir un proyecto
-    /// local con su contraseña), para no volver a pedirla al firmar.
-    pub fn recordar_llave_firma(&self, carpeta: &std::path::Path, rol: Rol, llave: LlavePrivada) {
-        *self.llave_firma.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some((carpeta.to_path_buf(), rol, llave));
-    }
-
     /// Primera línea de todo comando que depende del rol: devuelve quién lo usa
-    /// si su rol (verificado por la firma) puede usar `comando` según la tabla
+    /// si su rol (el de la tabla `usuarios`, copia de `miembros` del servidor) puede usar `comando` según la tabla
     /// `identidad::permisos::PERMISOS`; si no, `sin_permiso`.
     pub fn exigir_permiso(&self, comando: &str) -> Resultado<UsuarioActual> {
         match permisos::acceso(comando) {
@@ -128,10 +62,7 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or(Error::SinSesionUnityVc)?;
-        let usuario = self.con_db(|db| {
-            let publica = llave_publica_del_proyecto(db)?;
-            permisos::usuario_actual(db.conexion(), &publica, &email)
-        })?;
+        let usuario = self.con_db(|db| permisos::usuario_actual(db.conexion(), &email))?;
         permisos::exigir(comando, &usuario)?;
         Ok(usuario)
     }
@@ -294,19 +225,15 @@ mod tests {
     #[test]
     fn exigir_permiso_de_punta_a_punta() {
         use crate::db::{carpeta_proyecto, usuarios};
-        use crate::identidad::firmas;
         use crate::modelo::Rol;
 
         let datos = tempfile::tempdir().unwrap();
         let carpeta = carpeta_proyecto(datos.path(), "VirusTF").unwrap();
-        llaves::generar_llaves_admin(&carpeta, None).unwrap();
-        let admin = llaves::cargar_llave_admin(&carpeta, None).unwrap();
         let db = Db::abrir(&carpeta).unwrap();
         for (email, rol) in [
             ("admin@virustf.dev", Rol::Administrador),
             ("tester@virustf.dev", Rol::Tester),
         ] {
-            let fecha = "2026-11-10T10:00:00Z";
             usuarios::insertar(
                 db.conexion(),
                 &usuarios::Usuario {
@@ -315,11 +242,6 @@ mod tests {
                     apellido: "A".into(),
                     rol,
                     fecha_alta: "2026-11-10".into(),
-                    firma: Some(firmas::firmar_rol(&admin, email, rol, fecha).unwrap()),
-                    firmado_en: Some(fecha.into()),
-                    firmado_por: None,
-                    llave_publica: None,
-                    certificado: None,
                 },
             )
             .unwrap();

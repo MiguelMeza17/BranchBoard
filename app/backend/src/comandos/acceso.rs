@@ -151,7 +151,7 @@ pub fn vincular_proyecto_servidor_en(estado: &AppState) -> Resultado<Vinculo> {
 
 /// Pide a `vincular-repo-unity` que traiga el repo a BranchBoard con el token de Unity de `tokens.conf`.
 /// Si Unity rechaza el token (venció), lo renueva con `cm` y reintenta una vez.
-fn traer_repo<L: crate::servidor::pat::Llavero>(
+pub(crate) fn traer_repo<L: crate::servidor::pat::Llavero>(
     estado: &AppState,
     cliente: &ClienteSupabase<L>,
     repo: &RepoUnityVc,

@@ -32,29 +32,21 @@ pub async fn crear_proyecto_local(
     datos: NuevoProyectoLocal,
 ) -> Resultado<ProyectoLocalCreado> {
     let carpeta = proyecto_local::crear(&datos, &ahora_iso(), &hoy_local())?;
-    let entrada =
-        proyecto_local::abrir(&estado, &carpeta_datos(&app)?, &carpeta, &datos.clave, true)?;
+    let entrada = proyecto_local::abrir(&estado, &carpeta_datos(&app)?, &carpeta, true)?;
     Ok(ProyectoLocalCreado {
         ruta: carpeta.to_string_lossy().to_string(),
         entrada,
     })
 }
 
-/// Abre el proyecto local de `carpeta` (debe tener la marca de BranchBoard) con su contraseña.
+/// Abre el proyecto local de `carpeta` (debe tener la marca de BranchBoard). Sin contraseña desde #243.
 #[tauri::command]
 pub async fn abrir_proyecto_local(
     app: AppHandle,
     estado: State<'_, AppState>,
     carpeta: String,
-    clave: String,
 ) -> Resultado<Entrada> {
-    proyecto_local::abrir(
-        &estado,
-        &carpeta_datos(&app)?,
-        Path::new(&carpeta),
-        &clave,
-        false,
-    )
+    proyecto_local::abrir(&estado, &carpeta_datos(&app)?, Path::new(&carpeta), false)
 }
 
 /// Proyectos locales que ya se abrieron en esta máquina y siguen en su carpeta.

@@ -8,13 +8,13 @@
 //! ```text
 //! <Proyecto>/
 //!   branchboard-proyecto-local.json   ← marca: identifica la carpeta como proyecto de BranchBoard
-//!   datos/                            ← base SQLite, llaves del Administrador, copias de seguridad
+//!   datos/                            ← base SQLite y copias de seguridad
 //!   compartida/                       ← lo que en un proyecto de Unity VC va en Drive/OneDrive (ops/, documentos, imagen)
 //! ```
 //!
-//! La contraseña que se pide al crearlo cifra la llave del Administrador
-//! (`datos/admin.key`): abrir el proyecto exige esa contraseña, también después
-//! de exportarlo e importarlo en otra máquina.
+//! Desde #243 no lleva contraseña (decisión 4 de #231): antes cifraba la llave del Administrador
+//! (`datos/admin.key`), que se quitó con las firmas. Un proyecto creado antes conserva sus archivos de
+//! llave, pero ya no se usan.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -30,13 +30,11 @@ use crate::error::{Error, Resultado};
 use crate::estado::AppState;
 use crate::eventos;
 use crate::identidad::acceso::Entrada;
-use crate::identidad::firmas::{self, verificar_usuarios};
-use crate::identidad::llaves;
 use crate::modelo::{normalizar_email, Rol};
 
 /// Archivo que identifica la carpeta como un proyecto local de BranchBoard.
 pub const ARCHIVO_MARCA: &str = "branchboard-proyecto-local.json";
-/// Subcarpeta con la base y las llaves.
+/// Subcarpeta con la base y sus copias de seguridad.
 pub const CARPETA_DATOS: &str = "datos";
 /// Subcarpeta con `ops/`, documentos e imagen del proyecto.
 pub const CARPETA_COMPARTIDA: &str = "compartida";
@@ -79,7 +77,6 @@ pub struct NuevoProyectoLocal {
     pub proyecto: String,
     pub nombre: String,
     pub correo: String,
-    pub clave: String,
 }
 
 fn no_es_proyecto() -> Error {
@@ -172,8 +169,7 @@ fn id_nuevo() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Crea la carpeta del proyecto dentro de `nuevo.carpeta` con su marca, la base,
-/// las llaves del Administrador (cifradas con `nuevo.clave`) y su fila firmada.
+/// Crea la carpeta del proyecto dentro de `nuevo.carpeta` con su marca, la base y su Administrador.
 /// Devuelve la carpeta del proyecto. No lo abre.
 pub fn crear(nuevo: &NuevoProyectoLocal, ahora: &str, hoy: &str) -> Resultado<PathBuf> {
     let proyecto = nuevo.proyecto.trim();
@@ -191,11 +187,6 @@ pub fn crear(nuevo: &NuevoProyectoLocal, ahora: &str, hoy: &str) -> Resultado<Pa
             "El correo no es válido (ej. nombre@correo.com).".into(),
         ));
     }
-    if nuevo.clave.chars().count() < llaves::LARGO_MINIMO_PASSPHRASE {
-        return Err(Error::Validacion(
-            "La contraseña debe tener al menos 8 caracteres.".into(),
-        ));
-    }
     let padre = carpeta_padre_valida(&nuevo.carpeta)?;
     let carpeta = padre.join(nombre_carpeta(proyecto)?);
     if carpeta.exists() {
@@ -204,15 +195,7 @@ pub fn crear(nuevo: &NuevoProyectoLocal, ahora: &str, hoy: &str) -> Resultado<Pa
             carpeta.display()
         )));
     }
-    let resultado = crear_en(
-        &carpeta,
-        proyecto,
-        nombre,
-        &correo,
-        &nuevo.clave,
-        ahora,
-        hoy,
-    );
+    let resultado = crear_en(&carpeta, proyecto, nombre, &correo, ahora, hoy);
     if resultado.is_err() {
         // A medio crear no sirve: no deja una carpeta que parezca un proyecto.
         let _ = std::fs::remove_dir_all(&carpeta);
@@ -225,15 +208,12 @@ fn crear_en(
     proyecto: &str,
     nombre: &str,
     correo: &str,
-    clave: &str,
     ahora: &str,
     hoy: &str,
 ) -> Resultado<()> {
     std::fs::create_dir_all(carpeta)?;
     let datos = carpeta.join(CARPETA_DATOS);
     let db = Db::abrir(&datos)?;
-    llaves::generar_llaves_admin(&datos, Some(clave))?;
-    let llave = llaves::cargar_llave_admin(&datos, Some(clave))?;
     let mut palabras = nombre.split_whitespace();
     let admin = Usuario {
         email: correo.to_string(),
@@ -241,16 +221,6 @@ fn crear_en(
         apellido: palabras.collect::<Vec<_>>().join(" "),
         rol: Rol::Administrador,
         fecha_alta: hoy.to_string(),
-        firma: Some(firmas::firmar_rol(
-            &llave,
-            correo,
-            Rol::Administrador,
-            ahora,
-        )?),
-        firmado_en: Some(ahora.to_string()),
-        firmado_por: Some(correo.to_string()),
-        llave_publica: None,
-        certificado: None,
     };
     let c = db.conexion();
     let tx = c.unchecked_transaction()?;
@@ -278,45 +248,29 @@ fn crear_en(
     Ok(())
 }
 
-/// Abre el proyecto local de `carpeta` con su contraseña: queda abierto en
-/// `estado` con su Administrador como usuario y se anota en "Recientes".
+/// Abre el proyecto local de `carpeta`: queda abierto en `estado` con su Administrador como usuario y
+/// se anota en "Recientes".
 pub fn abrir(
     estado: &AppState,
     datos_app: &Path,
     carpeta: &Path,
-    clave: &str,
     configurado_ahora: bool,
 ) -> Resultado<Entrada> {
     let carpeta = carpeta_existente(carpeta)?;
     let marca = leer_marca(&carpeta)?;
     let datos = carpeta.join(CARPETA_DATOS);
-    if !datos.join(NOMBRE_DB).is_file() || !llaves::existe_llave_admin(&datos) {
+    if !datos.join(NOMBRE_DB).is_file() {
         return Err(Error::Validacion(
             "A ese proyecto le faltan archivos (carpeta datos). Puede que la copia esté incompleta."
                 .into(),
         ));
     }
-    // La contraseña solo se pide si el proyecto la tiene: sin ella, una llave cifrada responde
-    // `llave_cifrada` (la interfaz muestra entonces el campo) y una sin cifrar abre directo.
-    let clave = (!clave.is_empty()).then_some(clave);
-    let llave = llaves::cargar_llave_admin(&datos, clave).map_err(|e| match e {
-        Error::Validacion(_) => {
-            Error::Validacion("La contraseña del proyecto no es correcta.".into())
-        }
-        otro => otro,
-    })?;
-    let publica = llaves::leer_llave_publica_admin(&datos)?.ok_or_else(no_es_proyecto)?;
-    if publica != llave.publica() {
-        return Err(Error::Validacion(
-            "La llave del Administrador no coincide con la del proyecto".into(),
-        ));
-    }
     let db = Db::abrir_con_respaldo(&datos)?;
-    let admin = verificar_usuarios(&publica, usuarios::listar(db.conexion())?)
+    let admin = usuarios::listar(db.conexion())?
         .into_iter()
-        .find(|u| u.rol_efectivo == Some(Rol::Administrador))
-        .ok_or_else(|| Error::Validacion("El proyecto no tiene un Administrador válido".into()))?;
-    let email = admin.usuario.email.clone();
+        .find(|u| u.rol == Rol::Administrador)
+        .ok_or_else(|| Error::Validacion("El proyecto no tiene un Administrador".into()))?;
+    let email = admin.email.clone();
     let proyecto =
         configuracion::leer(db.conexion(), CLAVE_NOMBRE_PROYECTO)?.unwrap_or(marca.nombre.clone());
     let vistos_usuario = vistos::listar_vistos(db.conexion(), &email)?;
@@ -326,7 +280,6 @@ pub fn abrir(
     estado.fijar_usuario(Some(&email));
     estado.abrir_proyecto(db);
     estado.fijar_workspace(None, None);
-    estado.recordar_llave_firma(&datos, Rol::Administrador, llave);
     registrar_reciente(
         datos_app,
         ProyectoLocal {
@@ -406,13 +359,12 @@ fn escribir_zip(carpeta: &Path, copia_db: &Path, destino: &Path) -> Resultado<()
     let opciones = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
-    let agregar =
-        |zip: &mut zip::ZipWriter<File>, nombre: &str, origen: &Path| -> Resultado<()> {
-            zip.start_file(nombre, opciones).map_err(zip_err)?;
-            let mut f = File::open(origen)?;
-            std::io::copy(&mut f, zip)?;
-            Ok(())
-        };
+    let agregar = |zip: &mut zip::ZipWriter<File>, nombre: &str, origen: &Path| -> Resultado<()> {
+        zip.start_file(nombre, opciones).map_err(zip_err)?;
+        let mut f = File::open(origen)?;
+        std::io::copy(&mut f, zip)?;
+        Ok(())
+    };
     agregar(&mut zip, ARCHIVO_MARCA, &carpeta.join(ARCHIVO_MARCA))?;
     agregar(&mut zip, &format!("{CARPETA_DATOS}/{NOMBRE_DB}"), copia_db)?;
     let excluidos_datos = |relativa: &Path| {
@@ -605,12 +557,11 @@ mod tests {
             proyecto: proyecto.into(),
             nombre: "Ana María Pérez".into(),
             correo: "Ana@Ejemplo.dev".into(),
-            clave: "clave-segura".into(),
         }
     }
 
     #[test]
-    fn crear_deja_la_marca_y_abrir_pide_la_contrasena() {
+    fn crear_deja_la_marca_y_abrir_entra_como_administrador() {
         let base = tempfile::tempdir().unwrap();
         let app = tempfile::tempdir().unwrap();
         let carpeta = crear(&nuevo(base.path(), "Mi Juego"), AHORA, HOY).unwrap();
@@ -621,18 +572,11 @@ mod tests {
             ("Mi Juego", FORMATO)
         );
         assert!(carpeta.join(CARPETA_DATOS).join(NOMBRE_DB).is_file());
-        assert!(llaves::llave_admin_cifrada(&carpeta.join(CARPETA_DATOS)).unwrap());
+        // Sin llaves ni contraseña desde #243.
+        assert!(!carpeta.join(CARPETA_DATOS).join("admin.key").exists());
 
         let estado = AppState::default();
-        let e = abrir(&estado, app.path(), &carpeta, "otra-clave", false).unwrap_err();
-        assert_eq!(e.to_string(), "La contraseña del proyecto no es correcta.");
-        assert!(estado.con_db(|_| Ok(())).is_err(), "no queda abierto");
-        // Sin contraseña: como el proyecto la tiene, pide escribirla (la interfaz muestra el campo).
-        let e = abrir(&estado, app.path(), &carpeta, "", false).unwrap_err();
-        assert_eq!(e.codigo(), "llave_cifrada");
-        assert!(estado.con_db(|_| Ok(())).is_err(), "no queda abierto");
-
-        let entrada = abrir(&estado, app.path(), &carpeta, "clave-segura", true).unwrap();
+        let entrada = abrir(&estado, app.path(), &carpeta, true).unwrap();
         assert_eq!(
             entrada,
             Entrada::Dentro {
@@ -673,14 +617,14 @@ mod tests {
         let app = tempfile::tempdir().unwrap();
         let estado = AppState::default();
         std::fs::write(base.path().join("algo.txt"), "hola").unwrap();
-        let e = abrir(&estado, app.path(), base.path(), "clave-segura", false).unwrap_err();
+        let e = abrir(&estado, app.path(), base.path(), false).unwrap_err();
         assert_eq!(
             e.to_string(),
             "En esa carpeta no hay un proyecto de BranchBoard."
         );
         // Una marca de otra cosa (p. ej. la de la carpeta compartida) tampoco.
         std::fs::write(base.path().join(ARCHIVO_MARCA), r#"{"proyecto":"x"}"#).unwrap();
-        assert!(abrir(&estado, app.path(), base.path(), "clave-segura", false).is_err());
+        assert!(abrir(&estado, app.path(), base.path(), false).is_err());
         // Una marca de una versión más nueva pide actualizar.
         let nueva = serde_json::json!({
             "aplicacion": "BranchBoard", "tipo": "local", "formato": FORMATO + 1,
@@ -695,9 +639,6 @@ mod tests {
     fn crear_valida_los_datos_y_no_pisa_carpetas() {
         let base = tempfile::tempdir().unwrap();
         let mut datos = nuevo(base.path(), "Juego");
-        datos.clave = "corta".into();
-        assert!(crear(&datos, AHORA, HOY).is_err());
-        datos.clave = "clave-segura".into();
         datos.correo = "sin-arroba".into();
         assert!(crear(&datos, AHORA, HOY).is_err());
         assert!(!base.path().join("Juego").exists(), "nada a medias");
@@ -713,7 +654,7 @@ mod tests {
         let app = tempfile::tempdir().unwrap();
         let carpeta = crear(&nuevo(base.path(), "Juego"), AHORA, HOY).unwrap();
         let estado = AppState::default();
-        abrir(&estado, app.path(), &carpeta, "clave-segura", false).unwrap();
+        abrir(&estado, app.path(), &carpeta, false).unwrap();
         std::fs::write(
             carpeta.join(CARPETA_COMPARTIDA).join("ops").join("e1.json"),
             "{}",
@@ -734,7 +675,6 @@ mod tests {
         };
         assert!(nombres.contains(&ARCHIVO_MARCA.to_string()));
         assert!(nombres.contains(&"datos/branchboard.db".to_string()));
-        assert!(nombres.contains(&"datos/admin.key".to_string()));
         assert!(nombres.contains(&"compartida/ops/e1.json".to_string()));
         assert!(!nombres
             .iter()
@@ -744,7 +684,7 @@ mod tests {
             "no deja temporales"
         );
 
-        // Otra máquina: importa en otra carpeta (dos veces → no pisa) y abre con la contraseña.
+        // Otra máquina: importa en otra carpeta (dos veces → no pisa) y abre.
         let otra = tempfile::tempdir().unwrap();
         let otra_app = tempfile::tempdir().unwrap();
         let destino = otra.path().to_string_lossy().to_string();
@@ -758,8 +698,7 @@ mod tests {
 
         let estado_b = AppState::default();
         let ruta = PathBuf::from(&importado.ruta);
-        assert!(abrir(&estado_b, otra_app.path(), &ruta, "mala-clave", false).is_err());
-        abrir(&estado_b, otra_app.path(), &ruta, "clave-segura", false).unwrap();
+        abrir(&estado_b, otra_app.path(), &ruta, false).unwrap();
         let valor = estado_b
             .con_db(|db| configuracion::leer(db.conexion(), "prueba"))
             .unwrap();
