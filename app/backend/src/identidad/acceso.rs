@@ -108,8 +108,8 @@ pub fn entrar(
 
 /// Como [`entrar`], con el servidor de Supabase (#240, roles de #241):
 /// - **Base local vinculada** (`proyecto_servidor_id`): `refrescar(db, proyecto)` rehace la copia de
-///   `miembros` (sin red se usa la última) y se decide con ella **sin firmas**: los roles los hace
-///   cumplir el servidor, igual que `estado::llave_publica_del_proyecto` (llave vacía).
+///   `miembros` (sin red se usa la última) y se decide con ella: los roles los hace cumplir el
+///   servidor.
 /// - **Sin datos locales usables**: si `buscar()` encuentra el proyecto en el servidor (la cuenta es
 ///   miembro), se crea la base local vinculada, se trae el equipo y se decide con él. El historial lo
 ///   baja la recepción (#239). Así entra por primera vez en una PC quien no es el dueño.

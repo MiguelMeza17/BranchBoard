@@ -4573,7 +4573,10 @@ mod tests {
         }
 
         fn sincronizar_b(&self) -> lectura::ResumenSincronizacion {
-            let ahora = DateTime::parse_from_rfc3339(AHORA)
+            // Después de todos los eventos de las pruebas (llegan hasta las 16:xx). Con `AHORA` (15:00)
+            // quedaban "en el futuro" y se ordenaban por la hora de su archivo, que puede empatar: B
+            // aplicaba a veces un evento antes del que lo hace posible y lo descartaba.
+            let ahora = DateTime::parse_from_rfc3339("2026-11-15T23:00:00.000Z")
                 .unwrap()
                 .with_timezone(&Utc);
             sincronizar(
