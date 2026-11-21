@@ -44,7 +44,7 @@ pub mod warp;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use comandos::{
-    acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, datos,
+    acceso, actualizaciones, chat as comandos_chat, cm as comandos_cm, cuenta, datos,
     documentos as comandos_documentos, eventos as comandos_eventos,
     identidad as comandos_identidad, notificaciones as comandos_notificaciones,
     proyecto as comandos_proyecto, proyecto_local as comandos_proyecto_local, sistema,
@@ -122,6 +122,10 @@ pub fn run() {
             comandos_warp::estado_warp,
             comandos_warp::alternar_warp,
             comandos_warp::instalar_warp,
+            cuenta::registrar_cuenta,
+            cuenta::iniciar_sesion_branchboard,
+            cuenta::sesion_branchboard,
+            cuenta::cerrar_sesion_branchboard,
             comandos_cm::estado_cm,
             comandos_cm::instalar_cm,
             comandos_cm::sesion_unity_vc,

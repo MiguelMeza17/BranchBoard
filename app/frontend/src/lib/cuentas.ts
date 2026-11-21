@@ -1,6 +1,6 @@
-// Cuentas de BranchBoard para la pantalla de inicio ("Bienvenido" / "Regístrate").
-// Por ahora viven en este equipo (localStorage del webview): no hay backend de cuentas todavía.
-// La contraseña nunca se guarda tal cual: se guarda su hash SHA-256 con una sal aleatoria.
+// Cuenta de BranchBoard para la pantalla de inicio ("Bienvenido" / "Regístrate").
+// Las cuentas viven en Supabase Auth (#236): las crea y las comprueba el backend (`api.registrarCuenta`,
+// `api.iniciarSesionBranchBoard`). Aquí solo quedan los correos recordados de este equipo.
 
 export interface Cuenta {
   nombre: string;
@@ -8,34 +8,14 @@ export interface Cuenta {
   correo: string;
 }
 
-interface CuentaGuardada extends Cuenta {
-  sal: string;
-  hash: string;
-}
-
-const CLAVE = 'branchboard.cuentas';
-
-function leer(): CuentaGuardada[] {
-  try {
-    return JSON.parse(localStorage.getItem(CLAVE) ?? '[]') as CuentaGuardada[];
-  } catch {
-    return [];
-  }
-}
-
-function guardar(cuentas: CuentaGuardada[]) {
-  localStorage.setItem(CLAVE, JSON.stringify(cuentas));
-}
-
-const aHex = (bytes: ArrayBuffer | Uint8Array) =>
-  Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, '0')).join('');
-
-async function hashClave(clave: string, sal: string) {
-  const datos = new TextEncoder().encode(`${sal}:${clave}`);
-  return aHex(await crypto.subtle.digest('SHA-256', datos));
-}
-
 const normalizar = (correo: string) => correo.trim().toLowerCase();
+
+// Las cuentas que guardaba este equipo antes de #236 (correo y hash de la contraseña) ya no sirven: se borran.
+try {
+  localStorage.removeItem('branchboard.cuentas');
+} catch {
+  // sin almacenamiento: no hay nada que borrar
+}
 
 // Correos con los que ya se entró en este equipo, el más reciente primero: se sugieren en "Bienvenido".
 const CLAVE_RECIENTES = 'branchboard.correosRecientes';
@@ -66,27 +46,4 @@ export function recordarCorreo(correo: string) {
 export function olvidarCorreo(correo: string) {
   const c = normalizar(correo);
   guardarRecientes(correosRecientes().filter((x) => x !== c));
-}
-
-/** Crea la cuenta. Falla si ya hay una con ese correo. */
-export async function registrarCuenta(datos: Cuenta & { clave: string }): Promise<Cuenta> {
-  const cuentas = leer();
-  const correo = normalizar(datos.correo);
-  if (cuentas.some((c) => c.correo === correo)) {
-    throw new Error('Ya existe una cuenta con ese correo. Inicia sesión.');
-  }
-  const sal = aHex(crypto.getRandomValues(new Uint8Array(16)));
-  const cuenta: Cuenta = { nombre: datos.nombre.trim(), apellido: datos.apellido.trim(), correo };
-  guardar([...cuentas, { ...cuenta, sal, hash: await hashClave(datos.clave, sal) }]);
-  return cuenta;
-}
-
-/** Devuelve la cuenta si el correo y la contraseña coinciden. */
-export async function ingresar(correo: string, clave: string): Promise<Cuenta> {
-  const c = leer().find((x) => x.correo === normalizar(correo));
-  if (!c || (await hashClave(clave, c.sal)) !== c.hash) {
-    throw new Error('Correo o contraseña incorrectos.');
-  }
-  recordarCorreo(c.correo);
-  return { nombre: c.nombre, apellido: c.apellido, correo: c.correo };
 }

@@ -5,6 +5,7 @@ pub mod acceso;
 pub mod actualizaciones;
 pub mod chat;
 pub mod cm;
+pub mod cuenta;
 pub mod datos;
 pub mod diff;
 pub mod documentos;

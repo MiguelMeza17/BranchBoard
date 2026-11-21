@@ -57,6 +57,18 @@ export function App() {
     void cargarSesionUnityVc();
   }, [cargarEstadoWarp, cargarEstadoCm, cargarSesionUnityVc]);
 
+  // Con una sesión de BranchBoard guardada en este equipo (llavero, #236) se entra sin pedir la contraseña.
+  // Se lee sin red, así que también funciona sin internet.
+  useEffect(() => {
+    void api
+      .sesionBranchBoard()
+      .then((cuenta) => {
+        const s = useStore.getState();
+        if (cuenta && !s.cuentaBranchBoard && !s.accesoCompletado) s.entrarSinProyecto(cuenta);
+      })
+      .catch(() => undefined);
+  }, []);
+
   // Con una operación de Unity VC en curso, el backend no deja cerrar la ventana; aquí se avisa por qué.
   useEffect(() => {
     let dejarDeEscuchar: (() => void) | undefined;

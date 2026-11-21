@@ -43,11 +43,23 @@ impl Pat {
     }
 }
 
-/// Dónde se guardan los PAT. En la app es el llavero del sistema; en las pruebas, memoria.
+/// Dónde se guardan los PAT y la sesión de Supabase. En la app es el llavero del sistema; en las
+/// pruebas, memoria.
 pub trait Llavero {
     fn leer(&self, cuenta: &str) -> Resultado<Option<String>>;
     fn guardar(&self, cuenta: &str, valor: &str) -> Resultado<()>;
     fn borrar(&self, cuenta: &str) -> Resultado<()>;
+
+    /// Como `leer`, para valores largos (la sesión de Supabase, #236). Ver `guardar_largo`.
+    fn leer_largo(&self, cuenta: &str) -> Resultado<Option<String>> {
+        self.leer(cuenta)
+    }
+
+    /// Como `guardar`, para valores largos. En Windows, `guardar` usa UTF-16 (el doble de bytes) y el
+    /// límite es de 2560 bytes: la sesión de Supabase (~1270 caracteres) quedaba justo en el borde.
+    fn guardar_largo(&self, cuenta: &str, valor: &str) -> Resultado<()> {
+        self.guardar(cuenta, valor)
+    }
 }
 
 /// Llavero del sistema operativo (crate `keyring`).
@@ -81,6 +93,21 @@ impl Llavero for LlaveroSistema {
             Err(e) => Err(error_llavero(e)),
         }
     }
+
+    /// Se guarda como bytes UTF-8 (la mitad que UTF-16). Algo que no sea UTF-8 se trata como vacío.
+    fn leer_largo(&self, cuenta: &str) -> Resultado<Option<String>> {
+        match Self::entrada(cuenta)?.get_secret() {
+            Ok(bytes) => Ok(String::from_utf8(bytes).ok()),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(error_llavero(e)),
+        }
+    }
+
+    fn guardar_largo(&self, cuenta: &str, valor: &str) -> Resultado<()> {
+        Self::entrada(cuenta)?
+            .set_secret(valor.as_bytes())
+            .map_err(error_llavero)
+    }
 }
 
 /// El error del llavero nunca lleva el valor guardado.
@@ -91,7 +118,7 @@ fn error_llavero(e: keyring::Error) -> Error {
         }
         _ => "el llavero del sistema rechazó la operación",
     };
-    Error::Interno(format!("Token de Unity VC: {tipo}"))
+    Error::Interno(format!("Llavero del sistema: {tipo}"))
 }
 
 /// Clave del PAT en el llavero: correo + organización.

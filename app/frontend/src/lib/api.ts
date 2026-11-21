@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { diffEjemplo, type ArchivoDiff, type Diferencias } from './diff';
+import type { Cuenta } from './cuentas';
 import type {
   AvanceBacklog,
   AvanceSprint,
@@ -376,6 +377,9 @@ export function unoPorRepo<T extends { repo: string; nombre: string }>(lista: T[
   }
   return [...porRepo.values()];
 }
+
+// Cuentas del mockup del navegador (solo en memoria).
+const cuentasMockup = new Map<string, { cuenta: Cuenta; clave: string }>();
 
 export const api = {
   eliminarProyecto: (confirmacion: string, mockup: () => { repo: string; nombre: string }) =>
@@ -1084,6 +1088,34 @@ export const api = {
   /** Revoca los PAT de BranchBoard en Unity VC, limpia credenciales locales y cierra el proyecto (#124). */
   cerrarSesionUnityVc: (mockup?: () => number) =>
     llamar<number>('cerrar_sesion_unity_vc', undefined, mockup ?? (() => 0)),
+
+  // ───────── Cuenta de BranchBoard (Supabase Auth, #236) ─────────
+  // La sesión queda en el llavero del sistema; aquí solo llegan nombre, apellido y correo.
+  // En el navegador (mockup) las cuentas viven en memoria y se pierden al recargar.
+
+  /** Crea la cuenta y deja la sesión iniciada (sin confirmación de correo). */
+  registrarCuenta: (datos: Cuenta & { clave: string }) =>
+    llamar<Cuenta>('registrar_cuenta', { ...datos }, () => {
+      const correo = datos.correo.trim().toLowerCase();
+      if (cuentasMockup.has(correo)) {
+        throw new ErrorBackend('validacion', 'Ya existe una cuenta con ese correo. Inicia sesión.');
+      }
+      const cuenta = { nombre: datos.nombre.trim(), apellido: datos.apellido.trim(), correo };
+      cuentasMockup.set(correo, { cuenta, clave: datos.clave });
+      return cuenta;
+    }),
+
+  iniciarSesionBranchBoard: (correo: string, clave: string) =>
+    llamar<Cuenta>('iniciar_sesion_branchboard', { correo, clave }, () => {
+      const c = cuentasMockup.get(correo.trim().toLowerCase());
+      if (!c || c.clave !== clave) throw new ErrorBackend('validacion', 'Correo o contraseña incorrectos.');
+      return c.cuenta;
+    }),
+
+  /** La cuenta con sesión guardada en este equipo (sin red), o `null`. */
+  sesionBranchBoard: () => llamar<Cuenta | null>('sesion_branchboard', undefined, () => null),
+
+  cerrarSesionBranchBoard: () => llamar<void>('cerrar_sesion_branchboard', undefined, () => undefined),
 
   /** Workspaces locales de Unity VC con su marca local de BranchBoard (#125). */
   listarWorkspacesLocales: (mockup?: () => WorkspaceUnityVC[]) =>

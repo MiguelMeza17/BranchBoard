@@ -43,6 +43,8 @@
 
 **Quién se lo puede saltar**: el **dueño de la cuenta de Supabase** (panel, clave secreta, contraseña de Postgres). Es el nuevo ancla de confianza en lugar de `admin.key` (decisión 2 y 3 de #231); riesgo aceptado.
 
+**Cuentas sin confirmar el correo (#236, riesgo aceptado el 2026-11-21)**: al registrarse no se comprueba que el correo sea de quien lo escribe (el correo incluido de Supabase no lo permite; ver [Cuentas de BranchBoard en BACKEND.md](./BACKEND.md#cuentas-de-branchboard-236)). Alguien podría registrarse con el correo de otra persona y, si un Administrador agrega ese correo a un proyecto, entrar en su lugar. Mientras tanto, conviene que quien agrega a alguien confirme con esa persona que ya creó su cuenta. Lo resolverá la recuperación de contraseña con código (otro issue, necesita un SMTP propio).
+
 **Pendiente**: hoy, cualquier miembro puede insertar eventos de cualquier tipo (p. ej. aprobar una tarea siendo Desarrollador). Qué eventos valida el servidor según el rol se decide en #247.
 
 ### Administrador
