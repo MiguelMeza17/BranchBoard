@@ -5,6 +5,8 @@
 
 ## Contexto completo del proyecto
 
+**Actualización automática de los proyectos del servidor (#239, 2026-11-21)**: con un proyecto abierto, la App escucha `eventos-recibidos` aunque Unity VC esté desconectado o el proyecto no use Unity. Al llegar cambios aplicados sube `versionDatos` y la lista de tareas vuelve a leer sus datos; no hay que recargar ni volver a entrar. La escucha del servidor es independiente de la sincronización de Unity y se retira al salir del proyecto. Probado en Tauri con dos cuentas reales en `branchboard-pruebas`, creación y edición remotas, y React StrictMode.
+
 - **Nombre**: BranchBoard
 - **Qué es**: herramienta de gestión de tareas y producción para un equipo pequeño de desarrollo de un videojuego en Unity.
 - **Principio central**: todo el trabajo del equipo se organiza y visualiza a través de **tareas**. Cada tarea puede ser de tipo (ver [BACKEND.md](./BACKEND.md#contexto-completo-del-proyecto)):
