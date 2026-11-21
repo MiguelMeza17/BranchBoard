@@ -8,7 +8,9 @@ use tauri::State;
 use crate::checkins;
 use crate::cm::lectura::rama_actual_workspace;
 use crate::comandos::datos::carpeta_abierta;
+use crate::db::configuracion::{self, CLAVE_PROYECTO_SERVIDOR};
 use crate::db::{commits, tareas as db_tareas};
+use crate::eventos::recepcion;
 use crate::error::{Error, Resultado};
 use crate::estado::{llave_publica_del_proyecto, AppState};
 use crate::eventos::{self, ResumenCompactacion, ResumenSincronizacion};
@@ -43,10 +45,10 @@ pub fn configurar_carpeta_compartida(
     Ok(guardada.to_string_lossy().to_string())
 }
 
-/// Escanea `ops/` y aplica lo que le falta a esta máquina (#92). El frontend lo
-/// llama al entrar al proyecto, al volver a primer plano y cada 2 minutos. Si ya
-/// hay un escaneo en curso, no hace nada. Sin carpeta compartida, tampoco (se
-/// pide al entrar).
+/// Trae los cambios del equipo y los aplica: los de `ops/` si hay carpeta compartida (#92) y los del
+/// servidor si el proyecto está vinculado (#239; antes sube la bandeja de salida). El frontend lo llama
+/// al entrar al proyecto, al volver a primer plano y cada 2 minutos; además el backend consulta el
+/// servidor cada 5 s (ver `lib.rs`). Si ya hay una sincronización en curso, no hace nada.
 #[tauri::command]
 pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSincronizacion> {
     let yo = estado.exigir_permiso("sincronizar_eventos")?;
@@ -54,25 +56,125 @@ pub fn sincronizar_eventos(estado: State<'_, AppState>) -> Resultado<ResumenSinc
         return Ok(ResumenSincronizacion::default());
     };
     let carpeta = carpeta_abierta(&estado)?;
-    if eventos::carpeta_compartida(&carpeta)?.is_none() {
-        let _ = crate::comandos::sprints::evaluar_cierres_en(&estado, &yo.email)?;
-        return Ok(ResumenSincronizacion::default());
+    let mut resumen = if eventos::carpeta_compartida(&carpeta)?.is_some() {
+        sincronizar_ops(&estado, &yo.email, &carpeta)?
+    } else {
+        ResumenSincronizacion::default()
+    };
+    // Sin internet o sin sesión del servidor no es un error de este comando: se reintenta en 5 s.
+    if let Ok(servidor) = sincronizar_con_servidor_sin_guardia(&estado) {
+        resumen.sumar(&servidor.recibidos);
     }
-    let ops = eventos::carpeta_ops(&carpeta)?;
-    let resumen = estado.con_db(|db| {
+    let _ = crate::comandos::sprints::evaluar_cierres_en(&estado, &yo.email)?;
+    Ok(resumen)
+}
+
+/// Escaneo de `ops/` (#92), hasta que #244 quite la carpeta compartida.
+fn sincronizar_ops(
+    estado: &AppState,
+    email: &str,
+    carpeta: &std::path::Path,
+) -> Resultado<ResumenSincronizacion> {
+    let ops = eventos::carpeta_ops(carpeta)?;
+    estado.con_db(|db| {
         // Con la llave del Administrador se verifican los eventos firmados (#93).
         let publica = llave_publica_del_proyecto(db)?;
         eventos::lectura::sincronizar_con_doble_toma(
             db.conexion(),
             &ops,
-            &carpeta,
+            carpeta,
             Utc::now(),
             &publica,
             |c, e| eventos::lectura::aplicar_evento(c, &publica, e),
-            |info| revisar_y_cerrar_rama_perdedor(&estado, &yo.email, info),
+            |info| revisar_y_cerrar_rama_perdedor(estado, email, info),
+        )
+    })
+}
+
+/// Evento Tauri emitido cuando llegaron y se aplicaron cambios del equipo desde el servidor (#239).
+/// El frontend sube `versionDatos` para que las pantallas vuelvan a pedir sus datos.
+pub const EVENTO_EVENTOS_RECIBIDOS: &str = "eventos-recibidos";
+
+/// Cada cuánto se consulta el servidor mientras la app está abierta (decisión de #239: ~5 s).
+pub const INTERVALO_SERVIDOR_SEGUNDOS: u64 = 5;
+
+/// Resultado de una vuelta con el servidor (#238 + #239).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ResumenServidor {
+    /// Cómo quedó la bandeja de salida después de subir.
+    pub bandeja: eventos::bandeja::EstadoBandeja,
+    /// Lo que se aplicó de lo que bajó.
+    pub recibidos: ResumenSincronizacion,
+    /// Si no se pudo bajar (sin internet, sin sesión, servidor pausado…). Lo que ya estaba en la copia
+    /// local igual se intenta aplicar.
+    pub error_bajada: Option<String>,
+}
+
+/// Una vuelta con el servidor: sube la bandeja de salida y después baja y aplica lo nuevo. `None` si ya
+/// hay una sincronización en curso.
+pub fn sincronizar_con_servidor_en(estado: &AppState) -> Resultado<Option<ResumenServidor>> {
+    let Some(_escaneo) = estado.iniciar_sincronizacion() else {
+        return Ok(None);
+    };
+    sincronizar_con_servidor_sin_guardia(estado).map(Some)
+}
+
+/// Como [`sincronizar_con_servidor_en`], para quien ya tiene la guardia de sincronización.
+///
+/// Primero se sube y después se baja, en la misma vuelta y con la misma guardia: así una toma propia
+/// está o en la bandeja o ya en el servidor, nunca en el medio (lo necesita la doble toma, ver
+/// `tareas::buscar_toma_rival_servidor`).
+fn sincronizar_con_servidor_sin_guardia(estado: &AppState) -> Resultado<ResumenServidor> {
+    let proyecto = estado
+        .con_db(|db| configuracion::leer(db.conexion(), CLAVE_PROYECTO_SERVIDOR))?
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    let bandeja = subir_bandeja_en(estado)?;
+    let mut resumen = ResumenServidor {
+        bandeja,
+        ..Default::default()
+    };
+    let Some(proyecto) = proyecto else {
+        return Ok(resumen);
+    };
+    let cliente = crate::supabase::ClienteSupabase::new(
+        crate::supabase::Entorno::actual().proyecto(),
+        LlaveroSistema,
+    );
+    if let Err(e) = recepcion::bajar(
+        |f| estado.con_db(|db| f(db.conexion())),
+        &proyecto,
+        |desde| {
+            cliente
+                .llamar("GET", &recepcion::ruta_eventos(&proyecto, desde), None)
+                .and_then(recepcion::filas_desde_json)
+        },
+        |ids| {
+            cliente
+                .llamar("GET", &recepcion::ruta_perfiles(ids), None)
+                .and_then(recepcion::correos_desde_json)
+        },
+    ) {
+        resumen.error_bajada = Some(e.to_string());
+    }
+    let email = estado.exigir_permiso("sincronizar_eventos").ok().map(|yo| yo.email);
+    let carpeta = carpeta_abierta(estado).ok();
+    resumen.recibidos = estado.con_db(|db| {
+        // Los eventos firmados no viajan por el servidor (#238); la llave solo hace falta si existe.
+        let publica = llave_publica_del_proyecto(db).unwrap_or_default();
+        recepcion::aplicar(
+            db.conexion(),
+            &proyecto,
+            carpeta.as_deref(),
+            Utc::now(),
+            &publica,
+            |c, e| eventos::lectura::aplicar_evento(c, &publica, e),
+            |info| match &email {
+                Some(email) => revisar_y_cerrar_rama_perdedor(estado, email, info),
+                None => Ok(false),
+            },
         )
     })?;
-    let _ = crate::comandos::sprints::evaluar_cierres_en(&estado, &yo.email)?;
     Ok(resumen)
 }
 

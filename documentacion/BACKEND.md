@@ -62,8 +62,8 @@ Reemplaza el diseño anterior de "lock de escritura sobre el `.db` compartido": 
   - `Desconocido`: lo escribió una versión más nueva de la app; no se marca y queda pendiente hasta que esta máquina se actualice.
   - Un error de la base detiene el escaneo sin marcar el evento.
   - **Tipos registrados**: los cuatro de usuarios (#93, abajo). Cada comando que pase a eventos registra el suyo (#95 tareas…).
-- **Comando `sincronizar_eventos()`** (todos los roles): devuelve `{ aplicados, descartados, desconocidos, ilegibles }`. Si ya hay un escaneo en curso (`AppState::iniciar_sincronizacion`) o no hay carpeta compartida, no hace nada.
-- **Cuándo se escanea** (frontend, `lib/useSincronizacionEventos.ts`, montado en `App`): al entrar al proyecto, al volver la ventana a primer plano (`focus` / `visibilitychange`) y cada 2 minutos. Un fallo no se muestra cada vez; se reintenta en la siguiente revisión.
+- **Comando `sincronizar_eventos()`** (todos los roles): devuelve `{ aplicados, descartados, desconocidos, ilegibles }`. Si ya hay un escaneo en curso (`AppState::iniciar_sincronizacion`), no hace nada. Escanea `ops/` si hay carpeta compartida y, **desde #239**, si el proyecto está vinculado al servidor también sube la bandeja y baja del servidor ([Recepción desde el servidor](#recepción-desde-el-servidor-239)); el resumen suma las dos.
+- **Cuándo se escanea** (frontend, `lib/useSincronizacionEventos.ts`, montado en `App`): al entrar al proyecto, al volver la ventana a primer plano (`focus` / `visibilitychange`) y cada 2 minutos. Un fallo no se muestra cada vez; se reintenta en la siguiente revisión. Lo del servidor llega antes: el backend lo consulta cada 5 s y avisa con el evento Tauri `eventos-recibidos`, que el mismo hook escucha para subir `versionDatos` (#239).
 - **El frontend se refresca solo**: si `aplicados > 0`, sube `versionDatos` en el store. **Toda pantalla que lea datos del backend** (desde #95) lo pone como dependencia de su carga para volver a pedirlos sola.
 - Prueba en el entorno real: `BB_PRUEBA_CARPETA_COMPARTIDA=<carpeta de OneDrive/Drive> cargo test --lib entorno_real_dos_maquinas -- --ignored` (dos máquinas simuladas, cada una con su base y su carpeta local, sobre la misma carpeta de OneDrive).
 
@@ -203,7 +203,7 @@ Devuelve las líneas TAP y `fallidas` (tiene que ser 0). Con una expectativa cam
 
 ### Cliente de Supabase (#235)
 
-Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust** (con `ureq`) y no `supabase-js` en la webview: así la webview sigue sin red (ver [SEGURIDAD.md](./SEGURIDAD.md)) y los tokens nunca llegan al JavaScript. Si los cambios llegan por Realtime o por consulta periódica se decide en #239.
+Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust** (con `ureq`) y no `supabase-js` en la webview: así la webview sigue sin red (ver [SEGURIDAD.md](./SEGURIDAD.md)) y los tokens nunca llegan al JavaScript. Los cambios llegan por **consulta periódica** (decidido en #239, ver [Recepción desde el servidor](#recepción-desde-el-servidor-239)); Realtime queda para después.
 
 `ClienteSupabase::new(&PROYECTO, llavero)` habla con el proyecto que elige `Entorno::actual()` y ofrece:
 
@@ -292,7 +292,7 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
   - Proyectos sin `proyecto_servidor_id` en `configuracion_proyecto`: ese valor lo fija vincular el proyecto con el servidor (#240). Mientras no esté, no se encola nada.
   - Eventos de roles (`TIPOS_FIRMADOS`): en el servidor los roles los cambian solo sus funciones (#234/#241).
 - **Por ahora se sigue escribiendo en `ops/`** además de la bandeja. Quitar `ops/` es de #244. Así la sincronización por Drive/OneDrive sigue funcionando hasta que exista la recepción desde el servidor (#239).
-- **Subida**: el temporizador de 15 s (`disparar_polling` en `lib.rs`) llama a `subir_bandeja_en`.
+- **Subida**: **actualizado (#239)** — sube cada 5 s, en la misma vuelta que la recepción y justo antes de ella (`sincronizar_con_servidor_en`, ver [Recepción desde el servidor](#recepción-desde-el-servidor-239)). También al volver la ventana a primer plano y desde `sincronizar_eventos`.
   - Manda lotes de 50 en orden de llegada a `POST /rest/v1/eventos?on_conflict=id` con `Prefer: resolution=ignore-duplicates` (`ClienteSupabase::insertar_eventos`). Un evento que ya estaba (la respuesta se perdió y se reintenta) se ignora, sin error ni duplicado.
   - Al confirmarse, se borra de la bandeja.
   - Si un lote falla por la red o la sesión, se anota `intentos`/`ultimo_error` y se para ahí: los siguientes no se adelantan.
@@ -349,7 +349,7 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 **Reactivarlo** (solo el dueño de la cuenta de Supabase):
 1. Entrar a [supabase.com/dashboard](https://supabase.com/dashboard), organización BranchBoard, y abrir el proyecto (`branchboard` o `branchboard-pruebas`). Un proyecto pausado lo dice en su página.
 2. **Resume project** y confirmar. Vuelve con sus datos y su configuración en unos minutos.
-3. Las apps abiertas no hay que tocarlas: en la siguiente vuelta del temporizador (15 s) suben lo pendiente y el aviso desaparece.
+3. Las apps abiertas no hay que tocarlas: en la siguiente vuelta con el servidor (cada 5 s, #239) suben lo pendiente y el aviso desaparece.
 - Supabase deja un plazo para reactivarlo desde el panel; su documentación da 90 días en una página y 1 año en otra, así que hay que mirar el que muestra el panel. Pasado ese plazo, los datos solo se recuperan si se descargaron antes.
 - Si se queda trabado en "Pausing" o "Restoring", la vía documentada es el soporte de Supabase.
 
@@ -360,6 +360,29 @@ Comandos (`comandos/cuenta.rs`, `Acceso::Libre` porque se usan antes de entrar a
 - Para que no se pause: cualquier app abierta que lea o escriba en el servidor cuenta como actividad. Hoy se escribe con la bandeja (#238) y se leerá cada pocos segundos con la recepción (#239). Un proyecto que nadie abre en una semana se pausa.
 
 **Cuándo pasar a Pro** (de pago): cuando el equipo use BranchBoard a diario y una pausa o la falta de copias diarias ya no sea aceptable. También cuando se acerquen los límites del plan gratis (tamaño de la base, Storage, #242) o cuando haga falta restaurar a un punto en el tiempo. Pro no se pausa e incluye copias diarias. Con Pro, la copia propia con `pg_dump` deja de hacer falta.
+
+### Recepción desde el servidor (#239)
+
+**Nuevo (2026-11-21)** — los cambios del resto del equipo bajan de la tabla `eventos` del servidor y se aplican con el mismo código que los de `ops/` (`app/backend/src/eventos/recepcion.rs`). Solo en proyectos con `proyecto_servidor_id` (lo fija #240).
+
+- **Cuándo** (decisión del 2026-11-20 en #239: consulta periódica, Realtime después si hace falta): cada **5 s** mientras la app está abierta (un hilo aparte en `lib.rs`), al volver la ventana a primer plano y cuando el frontend llama a `sincronizar_eventos` (al entrar al proyecto y cada 2 minutos). Sin internet, sin sesión o con el proyecto pausado, la vuelta simplemente no baja nada y se reintenta en 5 s; como cada vuelta pide "lo nuevo desde el último", al volver la conexión llega todo lo que faltaba.
+- **Una vuelta** (`comandos::eventos::sincronizar_con_servidor_en`), con la guardia de sincronización (`AppState::iniciar_sincronizacion`, la misma de `ops/`):
+  1. Sube la bandeja de salida (#238).
+  2. Baja lo nuevo: `GET /rest/v1/eventos?select=orden,id,tipo,tarea_id,autor,payload,recibido_en&proyecto_id=eq.<id>&orden=gt.<último>&order=orden.asc&limit=500`, por páginas de 500 hasta que no haya más.
+  3. Pide el correo de los autores nuevos: `GET /rest/v1/perfiles?select=id,correo&id=in.(…)`.
+  4. Lo guarda en la tabla local **`eventos_servidor`** (migración 13 de SQLite: `orden`, `id`, `proyecto_servidor`, `tipo`, `tarea_id`, `usuario` = correo, `payload`, `recibido_en`). El último `orden` guardado es desde dónde se pide la próxima vez.
+  5. Aplica, en el `orden` del servidor, lo de `eventos_servidor` que no está en `eventos_aplicados`, con `eventos::lectura::aplicar_evento` (el mismo aplicador de `ops/`). Si aplicó algo, emite el evento Tauri **`eventos-recibidos`** (`{ aplicados, descartados, desconocidos, ilegibles }`) y el frontend sube `versionDatos`.
+- **Subir antes de bajar, en la misma vuelta**: así una toma propia está o en la bandeja o ya en el servidor, nunca "subida pero sin bajar", y la doble toma decide igual en todas las PCs (abajo).
+- **Primera vez en una PC**: el último `orden` es 0, así que baja todo el historial del proyecto y arma el SQLite local.
+- **Orden y desempate por el servidor**: se aplica por `orden` y la hora del evento (`timestamp` al aplicarlo) es `recibido_en`, la del servidor. Esto resuelve el riesgo aceptado del reloj local.
+- **Los propios no se aplican dos veces**: el id es el mismo en `ops/`, la bandeja y el servidor, y lo que ya está en `eventos_aplicados` se salta. Por la misma razón, mientras siga `ops/` (hasta #244) un evento que llegue por las dos vías se aplica una sola vez.
+- **Doble toma** (`tareas::detectar_doble_toma` con `FuenteToma::Servidor`): gana la toma con `orden` menor. Si la toma rival es de esta PC y sigue en la bandeja, llegará al servidor después, así que gana la que bajó. Si no hay toma rival (la asignó un Líder), pierde la que bajó, igual que con `ops/`.
+- **Autor sin perfil visible** (alguien que ya no comparte ningún proyecto con quien baja): queda como `<uuid>@sin-perfil`.
+- **Tipo desconocido** (lo escribió una versión más nueva de la app): queda pendiente en `eventos_servidor` y se reintenta en cada vuelta, sin frenar a los demás (igual que con `ops/`).
+- **Red y base separadas**: la base solo se presta para leer y guardar, nunca durante la red.
+- **Pruebas**:
+  - 7 unitarias en `eventos::recepcion` (historial por páginas, correo del autor y sin perfil, orden y hora del servidor y saltar los propios, tipo desconocido, sin conexión, proyectos aparte, rutas) y 2 de doble toma en `tareas` (gana la que llegó antes al servidor aunque el reloj diga otra cosa; la propia aún en la bandeja pierde).
+  - Real, `eventos::recepcion::…::entorno_real_dos_pcs_reciben_lo_del_otro` (`cargo test --lib entorno_real_dos_pcs -- --ignored --nocapture`): contra branchboard-pruebas con la sesión de Unity VC del equipo y **dos bases locales como dos PCs**. La PC A crea dos tareas y las sube; la PC B, nueva, baja todo el historial y las aplica con el creador correcto; A crea una tercera y B baja solo esa; A no aplica dos veces lo suyo. Deja el proyecto "Prueba recepción #239": borrarlo con `delete from public.proyectos where nombre = 'Prueba recepción #239'` (los eventos se borran en cascada).
 
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 

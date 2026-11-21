@@ -18,6 +18,7 @@
 
 pub mod bandeja;
 pub mod lectura;
+pub mod recepcion;
 pub mod snapshot;
 
 pub use lectura::{sincronizar, Aplicacion, ResumenSincronizacion};
