@@ -43,7 +43,7 @@ try {
     await captura('antes-sin-refresco');
     console.log('REPRODUCIDO: la tarea de otra cuenta llega a SQLite y no aparece en la App sin sesion Unity');
   }else{
-    assert.ok(await evaluate('return __refresco239.store.getState().tareas.length<=1;'),'usar un proyecto nuevo para la corrida completa');
+    assert.equal(await evaluate('return __refresco239.store.getState().tareas.length;'),0,'usar un proyecto nuevo para la corrida completa');
     if(await evaluate('return __refresco239.store.getState().tareas.length===0;')){
       const origen=await evaluate('return performance.timeOrigin;');
       await evaluate("await __refresco239.invoke('cambio_remoto',{editar:false});");
