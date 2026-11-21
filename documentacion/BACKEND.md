@@ -197,6 +197,51 @@ npx supabase@3 db query --remote --yes --file supabase/tests/01_reglas.test.sql
 
 Devuelve las líneas TAP y `fallidas` (tiene que ser 0). Con una expectativa cambiada a propósito sale `not ok`, así que las pruebas detectan errores. Además, `npx supabase@3 db advisors --linked --type security` revisa la seguridad: los únicos avisos que quedan son las 4 funciones `rpc/…` de arriba, a propósito (la app las llama con su sesión y cada una revisa el rol por dentro).
 
+### Cliente de Supabase (#235)
+
+Módulo `app/backend/src/supabase/cliente.rs`. Se eligió un cliente en **Rust** (con `ureq`) y no `supabase-js` en la webview: así la webview sigue sin red (ver [SEGURIDAD.md](./SEGURIDAD.md)) y los tokens nunca llegan al JavaScript. Si los cambios llegan por Realtime o por consulta periódica se decide en #239.
+
+`ClienteSupabase::new(&PROYECTO, llavero)` habla con el proyecto que elige `Entorno::actual()` y ofrece:
+
+| Función | Qué hace |
+|---|---|
+| `iniciar_sesion(correo, clave)` | `POST /auth/v1/token?grant_type=password`; guarda la sesión en el llavero |
+| `sesion_guardada()` | La sesión del llavero, **sin red** (para arrancar sin internet). Si está dañada, la borra y responde "sin sesión" |
+| `sesion_vigente()` | La guardada; si le quedan menos de 60 s, la renueva antes |
+| `renovar(sesion)` | `POST /auth/v1/token?grant_type=refresh_token` y guarda la nueva |
+| `cerrar_sesion()` | `POST /auth/v1/logout` si hay red (si no, da igual) y la borra del llavero |
+| `llamar(metodo, ruta, cuerpo)` | Llamada con la sesión a `/rest/v1/…` (tablas) o `/rest/v1/rpc/…` (funciones); devuelve el JSON (`null` si no hay cuerpo). Si responde 401, renueva y reintenta **una** vez |
+
+**La sesión** (`Sesion`: token de acceso, token de renovación, vencimiento, id de la cuenta y correo) se guarda como JSON en el **llavero del sistema** (el trait `Llavero` de `servidor/pat.rs`, el mismo del PAT), en la cuenta `supabase-<nombre del proyecto>`: pruebas y producción no se pisan. Nunca va a SQLite ni a archivos, y `Debug` de `Sesion` oculta los dos tokens.
+
+**Renovación**: si el servidor rechaza el token de renovación (vencido, revocado o ya usado), la sesión se borra y se pide iniciar sesión otra vez. **Sin conexión se conserva**: la app sigue trabajando con SQLite y los cambios esperan (#238). Un error 5xx tampoco la borra.
+
+**Errores** (variantes nuevas en `error.rs`, con su código en `api.ts`):
+
+| Caso | Error | Código |
+|---|---|---|
+| Sin sesión, o ya no se puede renovar | `SinSesionServidor` | `sin_sesion_servidor` |
+| Sin internet o el proyecto pausado | `ServidorSinConexion` | `servidor_sin_conexion` |
+| Respuesta inesperada del servidor | `Servidor(detalle)` | `servidor` |
+| Contraseña incorrecta (`invalid_credentials`), correo sin confirmar (`email_not_confirmed`), demasiados intentos (429) | `Validacion` con el mensaje en español | `validacion` |
+| Función o tabla sin permiso (`42501`) | `SinPermiso` | `sin_permiso` |
+| Regla de negocio de nuestras funciones (`P0001`) | `Validacion` con el mensaje del servidor | `validacion` |
+
+Respuestas reales comprobadas en branchboard-pruebas (2026-11-21): contraseña incorrecta → `400 {"error_code":"invalid_credentials"}`; token de renovación inválido → `400 {"error_code":"validation_failed"}`; token de acceso falso en la API de datos → `401 {"code":"PGRST301"}`.
+
+**Pruebas reales** (en `app/backend`, contra branchboard-pruebas):
+
+```
+cargo test --no-default-features --lib supabase::cliente -- --ignored --nocapture --test-threads=1
+```
+
+- `entorno_real_contrasena_incorrecta_y_renovacion_invalida` y `entorno_real_sin_conexion_conserva_la_sesion` no necesitan nada más.
+- `entorno_real_iniciar_llamar_renovar_y_cerrar` necesita una **cuenta confirmada** en `BB_PRUEBA_SUPABASE_CORREO` y `BB_PRUEBA_SUPABASE_CLAVE`. Mientras no exista el registro con código (#236), se crea una cuenta temporal con SQL (CLI v3, sin Docker; `supabase/.temp/project-ref` debe decir `freppiixmuspvozaqrxj`):
+  1. Un archivo `.sql` **fuera del repo** con un `insert into auth.users` (correo `ciclo-<hora>@prueba.branchboard`, `encrypted_password = extensions.crypt('<clave>', extensions.gen_salt('bf'))`, `email_confirmed_at = now()`, `confirmation_token`, `recovery_token`, `email_change_token_new` y `email_change` en `''`, `raw_app_meta_data = '{"provider":"email","providers":["email"]}'`) y su fila en `auth.identities` con `provider = 'email'`. La clave es aleatoria y **no se imprime ni se guarda**.
+  2. `npx --yes supabase@3 db query --remote --yes --file <ese archivo>`.
+  3. Correr la prueba con las dos variables.
+  4. Borrar: `delete from auth.users where email like 'ciclo-%@prueba.branchboard'` y comprobar que quedan 0 cuentas, 0 perfiles y 0 proyectos de prueba. Borrar también el `.sql`.
+
 ## Seguridad al invocar `cm` (evitar inyección de comandos)
 
 Regla de implementación, aplica a **todo** lugar donde el backend invoque `cm` con datos que vienen del usuario (nombre de rama, justificación, descripción, comentarios de checkin/merge, etc.):
