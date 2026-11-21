@@ -9,6 +9,19 @@
   #root {
     height: 100%;
   }
+  /* Es una app de escritorio: la ventana no se desplaza ni "rebota" al llegar al final de una
+     lista. Solo se desplazan las pantallas de adentro (main, paneles, modales). Si una pantalla
+     sin Layout (acceso) no cabe, se desplaza #root, que queda dentro de la ventana. */
+  html,
+  body {
+    overflow: hidden;
+  }
+  #root {
+    overflow-y: auto;
+  }
+  * {
+    overscroll-behavior: none;
+  }
   /* Ancho mínimo: por debajo de 320px la página se desplaza en horizontal en vez de desarmarse. */
   html {
     min-width: 320px;
