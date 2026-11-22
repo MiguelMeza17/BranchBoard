@@ -168,9 +168,12 @@
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
   /* Todo lo que crece hacia abajo (listas, columnas, tablas) se acota a ~1.5 pantallas y hace scroll
-     por dentro, para que una lista larga no estire la página sin fin. */
+     por dentro, para que una lista larga no estire la página sin fin. Solo en vertical: con
+     overflow-y el navegador también activaba el desplazamiento lateral y en las columnas del Scrum
+     se podían correr las tarjetas de lado hasta esconder un pedazo. Una tabla ancha que sí lo
+     necesita lo pide aparte con overflow-x-auto (Lista de tareas, Usuarios). */
   .acotado {
-    @apply max-h-[150vh] overflow-y-auto;
+    @apply max-h-[150vh] overflow-y-auto overflow-x-hidden;
   }
   .nav-link {
     @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-3 hover:text-text;

@@ -355,7 +355,7 @@ export function ListaTareas() {
       {raices.length === 0 ? (
         <EmptyState icon="lista" title="No hay tareas" desc="Crea la primera tarea del proyecto." />
       ) : (
-        <div className="card acotado">
+        <div className="card acotado overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="sticky top-0 z-10 bg-surface">
               <tr className="border-b border-border text-left text-xs text-faint">
