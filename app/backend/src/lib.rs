@@ -188,6 +188,7 @@ pub fn run() {
             comandos_tareas::tomar_tarea,
             comandos_tareas::asignar_tarea,
             comandos_tareas::desasignar_tarea,
+            comandos_tareas::quitar_responsable,
             comandos_tareas::cambiar_estado,
             comandos_tareas::borrar_progreso,
             comandos_tareas::reabrir_tarea,

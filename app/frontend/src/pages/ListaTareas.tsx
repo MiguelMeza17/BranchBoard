@@ -11,6 +11,9 @@ import { TIPOS_TAREA } from '../types';
 import { avatarColor } from '../lib/ui';
 import { Icono } from '../components/Icono';
 
+// Valor del selector de Asignar para "Nadie (sin asignar)".
+const NADIE = '__nadie__';
+
 // Orden dentro de cada nivel del árbol: "Sin asignar" (por hacer sin dueño, igual que la
 // columna visual del Tablero Scrum) va primero, luego el resto de estados en orden de flujo;
 // a igual estado, por ID ascendente (T-101-2 antes que T-211).
@@ -76,6 +79,7 @@ export function ListaTareas() {
   const navigate = useNavigate();
   const usuarios = useStore((s) => s.usuarios);
   const asignarTarea = useStore((s) => s.asignarTarea);
+  const quitarResponsable = useStore((s) => s.quitarResponsable);
   // Asignar desde la lista: solo Líder/Administrador, en tareas sin subtareas que no estén terminadas.
   const puedeAsignar = user.rol === 'Líder' || user.rol === 'Administrador';
   const [asignando, setAsignando] = useState<Tarea | null>(null);
@@ -376,7 +380,8 @@ export function ListaTareas() {
         open={!!asignando}
         onClose={() => setAsignando(null)}
         onConfirm={() => {
-          if (asignando && asignarA) asignarTarea(asignando.id, asignarA);
+          if (asignando && asignarA === NADIE) void quitarResponsable(asignando.id);
+          else if (asignando && asignarA) asignarTarea(asignando.id, asignarA);
           setAsignando(null);
         }}
         title={asignando ? `Asignar ${asignando.id}` : 'Asignar'}
@@ -386,12 +391,18 @@ export function ListaTareas() {
         description={
           <div className="space-y-2">
             <p>
-              {asignando?.titulo}. {asignando?.rama_asociada ? 'Ya tiene rama: solo cambia el responsable.' : 'Se crea su rama (sin cambiar tu workspace).'}
+              {asignando?.titulo}.{' '}
+              {asignarA === NADIE
+                ? 'Queda sin responsable. Si ya tiene check-ins conserva su estado y su rama; si no, vuelve a "Por hacer".'
+                : asignando?.rama_asociada
+                  ? 'Ya tiene rama: solo cambia el responsable.'
+                  : 'Se crea su rama (sin cambiar tu workspace).'}
             </p>
             <select className="input" value={asignarA} onChange={(e) => setAsignarA(e.target.value)}>
               <option value="" disabled>
                 Elige a quién…
               </option>
+              {asignando?.asignado_a && <option value={NADIE}>Nadie (sin asignar)</option>}
               {/* El Colaborador externo solo recibe tareas individuales (no subtareas). */}
               {usuarios.filter((u) => !asignando || puedeTomarTarea(u.rol, asignando, tareasAll)).map((u) => (
                 <option key={u.email} value={u.email}>

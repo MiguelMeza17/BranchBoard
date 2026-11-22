@@ -495,6 +495,9 @@ interface State {
    * no tiene rama, se crea (sin auto-switch: el workspace de quien asigna no cambia).
    */
   asignarTarea: (id: string, email: string) => void;
+  /** "Nadie" en Asignar: sin check-ins la suelta (vuelve a "por hacer"); con check-ins solo quita el
+   *  responsable y la tarea conserva su estado y su rama. */
+  quitarResponsable: (id: string) => Promise<void>;
   crearTarea: (data: NuevaTarea) => string;
   crearTareaConSubtareas: (
     data: NuevaTarea & { subtareas: { tipo: TipoTarea; titulo: string; detalles?: string }[] }
@@ -1511,6 +1514,28 @@ export const useStore = create<State>((set, get) => {
     });
     const u = get().usuarios.find((x) => x.email === email);
     get().showToast(`${id} asignada a ${u ? `${u.nombre} ${u.apellido}` : email}`);
+  },
+  quitarResponsable: async (id) => {
+    const t = get().tareas.find((x) => x.id === id);
+    if (!t || !t.asignado_a) return;
+    const conTrabajo = progresoDe(get().tareas, get().commits, id).length > 0;
+    try {
+      await api.quitarResponsable(id, () => ({
+        ...t,
+        asignado_a: null,
+        ...(conTrabajo ? {} : { estado: 'por hacer' as const }),
+      }));
+      if (enTauri()) await get().cargarTareas();
+      else
+        set((s) => ({
+          tareas: normalizar(
+            s.tareas.map((x) => (x.id === id ? { ...x, asignado_a: null, ...(conTrabajo ? {} : { estado: 'por hacer' }) } : x))
+          ),
+        }));
+      get().showToast(conTrabajo ? `${id} quedó sin responsable` : `${id} quedó sin asignar`);
+    } catch (e) {
+      get().showToast(mensajeDeError(e), 'danger');
+    }
   },
   desasignarTarea: (id) => {
     if (tieneProgreso(get(), id)) return;

@@ -178,6 +178,18 @@ pub async fn desasignar_tarea(estado: State<'_, AppState>, id: String) -> Result
     desasignar_en(&estado, &id)
 }
 
+/// "Nadie" en el selector de Asignar (Líder/Administrador): ver [`tareas::quitar_responsable`].
+#[tauri::command]
+pub async fn quitar_responsable(estado: State<'_, AppState>, id: String) -> Resultado<Tarea> {
+    quitar_responsable_en(&estado, &id)
+}
+
+pub fn quitar_responsable_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
+    con_ops(estado, "quitar_responsable", |c, autor| {
+        tareas::quitar_responsable(c, autor, id, &ahora_iso())
+    })
+}
+
 /// Lo mismo que [`desasignar_tarea`], sin el envoltorio de Tauri.
 pub fn desasignar_en(estado: &AppState, id: &str) -> Resultado<Tarea> {
     con_ops(estado, "desasignar_tarea", |c, autor| {

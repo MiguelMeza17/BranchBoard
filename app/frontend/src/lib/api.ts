@@ -572,6 +572,9 @@ export const api = {
   /** Suelta la tarea `id` (#98) si ni ella ni sus subtareas tienen check-ins. */
   desasignarTarea: (id: string, mockup: () => Tarea) =>
     llamar<Tarea>('desasignar_tarea', { id }, mockup),
+  /** "Nadie" en Asignar (Líder/Administrador): con check-ins solo quita el responsable. */
+  quitarResponsable: (id: string, mockup: () => Tarea) =>
+    llamar<Tarea>('quitar_responsable', { id }, mockup),
 
   /** Cambia el estado de `id` con recálculo de padres y aviso de préstamos (#99). */
   cambiarEstado: (
