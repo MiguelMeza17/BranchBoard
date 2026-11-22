@@ -203,6 +203,10 @@ pub struct PayloadTomarTarea {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PayloadDesasignarTarea {
     pub id: String,
+    /// "Nadie" en Asignar sobre una tarea con check-ins (solo Líder/Administrador): se quita el
+    /// responsable y la tarea conserva su estado, su rama y su trabajo.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conservar_estado: bool,
 }
 
 /// `payload` del evento `cambiar_estado` (#99).
@@ -1013,6 +1017,7 @@ pub fn desasignar(
 
     let payload = PayloadDesasignarTarea {
         id: tarea.id.clone(),
+        conservar_estado: false,
     };
     let mut ev = Evento::nuevo(
         "desasignar_tarea",
@@ -1023,7 +1028,69 @@ pub fn desasignar(
     );
     ev.timestamp = ahora.to_string();
 
-    eventos::publicar(c, &ev, |tx| aplicar_desasignar_tarea(tx, &payload))?;
+    eventos::publicar(c, &ev, |tx| {
+        aplicar_desasignar_tarea(tx, Some(autor.rol), &payload)
+    })?;
+    db_tareas::obtener(c, &tarea.id)
+}
+
+/// "Nadie" en el selector de Asignar (Líder/Administrador): sin check-ins es lo mismo que soltarla
+/// ([`desasignar`], vuelve a "por hacer"); con check-ins solo se quita el responsable y la tarea
+/// conserva su estado, su rama y sus check-ins.
+pub fn quitar_responsable(
+    c: &Connection,
+    autor: &AutorTarea<'_>,
+    id: &str,
+    ahora: &str,
+) -> Resultado<Tarea> {
+    if !autor.rol.es_lider_o_admin() {
+        return Err(Error::Validacion(
+            "Solo un Líder o Administrador puede dejar una tarea sin responsable".into(),
+        ));
+    }
+    let tarea = db_tareas::obtener(c, id.trim())?;
+    let con_trabajo = !commits::de_tarea(c, &tarea.id)?.is_empty()
+        || descendientes_activos(c, &tarea.id)?
+            .iter()
+            .map(|s| commits::de_tarea(c, &s.id).map(|l| !l.is_empty()))
+            .collect::<Resultado<Vec<bool>>>()?
+            .contains(&true);
+    if !con_trabajo {
+        return desasignar(c, autor, id, ahora);
+    }
+    if tarea.eliminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} está en la Papelera",
+            tarea.id
+        )));
+    }
+    if tarea.estado == EstadoTarea::Terminada {
+        return Err(Error::Validacion(format!(
+            "La tarea {} ya está terminada",
+            tarea.id
+        )));
+    }
+    if tarea.asignado_a.is_none() {
+        return Err(Error::Validacion(format!(
+            "La tarea {} no tiene responsable",
+            tarea.id
+        )));
+    }
+    let payload = PayloadDesasignarTarea {
+        id: tarea.id.clone(),
+        conservar_estado: true,
+    };
+    let mut ev = Evento::nuevo(
+        "desasignar_tarea",
+        Some(&tarea.id),
+        &normalizar_email(autor.email),
+        serde_json::to_value(&payload)
+            .map_err(|e| Error::Interno(format!("no se pudo serializar desasignar_tarea: {e}")))?,
+    );
+    ev.timestamp = ahora.to_string();
+    eventos::publicar(c, &ev, |tx| {
+        aplicar_desasignar_tarea(tx, Some(autor.rol), &payload)
+    })?;
     db_tareas::obtener(c, &tarea.id)
 }
 
@@ -1181,7 +1248,10 @@ pub fn aprobar_tarea(
     ahora: &str,
 ) -> Resultado<Tarea> {
     let id = id.trim();
-    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let payload = PayloadDesasignarTarea {
+        id: id.to_string(),
+        conservar_estado: false,
+    };
     let mut ev = Evento::nuevo(
         "aprobar_tarea",
         Some(id),
@@ -1341,7 +1411,10 @@ pub fn aprobar_modificacion(
     ahora: &str,
 ) -> Resultado<Tarea> {
     let id = id.trim();
-    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let payload = PayloadDesasignarTarea {
+        id: id.to_string(),
+        conservar_estado: false,
+    };
     let mut ev = Evento::nuevo(
         "aprobar_modificacion",
         Some(id),
@@ -1398,7 +1471,10 @@ pub fn rechazar_modificacion(
     ahora: &str,
 ) -> Resultado<Tarea> {
     let id = id.trim();
-    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let payload = PayloadDesasignarTarea {
+        id: id.to_string(),
+        conservar_estado: false,
+    };
     let mut ev = Evento::nuevo(
         "rechazar_modificacion",
         Some(id),
@@ -1456,7 +1532,10 @@ pub fn eliminar_definitivamente(
     ahora: &str,
 ) -> Resultado<Vec<Tarea>> {
     let id = id.trim();
-    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let payload = PayloadDesasignarTarea {
+        id: id.to_string(),
+        conservar_estado: false,
+    };
     let mut ev = Evento::nuevo(
         "eliminar_definitivamente",
         Some(id),
@@ -1700,7 +1779,10 @@ pub fn quitar_en_espera(
     ahora: &str,
 ) -> Resultado<()> {
     let id = espera_id.trim();
-    let payload = PayloadDesasignarTarea { id: id.to_string() };
+    let payload = PayloadDesasignarTarea {
+        id: id.to_string(),
+        conservar_estado: false,
+    };
     let mut ev = Evento::nuevo(
         "quitar_en_espera",
         Some(id),
@@ -2783,7 +2865,8 @@ pub fn aplicar_evento(c: &Connection, evento: &Evento) -> Resultado<()> {
         "desasignar_tarea" => {
             let payload: PayloadDesasignarTarea = serde_json::from_value(evento.payload.clone())
                 .map_err(|e| Error::Validacion(format!("desasignar_tarea inválido: {e}")))?;
-            aplicar_desasignar_tarea(c, &payload)
+            let rol = rol_de(c, &evento.usuario)?;
+            aplicar_desasignar_tarea(c, rol, &payload)
         }
         "cambiar_estado" => {
             let payload: PayloadCambiarEstado = serde_json::from_value(evento.payload.clone())
@@ -3093,7 +3176,11 @@ fn aplicar_asignar_tarea(
     )
 }
 
-fn aplicar_desasignar_tarea(c: &Connection, payload: &PayloadDesasignarTarea) -> Resultado<()> {
+fn aplicar_desasignar_tarea(
+    c: &Connection,
+    rol_conocido: Option<Rol>,
+    payload: &PayloadDesasignarTarea,
+) -> Resultado<()> {
     let mut tarea = db_tareas::obtener(c, &payload.id)?;
     if tarea.eliminada {
         return Err(Error::Validacion(format!(
@@ -3106,6 +3193,16 @@ fn aplicar_desasignar_tarea(c: &Connection, payload: &PayloadDesasignarTarea) ->
             "La tarea {} ya está terminada",
             tarea.id
         )));
+    }
+    if payload.conservar_estado {
+        // Solo se quita el responsable: estado, rama y check-ins quedan como estaban.
+        if !rol_conocido.is_some_and(Rol::es_lider_o_admin) {
+            return Err(Error::Validacion(
+                "Solo un Líder o Administrador puede dejar una tarea sin responsable".into(),
+            ));
+        }
+        tarea.asignado_a = None;
+        return db_tareas::actualizar(c, &tarea);
     }
     if !commits::de_tarea(c, &tarea.id)?.is_empty() {
         return Err(Error::Validacion(format!(
@@ -6209,6 +6306,67 @@ mod tests {
 
         let err = desasignar(c, &autor_dev, "T-101", "2026-11-15T10:05:00Z").unwrap_err();
         assert!(err.to_string().contains("check-ins"));
+
+        // "Nadie" en Asignar: un Desarrollador no puede; un Líder la deja sin responsable y la
+        // tarea conserva su estado y su rama (tiene check-ins). B recibe lo mismo.
+        let mut en_produccion = db_tareas::obtener(c, "T-101").unwrap();
+        en_produccion.estado = EstadoTarea::EnProduccion;
+        db_tareas::actualizar(c, &en_produccion).unwrap();
+        e.sincronizar_b();
+        db_tareas::actualizar(e.db_b.conexion(), &en_produccion).unwrap();
+        let estado_antes = EstadoTarea::EnProduccion;
+        assert!(quitar_responsable(c, &autor_dev, "T-101", "2026-11-15T10:06:00Z").is_err());
+        let sin_nadie =
+            quitar_responsable(c, &autor_lider, "T-101", "2026-11-15T10:07:00Z").unwrap();
+        assert_eq!(sin_nadie.asignado_a, None);
+        assert_eq!(sin_nadie.estado, estado_antes);
+        assert_eq!(
+            sin_nadie.rama_asociada.as_deref(),
+            Some("/main/dev/T-101-con-progreso")
+        );
+        e.sincronizar_b();
+        let en_b = db_tareas::obtener(e.db_b.conexion(), "T-101").unwrap();
+        assert_eq!((en_b.asignado_a, en_b.estado), (None, estado_antes));
+        // Sin responsable ya no hay a quién quitar.
+        assert!(quitar_responsable(c, &autor_lider, "T-101", "2026-11-15T10:08:00Z").is_err());
+    }
+
+    #[test]
+    fn quitar_responsable_sin_check_ins_es_soltarla() {
+        let e = Escenario::nuevo();
+        let c = e.db_a.conexion();
+        let lider = AutorTarea {
+            email: LIDER,
+            rol: Rol::Lider,
+        };
+        crear(
+            c,
+            &lider,
+            &datos_base("Sin avance"),
+            "2026-11-15T10:00:00Z",
+            HOY,
+        )
+        .unwrap();
+        asignar(
+            c,
+            &lider,
+            "T-101",
+            DEV,
+            |_| {
+                Ok(vec![(
+                    "T-101".into(),
+                    Rama {
+                        id: 3,
+                        name: "/main/dev/T-101-sin-avance".into(),
+                        head_changeset: 5,
+                    },
+                )])
+            },
+            "2026-11-15T10:01:00Z",
+        )
+        .unwrap();
+        let t = quitar_responsable(c, &lider, "T-101", "2026-11-15T10:02:00Z").unwrap();
+        assert_eq!((t.asignado_a, t.estado), (None, EstadoTarea::PorHacer));
     }
 
     struct EntornoRealPrueba {
