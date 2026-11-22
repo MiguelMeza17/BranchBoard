@@ -358,6 +358,9 @@ interface State {
   subirVersionDatos: () => void;
   /** Recarga la lista de tareas desde el backend (`listar_tareas`, #95). */
   cargarTareas: () => Promise<void>;
+  /** false desde que se entra a un proyecto hasta que termina la primera carga de sus tareas: mientras
+   *  tanto se muestra "Cargando…" en vez de una página vacía que después se llena. */
+  tareasCargadas: boolean;
   /** Recarga la lista de sprints y sus reportes desde el backend (`listar_sprints`, #113, #114). */
   cargarSprints: () => Promise<void>;
   /** Recarga los check-ins cacheados en SQLite (`listar_commits`, #112). */
@@ -677,6 +680,7 @@ export const useStore = create<State>((set, get) => {
   proyectoRepoAClonar: null,
   versionDatos: 0,
   subirVersionDatos: () => set((s) => ({ versionDatos: s.versionDatos + 1 })),
+  tareasCargadas: true,
   cargarTareas: async () => {
     try {
       const lista = await api.listarTareas(() => get().tareas);
@@ -691,6 +695,8 @@ export const useStore = create<State>((set, get) => {
       set({ tareas: normalizar(lista), edicionesPendientes: ediciones });
     } catch (e) {
       get().showToast(mensajeDeError(e), 'danger');
+    } finally {
+      if (!get().tareasCargadas) set({ tareasCargadas: true });
     }
   },
   cargarSprints: async () => {
@@ -1307,6 +1313,7 @@ export const useStore = create<State>((set, get) => {
       proyectoRepoAClonar: null,
       ...(enTauri()
         ? {
+            tareasCargadas: false,
             tareas: [],
             commits: [],
             cambiosTraidos: [],

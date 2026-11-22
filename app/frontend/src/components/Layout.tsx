@@ -18,6 +18,16 @@ function leerColapsado(): boolean {
   }
 }
 
+// Al entrar a un proyecto, mientras llegan sus tareas: en vez de una página vacía que después se llena.
+function CargandoProyecto() {
+  return (
+    <div role="status" className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-sm text-muted">
+      <span className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-primary" />
+      Cargando el proyecto…
+    </div>
+  );
+}
+
 export function Layout() {
   const [colapsado, setColapsado] = useState(leerColapsado);
   // En pantalla angosta (celular, tablet en vertical) el menú es un cajón que se abre con el botón
@@ -26,6 +36,7 @@ export function Layout() {
   const [menuAbierto, setMenuAbierto] = useState(false);
   const { pathname } = useLocation();
   const sinProyecto = useSinProyecto();
+  const tareasCargadas = useStore((s) => s.tareasCargadas);
   useEffect(() => setMenuAbierto(false), [pathname, angosta]);
 
   const toggleSidebar = () => {
@@ -63,6 +74,8 @@ export function Layout() {
             {/* Sin proyecto todas las páginas dicen lo mismo: entra a uno o créalo. */}
             {sinProyecto ? (
               <AvisoSinProyecto />
+            ) : !tareasCargadas ? (
+              <CargandoProyecto />
             ) : (
               <>
                 <AlertaRamaAjena />
