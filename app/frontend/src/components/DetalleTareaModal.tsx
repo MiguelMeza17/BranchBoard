@@ -41,13 +41,15 @@ export function DetalleTareaModal({ tarea: abierta, onClose }: { tarea: Tarea | 
             )}
           </div>
           <dl className="grid grid-cols-2 gap-3 border-t border-border pt-3">
+            {/* La ruta de una rama puede ser larga (ramas hechas en Plastic): ocupa toda la fila y, si
+                aun así no cabe, se corta pareja en vez de dejar un pedazo suelto en otra línea. */}
+            <div className="col-span-2 min-w-0">
+              <dt className="text-xs text-faint">Rama</dt>
+              <dd className="break-all font-mono text-accent">{tarea.rama_asociada ?? '— sin rama —'}</dd>
+            </div>
             <div>
               <dt className="text-xs text-faint">Estado</dt>
               <dd className="text-text">{estadoMeta[tarea.estado].label}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-faint">Rama</dt>
-              <dd className="font-mono text-accent">{tarea.rama_asociada ?? '— sin rama —'}</dd>
             </div>
             <div>
               <dt className="text-xs text-faint">Asignado a</dt>

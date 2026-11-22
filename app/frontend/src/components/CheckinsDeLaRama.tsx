@@ -339,9 +339,9 @@ export function PendingChanges({ tarea }: { tarea: Tarea }) {
           >
             <div className="space-y-3 text-sm">
               <dl className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="col-span-2 min-w-0">
                   <dt className="text-xs text-faint">Rama</dt>
-                  <dd className="font-mono text-text">{rama}</dd>
+                  <dd className="break-all font-mono text-text">{rama}</dd>
                 </div>
                 <div>
                   <dt className="text-xs text-faint">Quién trabaja</dt>
