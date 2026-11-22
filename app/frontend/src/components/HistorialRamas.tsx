@@ -437,7 +437,7 @@ export function DetalleCommit({ commit, posicion, total, usuario, onCerrar, onCo
       <div className="space-y-3 text-sm">
         {tarea && (
           <FilaDetalle k="Rama">
-            <span className="font-mono text-text">{tarea.rama_asociada}</span>
+            <span className="break-all font-mono text-text">{tarea.rama_asociada}</span>
             <span className="ml-2 text-muted">
               {tarea.id} · {tarea.titulo}
             </span>

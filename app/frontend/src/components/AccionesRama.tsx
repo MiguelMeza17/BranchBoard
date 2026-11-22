@@ -17,10 +17,10 @@ export function RamaDeLaTarea({ tarea }: { tarea: Tarea }) {
   const rama = ramaDeTarea(tarea, tareas);
   const enEspera = esTareaEnEspera(tarea);
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="text-faint">Rama</span>
+    <div className="flex min-w-0 items-center gap-2 text-xs">
+      <span className="shrink-0 text-faint">Rama</span>
       {rama ? (
-        <span className="rounded-md border border-border bg-surface-3 px-2 py-0.5 font-mono text-text">
+        <span className="min-w-0 break-all rounded-md border border-border bg-surface-3 px-2 py-0.5 font-mono text-text">
           {rama}
           {enEspera && <span className="ml-1.5 font-sans text-faint">(cambios hechos en la rama de su padre)</span>}
         </span>
